@@ -16,6 +16,7 @@ import (
 	"github.com/heurema/pactum/internal/codeindex"
 	"github.com/heurema/pactum/internal/ledger"
 	"github.com/heurema/pactum/internal/projectmap"
+	searchpkg "github.com/heurema/pactum/internal/search"
 	"gopkg.in/yaml.v3"
 )
 
@@ -26,6 +27,7 @@ type App struct {
 
 type cli struct {
 	Init   initCmd   `cmd:"" help:"Create a Pactum workspace and project map."`
+	Search searchCmd `cmd:"" help:"Search the Pactum project map."`
 	Status statusCmd `cmd:"" help:"Print Pactum workspace status."`
 }
 
@@ -34,6 +36,13 @@ type initCmd struct {
 }
 
 type statusCmd struct{}
+
+type searchCmd struct {
+	Query      string `arg:"" name:"query" help:"Search query."`
+	Limit      int    `help:"Maximum number of results." default:"10"`
+	Kind       string `help:"Document kind filter." default:"any" enum:"any,repo_map,llms,file,code_item"`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
 
 type runner struct {
 	App    App
@@ -158,6 +167,10 @@ func (c *statusCmd) Run(r *runner) error {
 	return r.App.Status(r.Stdout)
 }
 
+func (c *searchCmd) Run(r *runner) error {
+	return r.App.Search(r.Stdout, c.Query, c.Limit, c.Kind, c.JSONOutput)
+}
+
 func (a App) Init(root string) error {
 	if err := projectmap.ValidateRoot(root); err != nil {
 		return err
@@ -200,13 +213,30 @@ func (a App) Init(root string) error {
 	if err := projectmap.WriteJSONL(paths.CodeItemsJSONL, scan.CodeItems); err != nil {
 		return err
 	}
-	if err := os.WriteFile(paths.RepoMap, projectmap.RenderRepoMap(root, now, scan), 0o644); err != nil {
+	repoMap := projectmap.RenderRepoMap(root, now, scan)
+	llms := projectmap.RenderLLMS()
+	if err := os.WriteFile(paths.RepoMap, repoMap, 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(paths.LLMS, projectmap.RenderLLMS(), 0o644); err != nil {
+	if err := os.WriteFile(paths.LLMS, llms, 0o644); err != nil {
 		return err
 	}
 	if err := os.WriteFile(paths.AreaIndex, projectmap.RenderAreaIndex(), 0o644); err != nil {
+		return err
+	}
+	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "search_index_started", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
+		return err
+	}
+	if err := searchpkg.Rebuild(paths.SearchSQLite, searchpkg.IndexInput{
+		GeneratedAt: now,
+		RepoMapBody: repoMap,
+		LLMSBody:    llms,
+		Files:       scan.Files,
+		CodeItems:   scan.CodeItems,
+	}); err != nil {
+		return err
+	}
+	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "search_index_finished", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
 		return err
 	}
 
@@ -232,6 +262,7 @@ func (a App) Init(root string) error {
 			"files":        "map/files.jsonl",
 			"code_items":   "map/code-items.jsonl",
 			"hashes":       "map/hashes.jsonl",
+			"search":       "map/search.sqlite",
 			"areas_index":  "map/areas/_index.md",
 			"map_manifest": "map/manifest.json",
 		},
@@ -307,6 +338,40 @@ func (a App) Status(stdout io.Writer) error {
 	fmt.Fprintln(stdout, "  total tokens: 0")
 	fmt.Fprintln(stdout, "  estimated cost: $0.00")
 
+	return nil
+}
+
+func (a App) Search(stdout io.Writer, query string, limit int, kind string, jsonOutput bool) error {
+	root, workspace, err := a.resolveStatusRoot()
+	if err != nil {
+		return err
+	}
+	if workspace == "" {
+		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
+		return nil
+	}
+
+	paths := artifacts.New(root)
+	response, err := searchpkg.Query(paths.SearchSQLite, searchpkg.QueryOptions{
+		Query: query,
+		Limit: limit,
+		Kind:  kind,
+	})
+	if err != nil {
+		if searchpkg.IsMissingIndex(err) {
+			fmt.Fprintln(stdout, "Search index is missing. Run: pactum init")
+			return nil
+		}
+		return err
+	}
+
+	if jsonOutput {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(response)
+	}
+
+	writeSearchResults(stdout, response)
 	return nil
 }
 
@@ -511,4 +576,35 @@ func readJSON(path string, value any) error {
 func isDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+func writeSearchResults(stdout io.Writer, response searchpkg.Response) {
+	fmt.Fprintf(stdout, "Search results for: %s\n\n", response.Query)
+	if len(response.Results) == 0 {
+		fmt.Fprintln(stdout, "No results found.")
+		return
+	}
+	for _, result := range response.Results {
+		fmt.Fprintf(stdout, "%d. %s %s\n", result.Rank, result.Kind, result.Path)
+		switch result.Kind {
+		case searchpkg.KindCodeItem:
+			fmt.Fprintf(stdout, "   kind: %s\n", result.CodeKind)
+			fmt.Fprintf(stdout, "   name: %s\n", result.Title)
+			if result.Language != "" {
+				fmt.Fprintf(stdout, "   language: %s\n", result.Language)
+			}
+		case searchpkg.KindFile:
+			if result.Language != "" {
+				fmt.Fprintf(stdout, "   language: %s\n", result.Language)
+			}
+			if result.CodeKind != "" {
+				fmt.Fprintf(stdout, "   kind: %s\n", result.CodeKind)
+			}
+		default:
+			fmt.Fprintf(stdout, "   title: %s\n", result.Title)
+		}
+		if result.Rank < len(response.Results) {
+			fmt.Fprintln(stdout)
+		}
+	}
 }
