@@ -27,6 +27,7 @@ type App struct {
 
 type cli struct {
 	Init   initCmd   `cmd:"" help:"Create a Pactum workspace and project map."`
+	Map    mapCmd    `cmd:"" help:"Advanced project map commands."`
 	Search searchCmd `cmd:"" help:"Search the Pactum project map."`
 	Status statusCmd `cmd:"" help:"Print Pactum workspace status."`
 }
@@ -35,7 +36,18 @@ type initCmd struct {
 	Path string `arg:"" optional:"" default:"." name:"path" help:"Repository path to initialize."`
 }
 
-type statusCmd struct{}
+type mapCmd struct {
+	Refresh mapRefreshCmd `cmd:"" help:"Rebuild generated project map artifacts."`
+}
+
+type mapRefreshCmd struct {
+	JSONOutput bool `name:"json" help:"Print machine-readable JSON output."`
+	Full       bool `help:"Accepted for now; performs the same full rebuild as the default."`
+}
+
+type statusCmd struct {
+	JSONOutput bool `name:"json" help:"Print machine-readable JSON output."`
+}
 
 type searchCmd struct {
 	Query      string `arg:"" name:"query" help:"Search query."`
@@ -164,11 +176,33 @@ func (c *initCmd) Run(r *runner) error {
 }
 
 func (c *statusCmd) Run(r *runner) error {
-	return r.App.Status(r.Stdout)
+	return r.App.Status(r.Stdout, c.JSONOutput)
 }
 
 func (c *searchCmd) Run(r *runner) error {
 	return r.App.Search(r.Stdout, c.Query, c.Limit, c.Kind, c.JSONOutput)
+}
+
+func (c *mapRefreshCmd) Run(r *runner) error {
+	_ = c.Full
+	root, workspace, err := r.App.resolveStatusRoot()
+	if err != nil {
+		return err
+	}
+	if workspace == "" {
+		return errors.New("Pactum is not initialized. Run: pactum init")
+	}
+	result, err := r.App.RefreshMap(root)
+	if err != nil {
+		return err
+	}
+	if c.JSONOutput {
+		encoder := json.NewEncoder(r.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+	writeMapRefreshResult(r.Stdout, result)
+	return nil
 }
 
 func (a App) Init(root string) error {
@@ -180,7 +214,7 @@ func (a App) Init(root string) error {
 		return err
 	}
 
-	now := a.Now().UTC()
+	now := a.nowUTC()
 	runID := "map_" + now.Format("20060102_150405")
 
 	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "init_started", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
@@ -189,91 +223,6 @@ func (a App) Init(root string) error {
 	if err := writeStaticWorkspaceFiles(paths); err != nil {
 		return err
 	}
-	config, err := readConfig(paths.Config)
-	if err != nil {
-		return err
-	}
-	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "map_refresh_started", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
-		return err
-	}
-
-	scan, err := projectmap.Scan(root, projectmap.ScanOptions{
-		MaxFileBytes:  int64(config.ProjectMap.MaxFileBytes),
-		CodeIndexMode: config.ProjectMap.CodeIndex,
-	})
-	if err != nil {
-		return err
-	}
-	if err := projectmap.WriteJSONL(paths.FilesJSONL, scan.Files); err != nil {
-		return err
-	}
-	if err := projectmap.WriteJSONL(paths.HashesJSONL, scan.Hashes); err != nil {
-		return err
-	}
-	if err := projectmap.WriteJSONL(paths.CodeItemsJSONL, scan.CodeItems); err != nil {
-		return err
-	}
-	repoMap := projectmap.RenderRepoMap(root, now, scan)
-	llms := projectmap.RenderLLMS()
-	if err := os.WriteFile(paths.RepoMap, repoMap, 0o644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(paths.LLMS, llms, 0o644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(paths.AreaIndex, projectmap.RenderAreaIndex(), 0o644); err != nil {
-		return err
-	}
-	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "search_index_started", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
-		return err
-	}
-	if err := searchpkg.Rebuild(paths.SearchSQLite, searchpkg.IndexInput{
-		GeneratedAt: now,
-		RepoMapBody: repoMap,
-		LLMSBody:    llms,
-		Files:       scan.Files,
-		CodeItems:   scan.CodeItems,
-	}); err != nil {
-		return err
-	}
-	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "search_index_finished", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
-		return err
-	}
-
-	mapManifest := projectmap.Manifest{
-		Schema:       "pactum.map.manifest.v1",
-		RunID:        runID,
-		GeneratedAt:  now,
-		RepoRoot:     root,
-		FilesIndexed: len(scan.Files),
-		FilesIgnored: scan.FilesIgnored,
-		FilesSkipped: scan.FilesSkipped,
-		CodeIndex: projectmap.CodeIndexManifest{
-			Mode:               scan.CodeIndexMode,
-			SupportedLanguages: codeindex.SupportedLanguages(),
-			LanguagesSeen:      scan.CodeIndexLanguagesSeen,
-			LanguagesIndexed:   scan.CodeIndexLanguagesIndexed,
-			Items:              len(scan.CodeItems),
-		},
-		Warnings: scan.Warnings,
-		Artifacts: map[string]string{
-			"repo_map":     "map/repo-map.md",
-			"llms":         "map/llms.txt",
-			"files":        "map/files.jsonl",
-			"code_items":   "map/code-items.jsonl",
-			"hashes":       "map/hashes.jsonl",
-			"search":       "map/search.sqlite",
-			"areas_index":  "map/areas/_index.md",
-			"map_manifest": "map/manifest.json",
-		},
-	}
-	if err := writeJSON(paths.MapManifest, mapManifest); err != nil {
-		return err
-	}
-	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "map_refresh_finished", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
-		return err
-	}
-
 	manifest := workspaceManifest{
 		Schema:        "pactum.workspace.v1",
 		Tool:          artifacts.ToolName,
@@ -283,62 +232,86 @@ func (a App) Init(root string) error {
 		UpdatedAt:     now,
 		Status:        "initialized",
 	}
-	manifest.Map.CurrentRunID = runID
 	if err := writeJSON(paths.Manifest, manifest); err != nil {
 		return err
 	}
-	return ledger.Append(paths.EventsJSONL, ledger.Event{Type: "init_finished", Timestamp: now, RunID: runID, RepoRoot: root})
+	result, err := a.refreshMap(root, now)
+	if err != nil {
+		return err
+	}
+	return ledger.Append(paths.EventsJSONL, ledger.Event{Type: "init_finished", Timestamp: result.FinishedAt, RunID: result.RunID, RepoRoot: root})
 }
 
-func (a App) Status(stdout io.Writer) error {
+func (a App) Status(stdout io.Writer, jsonOutput bool) error {
 	root, workspace, err := a.resolveStatusRoot()
 	if err != nil {
 		return err
 	}
 	if workspace == "" {
+		if jsonOutput {
+			return writeStatusNotInitialized(stdout)
+		}
 		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
 		return nil
 	}
 
-	paths := artifacts.New(root)
-	if _, err := readConfig(paths.Config); err != nil {
-		return err
-	}
-	manifest, err := readWorkspaceManifest(paths.Manifest)
+	report, err := a.workspaceStatus(root)
 	if err != nil {
 		return err
 	}
-	mapManifest, err := readMapManifest(paths.MapManifest)
-	if err != nil {
-		return err
+	if jsonOutput {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(report)
 	}
+	writeWorkspaceStatus(stdout, report)
+	return nil
+}
 
+func (a App) nowUTC() time.Time {
+	if a.Now == nil {
+		return time.Now().UTC()
+	}
+	return a.Now().UTC()
+}
+
+func writeWorkspaceStatus(stdout io.Writer, report statusResponse) {
 	fmt.Fprintln(stdout, "Pactum status")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Repository:")
-	fmt.Fprintf(stdout, "  root: %s\n", manifest.RepoRoot)
+	fmt.Fprintf(stdout, "  root: %s\n", report.RepoRoot)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Workspace:")
-	fmt.Fprintf(stdout, "  path: %s\n", paths.Workspace)
+	fmt.Fprintf(stdout, "  path: %s\n", report.Workspace)
 	fmt.Fprintln(stdout, "  initialized: yes")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Project map:")
-	fmt.Fprintln(stdout, "  status: fresh")
-	fmt.Fprintf(stdout, "  run: %s\n", mapManifest.RunID)
-	fmt.Fprintf(stdout, "  files indexed: %d\n", mapManifest.FilesIndexed)
+	fmt.Fprintf(stdout, "  status: %s\n", report.ProjectMap.Status)
+	fmt.Fprintf(stdout, "  run: %s\n", report.ProjectMap.RunID)
+	fmt.Fprintf(stdout, "  files indexed: %d\n", report.ProjectMap.FilesIndexed)
+	fmt.Fprintf(stdout, "  code items: %d\n", report.ProjectMap.CodeItems)
+	fmt.Fprintf(stdout, "  search index: %s\n", report.ProjectMap.SearchIndex)
+	if len(report.ProjectMap.StaleReasons) > 0 {
+		fmt.Fprintln(stdout)
+		fmt.Fprintln(stdout, "Stale reasons:")
+		for _, reason := range report.ProjectMap.StaleReasons {
+			fmt.Fprintf(stdout, "  - %s\n", reason)
+		}
+		fmt.Fprintln(stdout)
+		fmt.Fprintln(stdout, "Suggested:")
+		fmt.Fprintln(stdout, "  pactum map refresh")
+	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Runs:")
-	fmt.Fprintln(stdout, "  active: 0")
+	fmt.Fprintf(stdout, "  active: %d\n", report.Runs.Active)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Memory:")
-	fmt.Fprintln(stdout, "  items: 0")
-	fmt.Fprintln(stdout, "  stale: 0")
+	fmt.Fprintf(stdout, "  items: %d\n", report.Memory.Items)
+	fmt.Fprintf(stdout, "  stale: %d\n", report.Memory.Stale)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Usage:")
-	fmt.Fprintln(stdout, "  total tokens: 0")
-	fmt.Fprintln(stdout, "  estimated cost: $0.00")
-
-	return nil
+	fmt.Fprintf(stdout, "  total tokens: %d\n", report.Usage.TotalTokens)
+	fmt.Fprintf(stdout, "  estimated cost: $%.2f\n", report.Usage.EstimatedCostUSD)
 }
 
 func (a App) Search(stdout io.Writer, query string, limit int, kind string, jsonOutput bool) error {
@@ -359,7 +332,7 @@ func (a App) Search(stdout io.Writer, query string, limit int, kind string, json
 	})
 	if err != nil {
 		if searchpkg.IsMissingIndex(err) {
-			fmt.Fprintln(stdout, "Search index is missing. Run: pactum init")
+			fmt.Fprintln(stdout, "Search index is missing. Run: pactum map refresh")
 			return nil
 		}
 		return err
