@@ -165,10 +165,14 @@ func ftsQuery(query string) string {
 	for _, field := range fields {
 		field = strings.TrimSpace(field)
 		if field != "" {
-			tokens = append(tokens, field)
+			tokens = append(tokens, quoteFTSToken(field))
 		}
 	}
 	return strings.Join(tokens, " ")
+}
+
+func quoteFTSToken(token string) string {
+	return `"` + strings.ReplaceAll(token, `"`, `""`) + `"`
 }
 
 func nonEmpty(values ...string) []string {
