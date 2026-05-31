@@ -187,6 +187,7 @@ func (a App) Init(root string) error {
 
 	scan, err := projectmap.Scan(root, projectmap.ScanOptions{
 		MaxFileBytes: int64(config.ProjectMap.MaxFileBytes),
+		IncludeGoAST: config.ProjectMap.IncludeGoAST,
 	})
 	if err != nil {
 		return err
@@ -408,7 +409,7 @@ func defaultConfigFile() configFile {
 		DefaultProfile: "balanced",
 		ProjectMap: projectMapConfig{
 			Refresh:          "auto",
-			IncludeGoAST:     false,
+			IncludeGoAST:     true,
 			IncludeVendor:    false,
 			IncludeGenerated: false,
 			MaxFileBytes:     500000,

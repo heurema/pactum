@@ -18,6 +18,7 @@ import (
 
 type ScanOptions struct {
 	MaxFileBytes int64
+	IncludeGoAST bool
 }
 
 type FileRecord struct {
@@ -161,7 +162,7 @@ func Scan(root string, options ...ScanOptions) (ScanResult, error) {
 		if language != "Unknown" {
 			result.Languages[language]++
 		}
-		if strings.ToLower(filepath.Ext(name)) == ".go" {
+		if option.IncludeGoAST && strings.ToLower(filepath.Ext(name)) == ".go" {
 			entries, warnings := extractGoEntries(path, rel)
 			result.Entries = append(result.Entries, entries...)
 			result.Warnings = append(result.Warnings, warnings...)

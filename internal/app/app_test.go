@@ -63,6 +63,9 @@ func helper() {}
 	if config.ProjectMap.MaxFileBytes != 500000 {
 		t.Fatalf("config project_map.max_file_bytes = %d, want 500000", config.ProjectMap.MaxFileBytes)
 	}
+	if !config.ProjectMap.IncludeGoAST {
+		t.Fatal("config project_map.include_go_ast = false, want true")
+	}
 
 	files := readFileRecords(t, paths.FilesJSONL)
 	seen := map[string]bool{}
@@ -180,6 +183,38 @@ func TestInitUsesConfigMaxFileBytesAndManifestWarnings(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(manifest.Warnings, "\n"), "skipped large file: large.go") {
 		t.Fatalf("manifest warnings did not mention skipped large.go: %#v", manifest.Warnings)
+	}
+}
+
+func TestInitCanDisableGoASTEntries(t *testing.T) {
+	root := t.TempDir()
+	paths := artifacts.New(root)
+	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
+	config := defaultConfigFile()
+	config.ProjectMap.IncludeGoAST = false
+	assertNoError(t, writeYAML(paths.Config, config))
+	mustWriteFile(t, filepath.Join(root, "main.go"), `package main
+
+type Server struct{}
+
+func main() {}
+func Start() {}
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	entries := readEntryRecords(t, paths.EntriesJSONL)
+	if len(entries) != 0 {
+		t.Fatalf("entries should be empty when include_go_ast is false: %#v", entries)
+	}
+	manifest, err := readMapManifest(paths.MapManifest)
+	assertNoError(t, err)
+	if manifest.Entries != 0 {
+		t.Fatalf("manifest entries = %d, want 0", manifest.Entries)
 	}
 }
 

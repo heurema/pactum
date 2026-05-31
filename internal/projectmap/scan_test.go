@@ -32,7 +32,7 @@ func Build() {}
 func build() {}
 `)
 
-	scan, err := Scan(root)
+	scan, err := Scan(root, ScanOptions{IncludeGoAST: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestScanToleratesGoParseErrors(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "broken.go"), "package broken\nfunc {\n")
 
-	scan, err := Scan(root)
+	scan, err := Scan(root, ScanOptions{IncludeGoAST: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestScanSkipsFilesOverMaxFileBytes(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "small.go"), "package small\n")
 	writeTestFile(t, filepath.Join(root, "large.go"), "package large\n"+strings.Repeat("x", 128))
 
-	scan, err := Scan(root, ScanOptions{MaxFileBytes: 64})
+	scan, err := Scan(root, ScanOptions{MaxFileBytes: 64, IncludeGoAST: true})
 	if err != nil {
 		t.Fatal(err)
 	}
