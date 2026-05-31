@@ -10,7 +10,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/heurema/pactum/internal/codeindex"
 )
+
+type ScanOptions struct {
+	MaxFileBytes  int64
+	CodeIndexMode string
+}
 
 type FileRecord struct {
 	Path      string `json:"path"`
@@ -26,12 +33,18 @@ type HashRecord struct {
 }
 
 type ScanResult struct {
-	Files        []FileRecord
-	Hashes       []HashRecord
-	FilesIgnored int
-	Languages    map[string]int
-	TopDirs      []string
-	Important    []string
+	Files                     []FileRecord
+	Hashes                    []HashRecord
+	CodeItems                 []codeindex.Item
+	FilesIgnored              int
+	FilesSkipped              int
+	Languages                 map[string]int
+	CodeIndexMode             string
+	CodeIndexLanguagesSeen    []string
+	CodeIndexLanguagesIndexed []string
+	TopDirs                   []string
+	Important                 []string
+	Warnings                  []string
 }
 
 var ignoredDirs = map[string]struct{}{
@@ -70,12 +83,16 @@ var importantFiles = []string{
 	"Dockerfile",
 }
 
-func Scan(root string) (ScanResult, error) {
+func Scan(root string, options ...ScanOptions) (ScanResult, error) {
+	option := scanOption(options)
 	result := ScanResult{
-		Languages: make(map[string]int),
+		Languages:     make(map[string]int),
+		CodeIndexMode: codeindex.NormalizeMode(option.CodeIndexMode),
 	}
 	topDirs := make(map[string]struct{})
 	important := make(map[string]struct{})
+	codeIndexLanguagesSeen := make(map[string]struct{})
+	codeIndexLanguagesIndexed := make(map[string]struct{})
 
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -113,6 +130,12 @@ func Scan(root string) (ScanResult, error) {
 			result.FilesIgnored++
 			return nil
 		}
+		if option.MaxFileBytes > 0 && info.Size() > option.MaxFileBytes {
+			result.FilesIgnored++
+			result.FilesSkipped++
+			result.Warnings = append(result.Warnings, "skipped large file: "+rel+" exceeds project_map.max_file_bytes")
+			return nil
+		}
 
 		hash, err := sha256File(path)
 		if err != nil {
@@ -131,6 +154,24 @@ func Scan(root string) (ScanResult, error) {
 		result.Hashes = append(result.Hashes, HashRecord{Path: rel, SHA256: hash})
 		if language != "Unknown" {
 			result.Languages[language]++
+		}
+
+		codeLanguage := codeindex.LanguageForPath(rel)
+		if codeindex.IsSupported(codeLanguage) {
+			codeIndexLanguagesSeen[codeLanguage] = struct{}{}
+		}
+		if codeindex.Enabled(result.CodeIndexMode) && codeindex.IsSupported(codeLanguage) {
+			source, err := os.ReadFile(path)
+			if err != nil {
+				result.Warnings = append(result.Warnings, "read code file failed: "+rel+": "+err.Error())
+			} else {
+				extracted := codeindex.Extract(rel, codeLanguage, source)
+				result.CodeItems = append(result.CodeItems, extracted.Items...)
+				result.Warnings = append(result.Warnings, extracted.Warnings...)
+				if len(extracted.Warnings) == 0 {
+					codeIndexLanguagesIndexed[codeLanguage] = struct{}{}
+				}
+			}
 		}
 
 		parts := strings.Split(rel, "/")
@@ -155,8 +196,12 @@ func Scan(root string) (ScanResult, error) {
 	sort.Slice(result.Hashes, func(i, j int) bool {
 		return result.Hashes[i].Path < result.Hashes[j].Path
 	})
+	codeindex.SortItems(result.CodeItems)
+	sort.Strings(result.Warnings)
 
 	result.TopDirs = sortedKeys(topDirs)
+	result.CodeIndexLanguagesSeen = sortedKeys(codeIndexLanguagesSeen)
+	result.CodeIndexLanguagesIndexed = sortedKeys(codeIndexLanguagesIndexed)
 	for _, candidate := range importantFiles {
 		if _, ok := important[candidate]; ok {
 			result.Important = append(result.Important, candidate)
@@ -164,6 +209,15 @@ func Scan(root string) (ScanResult, error) {
 	}
 
 	return result, nil
+}
+
+func scanOption(options []ScanOptions) ScanOptions {
+	if len(options) == 0 {
+		return ScanOptions{CodeIndexMode: codeindex.ModeAuto}
+	}
+	option := options[0]
+	option.CodeIndexMode = codeindex.NormalizeMode(option.CodeIndexMode)
+	return option
 }
 
 func sha256File(path string) (string, error) {

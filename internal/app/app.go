@@ -13,6 +13,7 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/heurema/pactum/internal/artifacts"
+	"github.com/heurema/pactum/internal/codeindex"
 	"github.com/heurema/pactum/internal/ledger"
 	"github.com/heurema/pactum/internal/projectmap"
 	"gopkg.in/yaml.v3"
@@ -62,11 +63,9 @@ type configFile struct {
 }
 
 type projectMapConfig struct {
-	Refresh          string `yaml:"refresh"`
-	IncludeGoAST     bool   `yaml:"include_go_ast"`
-	IncludeVendor    bool   `yaml:"include_vendor"`
-	IncludeGenerated bool   `yaml:"include_generated"`
-	MaxFileBytes     int    `yaml:"max_file_bytes"`
+	Refresh      string `yaml:"refresh"`
+	MaxFileBytes int    `yaml:"max_file_bytes"`
+	CodeIndex    string `yaml:"code_index"`
 }
 
 type limitsConfig struct {
@@ -177,11 +176,18 @@ func (a App) Init(root string) error {
 	if err := writeStaticWorkspaceFiles(paths); err != nil {
 		return err
 	}
+	config, err := readConfig(paths.Config)
+	if err != nil {
+		return err
+	}
 	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "map_refresh_started", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
 		return err
 	}
 
-	scan, err := projectmap.Scan(root)
+	scan, err := projectmap.Scan(root, projectmap.ScanOptions{
+		MaxFileBytes:  int64(config.ProjectMap.MaxFileBytes),
+		CodeIndexMode: config.ProjectMap.CodeIndex,
+	})
 	if err != nil {
 		return err
 	}
@@ -191,7 +197,7 @@ func (a App) Init(root string) error {
 	if err := projectmap.WriteJSONL(paths.HashesJSONL, scan.Hashes); err != nil {
 		return err
 	}
-	if err := os.WriteFile(paths.EntriesJSONL, nil, 0o644); err != nil {
+	if err := projectmap.WriteJSONL(paths.CodeItemsJSONL, scan.CodeItems); err != nil {
 		return err
 	}
 	if err := os.WriteFile(paths.RepoMap, projectmap.RenderRepoMap(root, now, scan), 0o644); err != nil {
@@ -211,11 +217,20 @@ func (a App) Init(root string) error {
 		RepoRoot:     root,
 		FilesIndexed: len(scan.Files),
 		FilesIgnored: scan.FilesIgnored,
+		FilesSkipped: scan.FilesSkipped,
+		CodeIndex: projectmap.CodeIndexManifest{
+			Mode:               scan.CodeIndexMode,
+			SupportedLanguages: codeindex.SupportedLanguages(),
+			LanguagesSeen:      scan.CodeIndexLanguagesSeen,
+			LanguagesIndexed:   scan.CodeIndexLanguagesIndexed,
+			Items:              len(scan.CodeItems),
+		},
+		Warnings: scan.Warnings,
 		Artifacts: map[string]string{
 			"repo_map":     "map/repo-map.md",
 			"llms":         "map/llms.txt",
 			"files":        "map/files.jsonl",
-			"entries":      "map/entries.jsonl",
+			"code_items":   "map/code-items.jsonl",
 			"hashes":       "map/hashes.jsonl",
 			"areas_index":  "map/areas/_index.md",
 			"map_manifest": "map/manifest.json",
@@ -360,7 +375,7 @@ func ensureDirs(paths []string) error {
 }
 
 func writeStaticWorkspaceFiles(paths artifacts.Paths) error {
-	if err := writeYAML(paths.Config, defaultConfigFile()); err != nil {
+	if err := writeDefaultConfigIfMissing(paths.Config); err != nil {
 		return err
 	}
 	files := map[string][]byte{
@@ -384,16 +399,23 @@ ledger/cost.json
 	return nil
 }
 
+func writeDefaultConfigIfMissing(path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return writeYAML(path, defaultConfigFile())
+}
+
 func defaultConfigFile() configFile {
 	return configFile{
 		Schema:         "pactum.config.v1",
 		DefaultProfile: "balanced",
 		ProjectMap: projectMapConfig{
-			Refresh:          "auto",
-			IncludeGoAST:     false,
-			IncludeVendor:    false,
-			IncludeGenerated: false,
-			MaxFileBytes:     500000,
+			Refresh:      "auto",
+			MaxFileBytes: 500000,
+			CodeIndex:    codeindex.ModeAuto,
 		},
 		Limits: limitsConfig{
 			Clarify: iterationLimits{
