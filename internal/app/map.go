@@ -20,7 +20,10 @@ type MapRefreshResult struct {
 	RunID        string    `json:"run_id"`
 	StartedAt    time.Time `json:"started_at"`
 	FinishedAt   time.Time `json:"finished_at"`
+	RepoRoot     string    `json:"repo_root"`
 	FilesIndexed int       `json:"files_indexed"`
+	FilesIgnored int       `json:"files_ignored"`
+	FilesSkipped int       `json:"files_skipped"`
 	CodeItems    int       `json:"code_items"`
 	Warnings     int       `json:"warnings"`
 	SearchIndex  string    `json:"search_index"`
@@ -45,7 +48,10 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 		return MapRefreshResult{}, err
 	}
 
-	runID := "map_" + startedAt.Format("20060102_150405")
+	runID, err := nextMapRunID(startedAt, paths.MapRunsDir)
+	if err != nil {
+		return MapRefreshResult{}, err
+	}
 	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "map_refresh_started", Timestamp: startedAt, RunID: runID, RepoRoot: root}); err != nil {
 		return MapRefreshResult{}, err
 	}
@@ -143,7 +149,10 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 		RunID:        runID,
 		StartedAt:    startedAt,
 		FinishedAt:   finishedAt,
+		RepoRoot:     root,
 		FilesIndexed: len(scan.Files),
+		FilesIgnored: scan.FilesIgnored,
+		FilesSkipped: scan.FilesSkipped,
 		CodeItems:    len(scan.CodeItems),
 		Warnings:     len(scan.Warnings),
 		SearchIndex:  "ready",
@@ -159,6 +168,22 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 	}
 
 	return result, nil
+}
+
+func nextMapRunID(startedAt time.Time, runsDir string) (string, error) {
+	base := "map_" + startedAt.Format("20060102_150405")
+	candidate := base
+	for suffix := 2; ; suffix++ {
+		path := filepath.Join(runsDir, candidate+".json")
+		if _, err := os.Stat(path); err == nil {
+			candidate = fmt.Sprintf("%s_%02d", base, suffix)
+			continue
+		} else if os.IsNotExist(err) {
+			return candidate, nil
+		} else {
+			return "", err
+		}
+	}
 }
 
 func updateWorkspaceMapRun(path string, runID string, updatedAt time.Time) error {
@@ -177,6 +202,8 @@ func writeMapRefreshResult(stdout io.Writer, result MapRefreshResult) {
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", result.RunID)
 	fmt.Fprintf(stdout, "  files indexed: %d\n", result.FilesIndexed)
+	fmt.Fprintf(stdout, "  files ignored: %d\n", result.FilesIgnored)
+	fmt.Fprintf(stdout, "  files skipped: %d\n", result.FilesSkipped)
 	fmt.Fprintf(stdout, "  code items: %d\n", result.CodeItems)
 	fmt.Fprintf(stdout, "  warnings: %d\n", result.Warnings)
 	fmt.Fprintf(stdout, "  search index: %s\n", result.SearchIndex)

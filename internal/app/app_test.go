@@ -492,8 +492,76 @@ func TestMapRefreshJSONOutput(t *testing.T) {
 	}
 	var result MapRefreshResult
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &result))
-	if result.RunID == "" || result.SearchIndex != "ready" || result.FilesIndexed == 0 {
+	if result.RunID == "" || result.RepoRoot != root || result.SearchIndex != "ready" || result.FilesIndexed == 0 {
 		t.Fatalf("unexpected map refresh --json result: %#v", result)
+	}
+}
+
+func TestMapRefreshRunIDsAreCollisionSafe(t *testing.T) {
+	root := t.TempDir()
+	paths := artifacts.New(root)
+	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
+	config := defaultConfigFile()
+	config.ProjectMap.MaxFileBytes = 64
+	assertNoError(t, writeYAML(paths.Config, config))
+	mustWriteFile(t, filepath.Join(root, "small.go"), "package small\n")
+	mustWriteFile(t, filepath.Join(root, "large.go"), "package large\n"+strings.Repeat("x", 128))
+	mustWriteFile(t, filepath.Join(root, "node_modules", "ignored.js"), "console.log('ignored')\n")
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+	firstManifest, err := readWorkspaceManifest(paths.Manifest)
+	assertNoError(t, err)
+	firstRunID := firstManifest.Map.CurrentRunID
+	if firstRunID != "map_20260531_184012" {
+		t.Fatalf("first run id = %q, want map_20260531_184012", firstRunID)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"map", "refresh"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
+	}
+	secondManifest, err := readWorkspaceManifest(paths.Manifest)
+	assertNoError(t, err)
+	secondRunID := secondManifest.Map.CurrentRunID
+	if secondRunID != "map_20260531_184012_02" {
+		t.Fatalf("second run id = %q, want map_20260531_184012_02", secondRunID)
+	}
+	if firstRunID == secondRunID {
+		t.Fatalf("run ids should differ: %q", firstRunID)
+	}
+
+	firstRunPath := filepath.Join(paths.MapRunsDir, firstRunID+".json")
+	secondRunPath := filepath.Join(paths.MapRunsDir, secondRunID+".json")
+	assertFile(t, firstRunPath)
+	assertFile(t, secondRunPath)
+
+	var secondRun MapRefreshResult
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, secondRunPath)), &secondRun))
+	if secondRun.RunID != secondRunID {
+		t.Fatalf("run artifact run_id = %q, want %q", secondRun.RunID, secondRunID)
+	}
+	if secondRun.RepoRoot != root {
+		t.Fatalf("run artifact repo_root = %q, want %q", secondRun.RepoRoot, root)
+	}
+	if secondRun.FilesIgnored == 0 {
+		t.Fatalf("run artifact files_ignored = 0, want non-zero")
+	}
+	if secondRun.FilesSkipped != 1 {
+		t.Fatalf("run artifact files_skipped = %d, want 1", secondRun.FilesSkipped)
+	}
+
+	var raw map[string]json.RawMessage
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, secondRunPath)), &raw))
+	for _, key := range []string{"repo_root", "files_ignored", "files_skipped"} {
+		if _, ok := raw[key]; !ok {
+			t.Fatalf("run artifact missing key %q: %s", key, mustReadFile(t, secondRunPath))
+		}
 	}
 }
 
@@ -525,6 +593,8 @@ func TestMapRefreshCommandRebuildsMapOnly(t *testing.T) {
 		"Project map refreshed",
 		"Run:",
 		"files indexed:",
+		"files ignored:",
+		"files skipped:",
 		"code items:",
 		"warnings:",
 		"search index: ready",
