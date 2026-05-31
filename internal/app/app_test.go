@@ -16,7 +16,14 @@ import (
 func TestInitCreatesExpectedLayoutAndProjectMap(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
-	mustWriteFile(t, filepath.Join(root, "src", "main.go"), "package main\n")
+	mustWriteFile(t, filepath.Join(root, "src", "main.go"), `package main
+
+type Server struct{}
+
+func main() {}
+func Start() {}
+func helper() {}
+`)
 	mustWriteFile(t, filepath.Join(root, "node_modules", "ignored.js"), "console.log('ignored')\n")
 
 	var stdout, stderr bytes.Buffer
@@ -76,15 +83,49 @@ func TestInitCreatesExpectedLayoutAndProjectMap(t *testing.T) {
 	if len(hashes) != len(files) {
 		t.Fatalf("hash record count = %d, want %d", len(hashes), len(files))
 	}
+	entries := readEntryRecords(t, paths.EntriesJSONL)
+	if !hasEntry(entries, "src/main.go", "go_main", "main") {
+		t.Fatalf("entries missing go_main main: %#v", entries)
+	}
+	if !hasEntry(entries, "src/main.go", "go_func", "Start") {
+		t.Fatalf("entries missing exported Start func: %#v", entries)
+	}
+	if !hasEntry(entries, "src/main.go", "go_type", "Server") {
+		t.Fatalf("entries missing exported Server type: %#v", entries)
+	}
+	if hasEntry(entries, "src/main.go", "go_func", "helper") {
+		t.Fatalf("entries should not include unexported helper: %#v", entries)
+	}
 
 	repoMap := mustReadFile(t, paths.RepoMap)
-	for _, want := range []string{"# Pactum Project Map", "README.md", "src/main.go", "Go: 1 file(s)"} {
+	for _, want := range []string{
+		"# Pactum Project Map",
+		"## Summary",
+		"Entries:",
+		"## Important entrypoints",
+		"`src/main.go`: `func main()`",
+		"`src/main.go`: exported func `main.Start`",
+		"`src/main.go`: exported type `main.Server`",
+		"## Agent guidance",
+		"Before adding new code, search/read relevant files and entrypoints.",
+		"README.md",
+		"src/main.go",
+		"Go: 1 file(s)",
+	} {
 		if !strings.Contains(repoMap, want) {
 			t.Fatalf("repo-map.md missing %q:\n%s", want, repoMap)
 		}
 	}
 	llms := mustReadFile(t, paths.LLMS)
-	for _, want := range []string{"repo-map.md", "files.jsonl", "before adding new code"} {
+	for _, want := range []string{
+		"generated Pactum project map",
+		"repo-map.md",
+		"files.jsonl",
+		"entries.jsonl",
+		"complete semantic truth",
+		"inspect relevant existing files",
+		"If uncertain, ask for clarification.",
+	} {
 		if !strings.Contains(llms, want) {
 			t.Fatalf("llms.txt missing %q:\n%s", want, llms)
 		}
@@ -98,6 +139,64 @@ func TestInitCreatesExpectedLayoutAndProjectMap(t *testing.T) {
 		if !strings.Contains(events[i], want) {
 			t.Fatalf("event %d = %s, want %s", i, events[i], want)
 		}
+	}
+}
+
+func TestInitUsesConfigMaxFileBytesAndManifestWarnings(t *testing.T) {
+	root := t.TempDir()
+	paths := artifacts.New(root)
+	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
+	config := defaultConfigFile()
+	config.ProjectMap.MaxFileBytes = 64
+	assertNoError(t, writeYAML(paths.Config, config))
+	mustWriteFile(t, filepath.Join(root, "small.go"), "package small\n")
+	mustWriteFile(t, filepath.Join(root, "large.go"), "package large\n"+strings.Repeat("x", 128))
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	files := readFileRecords(t, paths.FilesJSONL)
+	seen := map[string]bool{}
+	for _, file := range files {
+		seen[file.Path] = true
+	}
+	if !seen["small.go"] {
+		t.Fatalf("small.go was not indexed: %#v", files)
+	}
+	if seen["large.go"] {
+		t.Fatalf("large.go should have been skipped: %#v", files)
+	}
+
+	manifest, err := readMapManifest(paths.MapManifest)
+	assertNoError(t, err)
+	if manifest.FilesSkipped != 1 {
+		t.Fatalf("manifest files_skipped = %d, want 1", manifest.FilesSkipped)
+	}
+	if manifest.Entries == 0 {
+		t.Fatalf("manifest entries = 0, want at least package entry")
+	}
+	if !strings.Contains(strings.Join(manifest.Warnings, "\n"), "skipped large file: large.go") {
+		t.Fatalf("manifest warnings did not mention skipped large.go: %#v", manifest.Warnings)
+	}
+}
+
+func TestInitRecordsGoParseWarningsWithoutFailing(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "broken.go"), "package broken\nfunc {\n")
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	manifest, err := readMapManifest(artifacts.New(root).MapManifest)
+	assertNoError(t, err)
+	if !strings.Contains(strings.Join(manifest.Warnings, "\n"), "go parse failed: broken.go") {
+		t.Fatalf("manifest warnings did not mention parse failure: %#v", manifest.Warnings)
 	}
 }
 
@@ -213,6 +312,27 @@ func readFileRecords(t *testing.T, path string) []projectmap.FileRecord {
 		records = append(records, record)
 	}
 	return records
+}
+
+func readEntryRecords(t *testing.T, path string) []projectmap.EntryRecord {
+	t.Helper()
+	lines := readLines(t, path)
+	records := make([]projectmap.EntryRecord, 0, len(lines))
+	for _, line := range lines {
+		var record projectmap.EntryRecord
+		assertNoError(t, json.Unmarshal([]byte(line), &record))
+		records = append(records, record)
+	}
+	return records
+}
+
+func hasEntry(entries []projectmap.EntryRecord, path string, kind string, name string) bool {
+	for _, entry := range entries {
+		if entry.Path == path && entry.Kind == kind && entry.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func assertDir(t *testing.T, path string) {

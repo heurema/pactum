@@ -177,11 +177,17 @@ func (a App) Init(root string) error {
 	if err := writeStaticWorkspaceFiles(paths); err != nil {
 		return err
 	}
+	config, err := readConfig(paths.Config)
+	if err != nil {
+		return err
+	}
 	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "map_refresh_started", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
 		return err
 	}
 
-	scan, err := projectmap.Scan(root)
+	scan, err := projectmap.Scan(root, projectmap.ScanOptions{
+		MaxFileBytes: int64(config.ProjectMap.MaxFileBytes),
+	})
 	if err != nil {
 		return err
 	}
@@ -191,7 +197,7 @@ func (a App) Init(root string) error {
 	if err := projectmap.WriteJSONL(paths.HashesJSONL, scan.Hashes); err != nil {
 		return err
 	}
-	if err := os.WriteFile(paths.EntriesJSONL, nil, 0o644); err != nil {
+	if err := projectmap.WriteJSONL(paths.EntriesJSONL, scan.Entries); err != nil {
 		return err
 	}
 	if err := os.WriteFile(paths.RepoMap, projectmap.RenderRepoMap(root, now, scan), 0o644); err != nil {
@@ -211,6 +217,9 @@ func (a App) Init(root string) error {
 		RepoRoot:     root,
 		FilesIndexed: len(scan.Files),
 		FilesIgnored: scan.FilesIgnored,
+		FilesSkipped: scan.FilesSkipped,
+		Entries:      len(scan.Entries),
+		Warnings:     scan.Warnings,
 		Artifacts: map[string]string{
 			"repo_map":     "map/repo-map.md",
 			"llms":         "map/llms.txt",
@@ -360,7 +369,7 @@ func ensureDirs(paths []string) error {
 }
 
 func writeStaticWorkspaceFiles(paths artifacts.Paths) error {
-	if err := writeYAML(paths.Config, defaultConfigFile()); err != nil {
+	if err := writeDefaultConfigIfMissing(paths.Config); err != nil {
 		return err
 	}
 	files := map[string][]byte{
@@ -382,6 +391,15 @@ ledger/cost.json
 		}
 	}
 	return nil
+}
+
+func writeDefaultConfigIfMissing(path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return writeYAML(path, defaultConfigFile())
 }
 
 func defaultConfigFile() configFile {

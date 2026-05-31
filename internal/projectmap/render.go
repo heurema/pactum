@@ -18,6 +18,9 @@ type Manifest struct {
 	RepoRoot     string            `json:"repo_root"`
 	FilesIndexed int               `json:"files_indexed"`
 	FilesIgnored int               `json:"files_ignored"`
+	FilesSkipped int               `json:"files_skipped"`
+	Entries      int               `json:"entries"`
+	Warnings     []string          `json:"warnings,omitempty"`
 	Artifacts    map[string]string `json:"artifacts"`
 }
 
@@ -38,6 +41,12 @@ func RenderRepoMap(root string, generatedAt time.Time, scan ScanResult) []byte {
 	fmt.Fprintf(&buffer, "Generated: %s\n\n", generatedAt.Format(time.RFC3339))
 	fmt.Fprintf(&buffer, "Repository root: `%s`\n\n", root)
 
+	fmt.Fprintf(&buffer, "## Summary\n\n")
+	fmt.Fprintf(&buffer, "- Indexed files: %d\n", len(scan.Files))
+	fmt.Fprintf(&buffer, "- Ignored files/directories: %d\n", scan.FilesIgnored)
+	fmt.Fprintf(&buffer, "- Detected languages: %d\n", len(scan.Languages))
+	fmt.Fprintf(&buffer, "- Entries: %d\n\n", len(scan.Entries))
+
 	fmt.Fprintf(&buffer, "## Detected languages\n\n")
 	if len(scan.Languages) == 0 {
 		fmt.Fprintf(&buffer, "- None detected\n")
@@ -57,6 +66,22 @@ func RenderRepoMap(root string, generatedAt time.Time, scan ScanResult) []byte {
 		}
 	}
 	fmt.Fprintf(&buffer, "\n")
+
+	fmt.Fprintf(&buffer, "## Important entrypoints\n\n")
+	entrypoints := importantEntryLines(scan.Entries, 50)
+	if len(entrypoints) == 0 {
+		fmt.Fprintf(&buffer, "- None detected\n")
+	} else {
+		for _, line := range entrypoints {
+			fmt.Fprintf(&buffer, "- %s\n", line)
+		}
+	}
+	fmt.Fprintf(&buffer, "\n")
+
+	fmt.Fprintf(&buffer, "## Agent guidance\n\n")
+	fmt.Fprintf(&buffer, "- Before adding new code, search/read relevant files and entrypoints.\n")
+	fmt.Fprintf(&buffer, "- Prefer existing exported functions/types when applicable.\n")
+	fmt.Fprintf(&buffer, "- If ownership is unclear, ask for clarification instead of guessing.\n\n")
 
 	fmt.Fprintf(&buffer, "## Important files\n\n")
 	if len(scan.Important) == 0 {
@@ -85,9 +110,14 @@ func RenderLLMS() []byte {
 	return []byte(strings.TrimSpace(`
 # Pactum map pointer
 
-- Start with `+"`repo-map.md`"+` for a concise repository overview.
+This is a generated Pactum project map.
+
+- Start with `+"`repo-map.md`"+`.
 - Use `+"`files.jsonl`"+` for deterministic per-file metadata and hashes.
-- Search or read the project map before adding new code.
+- Use `+"`entries.jsonl`"+` for high-value Go entrypoints.
+- Do not assume the map is complete semantic truth.
+- Before creating new code, inspect relevant existing files.
+- If uncertain, ask for clarification.
 `) + "\n")
 }
 
@@ -116,6 +146,47 @@ func languageSummary(languages map[string]int) []languageItem {
 		return items[i].Count > items[j].Count
 	})
 	return items
+}
+
+func importantEntryLines(entries []EntryRecord, limit int) []string {
+	lines := make([]string, 0, len(entries))
+	add := func(line string) bool {
+		lines = append(lines, line)
+		return limit > 0 && len(lines) >= limit
+	}
+
+	for _, entry := range entries {
+		switch entry.Kind {
+		case "go_main":
+			if add(fmt.Sprintf("`%s`: `func main()`", entry.Path)) {
+				return lines
+			}
+		case "go_package":
+			if entry.IsMain {
+				if add(fmt.Sprintf("`%s`: main package `%s`", entry.Path, entry.Package)) {
+					return lines
+				}
+			}
+		}
+	}
+
+	for _, entry := range entries {
+		switch entry.Kind {
+		case "go_func":
+			if entry.Exported {
+				if add(fmt.Sprintf("`%s`: exported func `%s.%s`", entry.Path, entry.Package, entry.Name)) {
+					return lines
+				}
+			}
+		case "go_type":
+			if entry.Exported {
+				if add(fmt.Sprintf("`%s`: exported type `%s.%s`", entry.Path, entry.Package, entry.Name)) {
+					return lines
+				}
+			}
+		}
+	}
+	return lines
 }
 
 func treeLines(files []FileRecord, maxDepth int) []string {

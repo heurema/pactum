@@ -4,13 +4,21 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
+
+type ScanOptions struct {
+	MaxFileBytes int64
+}
 
 type FileRecord struct {
 	Path      string `json:"path"`
@@ -25,13 +33,27 @@ type HashRecord struct {
 	SHA256 string `json:"sha256"`
 }
 
+type EntryRecord struct {
+	Path         string `json:"path"`
+	Kind         string `json:"kind"`
+	Name         string `json:"name"`
+	Package      string `json:"package,omitempty"`
+	Exported     bool   `json:"exported,omitempty"`
+	ImportPath   string `json:"import_path,omitempty"`
+	IsMain       bool   `json:"is_main,omitempty"`
+	ImportsCount int    `json:"imports_count,omitempty"`
+}
+
 type ScanResult struct {
 	Files        []FileRecord
 	Hashes       []HashRecord
+	Entries      []EntryRecord
 	FilesIgnored int
+	FilesSkipped int
 	Languages    map[string]int
 	TopDirs      []string
 	Important    []string
+	Warnings     []string
 }
 
 var ignoredDirs = map[string]struct{}{
@@ -70,7 +92,8 @@ var importantFiles = []string{
 	"Dockerfile",
 }
 
-func Scan(root string) (ScanResult, error) {
+func Scan(root string, options ...ScanOptions) (ScanResult, error) {
+	option := scanOption(options)
 	result := ScanResult{
 		Languages: make(map[string]int),
 	}
@@ -113,6 +136,12 @@ func Scan(root string) (ScanResult, error) {
 			result.FilesIgnored++
 			return nil
 		}
+		if option.MaxFileBytes > 0 && info.Size() > option.MaxFileBytes {
+			result.FilesIgnored++
+			result.FilesSkipped++
+			result.Warnings = append(result.Warnings, "skipped large file: "+rel+" exceeds project_map.max_file_bytes")
+			return nil
+		}
 
 		hash, err := sha256File(path)
 		if err != nil {
@@ -131,6 +160,11 @@ func Scan(root string) (ScanResult, error) {
 		result.Hashes = append(result.Hashes, HashRecord{Path: rel, SHA256: hash})
 		if language != "Unknown" {
 			result.Languages[language]++
+		}
+		if strings.ToLower(filepath.Ext(name)) == ".go" {
+			entries, warnings := extractGoEntries(path, rel)
+			result.Entries = append(result.Entries, entries...)
+			result.Warnings = append(result.Warnings, warnings...)
 		}
 
 		parts := strings.Split(rel, "/")
@@ -155,6 +189,19 @@ func Scan(root string) (ScanResult, error) {
 	sort.Slice(result.Hashes, func(i, j int) bool {
 		return result.Hashes[i].Path < result.Hashes[j].Path
 	})
+	sort.Slice(result.Entries, func(i, j int) bool {
+		if result.Entries[i].Path != result.Entries[j].Path {
+			return result.Entries[i].Path < result.Entries[j].Path
+		}
+		if result.Entries[i].Kind != result.Entries[j].Kind {
+			return result.Entries[i].Kind < result.Entries[j].Kind
+		}
+		if result.Entries[i].Name != result.Entries[j].Name {
+			return result.Entries[i].Name < result.Entries[j].Name
+		}
+		return result.Entries[i].ImportPath < result.Entries[j].ImportPath
+	})
+	sort.Strings(result.Warnings)
 
 	result.TopDirs = sortedKeys(topDirs)
 	for _, candidate := range importantFiles {
@@ -164,6 +211,98 @@ func Scan(root string) (ScanResult, error) {
 	}
 
 	return result, nil
+}
+
+func scanOption(options []ScanOptions) ScanOptions {
+	if len(options) == 0 {
+		return ScanOptions{}
+	}
+	return options[0]
+}
+
+func extractGoEntries(path string, rel string) ([]EntryRecord, []string) {
+	source, err := os.ReadFile(path)
+	if err != nil {
+		return nil, []string{"read Go file failed: " + rel + ": " + err.Error()}
+	}
+
+	file, err := parser.ParseFile(token.NewFileSet(), rel, source, 0)
+	if err != nil {
+		return nil, []string{"go parse failed: " + rel + ": " + err.Error()}
+	}
+
+	packageName := file.Name.Name
+	isMainPackage := packageName == "main"
+	entries := []EntryRecord{{
+		Path:         rel,
+		Kind:         "go_package",
+		Name:         packageName,
+		Package:      packageName,
+		IsMain:       isMainPackage,
+		ImportsCount: len(file.Imports),
+	}}
+
+	for _, importSpec := range file.Imports {
+		importPath, err := strconv.Unquote(importSpec.Path.Value)
+		if err != nil {
+			importPath = importSpec.Path.Value
+		}
+		entries = append(entries, EntryRecord{
+			Path:       rel,
+			Kind:       "go_import",
+			Name:       importPath,
+			Package:    packageName,
+			ImportPath: importPath,
+		})
+	}
+
+	for _, decl := range file.Decls {
+		switch typed := decl.(type) {
+		case *ast.FuncDecl:
+			if typed.Recv != nil {
+				continue
+			}
+			if isMainPackage && typed.Name.Name == "main" {
+				entries = append(entries, EntryRecord{
+					Path:    rel,
+					Kind:    "go_main",
+					Name:    "main",
+					Package: packageName,
+					IsMain:  true,
+				})
+				continue
+			}
+			if !typed.Name.IsExported() {
+				continue
+			}
+			entries = append(entries, EntryRecord{
+				Path:     rel,
+				Kind:     "go_func",
+				Name:     typed.Name.Name,
+				Package:  packageName,
+				Exported: true,
+			})
+		case *ast.GenDecl:
+			if typed.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range typed.Specs {
+				typeSpec, ok := spec.(*ast.TypeSpec)
+				if !ok || !typeSpec.Name.IsExported() {
+					continue
+				}
+				entries = append(entries, EntryRecord{
+					Path:     rel,
+					Kind:     "go_type",
+					Name:     typeSpec.Name.Name,
+					Package:  packageName,
+					Exported: true,
+				})
+			}
+		}
+	}
+
+	return entries, nil
 }
 
 func sha256File(path string) (string, error) {
