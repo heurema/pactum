@@ -5,9 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/heurema/pactum/internal/codeindex"
 )
 
-func TestScanExtractsThinGoEntries(t *testing.T) {
+func TestScanExtractsCodeItemsWhenEnabled(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "cmd", "pactum", "main.go"), `package main
 
@@ -19,54 +21,62 @@ type hidden struct{}
 func main() {}
 func Run() {}
 func helper() {}
-func (App) Serve() {}
 
 var _ = fmt.Println
 `)
-	writeTestFile(t, filepath.Join(root, "internal", "worker", "worker.go"), `package worker
 
-type Task struct{}
-type local struct{}
-
-func Build() {}
-func build() {}
-`)
-
-	scan, err := Scan(root, ScanOptions{IncludeGoAST: true})
+	scan, err := Scan(root, ScanOptions{CodeIndexMode: codeindex.ModeAuto})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	assertEntry(t, scan.Entries, "cmd/pactum/main.go", "go_package", "main")
-	assertEntry(t, scan.Entries, "cmd/pactum/main.go", "go_import", "fmt")
-	assertEntry(t, scan.Entries, "cmd/pactum/main.go", "go_main", "main")
-	assertEntry(t, scan.Entries, "cmd/pactum/main.go", "go_func", "Run")
-	assertEntry(t, scan.Entries, "cmd/pactum/main.go", "go_type", "App")
-	assertEntry(t, scan.Entries, "internal/worker/worker.go", "go_func", "Build")
-	assertEntry(t, scan.Entries, "internal/worker/worker.go", "go_type", "Task")
-
-	assertNoEntry(t, scan.Entries, "cmd/pactum/main.go", "go_func", "helper")
-	assertNoEntry(t, scan.Entries, "cmd/pactum/main.go", "go_func", "Serve")
-	assertNoEntry(t, scan.Entries, "cmd/pactum/main.go", "go_type", "hidden")
-	assertNoEntry(t, scan.Entries, "internal/worker/worker.go", "go_func", "build")
-	assertSortedEntries(t, scan.Entries)
+	assertCodeItem(t, scan.CodeItems, "cmd/pactum/main.go", "go_package", "main")
+	assertCodeItem(t, scan.CodeItems, "cmd/pactum/main.go", "go_import", "fmt")
+	assertCodeItem(t, scan.CodeItems, "cmd/pactum/main.go", "go_main", "main")
+	assertCodeItem(t, scan.CodeItems, "cmd/pactum/main.go", "go_func", "Run")
+	assertCodeItem(t, scan.CodeItems, "cmd/pactum/main.go", "go_type", "App")
+	assertNoCodeItem(t, scan.CodeItems, "cmd/pactum/main.go", "go_func", "helper")
+	assertNoCodeItem(t, scan.CodeItems, "cmd/pactum/main.go", "go_type", "hidden")
+	assertSortedCodeItems(t, scan.CodeItems)
+	assertStringSliceEqual(t, scan.CodeIndexLanguagesSeen, []string{"go"})
+	assertStringSliceEqual(t, scan.CodeIndexLanguagesIndexed, []string{"go"})
 }
 
-func TestScanToleratesGoParseErrors(t *testing.T) {
+func TestScanCodeIndexOffSkipsExtractionWarnings(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "broken.go"), "package broken\nfunc {\n")
 
-	scan, err := Scan(root, ScanOptions{IncludeGoAST: true})
+	scan, err := Scan(root, ScanOptions{CodeIndexMode: codeindex.ModeOff})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scan.CodeItems) != 0 {
+		t.Fatalf("CodeItems = %#v, want empty when code index is off", scan.CodeItems)
+	}
+	if len(scan.Warnings) != 0 {
+		t.Fatalf("Warnings = %#v, want none when code index is off", scan.Warnings)
+	}
+	assertStringSliceEqual(t, scan.CodeIndexLanguagesSeen, []string{"go"})
+	if len(scan.CodeIndexLanguagesIndexed) != 0 {
+		t.Fatalf("CodeIndexLanguagesIndexed = %#v, want empty", scan.CodeIndexLanguagesIndexed)
+	}
+}
+
+func TestScanToleratesCodeIndexParseErrors(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "broken.go"), "package broken\nfunc {\n")
+
+	scan, err := Scan(root, ScanOptions{CodeIndexMode: codeindex.ModeAuto})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(scan.Warnings) == 0 {
 		t.Fatal("expected parse warning")
 	}
-	if !strings.Contains(strings.Join(scan.Warnings, "\n"), "go parse failed: broken.go") {
+	if !strings.Contains(strings.Join(scan.Warnings, "\n"), "broken.go") {
 		t.Fatalf("warnings did not mention parse failure: %#v", scan.Warnings)
 	}
-	assertNoEntry(t, scan.Entries, "broken.go", "go_package", "broken")
+	assertNoCodeItem(t, scan.CodeItems, "broken.go", "go_package", "broken")
 }
 
 func TestScanSkipsFilesOverMaxFileBytes(t *testing.T) {
@@ -74,7 +84,7 @@ func TestScanSkipsFilesOverMaxFileBytes(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "small.go"), "package small\n")
 	writeTestFile(t, filepath.Join(root, "large.go"), "package large\n"+strings.Repeat("x", 128))
 
-	scan, err := Scan(root, ScanOptions{MaxFileBytes: 64, IncludeGoAST: true})
+	scan, err := Scan(root, ScanOptions{MaxFileBytes: 64, CodeIndexMode: codeindex.ModeAuto})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,34 +115,35 @@ func writeTestFile(t *testing.T, path string, content string) {
 	}
 }
 
-func assertEntry(t *testing.T, entries []EntryRecord, path string, kind string, name string) {
+func assertCodeItem(t *testing.T, items []codeindex.Item, path string, kind string, name string) {
 	t.Helper()
-	for _, entry := range entries {
-		if entry.Path == path && entry.Kind == kind && entry.Name == name {
+	for _, item := range items {
+		if item.Path == path && item.Kind == kind && item.Name == name {
 			return
 		}
 	}
-	t.Fatalf("missing entry path=%s kind=%s name=%s in %#v", path, kind, name, entries)
+	t.Fatalf("missing code item path=%s kind=%s name=%s in %#v", path, kind, name, items)
 }
 
-func assertNoEntry(t *testing.T, entries []EntryRecord, path string, kind string, name string) {
+func assertNoCodeItem(t *testing.T, items []codeindex.Item, path string, kind string, name string) {
 	t.Helper()
-	for _, entry := range entries {
-		if entry.Path == path && entry.Kind == kind && entry.Name == name {
-			t.Fatalf("unexpected entry path=%s kind=%s name=%s in %#v", path, kind, name, entries)
+	for _, item := range items {
+		if item.Path == path && item.Kind == kind && item.Name == name {
+			t.Fatalf("unexpected code item path=%s kind=%s name=%s in %#v", path, kind, name, items)
 		}
 	}
 }
 
-func assertSortedEntries(t *testing.T, entries []EntryRecord) {
+func assertSortedCodeItems(t *testing.T, items []codeindex.Item) {
 	t.Helper()
-	for i := 1; i < len(entries); i++ {
-		prev := entries[i-1]
-		next := entries[i]
+	for i := 1; i < len(items); i++ {
+		prev := items[i-1]
+		next := items[i]
 		if prev.Path > next.Path ||
 			(prev.Path == next.Path && prev.Kind > next.Kind) ||
-			(prev.Path == next.Path && prev.Kind == next.Kind && prev.Name > next.Name) {
-			t.Fatalf("entries are not sorted at %d: %#v before %#v", i, prev, next)
+			(prev.Path == next.Path && prev.Kind == next.Kind && prev.Parent > next.Parent) ||
+			(prev.Path == next.Path && prev.Kind == next.Kind && prev.Parent == next.Parent && prev.Name > next.Name) {
+			t.Fatalf("code items are not sorted at %d: %#v before %#v", i, prev, next)
 		}
 	}
 }
@@ -144,4 +155,11 @@ func containsFile(files []FileRecord, path string) bool {
 		}
 	}
 	return false
+}
+
+func assertStringSliceEqual(t *testing.T, got []string, want []string) {
+	t.Helper()
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
 }

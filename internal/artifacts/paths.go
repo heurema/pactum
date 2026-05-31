@@ -16,16 +16,16 @@ type Paths struct {
 	Config    string
 	Gitignore string
 
-	MapDir       string
-	MapManifest  string
-	LLMS         string
-	RepoMap      string
-	AreasDir     string
-	AreaIndex    string
-	FilesJSONL   string
-	EntriesJSONL string
-	HashesJSONL  string
-	MapRunsDir   string
+	MapDir         string
+	MapManifest    string
+	LLMS           string
+	RepoMap        string
+	AreasDir       string
+	AreaIndex      string
+	FilesJSONL     string
+	CodeItemsJSONL string
+	HashesJSONL    string
+	MapRunsDir     string
 
 	RunsDir string
 
@@ -63,16 +63,16 @@ func New(root string) Paths {
 		Config:    filepath.Join(workspace, "config.yaml"),
 		Gitignore: filepath.Join(workspace, ".gitignore"),
 
-		MapDir:       mapDir,
-		MapManifest:  filepath.Join(mapDir, "manifest.json"),
-		LLMS:         filepath.Join(mapDir, "llms.txt"),
-		RepoMap:      filepath.Join(mapDir, "repo-map.md"),
-		AreasDir:     filepath.Join(mapDir, "areas"),
-		AreaIndex:    filepath.Join(mapDir, "areas", "_index.md"),
-		FilesJSONL:   filepath.Join(mapDir, "files.jsonl"),
-		EntriesJSONL: filepath.Join(mapDir, "entries.jsonl"),
-		HashesJSONL:  filepath.Join(mapDir, "hashes.jsonl"),
-		MapRunsDir:   filepath.Join(mapDir, "runs"),
+		MapDir:         mapDir,
+		MapManifest:    filepath.Join(mapDir, "manifest.json"),
+		LLMS:           filepath.Join(mapDir, "llms.txt"),
+		RepoMap:        filepath.Join(mapDir, "repo-map.md"),
+		AreasDir:       filepath.Join(mapDir, "areas"),
+		AreaIndex:      filepath.Join(mapDir, "areas", "_index.md"),
+		FilesJSONL:     filepath.Join(mapDir, "files.jsonl"),
+		CodeItemsJSONL: filepath.Join(mapDir, "code-items.jsonl"),
+		HashesJSONL:    filepath.Join(mapDir, "hashes.jsonl"),
+		MapRunsDir:     filepath.Join(mapDir, "runs"),
 
 		RunsDir: filepath.Join(workspace, "runs"),
 

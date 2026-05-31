@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/heurema/pactum/internal/artifacts"
+	"github.com/heurema/pactum/internal/codeindex"
 	"github.com/heurema/pactum/internal/projectmap"
 )
 
@@ -45,7 +46,7 @@ func helper() {}
 		paths.RepoMap,
 		paths.AreaIndex,
 		paths.FilesJSONL,
-		paths.EntriesJSONL,
+		paths.CodeItemsJSONL,
 		paths.HashesJSONL,
 		paths.ProjectMemory,
 		paths.StaleReport,
@@ -63,8 +64,17 @@ func helper() {}
 	if config.ProjectMap.MaxFileBytes != 500000 {
 		t.Fatalf("config project_map.max_file_bytes = %d, want 500000", config.ProjectMap.MaxFileBytes)
 	}
-	if !config.ProjectMap.IncludeGoAST {
-		t.Fatal("config project_map.include_go_ast = false, want true")
+	if config.ProjectMap.CodeIndex != codeindex.ModeAuto {
+		t.Fatalf("config project_map.code_index = %q, want auto", config.ProjectMap.CodeIndex)
+	}
+	configYAML := mustReadFile(t, paths.Config)
+	for _, forbidden := range []string{"include_go_ast", "tree_sitter", "tree_sitter_languages", "entrypoints"} {
+		if strings.Contains(configYAML, forbidden) {
+			t.Fatalf("config.yaml should not contain %q:\n%s", forbidden, configYAML)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(paths.MapDir, "entries.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("entries.jsonl should not be generated as a primary artifact")
 	}
 
 	files := readFileRecords(t, paths.FilesJSONL)
@@ -86,31 +96,34 @@ func helper() {}
 	if len(hashes) != len(files) {
 		t.Fatalf("hash record count = %d, want %d", len(hashes), len(files))
 	}
-	entries := readEntryRecords(t, paths.EntriesJSONL)
-	if !hasEntry(entries, "src/main.go", "go_main", "main") {
-		t.Fatalf("entries missing go_main main: %#v", entries)
+	codeItems := readCodeItems(t, paths.CodeItemsJSONL)
+	if !hasCodeItem(codeItems, "src/main.go", "go_main", "main") {
+		t.Fatalf("code items missing go_main main: %#v", codeItems)
 	}
-	if !hasEntry(entries, "src/main.go", "go_func", "Start") {
-		t.Fatalf("entries missing exported Start func: %#v", entries)
+	if !hasCodeItem(codeItems, "src/main.go", "go_func", "Start") {
+		t.Fatalf("code items missing exported Start func: %#v", codeItems)
 	}
-	if !hasEntry(entries, "src/main.go", "go_type", "Server") {
-		t.Fatalf("entries missing exported Server type: %#v", entries)
+	if !hasCodeItem(codeItems, "src/main.go", "go_type", "Server") {
+		t.Fatalf("code items missing exported Server type: %#v", codeItems)
 	}
-	if hasEntry(entries, "src/main.go", "go_func", "helper") {
-		t.Fatalf("entries should not include unexported helper: %#v", entries)
+	if hasCodeItem(codeItems, "src/main.go", "go_func", "helper") {
+		t.Fatalf("code items should not include unexported helper: %#v", codeItems)
 	}
 
 	repoMap := mustReadFile(t, paths.RepoMap)
 	for _, want := range []string{
 		"# Pactum Project Map",
 		"## Summary",
-		"Entries:",
-		"## Important entrypoints",
-		"`src/main.go`: `func main()`",
-		"`src/main.go`: exported func `main.Start`",
-		"`src/main.go`: exported type `main.Server`",
+		"Code items:",
+		"## Code surface",
+		"`src/main.go`: `go_main` `main`",
+		"`src/main.go`: `go_func` `main.Start`",
+		"`src/main.go`: `go_type` `main.Server`",
+		"## Language support",
+		"Go, Python, JavaScript, TypeScript/TSX/JSX, and C#",
+		"not complete semantic truth",
 		"## Agent guidance",
-		"Before adding new code, search/read relevant files and entrypoints.",
+		"Before adding new code, search/read relevant files and code items.",
 		"README.md",
 		"src/main.go",
 		"Go: 1 file(s)",
@@ -119,19 +132,41 @@ func helper() {}
 			t.Fatalf("repo-map.md missing %q:\n%s", want, repoMap)
 		}
 	}
+	if strings.Contains(repoMap, "Important entrypoints") {
+		t.Fatalf("repo-map.md should not use old entrypoints terminology:\n%s", repoMap)
+	}
 	llms := mustReadFile(t, paths.LLMS)
 	for _, want := range []string{
 		"generated Pactum project map",
 		"repo-map.md",
 		"files.jsonl",
-		"entries.jsonl",
-		"complete semantic truth",
+		"code-items.jsonl",
+		"Go, Python, JavaScript, TypeScript/TSX/JSX, and C#",
+		"not complete semantic truth",
+		"Not every possible symbol is indexed.",
 		"inspect relevant existing files",
-		"If uncertain, ask for clarification.",
+		"If ownership is unclear, ask for clarification.",
 	} {
 		if !strings.Contains(llms, want) {
 			t.Fatalf("llms.txt missing %q:\n%s", want, llms)
 		}
+	}
+	if strings.Contains(llms, "Tree-sitter") {
+		t.Fatalf("llms.txt should not mention Tree-sitter:\n%s", llms)
+	}
+	manifest, err := readMapManifest(paths.MapManifest)
+	assertNoError(t, err)
+	if manifest.Artifacts["code_items"] != "map/code-items.jsonl" {
+		t.Fatalf("manifest code_items artifact = %q", manifest.Artifacts["code_items"])
+	}
+	if manifest.Artifacts["entries"] != "" {
+		t.Fatalf("manifest should not point to entries artifact: %#v", manifest.Artifacts)
+	}
+	if manifest.CodeIndex.Mode != codeindex.ModeAuto {
+		t.Fatalf("manifest code_index.mode = %q, want auto", manifest.CodeIndex.Mode)
+	}
+	if manifest.CodeIndex.Items != len(codeItems) {
+		t.Fatalf("manifest code_index.items = %d, want %d", manifest.CodeIndex.Items, len(codeItems))
 	}
 
 	events := readLines(t, paths.EventsJSONL)
@@ -178,20 +213,20 @@ func TestInitUsesConfigMaxFileBytesAndManifestWarnings(t *testing.T) {
 	if manifest.FilesSkipped != 1 {
 		t.Fatalf("manifest files_skipped = %d, want 1", manifest.FilesSkipped)
 	}
-	if manifest.Entries == 0 {
-		t.Fatalf("manifest entries = 0, want at least package entry")
+	if manifest.CodeIndex.Items == 0 {
+		t.Fatalf("manifest code_index.items = 0, want at least package item")
 	}
 	if !strings.Contains(strings.Join(manifest.Warnings, "\n"), "skipped large file: large.go") {
 		t.Fatalf("manifest warnings did not mention skipped large.go: %#v", manifest.Warnings)
 	}
 }
 
-func TestInitCanDisableGoASTEntries(t *testing.T) {
+func TestInitCodeIndexOffDisablesCodeItemExtraction(t *testing.T) {
 	root := t.TempDir()
 	paths := artifacts.New(root)
 	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
 	config := defaultConfigFile()
-	config.ProjectMap.IncludeGoAST = false
+	config.ProjectMap.CodeIndex = codeindex.ModeOff
 	assertNoError(t, writeYAML(paths.Config, config))
 	mustWriteFile(t, filepath.Join(root, "main.go"), `package main
 
@@ -207,14 +242,17 @@ func Start() {}
 		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
 	}
 
-	entries := readEntryRecords(t, paths.EntriesJSONL)
-	if len(entries) != 0 {
-		t.Fatalf("entries should be empty when include_go_ast is false: %#v", entries)
+	codeItems := readCodeItems(t, paths.CodeItemsJSONL)
+	if len(codeItems) != 0 {
+		t.Fatalf("code items should be empty when code_index is off: %#v", codeItems)
 	}
 	manifest, err := readMapManifest(paths.MapManifest)
 	assertNoError(t, err)
-	if manifest.Entries != 0 {
-		t.Fatalf("manifest entries = %d, want 0", manifest.Entries)
+	if manifest.CodeIndex.Mode != codeindex.ModeOff {
+		t.Fatalf("manifest code_index.mode = %q, want off", manifest.CodeIndex.Mode)
+	}
+	if manifest.CodeIndex.Items != 0 {
+		t.Fatalf("manifest code_index.items = %d, want 0", manifest.CodeIndex.Items)
 	}
 }
 
@@ -230,7 +268,7 @@ func TestInitRecordsGoParseWarningsWithoutFailing(t *testing.T) {
 
 	manifest, err := readMapManifest(artifacts.New(root).MapManifest)
 	assertNoError(t, err)
-	if !strings.Contains(strings.Join(manifest.Warnings, "\n"), "go parse failed: broken.go") {
+	if !strings.Contains(strings.Join(manifest.Warnings, "\n"), "broken.go") {
 		t.Fatalf("manifest warnings did not mention parse failure: %#v", manifest.Warnings)
 	}
 }
@@ -349,21 +387,21 @@ func readFileRecords(t *testing.T, path string) []projectmap.FileRecord {
 	return records
 }
 
-func readEntryRecords(t *testing.T, path string) []projectmap.EntryRecord {
+func readCodeItems(t *testing.T, path string) []codeindex.Item {
 	t.Helper()
 	lines := readLines(t, path)
-	records := make([]projectmap.EntryRecord, 0, len(lines))
+	records := make([]codeindex.Item, 0, len(lines))
 	for _, line := range lines {
-		var record projectmap.EntryRecord
+		var record codeindex.Item
 		assertNoError(t, json.Unmarshal([]byte(line), &record))
 		records = append(records, record)
 	}
 	return records
 }
 
-func hasEntry(entries []projectmap.EntryRecord, path string, kind string, name string) bool {
-	for _, entry := range entries {
-		if entry.Path == path && entry.Kind == kind && entry.Name == name {
+func hasCodeItem(items []codeindex.Item, path string, kind string, name string) bool {
+	for _, item := range items {
+		if item.Path == path && item.Kind == kind && item.Name == name {
 			return true
 		}
 	}
