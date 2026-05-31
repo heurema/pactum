@@ -48,6 +48,14 @@ func TestInitCreatesExpectedLayoutAndProjectMap(t *testing.T) {
 	} {
 		assertFile(t, file)
 	}
+	config, err := readConfig(paths.Config)
+	assertNoError(t, err)
+	if config.Schema != "pactum.config.v1" {
+		t.Fatalf("config schema = %q, want pactum.config.v1", config.Schema)
+	}
+	if config.ProjectMap.MaxFileBytes != 500000 {
+		t.Fatalf("config project_map.max_file_bytes = %d, want 500000", config.ProjectMap.MaxFileBytes)
+	}
 
 	files := readFileRecords(t, paths.FilesJSONL)
 	seen := map[string]bool{}

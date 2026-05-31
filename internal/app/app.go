@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,14 +11,32 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alecthomas/kong"
 	"github.com/heurema/pactum/internal/artifacts"
 	"github.com/heurema/pactum/internal/ledger"
 	"github.com/heurema/pactum/internal/projectmap"
+	"gopkg.in/yaml.v3"
 )
 
 type App struct {
 	WorkingDir string
 	Now        func() time.Time
+}
+
+type cli struct {
+	Init   initCmd   `cmd:"" help:"Create a Pactum workspace and project map."`
+	Status statusCmd `cmd:"" help:"Print Pactum workspace status."`
+}
+
+type initCmd struct {
+	Path string `arg:"" optional:"" default:"." name:"path" help:"Repository path to initialize."`
+}
+
+type statusCmd struct{}
+
+type runner struct {
+	App    App
+	Stdout io.Writer
 }
 
 type workspaceManifest struct {
@@ -31,6 +50,52 @@ type workspaceManifest struct {
 		CurrentRunID string `json:"current_run_id"`
 	} `json:"map"`
 	Status string `json:"status"`
+}
+
+type configFile struct {
+	Schema         string           `yaml:"schema"`
+	DefaultProfile string           `yaml:"default_profile"`
+	ProjectMap     projectMapConfig `yaml:"project_map"`
+	Limits         limitsConfig     `yaml:"limits"`
+	Budget         budgetConfig     `yaml:"budget"`
+	Memory         memoryConfig     `yaml:"memory"`
+}
+
+type projectMapConfig struct {
+	Refresh          string `yaml:"refresh"`
+	IncludeGoAST     bool   `yaml:"include_go_ast"`
+	IncludeVendor    bool   `yaml:"include_vendor"`
+	IncludeGenerated bool   `yaml:"include_generated"`
+	MaxFileBytes     int    `yaml:"max_file_bytes"`
+}
+
+type limitsConfig struct {
+	Clarify iterationLimits `yaml:"clarify"`
+	Execute executeLimits   `yaml:"execute"`
+	Review  reviewLimits    `yaml:"review"`
+}
+
+type iterationLimits struct {
+	MaxIterations        int `yaml:"max_iterations"`
+	MaxQuestionsPerRound int `yaml:"max_questions_per_round"`
+}
+
+type executeLimits struct {
+	MaxIterations int `yaml:"max_iterations"`
+}
+
+type reviewLimits struct {
+	MaxRounds int `yaml:"max_rounds"`
+}
+
+type budgetConfig struct {
+	Mode   string   `yaml:"mode"`
+	MaxUSD *float64 `yaml:"max_usd"`
+}
+
+type memoryConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	IncludeStale string `yaml:"include_stale"`
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -55,50 +120,43 @@ func (a App) Run(args []string, stdout, stderr io.Writer) int {
 		a.WorkingDir = wd
 	}
 
-	if len(args) == 0 {
-		printUsage(stdout)
-		return 0
+	var command cli
+	parser, err := kong.New(
+		&command,
+		kong.Name("pactum"),
+		kong.Description("Contract-first CLI for agentic software work."),
+		kong.UsageOnError(),
+		kong.Writers(stdout, stderr),
+	)
+	if err != nil {
+		fmt.Fprintf(stderr, "pactum: %v\n", err)
+		return 1
 	}
-
-	switch args[0] {
-	case "init":
-		if len(args) > 2 {
-			fmt.Fprintln(stderr, "usage: pactum init [path]")
-			return 2
-		}
-		target := "."
-		if len(args) == 2 {
-			target = args[1]
-		}
-		root, err := a.resolveInitRoot(target)
-		if err != nil {
-			fmt.Fprintf(stderr, "pactum init: %v\n", err)
-			return 1
-		}
-		if err := a.Init(root); err != nil {
-			fmt.Fprintf(stderr, "pactum init: %v\n", err)
-			return 1
-		}
-		fmt.Fprintf(stdout, "Initialized Pactum workspace at %s\n", artifacts.New(root).Workspace)
-		return 0
-	case "status":
-		if len(args) != 1 {
-			fmt.Fprintln(stderr, "usage: pactum status")
-			return 2
-		}
-		if err := a.Status(stdout); err != nil {
-			fmt.Fprintf(stderr, "pactum status: %v\n", err)
-			return 1
-		}
-		return 0
-	case "-h", "--help", "help":
-		printUsage(stdout)
-		return 0
-	default:
-		fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
-		printUsage(stderr)
+	ctx, err := parser.Parse(args)
+	if err != nil {
 		return 2
 	}
+	if err := ctx.Run(&runner{App: a, Stdout: stdout}); err != nil {
+		fmt.Fprintf(stderr, "pactum %s: %v\n", ctx.Command(), err)
+		return 1
+	}
+	return 0
+}
+
+func (c *initCmd) Run(r *runner) error {
+	root, err := r.App.resolveInitRoot(c.Path)
+	if err != nil {
+		return err
+	}
+	if err := r.App.Init(root); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.Stdout, "Initialized Pactum workspace at %s\n", artifacts.New(root).Workspace)
+	return nil
+}
+
+func (c *statusCmd) Run(r *runner) error {
+	return r.App.Status(r.Stdout)
 }
 
 func (a App) Init(root string) error {
@@ -197,6 +255,9 @@ func (a App) Status(stdout io.Writer) error {
 	}
 
 	paths := artifacts.New(root)
+	if _, err := readConfig(paths.Config); err != nil {
+		return err
+	}
 	manifest, err := readWorkspaceManifest(paths.Manifest)
 	if err != nil {
 		return err
@@ -299,8 +360,10 @@ func ensureDirs(paths []string) error {
 }
 
 func writeStaticWorkspaceFiles(paths artifacts.Paths) error {
+	if err := writeYAML(paths.Config, defaultConfigFile()); err != nil {
+		return err
+	}
 	files := map[string][]byte{
-		paths.Config: []byte(defaultConfig()),
 		paths.Gitignore: []byte(strings.TrimSpace(`
 locks/
 tmp/
@@ -321,31 +384,38 @@ ledger/cost.json
 	return nil
 }
 
-func defaultConfig() string {
-	return strings.TrimSpace(`
-schema: pactum.config.v1
-default_profile: balanced
-project_map:
-  refresh: auto
-  include_go_ast: false
-  include_vendor: false
-  include_generated: false
-  max_file_bytes: 500000
-limits:
-  clarify:
-    max_iterations: 5
-    max_questions_per_round: 5
-  execute:
-    max_iterations: 10
-  review:
-    max_rounds: 4
-budget:
-  mode: warn
-  max_usd: null
-memory:
-  enabled: true
-  include_stale: warn
-`) + "\n"
+func defaultConfigFile() configFile {
+	return configFile{
+		Schema:         "pactum.config.v1",
+		DefaultProfile: "balanced",
+		ProjectMap: projectMapConfig{
+			Refresh:          "auto",
+			IncludeGoAST:     false,
+			IncludeVendor:    false,
+			IncludeGenerated: false,
+			MaxFileBytes:     500000,
+		},
+		Limits: limitsConfig{
+			Clarify: iterationLimits{
+				MaxIterations:        5,
+				MaxQuestionsPerRound: 5,
+			},
+			Execute: executeLimits{
+				MaxIterations: 10,
+			},
+			Review: reviewLimits{
+				MaxRounds: 4,
+			},
+		},
+		Budget: budgetConfig{
+			Mode:   "warn",
+			MaxUSD: nil,
+		},
+		Memory: memoryConfig{
+			Enabled:      true,
+			IncludeStale: "warn",
+		},
+	}
 }
 
 func writeJSON(path string, value any) error {
@@ -357,6 +427,20 @@ func writeJSON(path string, value any) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+func writeYAML(path string, value any) error {
+	var buffer bytes.Buffer
+	encoder := yaml.NewEncoder(&buffer)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(value); err != nil {
+		_ = encoder.Close()
+		return err
+	}
+	if err := encoder.Close(); err != nil {
+		return err
+	}
+	return os.WriteFile(path, buffer.Bytes(), 0o644)
+}
+
 func readWorkspaceManifest(path string) (workspaceManifest, error) {
 	var manifest workspaceManifest
 	if err := readJSON(path, &manifest); err != nil {
@@ -366,6 +450,21 @@ func readWorkspaceManifest(path string) (workspaceManifest, error) {
 		return workspaceManifest{}, errors.New("workspace manifest is incomplete")
 	}
 	return manifest, nil
+}
+
+func readConfig(path string) (configFile, error) {
+	var config configFile
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return configFile{}, err
+	}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return configFile{}, err
+	}
+	if config.Schema == "" {
+		return configFile{}, errors.New("config is incomplete")
+	}
+	return config, nil
 }
 
 func readMapManifest(path string) (projectmap.Manifest, error) {
@@ -390,12 +489,4 @@ func readJSON(path string, value any) error {
 func isDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
-}
-
-func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: pactum <command>")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "commands:")
-	fmt.Fprintln(w, "  init [path]   create a Pactum workspace and project map")
-	fmt.Fprintln(w, "  status        print Pactum workspace status")
 }
