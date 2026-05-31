@@ -50,6 +50,7 @@ func helper() {}
 		paths.CodeItemsJSONL,
 		paths.HashesJSONL,
 		paths.SearchSQLite,
+		filepath.Join(paths.MapRunsDir, "map_20260531_184012.json"),
 		paths.ProjectMemory,
 		paths.StaleReport,
 		paths.EventsJSONL,
@@ -172,6 +173,9 @@ func helper() {}
 	}
 	if manifest.CodeIndex.Items != len(codeItems) {
 		t.Fatalf("manifest code_index.items = %d, want %d", manifest.CodeIndex.Items, len(codeItems))
+	}
+	if manifest.ConfigHash == "" {
+		t.Fatalf("manifest config_hash should be populated")
 	}
 
 	events := readLines(t, paths.EventsJSONL)
@@ -320,6 +324,332 @@ func TestStatusBeforeAndAfterInit(t *testing.T) {
 	}
 }
 
+func TestStatusReportsStaleReasonsAndRefreshClearsThem(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+	mustWriteFile(t, filepath.Join(root, "old.go"), "package old\n")
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
+	assertNoError(t, os.Remove(filepath.Join(root, "old.go")))
+	mustWriteFile(t, filepath.Join(root, "new.go"), "package newfile\n")
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"status"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("status exited %d, stderr: %s", code, stderr.String())
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"status: stale",
+		"changed file: README.md",
+		"missing file: old.go",
+		"new file: new.go",
+		"Suggested:",
+		"pactum map refresh",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stale status missing %q:\n%s", want, got)
+		}
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"map", "refresh"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"status"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("status after refresh exited %d, stderr: %s", code, stderr.String())
+	}
+	got = stdout.String()
+	if !strings.Contains(got, "status: fresh") {
+		t.Fatalf("status after refresh should be fresh:\n%s", got)
+	}
+	if strings.Contains(got, "Stale reasons:") {
+		t.Fatalf("status after refresh should not print stale reasons:\n%s", got)
+	}
+}
+
+func TestStatusReportsMissingArtifactAndConfigChange(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	paths := artifacts.New(root)
+	assertNoError(t, os.Remove(paths.SearchSQLite))
+	config, err := readConfig(paths.Config)
+	assertNoError(t, err)
+	config.ProjectMap.MaxFileBytes = 123
+	assertNoError(t, writeYAML(paths.Config, config))
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"status"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("status exited %d, stderr: %s", code, stderr.String())
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"status: stale",
+		"search index: missing",
+		"missing artifact: map/search.sqlite",
+		"config changed: .heurema/pactum/config.yaml",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("status missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestStatusJSONOutput(t *testing.T) {
+	root := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"status", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("status --json before init exited %d, stderr: %s", code, stderr.String())
+	}
+	var before struct {
+		Initialized bool   `json:"initialized"`
+		Message     string `json:"message"`
+	}
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &before))
+	if before.Initialized || before.Message != "Pactum is not initialized. Run: pactum init" {
+		t.Fatalf("unexpected status --json before init: %#v", before)
+	}
+
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"status", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("status --json after init exited %d, stderr: %s", code, stderr.String())
+	}
+	var after statusResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &after))
+	if !after.Initialized {
+		t.Fatalf("status --json should report initialized: %#v", after)
+	}
+	if after.RepoRoot != root {
+		t.Fatalf("repo_root = %q, want %q", after.RepoRoot, root)
+	}
+	if after.Workspace != artifacts.New(root).Workspace {
+		t.Fatalf("workspace = %q, want %q", after.Workspace, artifacts.New(root).Workspace)
+	}
+	if after.ProjectMap.Status != "fresh" {
+		t.Fatalf("project_map.status = %q, want fresh: %#v", after.ProjectMap.Status, after.ProjectMap)
+	}
+	if after.ProjectMap.SearchIndex != "ready" {
+		t.Fatalf("project_map.search_index = %q, want ready", after.ProjectMap.SearchIndex)
+	}
+	if len(after.ProjectMap.StaleReasons) != 0 {
+		t.Fatalf("project_map.stale_reasons = %#v, want empty", after.ProjectMap.StaleReasons)
+	}
+	if after.Runs.Active != 0 || after.Memory.Items != 0 || after.Usage.TotalTokens != 0 || after.Usage.EstimatedCostUSD != 0 {
+		t.Fatalf("unexpected zero-status sections: %#v", after)
+	}
+}
+
+func TestMapRefreshJSONOutput(t *testing.T) {
+	root := t.TempDir()
+	app := testAppSequence(root)
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"map", "refresh", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("map refresh --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var result MapRefreshResult
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &result))
+	if result.RunID == "" || result.RepoRoot != root || result.SearchIndex != "ready" || result.FilesIndexed == 0 {
+		t.Fatalf("unexpected map refresh --json result: %#v", result)
+	}
+}
+
+func TestMapRefreshRunIDsAreCollisionSafe(t *testing.T) {
+	root := t.TempDir()
+	paths := artifacts.New(root)
+	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
+	config := defaultConfigFile()
+	config.ProjectMap.MaxFileBytes = 64
+	assertNoError(t, writeYAML(paths.Config, config))
+	mustWriteFile(t, filepath.Join(root, "small.go"), "package small\n")
+	mustWriteFile(t, filepath.Join(root, "large.go"), "package large\n"+strings.Repeat("x", 128))
+	mustWriteFile(t, filepath.Join(root, "node_modules", "ignored.js"), "console.log('ignored')\n")
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+	firstManifest, err := readWorkspaceManifest(paths.Manifest)
+	assertNoError(t, err)
+	firstRunID := firstManifest.Map.CurrentRunID
+	if firstRunID != "map_20260531_184012" {
+		t.Fatalf("first run id = %q, want map_20260531_184012", firstRunID)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"map", "refresh"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
+	}
+	secondManifest, err := readWorkspaceManifest(paths.Manifest)
+	assertNoError(t, err)
+	secondRunID := secondManifest.Map.CurrentRunID
+	if secondRunID != "map_20260531_184012_02" {
+		t.Fatalf("second run id = %q, want map_20260531_184012_02", secondRunID)
+	}
+	if firstRunID == secondRunID {
+		t.Fatalf("run ids should differ: %q", firstRunID)
+	}
+
+	firstRunPath := filepath.Join(paths.MapRunsDir, firstRunID+".json")
+	secondRunPath := filepath.Join(paths.MapRunsDir, secondRunID+".json")
+	assertFile(t, firstRunPath)
+	assertFile(t, secondRunPath)
+
+	var secondRun MapRefreshResult
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, secondRunPath)), &secondRun))
+	if secondRun.RunID != secondRunID {
+		t.Fatalf("run artifact run_id = %q, want %q", secondRun.RunID, secondRunID)
+	}
+	if secondRun.RepoRoot != root {
+		t.Fatalf("run artifact repo_root = %q, want %q", secondRun.RepoRoot, root)
+	}
+	if secondRun.FilesIgnored == 0 {
+		t.Fatalf("run artifact files_ignored = 0, want non-zero")
+	}
+	if secondRun.FilesSkipped != 1 {
+		t.Fatalf("run artifact files_skipped = %d, want 1", secondRun.FilesSkipped)
+	}
+
+	var raw map[string]json.RawMessage
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, secondRunPath)), &raw))
+	for _, key := range []string{"repo_root", "files_ignored", "files_skipped"} {
+		if _, ok := raw[key]; !ok {
+			t.Fatalf("run artifact missing key %q: %s", key, mustReadFile(t, secondRunPath))
+		}
+	}
+}
+
+func TestMapRefreshCommandRebuildsMapOnly(t *testing.T) {
+	root := t.TempDir()
+	app := testAppSequence(root)
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	paths := artifacts.New(root)
+	configBefore := mustReadFile(t, paths.Config)
+	mustWriteFile(t, paths.ProjectMemory, "# Project Memory\n\nKeep this.\n")
+	mustWriteFile(t, filepath.Join(paths.RunsDir, "keep.json"), "{}\n")
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"map", "refresh", "--full"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"Project map refreshed",
+		"Run:",
+		"files indexed:",
+		"files ignored:",
+		"files skipped:",
+		"code items:",
+		"warnings:",
+		"search index: ready",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("map refresh output missing %q:\n%s", want, got)
+		}
+	}
+	if mustReadFile(t, paths.Config) != configBefore {
+		t.Fatalf("map refresh should not rewrite config.yaml")
+	}
+	if got := mustReadFile(t, paths.ProjectMemory); !strings.Contains(got, "Keep this.") {
+		t.Fatalf("map refresh should not rewrite memory artifacts:\n%s", got)
+	}
+	assertFile(t, filepath.Join(paths.RunsDir, "keep.json"))
+
+	workspaceManifest, err := readWorkspaceManifest(paths.Manifest)
+	assertNoError(t, err)
+	mapManifest, err := readMapManifest(paths.MapManifest)
+	assertNoError(t, err)
+	if workspaceManifest.Map.CurrentRunID != mapManifest.RunID {
+		t.Fatalf("workspace current map run = %q, want %q", workspaceManifest.Map.CurrentRunID, mapManifest.RunID)
+	}
+	runPath := filepath.Join(paths.MapRunsDir, mapManifest.RunID+".json")
+	assertFile(t, runPath)
+	var run MapRefreshResult
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, runPath)), &run))
+	if run.RunID != mapManifest.RunID || run.StartedAt.IsZero() || run.FinishedAt.IsZero() {
+		t.Fatalf("map run artifact incomplete: %#v", run)
+	}
+
+	events := readLines(t, paths.EventsJSONL)
+	if len(events) != 10 {
+		t.Fatalf("events line count = %d, want 10: %v", len(events), events)
+	}
+	for i, want := range []string{"map_refresh_started", "search_index_started", "search_index_finished", "map_refresh_finished"} {
+		if !strings.Contains(events[len(events)-4+i], want) {
+			t.Fatalf("event %d = %s, want %s", len(events)-4+i, events[len(events)-4+i], want)
+		}
+	}
+}
+
+func TestMapRefreshRequiresInitializedWorkspace(t *testing.T) {
+	root := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"map", "refresh"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("map refresh before init should fail")
+	}
+	if got := stderr.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
+		t.Fatalf("map refresh before init stderr mismatch:\n%s", got)
+	}
+}
+
 func TestInitPrefersGitRoot(t *testing.T) {
 	root := t.TempDir()
 	assertNoError(t, os.Mkdir(filepath.Join(root, ".git"), 0o755))
@@ -380,7 +710,7 @@ func TestSearchMissingIndexPrintsGuidance(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Search index is missing. Run: pactum init") {
+	if got := stdout.String(); !strings.Contains(got, "Search index is missing. Run: pactum map refresh") {
 		t.Fatalf("missing search index output mismatch:\n%s", got)
 	}
 }
@@ -536,6 +866,17 @@ func testApp(root string) App {
 		WorkingDir: root,
 		Now: func() time.Time {
 			return time.Date(2026, 5, 31, 18, 40, 12, 0, time.UTC)
+		},
+	}
+}
+
+func testAppSequence(root string) App {
+	now := time.Date(2026, 5, 31, 18, 40, 11, 0, time.UTC)
+	return App{
+		WorkingDir: root,
+		Now: func() time.Time {
+			now = now.Add(time.Second)
+			return now
 		},
 	}
 }

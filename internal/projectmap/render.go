@@ -18,6 +18,7 @@ type Manifest struct {
 	RunID        string            `json:"run_id"`
 	GeneratedAt  time.Time         `json:"generated_at"`
 	RepoRoot     string            `json:"repo_root"`
+	ConfigHash   string            `json:"config_hash,omitempty"`
 	FilesIndexed int               `json:"files_indexed"`
 	FilesIgnored int               `json:"files_ignored"`
 	FilesSkipped int               `json:"files_skipped"`
