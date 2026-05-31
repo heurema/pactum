@@ -12,6 +12,7 @@ import (
 	"github.com/heurema/pactum/internal/artifacts"
 	"github.com/heurema/pactum/internal/codeindex"
 	"github.com/heurema/pactum/internal/projectmap"
+	searchpkg "github.com/heurema/pactum/internal/search"
 )
 
 func TestInitCreatesExpectedLayoutAndProjectMap(t *testing.T) {
@@ -48,6 +49,7 @@ func helper() {}
 		paths.FilesJSONL,
 		paths.CodeItemsJSONL,
 		paths.HashesJSONL,
+		paths.SearchSQLite,
 		paths.ProjectMemory,
 		paths.StaleReport,
 		paths.EventsJSONL,
@@ -159,6 +161,9 @@ func helper() {}
 	if manifest.Artifacts["code_items"] != "map/code-items.jsonl" {
 		t.Fatalf("manifest code_items artifact = %q", manifest.Artifacts["code_items"])
 	}
+	if manifest.Artifacts["search"] != "map/search.sqlite" {
+		t.Fatalf("manifest search artifact = %q", manifest.Artifacts["search"])
+	}
 	if manifest.Artifacts["entries"] != "" {
 		t.Fatalf("manifest should not point to entries artifact: %#v", manifest.Artifacts)
 	}
@@ -170,10 +175,10 @@ func helper() {}
 	}
 
 	events := readLines(t, paths.EventsJSONL)
-	if len(events) != 4 {
-		t.Fatalf("events line count = %d, want 4: %v", len(events), events)
+	if len(events) != 6 {
+		t.Fatalf("events line count = %d, want 6: %v", len(events), events)
 	}
-	for i, want := range []string{"init_started", "map_refresh_started", "map_refresh_finished", "init_finished"} {
+	for i, want := range []string{"init_started", "map_refresh_started", "search_index_started", "search_index_finished", "map_refresh_finished", "init_finished"} {
 		if !strings.Contains(events[i], want) {
 			t.Fatalf("event %d = %s, want %s", i, events[i], want)
 		}
@@ -341,6 +346,188 @@ func TestInitPrefersGitRoot(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "root: "+root) {
 		t.Fatalf("status did not report git root:\n%s", stdout.String())
+	}
+}
+
+func TestSearchBeforeInitPrintsGuidance(t *testing.T) {
+	root := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"search", "anything"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
+		t.Fatalf("search before init output mismatch:\n%s", got)
+	}
+}
+
+func TestSearchMissingIndexPrintsGuidance(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+	paths := artifacts.New(root)
+	assertNoError(t, os.Remove(paths.SearchSQLite))
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"search", "Example"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "Search index is missing. Run: pactum init") {
+		t.Fatalf("missing search index output mismatch:\n%s", got)
+	}
+}
+
+func TestSearchFindsFilesAndCodeItems(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "internal", "contracts", "runner.go"), `package contracts
+
+type Runner struct{}
+
+func BuildRunner() {}
+func helper() {}
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"search", "runner"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"Search results for: runner",
+		"internal/contracts/runner.go",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("search output missing %q:\n%s", want, got)
+		}
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"search", "BuildRunner"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
+	}
+	got = stdout.String()
+	for _, want := range []string{
+		"code_item internal/contracts/runner.go",
+		"kind: go_func",
+		"name: BuildRunner",
+		"language: go",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("code item search output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestSearchKindFilter(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "internal", "contracts", "runner.go"), `package contracts
+
+type Runner struct{}
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"search", "Runner", "--kind", "code_item"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "code_item internal/contracts/runner.go") {
+		t.Fatalf("code_item filter did not return code item:\n%s", got)
+	}
+	if strings.Contains(got, "file internal/contracts/runner.go") {
+		t.Fatalf("code_item filter returned file result:\n%s", got)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"search", "Runner", "--kind", "file"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
+	}
+	got = stdout.String()
+	if !strings.Contains(got, "file internal/contracts/runner.go") {
+		t.Fatalf("file filter did not return file result:\n%s", got)
+	}
+	if strings.Contains(got, "code_item internal/contracts/runner.go") {
+		t.Fatalf("file filter returned code item result:\n%s", got)
+	}
+}
+
+func TestSearchJSONOutput(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "internal", "contracts", "runner.go"), `package contracts
+
+type Runner struct{}
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"search", "Runner", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
+	}
+	var response searchpkg.Response
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.Query != "Runner" {
+		t.Fatalf("query = %q, want Runner", response.Query)
+	}
+	if len(response.Results) == 0 {
+		t.Fatalf("json search results empty:\n%s", stdout.String())
+	}
+	if response.Results[0].Rank == 0 || response.Results[0].ID == "" {
+		t.Fatalf("json search result incomplete: %#v", response.Results[0])
+	}
+}
+
+func TestSearchNoResults(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"search", "unlikelytermxyz"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "No results found.") {
+		t.Fatalf("no-results output mismatch:\n%s", got)
 	}
 }
 

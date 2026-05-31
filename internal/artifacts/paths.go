@@ -25,6 +25,7 @@ type Paths struct {
 	FilesJSONL     string
 	CodeItemsJSONL string
 	HashesJSONL    string
+	SearchSQLite   string
 	MapRunsDir     string
 
 	RunsDir string
@@ -72,6 +73,7 @@ func New(root string) Paths {
 		FilesJSONL:     filepath.Join(mapDir, "files.jsonl"),
 		CodeItemsJSONL: filepath.Join(mapDir, "code-items.jsonl"),
 		HashesJSONL:    filepath.Join(mapDir, "hashes.jsonl"),
+		SearchSQLite:   filepath.Join(mapDir, "search.sqlite"),
 		MapRunsDir:     filepath.Join(mapDir, "runs"),
 
 		RunsDir: filepath.Join(workspace, "runs"),
