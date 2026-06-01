@@ -196,6 +196,7 @@ type contractRunPathSet struct {
 	ClarifyDir  string
 	ContractDir string
 	ExecuteDir  string
+	GateDir     string
 	ReviewDir   string
 	MemoryDir   string
 	LedgerDir   string
@@ -221,36 +222,44 @@ type contractRunPathSet struct {
 	DryRunJSON     string
 	AttemptsDir    string
 	LastResultJSON string
+
+	GateReportJSON    string
+	GateValidationDir string
 }
 
 func contractRunPaths(runDir string) contractRunPathSet {
 	contextDir := filepath.Join(runDir, "context")
 	clarifyDir := filepath.Join(runDir, "clarify")
 	contractDir := filepath.Join(runDir, "contract")
+	executeDir := filepath.Join(runDir, "execute")
+	gateDir := filepath.Join(runDir, "gate")
 	return contractRunPathSet{
-		ContextDir:      contextDir,
-		ClarifyDir:      clarifyDir,
-		ContractDir:     contractDir,
-		ExecuteDir:      filepath.Join(runDir, "execute"),
-		ReviewDir:       filepath.Join(runDir, "review"),
-		MemoryDir:       filepath.Join(runDir, "memory"),
-		LedgerDir:       filepath.Join(runDir, "ledger"),
-		RunJSON:         filepath.Join(runDir, "run.json"),
-		TaskMD:          filepath.Join(runDir, "task.md"),
-		RepoContext:     filepath.Join(contextDir, "repo-context.md"),
-		SearchResults:   filepath.Join(contextDir, "search-results.json"),
-		ExecutorContext: filepath.Join(contextDir, "executor-context.md"),
-		QuestionsJSONL:  filepath.Join(clarifyDir, "questions.jsonl"),
-		AnswersJSONL:    filepath.Join(clarifyDir, "answers.jsonl"),
-		DecisionsJSONL:  filepath.Join(clarifyDir, "decisions.jsonl"),
-		ContractJSON:    filepath.Join(contractDir, "contract.json"),
-		ContractMD:      filepath.Join(contractDir, "contract.md"),
-		PromptMD:        filepath.Join(contractDir, "prompt.md"),
-		PromptManifest:  filepath.Join(contractDir, "prompt-manifest.json"),
-		ApprovalJSON:    filepath.Join(contractDir, "approval.json"),
-		DryRunJSON:      filepath.Join(runDir, "execute", "dry-run.json"),
-		AttemptsDir:     filepath.Join(runDir, "execute", "attempts"),
-		LastResultJSON:  filepath.Join(runDir, "execute", "last-result.json"),
+		ContextDir:        contextDir,
+		ClarifyDir:        clarifyDir,
+		ContractDir:       contractDir,
+		ExecuteDir:        executeDir,
+		GateDir:           gateDir,
+		ReviewDir:         filepath.Join(runDir, "review"),
+		MemoryDir:         filepath.Join(runDir, "memory"),
+		LedgerDir:         filepath.Join(runDir, "ledger"),
+		RunJSON:           filepath.Join(runDir, "run.json"),
+		TaskMD:            filepath.Join(runDir, "task.md"),
+		RepoContext:       filepath.Join(contextDir, "repo-context.md"),
+		SearchResults:     filepath.Join(contextDir, "search-results.json"),
+		ExecutorContext:   filepath.Join(contextDir, "executor-context.md"),
+		QuestionsJSONL:    filepath.Join(clarifyDir, "questions.jsonl"),
+		AnswersJSONL:      filepath.Join(clarifyDir, "answers.jsonl"),
+		DecisionsJSONL:    filepath.Join(clarifyDir, "decisions.jsonl"),
+		ContractJSON:      filepath.Join(contractDir, "contract.json"),
+		ContractMD:        filepath.Join(contractDir, "contract.md"),
+		PromptMD:          filepath.Join(contractDir, "prompt.md"),
+		PromptManifest:    filepath.Join(contractDir, "prompt-manifest.json"),
+		ApprovalJSON:      filepath.Join(contractDir, "approval.json"),
+		DryRunJSON:        filepath.Join(executeDir, "dry-run.json"),
+		AttemptsDir:       filepath.Join(executeDir, "attempts"),
+		LastResultJSON:    filepath.Join(executeDir, "last-result.json"),
+		GateReportJSON:    filepath.Join(gateDir, "gate-report.json"),
+		GateValidationDir: filepath.Join(gateDir, "validation"),
 	}
 }
 

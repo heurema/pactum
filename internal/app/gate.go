@@ -1,0 +1,608 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/heurema/pactum/internal/artifacts"
+	"github.com/heurema/pactum/internal/ledger"
+	"github.com/heurema/pactum/internal/projectmap"
+)
+
+const (
+	gateReportSchema              = "pactum.gate_report.v1"
+	validationCommandResultSchema = "pactum.validation_command_result.v1"
+	gateReportArtifact            = "gate/gate-report.json"
+	gateDefaultCommandTimeout     = 10 * time.Minute
+)
+
+type gateReportDocument struct {
+	Schema     string               `json:"schema"`
+	RunID      string               `json:"run_id"`
+	CreatedAt  string               `json:"created_at"`
+	Status     string               `json:"status"`
+	Execution  gateExecutionReport  `json:"execution"`
+	Changes    gateChangeReport     `json:"changes"`
+	Validation gateValidationReport `json:"validation"`
+	Summary    gateSummary          `json:"summary"`
+}
+
+type gateExecutionReport struct {
+	AttemptID string `json:"attempt_id"`
+	ExitCode  int    `json:"exit_code"`
+	TimedOut  bool   `json:"timed_out"`
+	Result    string `json:"result"`
+}
+
+type gateChangeReport struct {
+	Status       string   `json:"status"`
+	ChangedFiles []string `json:"changed_files"`
+	NewFiles     []string `json:"new_files"`
+	MissingFiles []string `json:"missing_files"`
+	Reasons      []string `json:"reasons"`
+}
+
+type gateValidationReport struct {
+	CommandsAllowed bool                          `json:"commands_allowed"`
+	Commands        []gateValidationCommandReport `json:"commands"`
+}
+
+type gateValidationCommandReport struct {
+	ID       string `json:"id"`
+	Command  string `json:"command"`
+	ExitCode int    `json:"exit_code"`
+	TimedOut bool   `json:"timed_out"`
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	Result   string `json:"result"`
+}
+
+type gateSummary struct {
+	ExecutionPassed   bool `json:"execution_passed"`
+	ValidationPassed  bool `json:"validation_passed"`
+	ChangesNeedReview bool `json:"changes_need_review"`
+}
+
+type validationCommandResultDocument struct {
+	Schema         string `json:"schema"`
+	ID             string `json:"id"`
+	Command        string `json:"command"`
+	StartedAt      string `json:"started_at"`
+	FinishedAt     string `json:"finished_at"`
+	DurationMillis int64  `json:"duration_ms"`
+	ExitCode       int    `json:"exit_code"`
+	TimedOut       bool   `json:"timed_out"`
+	Stdout         string `json:"stdout"`
+	Stderr         string `json:"stderr"`
+}
+
+type gateContext struct {
+	Root     string
+	Paths    artifacts.Paths
+	RunDir   string
+	RunPaths contractRunPathSet
+	State    contractRunState
+	Contract draftContract
+	Approval approvalState
+}
+
+type gateProcessError struct {
+	Status string
+}
+
+func (e gateProcessError) Error() string {
+	return fmt.Sprintf("gate status %s", e.Status)
+}
+
+func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOutput bool) error {
+	context, ok, err := a.loadGateContext(stdout, runID)
+	if err != nil || !ok {
+		return err
+	}
+	if err := ensureGateContractApproved(context); err != nil {
+		return err
+	}
+
+	attempt, resultArtifact, found, err := latestCompletedGateExecution(context)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("cannot run gate: no completed execution attempts found")
+	}
+
+	commands := nonEmptyValidationCommands(context.Contract.Validation.Commands)
+	if len(commands) > 0 && !allowCommands {
+		fmt.Fprintln(stdout, "Refusing to run validation commands without --allow-commands.")
+		return nil
+	}
+
+	startedAt := a.nowUTC()
+	if err := os.MkdirAll(context.RunPaths.GateDir, 0o755); err != nil {
+		return err
+	}
+	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "gate_run_started", Timestamp: startedAt, RunID: runID, RepoRoot: context.Root}); err != nil {
+		return err
+	}
+
+	changes := buildGateChangeReport(context.Root, context.Paths)
+	validation := gateValidationReport{
+		CommandsAllowed: allowCommands,
+		Commands:        []gateValidationCommandReport{},
+	}
+	if allowCommands && len(commands) > 0 {
+		if err := os.MkdirAll(context.RunPaths.GateValidationDir, 0o755); err != nil {
+			return err
+		}
+		for index, command := range commands {
+			id := fmt.Sprintf("command_%03d", index+1)
+			result, err := a.runGateValidationCommand(context.Root, context.RunPaths, id, command, gateDefaultCommandTimeout)
+			if err != nil {
+				return err
+			}
+			validation.Commands = append(validation.Commands, result)
+		}
+	}
+
+	summary := gateSummary{
+		ExecutionPassed:   attempt.Result.ExitCode == 0 && !attempt.Result.TimedOut,
+		ValidationPassed:  gateValidationPassed(validation.Commands),
+		ChangesNeedReview: gateChangesNeedReview(changes),
+	}
+	status := gateStatus(summary)
+	report := gateReportDocument{
+		Schema:    gateReportSchema,
+		RunID:     runID,
+		CreatedAt: a.nowUTC().Format(time.RFC3339),
+		Status:    status,
+		Execution: gateExecutionReport{
+			AttemptID: attempt.ID,
+			ExitCode:  attempt.Result.ExitCode,
+			TimedOut:  attempt.Result.TimedOut,
+			Result:    resultArtifact,
+		},
+		Changes:    changes,
+		Validation: validation,
+		Summary:    summary,
+	}
+	if err := writeJSON(context.RunPaths.GateReportJSON, report); err != nil {
+		return err
+	}
+	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "gate_run_finished", Timestamp: a.nowUTC(), RunID: runID, RepoRoot: context.Root}); err != nil {
+		return err
+	}
+
+	if jsonOutput {
+		if err := writeJSONResponse(stdout, report); err != nil {
+			return err
+		}
+	} else {
+		writeGateRun(stdout, context.State, report)
+	}
+	if report.Status == "failed" {
+		return gateProcessError{Status: report.Status}
+	}
+	return nil
+}
+
+func (a App) GateShow(stdout io.Writer, runID string, jsonOutput bool) error {
+	context, ok, err := a.loadGateContext(stdout, runID)
+	if err != nil || !ok {
+		return err
+	}
+	if !isRegularFile(context.RunPaths.GateReportJSON) {
+		fmt.Fprintf(stdout, "Gate report has not been created. Run: pactum gate run %s --allow-commands\n", runID)
+		return nil
+	}
+
+	var report gateReportDocument
+	if err := readJSON(context.RunPaths.GateReportJSON, &report); err != nil {
+		return err
+	}
+	if jsonOutput {
+		return writeJSONResponse(stdout, report)
+	}
+	writeGateShow(stdout, report)
+	return nil
+}
+
+func (a App) loadGateContext(stdout io.Writer, runID string) (gateContext, bool, error) {
+	root, workspace, err := a.resolveStatusRoot()
+	if err != nil {
+		return gateContext{}, false, err
+	}
+	if workspace == "" {
+		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
+		return gateContext{}, false, nil
+	}
+
+	paths := artifacts.New(root)
+	runDir := filepath.Join(paths.RunsDir, runID)
+	info, err := os.Stat(runDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return gateContext{}, false, fmt.Errorf("run not found: %s", runID)
+		}
+		return gateContext{}, false, err
+	}
+	if !info.IsDir() {
+		return gateContext{}, false, fmt.Errorf("run not found: %s", runID)
+	}
+
+	runPaths := contractRunPaths(runDir)
+	state, err := readContractRunState(runPaths.RunJSON)
+	if err != nil {
+		return gateContext{}, false, err
+	}
+	contract, err := readDraftContract(runPaths.ContractJSON)
+	if err != nil {
+		return gateContext{}, false, err
+	}
+	approval, err := readApprovalState(runPaths.ApprovalJSON)
+	if err != nil {
+		return gateContext{}, false, err
+	}
+	return gateContext{
+		Root:     root,
+		Paths:    paths,
+		RunDir:   runDir,
+		RunPaths: runPaths,
+		State:    state,
+		Contract: contract,
+		Approval: approval,
+	}, true, nil
+}
+
+func ensureGateContractApproved(context gateContext) error {
+	if context.Contract.Status != "approved" || context.Approval.Status != "approved" || context.Approval.ContractSHA256 == nil {
+		return fmt.Errorf("cannot run gate: contract is not approved")
+	}
+	hash, err := fileSHA256(context.RunPaths.ContractJSON)
+	if err != nil {
+		return err
+	}
+	if hash != *context.Approval.ContractSHA256 {
+		return fmt.Errorf("cannot run gate: approved contract hash does not match current contract")
+	}
+	return nil
+}
+
+func latestCompletedGateExecution(context gateContext) (executionAttemptSummary, string, bool, error) {
+	attemptIDs, err := listExecutionAttemptIDs(context.RunPaths.AttemptsDir)
+	if err != nil {
+		return executionAttemptSummary{}, "", false, err
+	}
+	for index := len(attemptIDs) - 1; index >= 0; index-- {
+		attemptID := attemptIDs[index]
+		attemptPaths := executionAttemptPaths(context.RunPaths, attemptID)
+		if !isRegularFile(attemptPaths.ResultJSON) {
+			continue
+		}
+		var result executionResultDocument
+		if err := readJSON(attemptPaths.ResultJSON, &result); err != nil {
+			return executionAttemptSummary{}, "", false, err
+		}
+		if result.AttemptID == "" {
+			result.AttemptID = attemptID
+		}
+		artifact := filepath.ToSlash(filepath.Join("execute", "attempts", attemptID, "result.json"))
+		if gateLastResultMatches(context.RunPaths.LastResultJSON, result.AttemptID) {
+			artifact = executeLastResultArtifact
+		}
+		return executionAttemptSummary{
+			ID:     attemptID,
+			Paths:  attemptPaths,
+			Result: result,
+		}, artifact, true, nil
+	}
+	return executionAttemptSummary{}, "", false, nil
+}
+
+func gateLastResultMatches(path string, attemptID string) bool {
+	if !isRegularFile(path) {
+		return false
+	}
+	var result executionResultDocument
+	if err := readJSON(path, &result); err != nil {
+		return false
+	}
+	return result.AttemptID == attemptID
+}
+
+func nonEmptyValidationCommands(commands []string) []string {
+	filtered := make([]string, 0, len(commands))
+	for _, command := range commands {
+		if strings.TrimSpace(command) != "" {
+			filtered = append(filtered, command)
+		}
+	}
+	return filtered
+}
+
+func buildGateChangeReport(root string, paths artifacts.Paths) gateChangeReport {
+	report := gateChangeReport{
+		Status:       "clean",
+		ChangedFiles: []string{},
+		NewFiles:     []string{},
+		MissingFiles: []string{},
+		Reasons:      []string{},
+	}
+
+	expected, err := readJSONLines[projectmap.HashRecord](paths.HashesJSONL)
+	if err != nil {
+		report.Status = "unknown"
+		report.Reasons = append(report.Reasons, "cannot read project map hashes: "+err.Error())
+		return report
+	}
+	config, err := readConfig(paths.Config)
+	if err != nil {
+		report.Status = "unknown"
+		report.Reasons = append(report.Reasons, "cannot read project map config: "+err.Error())
+		return report
+	}
+	current, err := projectmap.Scan(root, projectmap.ScanOptions{
+		MaxFileBytes:  int64(config.ProjectMap.MaxFileBytes),
+		CodeIndexMode: config.ProjectMap.CodeIndex,
+	})
+	if err != nil {
+		report.Status = "unknown"
+		report.Reasons = append(report.Reasons, "cannot scan repository: "+err.Error())
+		return report
+	}
+
+	expectedByPath := make(map[string]string, len(expected))
+	for _, record := range expected {
+		if strings.HasPrefix(record.Path, artifacts.WorkspaceRel+"/") {
+			continue
+		}
+		expectedByPath[record.Path] = record.SHA256
+		fullPath := filepath.Join(root, filepath.FromSlash(record.Path))
+		if !isRegularFile(fullPath) {
+			report.MissingFiles = append(report.MissingFiles, record.Path)
+			continue
+		}
+		hash, err := fileSHA256(fullPath)
+		if err != nil {
+			report.Status = "unknown"
+			report.Reasons = append(report.Reasons, "cannot hash file: "+record.Path+": "+err.Error())
+			return report
+		}
+		if hash != record.SHA256 {
+			report.ChangedFiles = append(report.ChangedFiles, record.Path)
+		}
+	}
+	for _, record := range current.Hashes {
+		if strings.HasPrefix(record.Path, artifacts.WorkspaceRel+"/") {
+			continue
+		}
+		if _, ok := expectedByPath[record.Path]; !ok {
+			report.NewFiles = append(report.NewFiles, record.Path)
+		}
+	}
+
+	sort.Strings(report.ChangedFiles)
+	sort.Strings(report.NewFiles)
+	sort.Strings(report.MissingFiles)
+	if len(report.ChangedFiles)+len(report.NewFiles)+len(report.MissingFiles) > 0 {
+		report.Status = "changed"
+		report.Reasons = gateChangeReasons(report)
+	}
+	return report
+}
+
+func gateChangeReasons(report gateChangeReport) []string {
+	reasons := make([]string, 0, len(report.ChangedFiles)+len(report.NewFiles)+len(report.MissingFiles))
+	for _, path := range report.ChangedFiles {
+		reasons = append(reasons, "changed file: "+path)
+	}
+	for _, path := range report.NewFiles {
+		reasons = append(reasons, "new file: "+path)
+	}
+	for _, path := range report.MissingFiles {
+		reasons = append(reasons, "missing file: "+path)
+	}
+	return reasons
+}
+
+func (a App) runGateValidationCommand(root string, runPaths contractRunPathSet, id string, commandText string, timeout time.Duration) (gateValidationCommandReport, error) {
+	commandDir := filepath.Join(runPaths.GateValidationDir, id)
+	if err := os.MkdirAll(commandDir, 0o755); err != nil {
+		return gateValidationCommandReport{}, err
+	}
+
+	stdoutArtifact := filepath.ToSlash(filepath.Join("gate", "validation", id, "stdout.log"))
+	stderrArtifact := filepath.ToSlash(filepath.Join("gate", "validation", id, "stderr.log"))
+	resultArtifact := filepath.ToSlash(filepath.Join("gate", "validation", id, "result.json"))
+	stdoutPath := filepath.Join(commandDir, "stdout.log")
+	stderrPath := filepath.Join(commandDir, "stderr.log")
+	resultPath := filepath.Join(commandDir, "result.json")
+
+	stdoutFile, err := os.Create(stdoutPath)
+	if err != nil {
+		return gateValidationCommandReport{}, err
+	}
+	defer stdoutFile.Close()
+	stderrFile, err := os.Create(stderrPath)
+	if err != nil {
+		return gateValidationCommandReport{}, err
+	}
+	defer stderrFile.Close()
+
+	fields := strings.Fields(commandText)
+	if len(fields) == 0 {
+		return gateValidationCommandReport{}, fmt.Errorf("validation command %s is empty", id)
+	}
+
+	started := time.Now().UTC()
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	command := exec.CommandContext(ctx, fields[0], fields[1:]...)
+	command.Dir = root
+	command.Env = os.Environ()
+	command.Stdout = stdoutFile
+	command.Stderr = stderrFile
+
+	runErr := command.Run()
+	finished := time.Now().UTC()
+
+	exitCode := 0
+	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
+	if runErr != nil {
+		var exitError *exec.ExitError
+		if errors.As(runErr, &exitError) {
+			exitCode = exitError.ExitCode()
+		} else {
+			exitCode = -1
+			fmt.Fprintln(stderrFile, runErr.Error())
+		}
+	}
+	if timedOut && exitCode == 0 {
+		exitCode = -1
+	}
+
+	result := validationCommandResultDocument{
+		Schema:         validationCommandResultSchema,
+		ID:             id,
+		Command:        commandText,
+		StartedAt:      started.Format(time.RFC3339Nano),
+		FinishedAt:     finished.Format(time.RFC3339Nano),
+		DurationMillis: finished.Sub(started).Milliseconds(),
+		ExitCode:       exitCode,
+		TimedOut:       timedOut,
+		Stdout:         stdoutArtifact,
+		Stderr:         stderrArtifact,
+	}
+	if err := writeJSON(resultPath, result); err != nil {
+		return gateValidationCommandReport{}, err
+	}
+	return gateValidationCommandReport{
+		ID:       id,
+		Command:  commandText,
+		ExitCode: exitCode,
+		TimedOut: timedOut,
+		Stdout:   stdoutArtifact,
+		Stderr:   stderrArtifact,
+		Result:   resultArtifact,
+	}, nil
+}
+
+func gateValidationPassed(commands []gateValidationCommandReport) bool {
+	for _, command := range commands {
+		if command.ExitCode != 0 || command.TimedOut {
+			return false
+		}
+	}
+	return true
+}
+
+func gateChangesNeedReview(changes gateChangeReport) bool {
+	return changes.Status == "changed" || changes.Status == "unknown"
+}
+
+func gateStatus(summary gateSummary) string {
+	if !summary.ExecutionPassed || !summary.ValidationPassed {
+		return "failed"
+	}
+	if summary.ChangesNeedReview {
+		return "needs_review"
+	}
+	return "passed"
+}
+
+func writeGateRun(stdout io.Writer, state contractRunState, report gateReportDocument) {
+	fmt.Fprintln(stdout, "Gate report created")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Run:")
+	fmt.Fprintf(stdout, "  id: %s\n", report.RunID)
+	fmt.Fprintf(stdout, "  status: %s\n", state.Status)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Execution:")
+	fmt.Fprintf(stdout, "  attempt: %s\n", report.Execution.AttemptID)
+	fmt.Fprintf(stdout, "  exit code: %d\n", report.Execution.ExitCode)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Changes:")
+	fmt.Fprintf(stdout, "  status: %s\n", report.Changes.Status)
+	fmt.Fprintf(stdout, "  changed files: %d\n", len(report.Changes.ChangedFiles))
+	fmt.Fprintf(stdout, "  new files: %d\n", len(report.Changes.NewFiles))
+	fmt.Fprintf(stdout, "  missing files: %d\n", len(report.Changes.MissingFiles))
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Validation:")
+	passed, failed := gateValidationCounts(report.Validation.Commands)
+	fmt.Fprintf(stdout, "  commands: %d\n", len(report.Validation.Commands))
+	fmt.Fprintf(stdout, "  passed: %d\n", passed)
+	fmt.Fprintf(stdout, "  failed: %d\n", failed)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Gate:")
+	fmt.Fprintf(stdout, "  status: %s\n", report.Status)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Artifacts:")
+	fmt.Fprintf(stdout, "  report: %s\n", runArtifactRepoRel(report.RunID, gateReportArtifact))
+}
+
+func writeGateShow(stdout io.Writer, report gateReportDocument) {
+	fmt.Fprintln(stdout, "Gate report")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Run:")
+	fmt.Fprintf(stdout, "  id: %s\n", report.RunID)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Gate:")
+	fmt.Fprintf(stdout, "  status: %s\n", report.Status)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Execution:")
+	fmt.Fprintf(stdout, "  exit code: %d\n", report.Execution.ExitCode)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Validation:")
+	if len(report.Validation.Commands) == 0 {
+		fmt.Fprintln(stdout, "  commands: 0")
+	} else {
+		for _, command := range report.Validation.Commands {
+			fmt.Fprintf(stdout, "  %s %s\n", command.ID, command.Command)
+			fmt.Fprintf(stdout, "    exit code: %d\n", command.ExitCode)
+		}
+	}
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Changes:")
+	writeGateShowChanges(stdout, report.Changes)
+}
+
+func writeGateShowChanges(stdout io.Writer, changes gateChangeReport) {
+	if len(changes.ChangedFiles)+len(changes.NewFiles)+len(changes.MissingFiles) == 0 {
+		fmt.Fprintf(stdout, "  status: %s\n", changes.Status)
+		return
+	}
+	for _, path := range changes.ChangedFiles {
+		fmt.Fprintf(stdout, "  - changed file: %s\n", path)
+	}
+	for _, path := range changes.NewFiles {
+		fmt.Fprintf(stdout, "  - new file: %s\n", path)
+	}
+	for _, path := range changes.MissingFiles {
+		fmt.Fprintf(stdout, "  - missing file: %s\n", path)
+	}
+}
+
+func gateValidationCounts(commands []gateValidationCommandReport) (int, int) {
+	passed := 0
+	failed := 0
+	for _, command := range commands {
+		if command.ExitCode == 0 && !command.TimedOut {
+			passed++
+		} else {
+			failed++
+		}
+	}
+	return passed, failed
+}
