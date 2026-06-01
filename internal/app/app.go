@@ -28,6 +28,7 @@ type App struct {
 type cli struct {
 	Init   initCmd   `cmd:"" help:"Create a Pactum workspace and project map."`
 	Map    mapCmd    `cmd:"" help:"Advanced project map commands."`
+	Run    runCmd    `cmd:"" help:"Create a Pactum run workspace."`
 	Search searchCmd `cmd:"" help:"Search the Pactum project map."`
 	Status statusCmd `cmd:"" help:"Print Pactum workspace status."`
 }
@@ -47,6 +48,12 @@ type mapRefreshCmd struct {
 
 type statusCmd struct {
 	JSONOutput bool `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type runCmd struct {
+	Task         string `arg:"" name:"task" help:"Task to prepare a contract for."`
+	ContractOnly bool   `name:"contract-only" help:"Create a contract draft without execution."`
+	JSONOutput   bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type searchCmd struct {
@@ -179,6 +186,10 @@ func (c *statusCmd) Run(r *runner) error {
 	return r.App.Status(r.Stdout, c.JSONOutput)
 }
 
+func (c *runCmd) Run(r *runner) error {
+	return r.App.RunContract(r.Stdout, c.Task, c.ContractOnly, c.JSONOutput)
+}
+
 func (c *searchCmd) Run(r *runner) error {
 	return r.App.Search(r.Stdout, c.Query, c.Limit, c.Kind, c.JSONOutput)
 }
@@ -227,7 +238,7 @@ func (a App) Init(root string) error {
 		Schema:        "pactum.workspace.v1",
 		Tool:          artifacts.ToolName,
 		ToolVersion:   artifacts.ToolVersion,
-		RepoRoot:      root,
+		RepoRoot:      ".",
 		InitializedAt: now,
 		UpdatedAt:     now,
 		Status:        "initialized",
@@ -419,10 +430,13 @@ func writeStaticWorkspaceFiles(paths artifacts.Paths) error {
 	files := map[string][]byte{
 		paths.Gitignore: []byte(strings.TrimSpace(`
 locks/
-tmp/
+map/
+ledger/
 cache/
-ledger/usage.jsonl
-ledger/cost.json
+tmp/
+runs/*/ledger/
+runs/*/execute/
+runs/*/review/
 `) + "\n"),
 		paths.ProjectMemory: []byte("# Project Memory\n\nNo project memory has been extracted yet.\n"),
 		paths.StaleReport:   []byte("{\"stale\":0,\"items\":[]}\n"),

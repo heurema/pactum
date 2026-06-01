@@ -82,7 +82,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 		return MapRefreshResult{}, err
 	}
 
-	repoMap := projectmap.RenderRepoMap(root, startedAt, scan)
+	repoMap := projectmap.RenderRepoMap(".", startedAt, scan)
 	llms := projectmap.RenderLLMS()
 	if err := os.WriteFile(paths.RepoMap, repoMap, 0o644); err != nil {
 		return MapRefreshResult{}, err
@@ -116,7 +116,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 		Schema:       "pactum.map.manifest.v1",
 		RunID:        runID,
 		GeneratedAt:  startedAt,
-		RepoRoot:     root,
+		RepoRoot:     ".",
 		ConfigHash:   configHash,
 		FilesIndexed: len(scan.Files),
 		FilesIgnored: scan.FilesIgnored,
@@ -149,7 +149,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 		RunID:        runID,
 		StartedAt:    startedAt,
 		FinishedAt:   finishedAt,
-		RepoRoot:     root,
+		RepoRoot:     ".",
 		FilesIndexed: len(scan.Files),
 		FilesIgnored: scan.FilesIgnored,
 		FilesSkipped: scan.FilesSkipped,
