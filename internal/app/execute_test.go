@@ -363,6 +363,12 @@ func TestExecuteRunRequiresAllowExecute(t *testing.T) {
 	} else if !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
+	events := strings.Join(readLines(t, paths.EventsJSONL), "\n")
+	for _, forbidden := range []string{"execution_attempt_started", "execution_attempt_finished"} {
+		if strings.Contains(events, forbidden) {
+			t.Fatalf("refused execute run should not write %s:\n%s", forbidden, events)
+		}
+	}
 }
 
 func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
@@ -428,8 +434,14 @@ func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
 	if state := readRunState(t, runPaths.RunJSON); state.Status != "contract_approved" {
 		t.Fatalf("execute run should not change status: %#v", state)
 	}
-	if events := strings.Join(readLines(t, paths.EventsJSONL), "\n"); !strings.Contains(events, "execution_attempt_completed") {
-		t.Fatalf("events missing execution_attempt_completed:\n%s", events)
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	startedIndex := indexOfEvent(eventTypes, "execution_attempt_started")
+	finishedIndex := indexOfEvent(eventTypes, "execution_attempt_finished")
+	if startedIndex == -1 || finishedIndex == -1 {
+		t.Fatalf("events missing execution attempt lifecycle events:\n%v", eventTypes)
+	}
+	if startedIndex > finishedIndex {
+		t.Fatalf("execution_attempt_started should appear before execution_attempt_finished:\n%v", eventTypes)
 	}
 }
 
@@ -459,6 +471,10 @@ func TestExecuteRunNonZeroWritesArtifactsAndReturnsNonZero(t *testing.T) {
 	}
 	if state := readRunState(t, runPaths.RunJSON); state.Status != "contract_approved" {
 		t.Fatalf("execute run should not change status: %#v", state)
+	}
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "execution_attempt_started") != 1 || countEvents(eventTypes, "execution_attempt_finished") != 1 {
+		t.Fatalf("non-zero execute run should write started and finished events:\n%v", eventTypes)
 	}
 }
 
@@ -502,11 +518,74 @@ func TestNextAttemptIDUsesExistingAttemptDirs(t *testing.T) {
 	}
 }
 
+func TestExecuteRunCreatesIncrementingAttemptsAndLedgerEvents(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedBuiltPromptWithHelperAgent(t, root, "helper")
+	t.Setenv("PACTUM_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
+
+	for i := 0; i < 2; i++ {
+		var stdout, stderr bytes.Buffer
+		code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--allow-execute"}, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("execute run %d exited %d, stderr: %s", i+1, code, stderr.String())
+		}
+	}
+
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	for _, attemptID := range []string{"attempt_001", "attempt_002"} {
+		attemptPaths := executionAttemptPaths(runPaths, attemptID)
+		assertFile(t, attemptPaths.RequestJSON)
+		assertFile(t, attemptPaths.ResultJSON)
+	}
+
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if got := countEvents(eventTypes, "execution_attempt_started"); got != 2 {
+		t.Fatalf("execution_attempt_started count = %d, want 2:\n%v", got, eventTypes)
+	}
+	if got := countEvents(eventTypes, "execution_attempt_finished"); got != 2 {
+		t.Fatalf("execution_attempt_finished count = %d, want 2:\n%v", got, eventTypes)
+	}
+}
+
 func readDryRunPlan(t *testing.T, path string) agents.DryRunPlan {
 	t.Helper()
 	var plan agents.DryRunPlan
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, path)), &plan))
 	return plan
+}
+
+func ledgerEventTypes(t *testing.T, path string) []string {
+	t.Helper()
+	lines := readLines(t, path)
+	types := make([]string, 0, len(lines))
+	for _, line := range lines {
+		var event struct {
+			Type string `json:"type"`
+		}
+		assertNoError(t, json.Unmarshal([]byte(line), &event))
+		types = append(types, event.Type)
+	}
+	return types
+}
+
+func indexOfEvent(events []string, eventType string) int {
+	for i, event := range events {
+		if event == eventType {
+			return i
+		}
+	}
+	return -1
+}
+
+func countEvents(events []string, eventType string) int {
+	count := 0
+	for _, event := range events {
+		if event == eventType {
+			count++
+		}
+	}
+	return count
 }
 
 func configureHelperAgent(t *testing.T, paths artifacts.Paths, name string) {

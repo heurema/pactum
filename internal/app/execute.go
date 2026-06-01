@@ -104,6 +104,9 @@ func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, allowE
 	if err := writeJSON(attemptPaths.RequestJSON, request); err != nil {
 		return err
 	}
+	if err := ledger.Append(prep.Paths.EventsJSONL, ledger.Event{Type: "execution_attempt_started", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
+		return err
+	}
 
 	runResult, runErr := agents.RunSubprocess(agents.RunRequest{
 		RepoRoot:       root,
@@ -124,7 +127,7 @@ func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, allowE
 	if err := writeJSON(prep.RunPaths.LastResultJSON, result); err != nil {
 		return err
 	}
-	if err := ledger.Append(prep.Paths.EventsJSONL, ledger.Event{Type: "execution_attempt_completed", Timestamp: executionResultTimestamp(result, now), RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(prep.Paths.EventsJSONL, ledger.Event{Type: "execution_attempt_finished", Timestamp: executionResultTimestamp(result, now), RunID: runID, RepoRoot: root}); err != nil {
 		return err
 	}
 
