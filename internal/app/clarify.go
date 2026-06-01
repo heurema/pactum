@@ -209,6 +209,9 @@ func (a App) ClarifyStatus(stdout io.Writer, runID string, jsonOutput bool) erro
 	if err != nil {
 		return err
 	}
+	if context.State.Status == "contract_approved" && status.BlockingOpen == 0 {
+		status.RunStatus = "contract_approved"
+	}
 	if jsonOutput {
 		return writeJSONResponse(stdout, status)
 	}

@@ -1702,6 +1702,50 @@ func TestClarifyStatusJSONOutput(t *testing.T) {
 	}
 }
 
+func TestClarifyStatusReportsApprovedRun(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract approve exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"clarify", "status", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify status exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "status: contract_approved") {
+		t.Fatalf("clarify status should preserve approved status:\n%s", got)
+	}
+}
+
+func TestClarifyStatusJSONReportsApprovedRun(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract approve exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"clarify", "status", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify status --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var status clarifyStatusResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &status))
+	if status.RunID != runID || status.RunStatus != "contract_approved" || status.BlockingOpen != 0 {
+		t.Fatalf("unexpected approved clarify status json: %#v", status)
+	}
+}
+
 func TestClarifyLatestAnswerWinsForDisplay(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
