@@ -78,6 +78,9 @@ func (a App) ExecuteDryRun(stdout io.Writer, runID string, agentName string, jso
 	if report.ProjectMap.Status != "fresh" {
 		return fmt.Errorf("cannot prepare execution: project map is stale")
 	}
+	if manifest.MapRunID != report.ProjectMap.RunID {
+		return fmt.Errorf("cannot prepare execution: executor prompt was built for a different project map")
+	}
 
 	if _, err := os.ReadFile(runPaths.PromptMD); err != nil {
 		return err

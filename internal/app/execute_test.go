@@ -214,6 +214,71 @@ func TestExecuteDryRunStaleMapFails(t *testing.T) {
 	}
 }
 
+func TestExecuteDryRunFailsWhenPromptManifestMapRunIsStale(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	assertFile(t, runPaths.PromptManifest)
+	manifest := readPromptManifestForTest(t, runPaths.PromptManifest)
+
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"map", "refresh"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
+	}
+	workspace, err := readWorkspaceManifest(paths.Manifest)
+	assertNoError(t, err)
+	if workspace.Map.CurrentRunID == manifest.MapRunID {
+		t.Fatalf("map run did not change after refresh: %s", workspace.Map.CurrentRunID)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("execute dry-run should fail when prompt manifest map run is stale")
+	}
+	if got := stderr.String(); !strings.Contains(got, "cannot prepare execution: executor prompt was built for a different project map") {
+		t.Fatalf("stale prompt map stderr mismatch:\n%s", got)
+	}
+	assertNoFile(t, runPaths.DryRunJSON)
+}
+
+func TestExecuteDryRunSucceedsAfterPromptBuildOnLatestMap(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedPromptContract(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"map", "refresh"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
+	}
+	workspace, err := readWorkspaceManifest(paths.Manifest)
+	assertNoError(t, err)
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("prompt build exited %d, stderr: %s", code, stderr.String())
+	}
+	manifest := readPromptManifestForTest(t, runPaths.PromptManifest)
+	if manifest.MapRunID != workspace.Map.CurrentRunID {
+		t.Fatalf("prompt manifest map_run_id = %q, want %q", manifest.MapRunID, workspace.Map.CurrentRunID)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute dry-run exited %d, stderr: %s", code, stderr.String())
+	}
+	assertFile(t, runPaths.DryRunJSON)
+}
+
 func TestExecuteDryRunPathPortability(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
