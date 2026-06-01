@@ -57,6 +57,14 @@ type promptShowResponse struct {
 	Prompt    string         `json:"prompt"`
 }
 
+type promptShowNotBuiltResponse struct {
+	RunID            string `json:"run_id"`
+	RunStatus        string `json:"run_status"`
+	Ready            bool   `json:"ready"`
+	Message          string `json:"message"`
+	SuggestedCommand string `json:"suggested_command"`
+}
+
 func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error {
 	context, ok, err := a.loadContractContext(stdout, runID, jsonOutput)
 	if err != nil || !ok {
@@ -136,6 +144,16 @@ func (a App) PromptShow(stdout io.Writer, runID string, jsonOutput bool) error {
 		return err
 	}
 	if !isRegularFile(context.RunPaths.PromptManifest) {
+		message := "Executor prompt has not been built. Run: pactum prompt build " + runID
+		if jsonOutput {
+			return writeJSONResponse(stdout, promptShowNotBuiltResponse{
+				RunID:            runID,
+				RunStatus:        context.State.Status,
+				Ready:            false,
+				Message:          message,
+				SuggestedCommand: "pactum prompt build " + runID,
+			})
+		}
 		fmt.Fprintf(stdout, "Executor prompt has not been built. Run: pactum prompt build %s\n", runID)
 		return nil
 	}

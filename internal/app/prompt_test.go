@@ -225,6 +225,25 @@ func TestPromptShowBeforeBuildPrintsGuidance(t *testing.T) {
 	}
 }
 
+func TestPromptShowBeforeBuildJSONOutput(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"prompt", "show", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("prompt show --json before build exited %d, stderr: %s", code, stderr.String())
+	}
+	var response promptShowNotBuiltResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.RunID != runID || response.RunStatus == "" || response.Ready {
+		t.Fatalf("unexpected prompt show before build json: %#v", response)
+	}
+	if !strings.Contains(response.Message, "Executor prompt has not been built") || response.SuggestedCommand != "pactum prompt build "+runID {
+		t.Fatalf("unexpected prompt show before build guidance: %#v", response)
+	}
+}
+
 func TestPromptShowAfterBuildPrintsPrompt(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupApprovedAndBuiltPrompt(t, root)
