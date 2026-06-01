@@ -32,13 +32,15 @@ type contractRunState struct {
 }
 
 type contractRunArtifacts struct {
-	Task          string `json:"task"`
-	RepoContext   string `json:"repo_context"`
-	SearchResults string `json:"search_results"`
-	ContractJSON  string `json:"contract_json"`
-	ContractMD    string `json:"contract_md"`
-	Prompt        string `json:"prompt"`
-	Approval      string `json:"approval"`
+	Task            string `json:"task"`
+	RepoContext     string `json:"repo_context"`
+	SearchResults   string `json:"search_results"`
+	ExecutorContext string `json:"executor_context"`
+	ContractJSON    string `json:"contract_json"`
+	ContractMD      string `json:"contract_md"`
+	Prompt          string `json:"prompt"`
+	PromptManifest  string `json:"prompt_manifest"`
+	Approval        string `json:"approval"`
 }
 
 type runSearchResults struct {
@@ -145,13 +147,15 @@ func (a App) createContractOnlyRun(root string, task string) (contractRunState, 
 		Workspace: artifacts.WorkspaceRel,
 		MapRunID:  report.ProjectMap.RunID,
 		Artifacts: contractRunArtifacts{
-			Task:          "task.md",
-			RepoContext:   "context/repo-context.md",
-			SearchResults: "context/search-results.json",
-			ContractJSON:  "contract/contract.json",
-			ContractMD:    "contract/contract.md",
-			Prompt:        "contract/prompt.md",
-			Approval:      "contract/approval.json",
+			Task:            "task.md",
+			RepoContext:     "context/repo-context.md",
+			SearchResults:   "context/search-results.json",
+			ExecutorContext: "context/executor-context.md",
+			ContractJSON:    "contract/contract.json",
+			ContractMD:      "contract/contract.md",
+			Prompt:          "contract/prompt.md",
+			PromptManifest:  "contract/prompt-manifest.json",
+			Approval:        "contract/approval.json",
 		},
 	}
 
@@ -202,14 +206,17 @@ type contractRunPathSet struct {
 	RepoContext   string
 	SearchResults string
 
+	ExecutorContext string
+
 	QuestionsJSONL string
 	AnswersJSONL   string
 	DecisionsJSONL string
 
-	ContractJSON string
-	ContractMD   string
-	PromptMD     string
-	ApprovalJSON string
+	ContractJSON   string
+	ContractMD     string
+	PromptMD       string
+	PromptManifest string
+	ApprovalJSON   string
 }
 
 func contractRunPaths(runDir string) contractRunPathSet {
@@ -217,24 +224,26 @@ func contractRunPaths(runDir string) contractRunPathSet {
 	clarifyDir := filepath.Join(runDir, "clarify")
 	contractDir := filepath.Join(runDir, "contract")
 	return contractRunPathSet{
-		ContextDir:     contextDir,
-		ClarifyDir:     clarifyDir,
-		ContractDir:    contractDir,
-		ExecuteDir:     filepath.Join(runDir, "execute"),
-		ReviewDir:      filepath.Join(runDir, "review"),
-		MemoryDir:      filepath.Join(runDir, "memory"),
-		LedgerDir:      filepath.Join(runDir, "ledger"),
-		RunJSON:        filepath.Join(runDir, "run.json"),
-		TaskMD:         filepath.Join(runDir, "task.md"),
-		RepoContext:    filepath.Join(contextDir, "repo-context.md"),
-		SearchResults:  filepath.Join(contextDir, "search-results.json"),
-		QuestionsJSONL: filepath.Join(clarifyDir, "questions.jsonl"),
-		AnswersJSONL:   filepath.Join(clarifyDir, "answers.jsonl"),
-		DecisionsJSONL: filepath.Join(clarifyDir, "decisions.jsonl"),
-		ContractJSON:   filepath.Join(contractDir, "contract.json"),
-		ContractMD:     filepath.Join(contractDir, "contract.md"),
-		PromptMD:       filepath.Join(contractDir, "prompt.md"),
-		ApprovalJSON:   filepath.Join(contractDir, "approval.json"),
+		ContextDir:      contextDir,
+		ClarifyDir:      clarifyDir,
+		ContractDir:     contractDir,
+		ExecuteDir:      filepath.Join(runDir, "execute"),
+		ReviewDir:       filepath.Join(runDir, "review"),
+		MemoryDir:       filepath.Join(runDir, "memory"),
+		LedgerDir:       filepath.Join(runDir, "ledger"),
+		RunJSON:         filepath.Join(runDir, "run.json"),
+		TaskMD:          filepath.Join(runDir, "task.md"),
+		RepoContext:     filepath.Join(contextDir, "repo-context.md"),
+		SearchResults:   filepath.Join(contextDir, "search-results.json"),
+		ExecutorContext: filepath.Join(contextDir, "executor-context.md"),
+		QuestionsJSONL:  filepath.Join(clarifyDir, "questions.jsonl"),
+		AnswersJSONL:    filepath.Join(clarifyDir, "answers.jsonl"),
+		DecisionsJSONL:  filepath.Join(clarifyDir, "decisions.jsonl"),
+		ContractJSON:    filepath.Join(contractDir, "contract.json"),
+		ContractMD:      filepath.Join(contractDir, "contract.md"),
+		PromptMD:        filepath.Join(contractDir, "prompt.md"),
+		PromptManifest:  filepath.Join(contractDir, "prompt-manifest.json"),
+		ApprovalJSON:    filepath.Join(contractDir, "approval.json"),
 	}
 }
 

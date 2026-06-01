@@ -312,6 +312,9 @@ func resetApprovalIfApproved(paths artifacts.Paths, runPaths contractRunPathSet,
 	if err := writeJSON(runPaths.ApprovalJSON, pending); err != nil {
 		return approvalState{}, false, err
 	}
+	if err := removePromptReadinessArtifacts(runPaths); err != nil {
+		return approvalState{}, false, err
+	}
 	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "contract_approval_reset", Timestamp: resetAt, RunID: runID, RepoRoot: root}); err != nil {
 		return approvalState{}, false, err
 	}
