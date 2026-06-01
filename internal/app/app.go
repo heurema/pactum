@@ -35,6 +35,7 @@ type cli struct {
 	Init     initCmd     `cmd:"" help:"Create a Pactum workspace and project map."`
 	Map      mapCmd      `cmd:"" help:"Advanced project map commands."`
 	Prompt   promptCmd   `cmd:"" help:"Build and inspect executor prompt boundaries."`
+	Review   reviewCmd   `cmd:"" help:"Manage manual review artifacts."`
 	Run      runCmd      `cmd:"" help:"Create a Pactum run workspace."`
 	Search   searchCmd   `cmd:"" help:"Search the Pactum project map."`
 	Status   statusCmd   `cmd:"" help:"Print Pactum workspace status."`
@@ -94,6 +95,15 @@ type executeCmd struct {
 type gateCmd struct {
 	Run  gateRunCmd  `cmd:"run" help:"Run deterministic validation and scope checks."`
 	Show gateShowCmd `cmd:"show" help:"Show the latest gate report."`
+}
+
+type reviewCmd struct {
+	Prepare    reviewPrepareCmd    `cmd:"" help:"Prepare manual review artifacts."`
+	Status     reviewStatusCmd     `cmd:"" help:"Show manual review status."`
+	Show       reviewShowCmd       `cmd:"" help:"Show manual review findings."`
+	AddFinding reviewAddFindingCmd `cmd:"add-finding" help:"Append a manual review finding."`
+	Resolve    reviewResolveCmd    `cmd:"" help:"Resolve a manual review finding."`
+	Approve    reviewApproveCmd    `cmd:"" help:"Approve a manual review."`
 }
 
 type agentsCmd struct {
@@ -166,6 +176,45 @@ type gateRunCmd struct {
 
 type gateShowCmd struct {
 	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type reviewPrepareCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to review."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type reviewStatusCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type reviewShowCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type reviewAddFindingCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to review."`
+	Message    string `arg:"" name:"message" help:"Finding message."`
+	Severity   string `name:"severity" default:"medium" enum:"low,medium,high,critical" help:"Finding severity."`
+	Category   string `name:"category" default:"other" enum:"correctness,scope,quality,validation,process,other" help:"Finding category."`
+	File       string `name:"file" help:"Repo-relative file path."`
+	Line       int    `name:"line" help:"Optional line number."`
+	Blocking   bool   `name:"blocking" help:"Block review approval until resolved."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type reviewResolveCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to review."`
+	FindingID  string `arg:"" name:"finding_id" help:"Finding id to resolve."`
+	Note       string `name:"note" help:"Resolution note."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type reviewApproveCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to review."`
+	By         string `name:"by" default:"manual" help:"Approver name to record."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -386,6 +435,38 @@ func (c *gateRunCmd) Run(r *runner) error {
 
 func (c *gateShowCmd) Run(r *runner) error {
 	return r.App.GateShow(r.Stdout, c.RunID, c.JSONOutput)
+}
+
+func (c *reviewPrepareCmd) Run(r *runner) error {
+	return r.App.ReviewPrepare(r.Stdout, c.RunID, c.JSONOutput)
+}
+
+func (c *reviewStatusCmd) Run(r *runner) error {
+	return r.App.ReviewStatus(r.Stdout, c.RunID, c.JSONOutput)
+}
+
+func (c *reviewShowCmd) Run(r *runner) error {
+	return r.App.ReviewShow(r.Stdout, c.RunID, c.JSONOutput)
+}
+
+func (c *reviewAddFindingCmd) Run(r *runner) error {
+	finding := reviewFindingInput{
+		Message:  c.Message,
+		Severity: c.Severity,
+		Category: c.Category,
+		File:     c.File,
+		Line:     c.Line,
+		Blocking: c.Blocking,
+	}
+	return r.App.ReviewAddFinding(r.Stdout, c.RunID, finding, c.JSONOutput)
+}
+
+func (c *reviewResolveCmd) Run(r *runner) error {
+	return r.App.ReviewResolve(r.Stdout, c.RunID, c.FindingID, c.Note, c.JSONOutput)
+}
+
+func (c *reviewApproveCmd) Run(r *runner) error {
+	return r.App.ReviewApprove(r.Stdout, c.RunID, c.By, c.JSONOutput)
 }
 
 func (c *agentsDoctorCmd) Run(r *runner) error {
