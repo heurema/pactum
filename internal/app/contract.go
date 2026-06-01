@@ -146,6 +146,12 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 	}
 
 	now := a.nowUTC()
+	contract := context.Contract
+	applyClarificationStatusToContract(&contract, status)
+	contract.Status = "approved"
+	if err := writeContractArtifacts(context.RunPaths, contract, context.State.MapRunID); err != nil {
+		return err
+	}
 	hash, err := fileSHA256(context.RunPaths.ContractJSON)
 	if err != nil {
 		return err

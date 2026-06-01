@@ -1209,6 +1209,13 @@ func TestContractApproveSucceedsWithoutBlockingQuestions(t *testing.T) {
 	if state.Status != "contract_approved" {
 		t.Fatalf("run status = %q, want contract_approved", state.Status)
 	}
+	contract := readContractDraft(t, runPaths.ContractJSON)
+	if contract.Status != "approved" {
+		t.Fatalf("contract status = %q, want approved", contract.Status)
+	}
+	if got := mustReadFile(t, runPaths.ContractMD); !strings.Contains(got, "Contract status: approved") || strings.Contains(got, "Contract status: draft") {
+		t.Fatalf("contract.md should show approved status:\n%s", got)
+	}
 	approval := readApproval(t, runPaths.ApprovalJSON)
 	if approval.Schema != approvalSchema || approval.Status != "approved" || approval.ApprovedAt == nil || *approval.ApprovedAt != "2026-05-31T18:40:12Z" || approval.ApprovedBy == nil || *approval.ApprovedBy != "manual" || approval.ContractSHA256 == nil || *approval.ContractSHA256 == "" {
 		t.Fatalf("unexpected approval: %#v", approval)
@@ -1220,6 +1227,15 @@ func TestContractApproveSucceedsWithoutBlockingQuestions(t *testing.T) {
 	}
 	if events := strings.Join(readLines(t, paths.EventsJSONL), "\n"); !strings.Contains(events, "contract_approved") {
 		t.Fatalf("events missing contract_approved:\n%s", events)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"contract", "show", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract show after approve exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "Contract status: approved") || strings.Contains(got, "Contract status: draft") {
+		t.Fatalf("contract show should render approved status:\n%s", got)
 	}
 }
 
@@ -1307,7 +1323,7 @@ func TestContractApproveAllowsNonBlockingOpenClarification(t *testing.T) {
 	if state := readRunState(t, runPaths.RunJSON); state.Status != "contract_approved" {
 		t.Fatalf("run status = %q, want contract_approved", state.Status)
 	}
-	if contract := readContractDraft(t, runPaths.ContractJSON); len(contract.OpenQuestions) != 1 || contract.OpenQuestions[0] != "Optional context?" {
+	if contract := readContractDraft(t, runPaths.ContractJSON); contract.Status != "approved" || len(contract.OpenQuestions) != 1 || contract.OpenQuestions[0] != "Optional context?" {
 		t.Fatalf("contract should retain non-blocking open question: %#v", contract.OpenQuestions)
 	}
 }
@@ -1336,6 +1352,9 @@ func TestContractReviseApprovedContractResetsApproval(t *testing.T) {
 	}
 	if approval := readApproval(t, runPaths.ApprovalJSON); approval.Status != "pending" || approval.ContractSHA256 != nil || approval.ApprovedBy != nil || approval.ApprovedAt != nil {
 		t.Fatalf("approval should reset to pending: %#v", approval)
+	}
+	if contract := readContractDraft(t, runPaths.ContractJSON); contract.Status != "draft" {
+		t.Fatalf("contract status = %q, want draft after revision", contract.Status)
 	}
 	events := strings.Join(readLines(t, paths.EventsJSONL), "\n")
 	for _, want := range []string{"contract_approved", "contract_approval_reset", "contract_revised"} {
@@ -1366,6 +1385,9 @@ func TestClarifyAfterApprovedContractResetsApproval(t *testing.T) {
 	}
 	if approval := readApproval(t, runPaths.ApprovalJSON); approval.Status != "pending" || approval.ContractSHA256 != nil {
 		t.Fatalf("approval should reset after clarification: %#v", approval)
+	}
+	if contract := readContractDraft(t, runPaths.ContractJSON); contract.Status != "draft" {
+		t.Fatalf("contract status = %q, want draft after clarification", contract.Status)
 	}
 	if events := strings.Join(readLines(t, paths.EventsJSONL), "\n"); !strings.Contains(events, "contract_approval_reset") {
 		t.Fatalf("events missing contract_approval_reset:\n%s", events)
