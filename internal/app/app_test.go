@@ -3,9 +3,11 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -79,6 +81,30 @@ func helper() {}
 	if _, err := os.Stat(filepath.Join(paths.MapDir, "entries.jsonl")); !os.IsNotExist(err) {
 		t.Fatalf("entries.jsonl should not be generated as a primary artifact")
 	}
+	gitignore := mustReadFile(t, paths.Gitignore)
+	for _, want := range []string{
+		"map/",
+		"ledger/",
+		"cache/",
+		"tmp/",
+		"runs/*/ledger/",
+		"runs/*/execute/",
+		"runs/*/review/",
+	} {
+		if !strings.Contains(gitignore, want) {
+			t.Fatalf(".gitignore missing %q:\n%s", want, gitignore)
+		}
+	}
+	for _, forbidden := range []string{"runs/*/task.md", "runs/*/context/", "runs/*/contract/", "runs/*/memory/", "contract/*.md", "contract/*.json"} {
+		if strings.Contains(gitignore, forbidden) {
+			t.Fatalf(".gitignore should not ignore %q:\n%s", forbidden, gitignore)
+		}
+	}
+	workspaceManifest, err := readWorkspaceManifest(paths.Manifest)
+	assertNoError(t, err)
+	if workspaceManifest.RepoRoot != "." {
+		t.Fatalf("workspace manifest repo_root = %q, want .", workspaceManifest.RepoRoot)
+	}
 
 	files := readFileRecords(t, paths.FilesJSONL)
 	seen := map[string]bool{}
@@ -116,6 +142,7 @@ func helper() {}
 	repoMap := mustReadFile(t, paths.RepoMap)
 	for _, want := range []string{
 		"# Pactum Project Map",
+		"Repository root: `.`",
 		"## Summary",
 		"Code items:",
 		"## Code surface",
@@ -159,6 +186,9 @@ func helper() {}
 	}
 	manifest, err := readMapManifest(paths.MapManifest)
 	assertNoError(t, err)
+	if manifest.RepoRoot != "." {
+		t.Fatalf("map manifest repo_root = %q, want .", manifest.RepoRoot)
+	}
 	if manifest.Artifacts["code_items"] != "map/code-items.jsonl" {
 		t.Fatalf("manifest code_items artifact = %q", manifest.Artifacts["code_items"])
 	}
@@ -473,6 +503,473 @@ func TestStatusJSONOutput(t *testing.T) {
 	}
 }
 
+func TestRunBeforeInitPrintsGuidance(t *testing.T) {
+	root := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"run", "add sqlite cache", "--contract-only"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run before init exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
+		t.Fatalf("run before init output mismatch:\n%s", got)
+	}
+}
+
+func TestRunWithoutContractOnlyPrintsGuidance(t *testing.T) {
+	root := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"run", "add sqlite cache"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run without --contract-only exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "Execution is not implemented yet. Use --contract-only.") {
+		t.Fatalf("run without --contract-only output mismatch:\n%s", got)
+	}
+}
+
+func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
+	root := t.TempDir()
+	task := "add sqlite cache"
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+
+	var stdout, stderr bytes.Buffer
+	app := testApp(root)
+	code := app.Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"run", task, "--contract-only"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run --contract-only exited %d, stderr: %s", code, stderr.String())
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"Run created",
+		"id: run_20260531_184012",
+		"status: contract_draft",
+		"task: add sqlite cache",
+		"task: .heurema/pactum/runs/run_20260531_184012/task.md",
+		"context: .heurema/pactum/runs/run_20260531_184012/context/repo-context.md",
+		"contract: .heurema/pactum/runs/run_20260531_184012/contract/contract.md",
+		"Review the generated contract draft.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("run output missing %q:\n%s", want, got)
+		}
+	}
+
+	paths := artifacts.New(root)
+	runDir := filepath.Join(paths.RunsDir, "run_20260531_184012")
+	for _, dir := range []string{
+		runDir,
+		filepath.Join(runDir, "context"),
+		filepath.Join(runDir, "clarify"),
+		filepath.Join(runDir, "contract"),
+		filepath.Join(runDir, "execute"),
+		filepath.Join(runDir, "review"),
+		filepath.Join(runDir, "memory"),
+		filepath.Join(runDir, "ledger"),
+	} {
+		assertDir(t, dir)
+	}
+	for _, file := range []string{
+		filepath.Join(runDir, "run.json"),
+		filepath.Join(runDir, "task.md"),
+		filepath.Join(runDir, "context", "repo-context.md"),
+		filepath.Join(runDir, "context", "search-results.json"),
+		filepath.Join(runDir, "clarify", "questions.jsonl"),
+		filepath.Join(runDir, "clarify", "answers.jsonl"),
+		filepath.Join(runDir, "clarify", "decisions.jsonl"),
+		filepath.Join(runDir, "contract", "contract.json"),
+		filepath.Join(runDir, "contract", "contract.md"),
+		filepath.Join(runDir, "contract", "prompt.md"),
+		filepath.Join(runDir, "contract", "approval.json"),
+	} {
+		assertFile(t, file)
+	}
+
+	var state contractRunState
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, filepath.Join(runDir, "run.json"))), &state))
+	if state.Schema != "pactum.run.v1" || state.RunID != "run_20260531_184012" || state.Status != "contract_draft" {
+		t.Fatalf("unexpected run state: %#v", state)
+	}
+	if state.Task != task || state.RepoRoot != "." || state.Workspace != artifacts.WorkspaceRel || state.MapRunID != "map_20260531_184012" {
+		t.Fatalf("run state has unexpected task/root/workspace/map: %#v", state)
+	}
+	if state.Artifacts.ContractJSON != "contract/contract.json" || state.Artifacts.SearchResults != "context/search-results.json" {
+		t.Fatalf("run state artifacts mismatch: %#v", state.Artifacts)
+	}
+
+	taskMD := mustReadFile(t, filepath.Join(runDir, "task.md"))
+	if !strings.Contains(taskMD, "# Task") || !strings.Contains(taskMD, task) || !strings.Contains(taskMD, "Generated: 2026-05-31T18:40:12Z") {
+		t.Fatalf("task.md content mismatch:\n%s", taskMD)
+	}
+	repoContext := mustReadFile(t, filepath.Join(runDir, "context", "repo-context.md"))
+	for _, want := range []string{
+		"Map run: map_20260531_184012",
+		"Repo map path: .heurema/pactum/map/repo-map.md",
+		"LLMS path: .heurema/pactum/map/llms.txt",
+		"Search index path: .heurema/pactum/map/search.sqlite",
+		"Pactum has not yet done agentic clarification.",
+		"deterministic context",
+		"# Pactum Project Map",
+		"Repository root: `.`",
+	} {
+		if !strings.Contains(repoContext, want) {
+			t.Fatalf("repo-context.md missing %q:\n%s", want, repoContext)
+		}
+	}
+
+	var searchResults runSearchResults
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, filepath.Join(runDir, "context", "search-results.json"))), &searchResults))
+	if searchResults.Query != task || searchResults.Results == nil {
+		t.Fatalf("unexpected search-results.json: %#v", searchResults)
+	}
+
+	var contract draftContract
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, filepath.Join(runDir, "contract", "contract.json"))), &contract))
+	if contract.Schema != "pactum.contract.v1" || contract.RunID != "run_20260531_184012" || contract.Goal != task {
+		t.Fatalf("unexpected contract.json: %#v", contract)
+	}
+	if len(contract.Scope.In) != 0 || len(contract.Scope.Out) != 0 || len(contract.AcceptanceCriteria) != 0 || len(contract.Validation.Commands) != 0 {
+		t.Fatalf("contract draft should keep empty deterministic sections: %#v", contract)
+	}
+	contractMD := mustReadFile(t, filepath.Join(runDir, "contract", "contract.md"))
+	if !strings.Contains(contractMD, "## Goal\n"+task) ||
+		!strings.Contains(contractMD, "Repo map: .heurema/pactum/map/repo-map.md") ||
+		!strings.Contains(contractMD, "Search results: context/search-results.json") ||
+		!strings.Contains(contractMD, "Clarification loop is not implemented yet.") {
+		t.Fatalf("contract.md content mismatch:\n%s", contractMD)
+	}
+	promptMD := mustReadFile(t, filepath.Join(runDir, "contract", "prompt.md"))
+	if !strings.Contains(promptMD, "This prompt is not executable yet.") || !strings.Contains(promptMD, task) {
+		t.Fatalf("prompt.md content mismatch:\n%s", promptMD)
+	}
+	var approval approvalState
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, filepath.Join(runDir, "contract", "approval.json"))), &approval))
+	if approval.Status != "pending" || approval.ApprovedAt != nil || approval.ApprovedBy != nil {
+		t.Fatalf("unexpected approval.json: %#v", approval)
+	}
+
+	events := readLines(t, paths.EventsJSONL)
+	if len(events) != 8 {
+		t.Fatalf("events line count = %d, want 8: %v", len(events), events)
+	}
+	for i, want := range []string{"run_created", "contract_draft_created"} {
+		event := events[len(events)-2+i]
+		if !strings.Contains(event, want) || !strings.Contains(event, "run_20260531_184012") || !strings.Contains(event, root) {
+			t.Fatalf("event %d = %s, want %s with run/root", len(events)-2+i, event, want)
+		}
+	}
+}
+
+func TestRunContractOnlyArtifactsUseRepoRelativePaths(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "task.md"), "# Task\n\ncontract task notes\n")
+
+	var stdout, stderr bytes.Buffer
+	app := testApp(root)
+	code := app.Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"run", "task", "--contract-only"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run --contract-only exited %d, stderr: %s", code, stderr.String())
+	}
+
+	paths := artifacts.New(root)
+	runDir := filepath.Join(paths.RunsDir, "run_20260531_184012")
+	workspaceManifest := mustReadFile(t, paths.Manifest)
+	mapManifest := mustReadFile(t, paths.MapManifest)
+	repoMap := mustReadFile(t, paths.RepoMap)
+	mapRun := mustReadFile(t, filepath.Join(paths.MapRunsDir, "map_20260531_184012.json"))
+	runJSON := mustReadFile(t, filepath.Join(runDir, "run.json"))
+	repoContext := mustReadFile(t, filepath.Join(runDir, "context", "repo-context.md"))
+	contractMD := mustReadFile(t, filepath.Join(runDir, "contract", "contract.md"))
+	searchResults := mustReadFile(t, filepath.Join(runDir, "context", "search-results.json"))
+
+	for name, content := range map[string]string{
+		"manifest.json":       workspaceManifest,
+		"map/manifest.json":   mapManifest,
+		"map/repo-map.md":     repoMap,
+		"map/runs/run.json":   mapRun,
+		"run.json":            runJSON,
+		"repo-context.md":     repoContext,
+		"contract.md":         contractMD,
+		"search-results.json": searchResults,
+	} {
+		assertDoesNotContainRoot(t, name, content, root)
+	}
+
+	for name, content := range map[string]string{
+		"manifest.json":     workspaceManifest,
+		"map/manifest.json": mapManifest,
+		"map/runs/run.json": mapRun,
+	} {
+		if !strings.Contains(content, `"repo_root": "."`) {
+			t.Fatalf("%s missing portable repo_root:\n%s", name, content)
+		}
+	}
+	if !strings.Contains(repoMap, "Repository root: `.`") {
+		t.Fatalf("repo-map.md missing portable repository root:\n%s", repoMap)
+	}
+	for _, want := range []string{
+		`"repo_root": "."`,
+		`"workspace": ".heurema/pactum"`,
+		`"task": "task.md"`,
+		`"repo_context": "context/repo-context.md"`,
+		`"contract_json": "contract/contract.json"`,
+	} {
+		if !strings.Contains(runJSON, want) {
+			t.Fatalf("run.json missing portable path %q:\n%s", want, runJSON)
+		}
+	}
+	for _, want := range []string{
+		"Repo map path: .heurema/pactum/map/repo-map.md",
+		"LLMS path: .heurema/pactum/map/llms.txt",
+		"Search index path: .heurema/pactum/map/search.sqlite",
+		"Repository root: `.`",
+	} {
+		if !strings.Contains(repoContext, want) {
+			t.Fatalf("repo-context.md missing repo-relative path %q:\n%s", want, repoContext)
+		}
+	}
+	for _, want := range []string{
+		"Repo map: .heurema/pactum/map/repo-map.md",
+		"Search results: context/search-results.json",
+	} {
+		if !strings.Contains(contractMD, want) {
+			t.Fatalf("contract.md missing repo-relative path %q:\n%s", want, contractMD)
+		}
+	}
+	if !strings.Contains(searchResults, `"path": "task.md"`) {
+		t.Fatalf("search-results.json should contain repo-relative result path:\n%s", searchResults)
+	}
+}
+
+func TestRunContractOnlySearchResultsWarnWhenIndexMissing(t *testing.T) {
+	root := t.TempDir()
+	task := "add sqlite cache"
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+
+	var stdout, stderr bytes.Buffer
+	app := testApp(root)
+	code := app.Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+	paths := artifacts.New(root)
+	assertNoError(t, os.Remove(paths.SearchSQLite))
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"run", task, "--contract-only"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run --contract-only exited %d, stderr: %s", code, stderr.String())
+	}
+
+	var searchResults runSearchResults
+	runDir := filepath.Join(paths.RunsDir, "run_20260531_184012")
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, filepath.Join(runDir, "context", "search-results.json"))), &searchResults))
+	if searchResults.Query != task || len(searchResults.Results) != 0 {
+		t.Fatalf("unexpected search results for missing index: %#v", searchResults)
+	}
+	if len(searchResults.Warnings) != 1 || !strings.Contains(searchResults.Warnings[0], "Search index is stale") {
+		t.Fatalf("missing stale search warning: %#v", searchResults)
+	}
+}
+
+func TestRunContractOnlyJSONOutput(t *testing.T) {
+	root := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	app := testApp(root)
+	code := app.Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"run", "add sqlite cache", "--contract-only", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run --contract-only --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var state contractRunState
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &state))
+	if state.RunID != "run_20260531_184012" || state.Status != "contract_draft" || state.Task != "add sqlite cache" {
+		t.Fatalf("unexpected run json output: %#v", state)
+	}
+	if state.RepoRoot != "." || state.Workspace != artifacts.WorkspaceRel {
+		t.Fatalf("run json should use portable paths: %#v", state)
+	}
+	if strings.Contains(stdout.String(), "Run created") {
+		t.Fatalf("json output should not include human output:\n%s", stdout.String())
+	}
+}
+
+func TestRunIDsAreCollisionSafeWithFixedTimestamp(t *testing.T) {
+	root := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	app := testApp(root)
+	code := app.Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"run", "first task", "--contract-only"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("first run exited %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"run", "second task", "--contract-only"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("second run exited %d, stderr: %s", code, stderr.String())
+	}
+
+	paths := artifacts.New(root)
+	for _, runID := range []string{"run_20260531_184012", "run_20260531_184012_02"} {
+		assertDir(t, filepath.Join(paths.RunsDir, runID))
+		assertFile(t, filepath.Join(paths.RunsDir, runID, "run.json"))
+	}
+	var second contractRunState
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, filepath.Join(paths.RunsDir, "run_20260531_184012_02", "run.json"))), &second))
+	if second.RunID != "run_20260531_184012_02" || second.Task != "second task" {
+		t.Fatalf("unexpected second run state: %#v", second)
+	}
+}
+
+func TestRunContractOnlyConcurrentRunsUseDistinctDirectories(t *testing.T) {
+	root := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	app := testApp(root)
+	code := app.Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	const runCount = 2
+	var wg sync.WaitGroup
+	errs := make(chan string, runCount)
+	for i := range runCount {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			var stdout, stderr bytes.Buffer
+			code := app.Run([]string{"run", fmt.Sprintf("task %d", i), "--contract-only"}, &stdout, &stderr)
+			if code != 0 {
+				errs <- fmt.Sprintf("run %d exited %d, stderr: %s", i, code, stderr.String())
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+
+	paths := artifacts.New(root)
+	for _, runID := range []string{"run_20260531_184012", "run_20260531_184012_02"} {
+		runDir := filepath.Join(paths.RunsDir, runID)
+		assertDir(t, runDir)
+		assertFile(t, filepath.Join(runDir, "run.json"))
+
+		var state contractRunState
+		assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, filepath.Join(runDir, "run.json"))), &state))
+		if state.RunID != runID {
+			t.Fatalf("run.json in %s has run_id %q", runDir, state.RunID)
+		}
+	}
+}
+
+func TestStatusActiveRunsCountIncreasesAfterContractOnlyRun(t *testing.T) {
+	root := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	app := testApp(root)
+	code := app.Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"status"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("status before run exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "active: 0") {
+		t.Fatalf("status before run should report active 0:\n%s", got)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"run", "add sqlite cache", "--contract-only"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run --contract-only exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"status"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("status after run exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "active: 1") {
+		t.Fatalf("status after run should report active 1:\n%s", got)
+	}
+}
+
+func TestStatusJSONIncludesActiveRunCount(t *testing.T) {
+	root := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	app := testApp(root)
+	code := app.Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"run", "add sqlite cache", "--contract-only"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run --contract-only exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"status", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("status --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var status statusResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &status))
+	if status.Runs.Active != 1 {
+		t.Fatalf("status --json runs.active = %d, want 1: %#v", status.Runs.Active, status)
+	}
+}
+
 func TestMapRefreshJSONOutput(t *testing.T) {
 	root := t.TempDir()
 	app := testAppSequence(root)
@@ -492,7 +989,7 @@ func TestMapRefreshJSONOutput(t *testing.T) {
 	}
 	var result MapRefreshResult
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &result))
-	if result.RunID == "" || result.RepoRoot != root || result.SearchIndex != "ready" || result.FilesIndexed == 0 {
+	if result.RunID == "" || result.RepoRoot != "." || result.SearchIndex != "ready" || result.FilesIndexed == 0 {
 		t.Fatalf("unexpected map refresh --json result: %#v", result)
 	}
 }
@@ -546,8 +1043,8 @@ func TestMapRefreshRunIDsAreCollisionSafe(t *testing.T) {
 	if secondRun.RunID != secondRunID {
 		t.Fatalf("run artifact run_id = %q, want %q", secondRun.RunID, secondRunID)
 	}
-	if secondRun.RepoRoot != root {
-		t.Fatalf("run artifact repo_root = %q, want %q", secondRun.RepoRoot, root)
+	if secondRun.RepoRoot != "." {
+		t.Fatalf("run artifact repo_root = %q, want .", secondRun.RepoRoot)
 	}
 	if secondRun.FilesIgnored == 0 {
 		t.Fatalf("run artifact files_ignored = 0, want non-zero")
@@ -951,6 +1448,19 @@ func assertFile(t *testing.T, path string) {
 	assertNoError(t, err)
 	if !info.Mode().IsRegular() {
 		t.Fatalf("%s is not a regular file", path)
+	}
+}
+
+func assertDoesNotContainRoot(t *testing.T, name string, content string, root string) {
+	t.Helper()
+	for _, forbidden := range []string{
+		root,
+		filepath.ToSlash(root),
+		strings.ReplaceAll(root, `\`, `\\`),
+	} {
+		if forbidden != "" && strings.Contains(content, forbidden) {
+			t.Fatalf("%s contains absolute repo root %q:\n%s", name, forbidden, content)
+		}
 	}
 }
 

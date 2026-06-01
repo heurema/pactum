@@ -78,16 +78,64 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 	if err != nil {
 		return statusResponse{}, err
 	}
+	activeRuns, err := countActiveRuns(paths)
+	if err != nil {
+		return statusResponse{}, err
+	}
 
 	return statusResponse{
 		Initialized: true,
-		RepoRoot:    manifest.RepoRoot,
+		RepoRoot:    root,
 		Workspace:   paths.Workspace,
 		ProjectMap:  mapStatus,
-		Runs:        runsStatus{Active: 0},
+		Runs:        runsStatus{Active: activeRuns},
 		Memory:      memoryStatus{Items: 0, Stale: 0},
 		Usage:       usageStatus{TotalTokens: 0, EstimatedCostUSD: 0},
 	}, nil
+}
+
+func countActiveRuns(paths artifacts.Paths) (int, error) {
+	entries, err := os.ReadDir(paths.RunsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	active := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		runPath := filepath.Join(paths.RunsDir, entry.Name(), "run.json")
+		data, err := os.ReadFile(runPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return 0, err
+		}
+		var state struct {
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(data, &state); err != nil {
+			return 0, err
+		}
+		if !isTerminalRunStatus(state.Status) {
+			active++
+		}
+	}
+	return active, nil
+}
+
+func isTerminalRunStatus(status string) bool {
+	switch status {
+	case "completed", "cancelled", "failed":
+		return true
+	default:
+		return false
+	}
 }
 
 func inspectProjectMap(root string, paths artifacts.Paths, config configFile, configHash string, currentRunID string) (projectMapStatus, error) {
