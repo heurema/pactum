@@ -75,9 +75,11 @@ type draftMemoryContext struct {
 }
 
 type approvalState struct {
-	Status     string  `json:"status"`
-	ApprovedAt *string `json:"approved_at"`
-	ApprovedBy *string `json:"approved_by"`
+	Schema         string  `json:"schema"`
+	Status         string  `json:"status"`
+	ApprovedAt     *string `json:"approved_at"`
+	ApprovedBy     *string `json:"approved_by"`
+	ContractSHA256 *string `json:"contract_sha256"`
 }
 
 func (a App) RunContract(stdout io.Writer, task string, contractOnly bool, jsonOutput bool) error {
@@ -154,18 +156,19 @@ func (a App) createContractOnlyRun(root string, task string) (contractRunState, 
 	}
 
 	searchResults := buildRunSearchResults(paths, report.ProjectMap, task)
+	contract := draftContractFor(runID, task)
 	files := map[string][]byte{
 		runPaths.TaskMD:         renderTaskMD(task, createdAt),
 		runPaths.RepoContext:    renderRepoContext(root, paths, report.ProjectMap.RunID, createdAt),
-		runPaths.ContractMD:     renderContractMD(task, report.ProjectMap.RunID, len(searchResults.Results)),
-		runPaths.PromptMD:       renderPromptMD(task),
+		runPaths.ContractMD:     renderContractMDFromDraft(contract, report.ProjectMap.RunID, len(searchResults.Results)),
+		runPaths.PromptMD:       renderPromptMDFromDraft(contract),
 		runPaths.QuestionsJSONL: nil,
 		runPaths.AnswersJSONL:   nil,
 		runPaths.DecisionsJSONL: nil,
 	}
 	files[runPaths.SearchResults] = mustMarshalJSON(searchResults)
-	files[runPaths.ContractJSON] = mustMarshalJSON(draftContractFor(runID, task))
-	files[runPaths.ApprovalJSON] = mustMarshalJSON(approvalState{Status: "pending"})
+	files[runPaths.ContractJSON] = mustMarshalJSON(contract)
+	files[runPaths.ApprovalJSON] = mustMarshalJSON(pendingApprovalState())
 	files[runPaths.RunJSON] = mustMarshalJSON(state)
 
 	for _, path := range sortedKeys(files) {
@@ -378,19 +381,21 @@ func renderContractMDFromDraft(contract draftContract, mapRunID string, searchRe
 	fmt.Fprintln(&buffer, "# Contract Draft")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Goal")
-	fmt.Fprintln(&buffer, contract.Goal)
+	writeMarkdownValue(&buffer, contract.Goal)
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Current status")
-	fmt.Fprintln(&buffer, "Draft only. Manual clarification is available; approval and agent execution are not implemented yet.")
+	fmt.Fprintf(&buffer, "Contract status: %s\n", contract.Status)
+	fmt.Fprintln(&buffer, "Manual clarification and approval are available; agent execution is not implemented yet.")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Relevant repository context")
 	fmt.Fprintf(&buffer, "- Map run: %s\n", mapRunID)
 	fmt.Fprintf(&buffer, "- Repo map: %s\n", filepath.ToSlash(filepath.Join(artifacts.WorkspaceRel, "map", "repo-map.md")))
 	fmt.Fprintf(&buffer, "- Search results: context/search-results.json (%d result(s))\n", searchResults)
 	fmt.Fprintln(&buffer)
-	if len(contract.Clarifications.Questions) > 0 {
-		fmt.Fprintln(&buffer, "## Clarifications")
-		fmt.Fprintln(&buffer)
+	fmt.Fprintln(&buffer, "## Clarifications")
+	if len(contract.Clarifications.Questions) == 0 {
+		fmt.Fprintln(&buffer, "- None")
+	} else {
 		for _, question := range contract.Clarifications.Questions {
 			blocking := ""
 			if question.Blocking {
@@ -403,16 +408,17 @@ func renderContractMDFromDraft(contract draftContract, mapRunID string, searchRe
 				fmt.Fprintln(&buffer, "  Answer: pending")
 			}
 		}
-		fmt.Fprintln(&buffer)
 	}
-	fmt.Fprintln(&buffer, "## In scope")
-	fmt.Fprintln(&buffer, "TBD")
 	fmt.Fprintln(&buffer)
-	fmt.Fprintln(&buffer, "## Out of scope")
-	fmt.Fprintln(&buffer, "TBD")
+	writeMarkdownListSection(&buffer, "In scope", contract.Scope.In)
 	fmt.Fprintln(&buffer)
-	fmt.Fprintln(&buffer, "## Acceptance criteria")
-	fmt.Fprintln(&buffer, "TBD")
+	writeMarkdownListSection(&buffer, "Out of scope", contract.Scope.Out)
+	fmt.Fprintln(&buffer)
+	writeMarkdownListSection(&buffer, "Acceptance criteria", contract.AcceptanceCriteria)
+	fmt.Fprintln(&buffer)
+	writeMarkdownListSection(&buffer, "Validation commands", contract.Validation.Commands)
+	fmt.Fprintln(&buffer)
+	writeMarkdownListSection(&buffer, "Assumptions", contract.Assumptions)
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Open questions")
 	if len(contract.OpenQuestions) == 0 {
@@ -426,14 +432,45 @@ func renderContractMDFromDraft(contract draftContract, mapRunID string, searchRe
 }
 
 func renderPromptMD(task string) []byte {
+	return renderPromptMDFromDraft(draftContractFor("", task))
+}
+
+func renderPromptMDFromDraft(contract draftContract) []byte {
 	var buffer bytes.Buffer
 	fmt.Fprintln(&buffer, "# Executor Prompt")
 	fmt.Fprintln(&buffer)
-	fmt.Fprintln(&buffer, "This prompt is not executable yet. Manual clarification is available, but approval and agent execution are not implemented.")
+	fmt.Fprintln(&buffer, "This prompt is not executable yet. Manual clarification and approval are available, but agent execution is not implemented.")
 	fmt.Fprintln(&buffer)
-	fmt.Fprintln(&buffer, "Task:")
-	fmt.Fprintln(&buffer, task)
+	fmt.Fprintln(&buffer, "## Goal")
+	writeMarkdownValue(&buffer, contract.Goal)
+	fmt.Fprintln(&buffer)
+	writeMarkdownListSection(&buffer, "In scope", contract.Scope.In)
+	fmt.Fprintln(&buffer)
+	writeMarkdownListSection(&buffer, "Out of scope", contract.Scope.Out)
+	fmt.Fprintln(&buffer)
+	writeMarkdownListSection(&buffer, "Acceptance criteria", contract.AcceptanceCriteria)
+	fmt.Fprintln(&buffer)
+	writeMarkdownListSection(&buffer, "Validation commands", contract.Validation.Commands)
 	return buffer.Bytes()
+}
+
+func writeMarkdownValue(buffer *bytes.Buffer, value string) {
+	if strings.TrimSpace(value) == "" {
+		fmt.Fprintln(buffer, "TBD")
+		return
+	}
+	fmt.Fprintln(buffer, value)
+}
+
+func writeMarkdownListSection(buffer *bytes.Buffer, heading string, values []string) {
+	fmt.Fprintf(buffer, "## %s\n", heading)
+	if len(values) == 0 {
+		fmt.Fprintln(buffer, "TBD")
+		return
+	}
+	for _, value := range values {
+		fmt.Fprintf(buffer, "- %s\n", value)
+	}
 }
 
 func writeRunCreated(stdout io.Writer, result contractRunState) {
