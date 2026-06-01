@@ -104,6 +104,7 @@ type reviewCmd struct {
 	AddFinding reviewAddFindingCmd `cmd:"add-finding" help:"Append a manual review finding."`
 	Resolve    reviewResolveCmd    `cmd:"" help:"Resolve a manual review finding."`
 	Approve    reviewApproveCmd    `cmd:"" help:"Approve a manual review."`
+	DryRun     reviewDryRunCmd     `cmd:"dry-run" help:"Prepare reviewer artifacts without running a reviewer."`
 }
 
 type agentsCmd struct {
@@ -215,6 +216,12 @@ type reviewResolveCmd struct {
 type reviewApproveCmd struct {
 	RunID      string `arg:"" name:"run_id" help:"Run id to review."`
 	By         string `name:"by" default:"manual" help:"Approver name to record."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type reviewDryRunCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to prepare reviewer artifacts for."`
+	Reviewer   string `name:"reviewer" help:"Reviewer adapter name. Defaults to agents.default_reviewer."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -467,6 +474,10 @@ func (c *reviewResolveCmd) Run(r *runner) error {
 
 func (c *reviewApproveCmd) Run(r *runner) error {
 	return r.App.ReviewApprove(r.Stdout, c.RunID, c.By, c.JSONOutput)
+}
+
+func (c *reviewDryRunCmd) Run(r *runner) error {
+	return r.App.ReviewDryRun(r.Stdout, c.RunID, c.Reviewer, c.JSONOutput)
 }
 
 func (c *agentsDoctorCmd) Run(r *runner) error {

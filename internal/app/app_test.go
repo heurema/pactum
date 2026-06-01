@@ -72,7 +72,7 @@ func helper() {}
 	if config.ProjectMap.CodeIndex != codeindex.ModeAuto {
 		t.Fatalf("config project_map.code_index = %q, want auto", config.ProjectMap.CodeIndex)
 	}
-	if config.Agents.DefaultExecutor != "codex" || config.Agents.Adapters["codex"].Command != "codex" || config.Agents.Adapters["claude"].Command != "claude" {
+	if config.Agents.DefaultExecutor != "codex" || config.Agents.DefaultReviewer != "codex" || config.Agents.Adapters["codex"].Command != "codex" || config.Agents.Adapters["claude"].Command != "claude" {
 		t.Fatalf("config agents default mismatch: %#v", config.Agents)
 	}
 	configYAML := mustReadFile(t, paths.Config)

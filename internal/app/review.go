@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/heurema/pactum/internal/agents"
 	"github.com/heurema/pactum/internal/artifacts"
 	"github.com/heurema/pactum/internal/ledger"
 )
@@ -20,6 +21,10 @@ const (
 	reviewArtifact            = "review/review.json"
 	reviewFindingsArtifact    = "review/findings.jsonl"
 	reviewResolutionsArtifact = "review/resolutions.jsonl"
+	reviewerContextArtifact   = "review/reviewer-context.md"
+	reviewerPromptArtifact    = "review/reviewer-prompt.md"
+	reviewerDryRunArtifact    = "review/reviewer-dry-run.json"
+	reviewerDryRunSchema      = "pactum.review_dry_run.v1"
 )
 
 type reviewContext struct {
@@ -130,6 +135,49 @@ type reviewAddFindingResponse struct {
 type reviewResolveResponse struct {
 	Resolution reviewResolutionRecord `json:"resolution"`
 	State      reviewStateResponse    `json:"state"`
+}
+
+type reviewerDryRunPreparation struct {
+	Context     reviewContext
+	Contract    draftContract
+	GateReport  gateReportDocument
+	Review      reviewDocument
+	Findings    []reviewFindingRecord
+	Resolutions []reviewResolutionRecord
+	Reviewer    string
+	Adapter     agents.AdapterConfig
+}
+
+type reviewerDryRunDocument struct {
+	Schema    string                  `json:"schema"`
+	RunID     string                  `json:"run_id"`
+	CreatedAt string                  `json:"created_at"`
+	Reviewer  reviewerDryRunAgent     `json:"reviewer"`
+	Checks    reviewerDryRunChecks    `json:"checks"`
+	Artifacts reviewerDryRunArtifacts `json:"artifacts"`
+	WouldRun  agents.DryRunCommand    `json:"would_run"`
+}
+
+type reviewerDryRunAgent struct {
+	Name    string   `json:"name"`
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
+	Input   string   `json:"input"`
+}
+
+type reviewerDryRunChecks struct {
+	ReviewPrepared   bool `json:"review_prepared"`
+	GateReportReady  bool `json:"gate_report_ready"`
+	ContractApproved bool `json:"contract_approved"`
+}
+
+type reviewerDryRunArtifacts struct {
+	ReviewerPrompt  string `json:"reviewer_prompt"`
+	ReviewerContext string `json:"reviewer_context"`
+	Review          string `json:"review"`
+	Findings        string `json:"findings"`
+	Resolutions     string `json:"resolutions"`
+	GateReport      string `json:"gate_report"`
 }
 
 func (a App) ReviewPrepare(stdout io.Writer, runID string, jsonOutput bool) error {
@@ -383,6 +431,42 @@ func (a App) ReviewApprove(stdout io.Writer, runID string, approvedBy string, js
 	return nil
 }
 
+func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, jsonOutput bool) error {
+	context, ok, err := a.loadReviewContext(stdout, runID)
+	if err != nil || !ok {
+		return err
+	}
+	prep, err := a.prepareReviewerDryRun(context, reviewerName)
+	if err != nil {
+		return err
+	}
+
+	now := a.nowUTC()
+	createdAt := now.Format(time.RFC3339)
+	plan := buildReviewerDryRunDocument(runID, createdAt, prep.Reviewer, prep.Adapter)
+	if err := os.MkdirAll(context.RunPaths.ReviewDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(context.RunPaths.ReviewContextMD, []byte(renderReviewerContext(prep)), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(context.RunPaths.ReviewPromptMD, []byte(renderReviewerPrompt()), 0o644); err != nil {
+		return err
+	}
+	if err := writeJSON(context.RunPaths.ReviewDryRunJSON, plan); err != nil {
+		return err
+	}
+	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_dry_run_prepared", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+		return err
+	}
+
+	if jsonOutput {
+		return writeJSONResponse(stdout, plan)
+	}
+	writeReviewDryRun(stdout, plan)
+	return nil
+}
+
 func (a App) loadPreparedReviewState(stdout io.Writer, runID string) (reviewStateResponse, bool, error) {
 	context, ok, err := a.loadReviewContext(stdout, runID)
 	if err != nil || !ok {
@@ -443,6 +527,65 @@ func (a App) loadReviewContext(stdout io.Writer, runID string) (reviewContext, b
 		RunPaths: runPaths,
 		State:    state,
 	}, true, nil
+}
+
+func (a App) prepareReviewerDryRun(context reviewContext, reviewerName string) (reviewerDryRunPreparation, error) {
+	review, err := requireReviewPrepared(context.RunPaths, context.State.RunID)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	if !isRegularFile(context.RunPaths.GateReportJSON) {
+		return reviewerDryRunPreparation{}, fmt.Errorf("cannot prepare reviewer dry-run: gate report not found")
+	}
+	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	contract, err := readDraftContract(context.RunPaths.ContractJSON)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	approval, err := readApprovalState(context.RunPaths.ApprovalJSON)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	if contract.Status != "approved" || approval.Status != "approved" || approval.ContractSHA256 == nil {
+		return reviewerDryRunPreparation{}, fmt.Errorf("cannot prepare reviewer dry-run: contract is not approved")
+	}
+	hash, err := fileSHA256(context.RunPaths.ContractJSON)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	if hash != *approval.ContractSHA256 {
+		return reviewerDryRunPreparation{}, fmt.Errorf("cannot prepare reviewer dry-run: contract is not approved")
+	}
+	findings, resolutions, err := readReviewRecords(context.RunPaths)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	config, err := readConfig(context.Paths.Config)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	resolvedReviewer, adapter, err := agents.ResolveReviewerAdapter(config.Agents, reviewerName)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	if adapter.Input != agents.InputPromptFile {
+		return reviewerDryRunPreparation{}, fmt.Errorf("unsupported agent input mode: %s", adapter.Input)
+	}
+
+	review = refreshReviewDocument(review, context.State.RunID, gateReport.Status, findings, resolutions, "")
+	return reviewerDryRunPreparation{
+		Context:     context,
+		Contract:    contract,
+		GateReport:  gateReport,
+		Review:      review,
+		Findings:    findings,
+		Resolutions: resolutions,
+		Reviewer:    resolvedReviewer,
+		Adapter:     adapter,
+	}, nil
 }
 
 func readReviewGateReport(path string) (gateReportDocument, error) {
@@ -618,6 +761,176 @@ func nextReviewID(prefix string, index int) string {
 	return fmt.Sprintf("%s_%03d", prefix, index)
 }
 
+func buildReviewerDryRunDocument(runID string, createdAt string, reviewerName string, adapter agents.AdapterConfig) reviewerDryRunDocument {
+	agentArgs := append([]string{}, adapter.Args...)
+	wouldRunArgs := append([]string{}, adapter.Args...)
+	wouldRunArgs = append(wouldRunArgs, "--", runArtifactRepoRel(runID, reviewerPromptArtifact))
+	return reviewerDryRunDocument{
+		Schema:    reviewerDryRunSchema,
+		RunID:     runID,
+		CreatedAt: createdAt,
+		Reviewer: reviewerDryRunAgent{
+			Name:    reviewerName,
+			Command: adapter.Command,
+			Args:    agentArgs,
+			Input:   adapter.Input,
+		},
+		Checks: reviewerDryRunChecks{
+			ReviewPrepared:   true,
+			GateReportReady:  true,
+			ContractApproved: true,
+		},
+		Artifacts: reviewerDryRunArtifacts{
+			ReviewerPrompt:  reviewerPromptArtifact,
+			ReviewerContext: reviewerContextArtifact,
+			Review:          reviewArtifact,
+			Findings:        reviewFindingsArtifact,
+			Resolutions:     reviewResolutionsArtifact,
+			GateReport:      gateReportArtifact,
+		},
+		WouldRun: agents.DryRunCommand{
+			Command: adapter.Command,
+			Args:    wouldRunArgs,
+		},
+	}
+}
+
+func renderReviewerContext(prep reviewerDryRunPreparation) string {
+	var b strings.Builder
+	state := buildReviewState(prep.Review, prep.Findings, prep.Resolutions)
+
+	fmt.Fprintln(&b, "# Reviewer Context")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Run")
+	fmt.Fprintf(&b, "- Run id: %s\n", prep.Context.State.RunID)
+	fmt.Fprintf(&b, "- Run status: %s\n", prep.Context.State.Status)
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Contract")
+	fmt.Fprintf(&b, "- Goal: %s\n", prep.Contract.Goal)
+	writeMarkdownStringList(&b, "- In scope:", prep.Contract.Scope.In)
+	writeMarkdownStringList(&b, "- Out of scope:", prep.Contract.Scope.Out)
+	writeMarkdownStringList(&b, "- Acceptance criteria:", prep.Contract.AcceptanceCriteria)
+	writeMarkdownStringList(&b, "- Validation commands:", prep.Contract.Validation.Commands)
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Gate report")
+	fmt.Fprintf(&b, "- Gate status: %s\n", prep.GateReport.Status)
+	fmt.Fprintf(&b, "- Execution attempt id: %s\n", valueOrNone(prep.GateReport.Execution.AttemptID))
+	fmt.Fprintf(&b, "- Execution exit code: %d\n", prep.GateReport.Execution.ExitCode)
+	fmt.Fprintln(&b, "- Validation command results:")
+	if len(prep.GateReport.Validation.Commands) == 0 {
+		fmt.Fprintln(&b, "  - none")
+	} else {
+		for _, command := range prep.GateReport.Validation.Commands {
+			fmt.Fprintf(&b, "  - %s: %s (exit %d, timed out: %t, result: %s)\n", command.ID, command.Command, command.ExitCode, command.TimedOut, command.Result)
+		}
+	}
+	fmt.Fprintln(&b, "- Change summary:")
+	writeMarkdownIndentedStringList(&b, "changed files", prep.GateReport.Changes.ChangedFiles)
+	writeMarkdownIndentedStringList(&b, "new files", prep.GateReport.Changes.NewFiles)
+	writeMarkdownIndentedStringList(&b, "missing files", prep.GateReport.Changes.MissingFiles)
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Existing manual review")
+	fmt.Fprintf(&b, "- Review status: %s\n", state.Review.Status)
+	fmt.Fprintf(&b, "- Current findings summary: findings=%d open=%d resolved=%d blocking_open=%d\n", state.Review.Summary.Findings, state.Review.Summary.Open, state.Review.Summary.Resolved, state.Review.Summary.BlockingOpen)
+	fmt.Fprintln(&b, "- Existing findings:")
+	if len(state.Findings) == 0 {
+		fmt.Fprintln(&b, "  - none")
+	} else {
+		for _, finding := range state.Findings {
+			fmt.Fprintf(&b, "  - %s severity=%s category=%s blocking=%t status=%s: %s\n", finding.ID, finding.Severity, finding.Category, finding.Blocking, finding.Status, finding.Message)
+		}
+	}
+	fmt.Fprintln(&b, "- Existing resolutions:")
+	if len(state.Resolutions) == 0 {
+		fmt.Fprintln(&b, "  - none")
+	} else {
+		for _, resolution := range state.Resolutions {
+			note := valueOrNone(resolution.Note)
+			fmt.Fprintf(&b, "  - %s finding=%s source=%s note=%s\n", resolution.ID, resolution.FindingID, resolution.Source, note)
+		}
+	}
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Artifacts")
+	fmt.Fprintln(&b, "- Contract: contract/contract.json")
+	fmt.Fprintln(&b, "- Gate report: gate/gate-report.json")
+	fmt.Fprintln(&b, "- Review: review/review.json")
+	fmt.Fprintln(&b, "- Findings: review/findings.jsonl")
+	fmt.Fprintln(&b, "- Resolutions: review/resolutions.jsonl")
+	fmt.Fprintln(&b, "- Execution result: execute/last-result.json")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Reviewer guidance")
+	fmt.Fprintln(&b, "- This context is not complete semantic truth.")
+	fmt.Fprintln(&b, "- Use `pactum search \"<term>\"` and inspect files before proposing findings.")
+	fmt.Fprintln(&b, "- Do not invent changes.")
+	fmt.Fprintln(&b, "- Do not approve automatically.")
+	fmt.Fprintln(&b, "- If uncertain, propose a blocking finding that asks for clarification.")
+	return b.String()
+}
+
+func renderReviewerPrompt() string {
+	return strings.TrimSpace(`# Reviewer Prompt
+
+This prompt is prepared for a future reviewer agent.
+Pactum does not execute reviewer agents in this milestone.
+
+## Objective
+Review the executed task against the approved Pactum contract and gate report.
+
+## Inputs
+- Reviewer context: review/reviewer-context.md
+- Contract: contract/contract.json
+- Gate report: gate/gate-report.json
+- Review artifacts: review/review.json, review/findings.jsonl, review/resolutions.jsonl
+
+## Review boundaries
+- Do not apply patches.
+- Do not modify files.
+- Do not approve the review.
+- Do not claim semantic correctness without evidence.
+- Prefer concrete findings with file/path evidence.
+- If uncertain, recommend a blocking manual finding.
+
+## Expected future output
+Future reviewer output should be converted into manual review findings:
+- message
+- severity
+- category
+- file
+- line
+- blocking
+
+This PR does not parse reviewer output.`) + "\n"
+}
+
+func writeMarkdownStringList(b *strings.Builder, heading string, values []string) {
+	fmt.Fprintln(b, heading)
+	if len(values) == 0 {
+		fmt.Fprintln(b, "  - none")
+		return
+	}
+	for _, value := range values {
+		fmt.Fprintf(b, "  - %s\n", value)
+	}
+}
+
+func writeMarkdownIndentedStringList(b *strings.Builder, label string, values []string) {
+	fmt.Fprintf(b, "  - %s:\n", label)
+	if len(values) == 0 {
+		fmt.Fprintln(b, "    - none")
+		return
+	}
+	for _, value := range values {
+		fmt.Fprintf(b, "    - %s\n", value)
+	}
+}
+
+func valueOrNone(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "none"
+	}
+	return value
+}
+
 func writeReviewNotPrepared(stdout io.Writer, runID string) {
 	fmt.Fprintf(stdout, "Review has not been prepared. Run: pactum review prepare %s\n", runID)
 }
@@ -727,6 +1040,30 @@ func writeReviewApproved(stdout io.Writer, state reviewStateResponse) {
 	if state.Review.Approval.ApprovedBy != nil {
 		fmt.Fprintf(stdout, "  approved by: %s\n", *state.Review.Approval.ApprovedBy)
 	}
+}
+
+func writeReviewDryRun(stdout io.Writer, plan reviewerDryRunDocument) {
+	fmt.Fprintln(stdout, "Reviewer dry-run prepared")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Run:")
+	fmt.Fprintf(stdout, "  id: %s\n", plan.RunID)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Reviewer:")
+	fmt.Fprintf(stdout, "  name: %s\n", plan.Reviewer.Name)
+	fmt.Fprintf(stdout, "  command: %s\n", plan.Reviewer.Command)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Checks:")
+	fmt.Fprintln(stdout, "  review prepared: yes")
+	fmt.Fprintln(stdout, "  gate report: ready")
+	fmt.Fprintln(stdout, "  contract approved: yes")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Would run:")
+	fmt.Fprintf(stdout, "  %s\n", formatAgentCommand(plan.WouldRun))
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Artifacts:")
+	fmt.Fprintf(stdout, "  reviewer prompt: %s\n", runArtifactRepoRel(plan.RunID, reviewerPromptArtifact))
+	fmt.Fprintf(stdout, "  reviewer context: %s\n", runArtifactRepoRel(plan.RunID, reviewerContextArtifact))
+	fmt.Fprintf(stdout, "  dry run: %s\n", runArtifactRepoRel(plan.RunID, reviewerDryRunArtifact))
 }
 
 func writeReviewRunAndGate(stdout io.Writer, state reviewStateResponse) {

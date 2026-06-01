@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/heurema/pactum/internal/agents"
 	"github.com/heurema/pactum/internal/artifacts"
 )
 
@@ -377,6 +378,285 @@ func TestReviewArtifactsArePortable(t *testing.T) {
 	}
 }
 
+func TestReviewDryRunBeforeInitPrintsGuidance(t *testing.T) {
+	root := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"review", "dry-run", "run_x"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review dry-run before init exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
+		t.Fatalf("review dry-run before init output mismatch:\n%s", got)
+	}
+}
+
+func TestReviewDryRunMissingRunReturnsError(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+
+	var stdout, stderr bytes.Buffer
+	app := testApp(root)
+	code := app.Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"review", "dry-run", "run_missing"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review dry-run missing run should fail")
+	}
+	if got := stderr.String(); !strings.Contains(got, "run not found: run_missing") {
+		t.Fatalf("missing run stderr mismatch:\n%s", got)
+	}
+}
+
+func TestReviewDryRunBeforeReviewPreparedFails(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, _ := setupRunWithGateReport(t, root, "passed")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "dry-run", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review dry-run should fail before review prepare")
+	}
+	if got := stderr.String(); !strings.Contains(got, "review has not been prepared: "+runID) {
+		t.Fatalf("review not prepared stderr mismatch:\n%s", got)
+	}
+}
+
+func TestReviewDryRunMissingGateReportFails(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedReviewWithoutGateReport(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "dry-run", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review dry-run should fail without gate report")
+	}
+	if got := stderr.String(); !strings.Contains(got, "cannot prepare reviewer dry-run: gate report not found") {
+		t.Fatalf("missing gate stderr mismatch:\n%s", got)
+	}
+	assertNoFile(t, runPaths.ReviewDryRunJSON)
+}
+
+func TestReviewDryRunContractNotApprovedFails(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "dry-run", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review dry-run should fail without approved contract")
+	}
+	if got := stderr.String(); !strings.Contains(got, "cannot prepare reviewer dry-run: contract is not approved") {
+		t.Fatalf("unapproved contract stderr mismatch:\n%s", got)
+	}
+	assertNoFile(t, runPaths.ReviewDryRunJSON)
+}
+
+func TestReviewDryRunSucceeds(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "dry-run", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review dry-run exited %d, stderr: %s", code, stderr.String())
+	}
+	assertFile(t, runPaths.ReviewContextMD)
+	assertFile(t, runPaths.ReviewPromptMD)
+	assertFile(t, runPaths.ReviewDryRunJSON)
+	got := stdout.String()
+	for _, want := range []string{
+		"Reviewer dry-run prepared",
+		"Would run:",
+		"codex exec --sandbox read-only -- .heurema/pactum/runs/" + runID + "/review/reviewer-prompt.md",
+		".heurema/pactum/runs/" + runID + "/review/reviewer-context.md",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("review dry-run output missing %q:\n%s", want, got)
+		}
+	}
+	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
+	if plan.Schema != reviewerDryRunSchema || plan.RunID != runID || plan.Reviewer.Name != "codex" {
+		t.Fatalf("unexpected reviewer dry-run plan: %#v", plan)
+	}
+	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec --sandbox read-only -- .heurema/pactum/runs/"+runID+"/review/reviewer-prompt.md" {
+		t.Fatalf("unexpected would_run command: %#v", plan.WouldRun)
+	}
+}
+
+func TestReviewDryRunJSONOutput(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "dry-run", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review dry-run --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var plan reviewerDryRunDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &plan))
+	if plan.Reviewer.Name != "codex" || !plan.Checks.ReviewPrepared || !plan.Checks.GateReportReady || !plan.Checks.ContractApproved {
+		t.Fatalf("unexpected reviewer dry-run json: %#v", plan)
+	}
+	if plan.Artifacts.ReviewerPrompt != reviewerPromptArtifact || plan.Artifacts.ReviewerContext != reviewerContextArtifact || plan.WouldRun.Command != "codex" {
+		t.Fatalf("reviewer dry-run json missing artifacts/would_run: %#v", plan)
+	}
+	if strings.Contains(stdout.String(), "Reviewer dry-run prepared") {
+		t.Fatalf("json output should not include human output:\n%s", stdout.String())
+	}
+}
+
+func TestReviewDryRunUsesDefaultReviewer(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+
+	runReviewCommand(t, app, "review", "dry-run", runID)
+	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
+	if plan.Reviewer.Name != "codex" || plan.Reviewer.Command != "codex" {
+		t.Fatalf("default reviewer mismatch: %#v", plan.Reviewer)
+	}
+}
+
+func TestReviewDryRunCustomReviewerAdapter(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	config := defaultConfigFile()
+	config.Agents.DefaultReviewer = "custom"
+	config.Agents.Adapters["custom"] = agents.AdapterConfig{
+		Command: "custom-reviewer",
+		Args:    []string{"review", "--dry"},
+		Input:   agents.InputPromptFile,
+	}
+	config.Agents.Adapters["explicit"] = agents.AdapterConfig{
+		Command: "explicit-reviewer",
+		Args:    []string{"check"},
+		Input:   agents.InputPromptFile,
+	}
+	assertNoError(t, writeYAML(paths.Config, config))
+
+	runReviewCommand(t, app, "review", "dry-run", runID)
+	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
+	if plan.Reviewer.Name != "custom" || plan.Reviewer.Command != "custom-reviewer" {
+		t.Fatalf("custom default reviewer mismatch: %#v", plan.Reviewer)
+	}
+	if strings.Join(plan.WouldRun.Args, " ") != "review --dry -- .heurema/pactum/runs/"+runID+"/review/reviewer-prompt.md" {
+		t.Fatalf("custom would_run mismatch: %#v", plan.WouldRun)
+	}
+
+	runReviewCommand(t, app, "review", "dry-run", runID, "--reviewer", "explicit")
+	plan = readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
+	if plan.Reviewer.Name != "explicit" || plan.Reviewer.Command != "explicit-reviewer" {
+		t.Fatalf("explicit reviewer mismatch: %#v", plan.Reviewer)
+	}
+}
+
+func TestReviewDryRunMissingReviewerAdapterFails(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "dry-run", runID, "--reviewer", "missing"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review dry-run should fail for missing reviewer")
+	}
+	if got := stderr.String(); !strings.Contains(got, "agent adapter not configured: missing") {
+		t.Fatalf("missing reviewer stderr mismatch:\n%s", got)
+	}
+}
+
+func TestReviewDryRunUnsupportedInputModeFails(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	config := defaultConfigFile()
+	config.Agents.Adapters["bad-input"] = agents.AdapterConfig{
+		Command: "bad-reviewer",
+		Args:    []string{"dry-run"},
+		Input:   "stdin",
+	}
+	assertNoError(t, writeYAML(paths.Config, config))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "dry-run", runID, "--reviewer", "bad-input"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review dry-run should fail for unsupported input mode")
+	}
+	if got := stderr.String(); !strings.Contains(got, "unsupported agent input mode: stdin") {
+		t.Fatalf("unsupported input stderr mismatch:\n%s", got)
+	}
+}
+
+func TestReviewDryRunContextIncludesManualFindings(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	runReviewCommand(t, app, "review", "add-finding", runID, "Manual review artifacts should stay append-only", "--category", "process", "--severity", "medium")
+
+	runReviewCommand(t, app, "review", "dry-run", runID)
+	context := mustReadFile(t, runPaths.ReviewContextMD)
+	for _, want := range []string{"f_001", "Manual review artifacts should stay append-only", "status=open"} {
+		if !strings.Contains(context, want) {
+			t.Fatalf("reviewer context missing %q:\n%s", want, context)
+		}
+	}
+}
+
+func TestReviewDryRunArtifactsArePortable(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	runReviewCommand(t, app, "review", "add-finding", runID, "portable reviewer context", "--file", "internal/app/review.go")
+
+	runReviewCommand(t, app, "review", "dry-run", runID)
+	for name, content := range map[string]string{
+		"review/reviewer-context.md":   mustReadFile(t, runPaths.ReviewContextMD),
+		"review/reviewer-prompt.md":    mustReadFile(t, runPaths.ReviewPromptMD),
+		"review/reviewer-dry-run.json": mustReadFile(t, runPaths.ReviewDryRunJSON),
+	} {
+		assertDoesNotContainRoot(t, name, content, root)
+	}
+}
+
+func TestReviewDryRunWritesLedgerEvent(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+
+	runReviewCommand(t, app, "review", "dry-run", runID)
+	events := strings.Join(readLines(t, paths.EventsJSONL), "\n")
+	if !strings.Contains(events, "review_dry_run_prepared") || !strings.Contains(events, runID) {
+		t.Fatalf("events missing review_dry_run_prepared:\n%s", events)
+	}
+}
+
+func TestReviewDryRunDoesNotMutateManualReviewArtifacts(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	runReviewCommand(t, app, "review", "add-finding", runID, "manual artifact should not change")
+
+	beforeReview := mustReadFile(t, runPaths.ReviewJSON)
+	beforeFindings := mustReadFile(t, runPaths.ReviewFindingsJSONL)
+	beforeResolutions := mustReadFile(t, runPaths.ReviewResolutionsJSONL)
+	beforeEvents := readLines(t, paths.EventsJSONL)
+
+	runReviewCommand(t, app, "review", "dry-run", runID)
+
+	if got := mustReadFile(t, runPaths.ReviewJSON); got != beforeReview {
+		t.Fatalf("review dry-run mutated review.json")
+	}
+	if got := mustReadFile(t, runPaths.ReviewFindingsJSONL); got != beforeFindings {
+		t.Fatalf("review dry-run mutated findings.jsonl")
+	}
+	if got := mustReadFile(t, runPaths.ReviewResolutionsJSONL); got != beforeResolutions {
+		t.Fatalf("review dry-run mutated resolutions.jsonl")
+	}
+	afterEvents := readLines(t, paths.EventsJSONL)
+	if len(afterEvents) != len(beforeEvents)+1 || !strings.Contains(afterEvents[len(afterEvents)-1], "review_dry_run_prepared") {
+		t.Fatalf("review dry-run should only append its ledger event:\nbefore=%v\nafter=%v", beforeEvents, afterEvents)
+	}
+}
+
 func setupRunWithGateReport(t *testing.T, root string, status string) (App, artifacts.Paths, string, contractRunPathSet) {
 	t.Helper()
 	app, paths, runID := setupContractRun(t, root)
@@ -401,6 +681,26 @@ func setupPreparedReview(t *testing.T, root string, gateStatus string) (App, art
 	t.Helper()
 	app, paths, runID, runPaths := setupRunWithGateReport(t, root, gateStatus)
 	runReviewCommand(t, app, "review", "prepare", runID)
+	return app, paths, runID, runPaths
+}
+
+func setupApprovedPreparedReview(t *testing.T, root string, gateStatus string) (App, artifacts.Paths, string, contractRunPathSet) {
+	t.Helper()
+	app, paths, runID := setupApprovedPromptContract(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	writeReviewGateReportForTest(t, runPaths, runID, gateStatus)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	return app, paths, runID, runPaths
+}
+
+func setupApprovedReviewWithoutGateReport(t *testing.T, root string) (App, artifacts.Paths, string, contractRunPathSet) {
+	t.Helper()
+	app, paths, runID := setupApprovedPromptContract(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	assertNoError(t, os.MkdirAll(runPaths.ReviewDir, 0o755))
+	assertNoError(t, writeJSON(runPaths.ReviewJSON, newReviewDocument(runID, "passed", "2026-05-31T18:40:12Z")))
+	assertNoError(t, ensureAppendOnlyFile(runPaths.ReviewFindingsJSONL))
+	assertNoError(t, ensureAppendOnlyFile(runPaths.ReviewResolutionsJSONL))
 	return app, paths, runID, runPaths
 }
 
@@ -442,4 +742,11 @@ func readReviewResolutions(t *testing.T, path string) []reviewResolutionRecord {
 		records = append(records, record)
 	}
 	return records
+}
+
+func readReviewerDryRunPlan(t *testing.T, path string) reviewerDryRunDocument {
+	t.Helper()
+	var plan reviewerDryRunDocument
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, path)), &plan))
+	return plan
 }
