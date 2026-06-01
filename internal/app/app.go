@@ -84,6 +84,7 @@ type promptCmd struct {
 
 type executeCmd struct {
 	DryRun executeDryRunCmd `cmd:"dry-run" help:"Prepare execution artifacts without running an agent."`
+	Run    executeRunCmd    `cmd:"run" help:"Run an external agent behind an explicit safety gate."`
 }
 
 type contractShowCmd struct {
@@ -122,6 +123,14 @@ type executeDryRunCmd struct {
 	RunID      string `arg:"" name:"run_id" help:"Run id to prepare for execution."`
 	Agent      string `name:"agent" help:"Agent adapter name. Defaults to agents.default_executor."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type executeRunCmd struct {
+	RunID        string        `arg:"" name:"run_id" help:"Run id to execute."`
+	Agent        string        `name:"agent" help:"Agent adapter name. Defaults to agents.default_executor."`
+	AllowExecute bool          `name:"allow-execute" help:"Required safety flag before launching an external agent."`
+	Timeout      time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the external agent process."`
+	JSONOutput   bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type mapRefreshCmd struct {
@@ -316,6 +325,10 @@ func (c *promptShowCmd) Run(r *runner) error {
 
 func (c *executeDryRunCmd) Run(r *runner) error {
 	return r.App.ExecuteDryRun(r.Stdout, c.RunID, c.Agent, c.JSONOutput)
+}
+
+func (c *executeRunCmd) Run(r *runner) error {
+	return r.App.ExecuteRun(r.Stdout, c.RunID, c.Agent, c.AllowExecute, c.Timeout, c.JSONOutput)
 }
 
 func (c *searchCmd) Run(r *runner) error {
