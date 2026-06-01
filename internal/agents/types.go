@@ -45,6 +45,7 @@ type DryRunArtifacts struct {
 type DryRunCommand struct {
 	Command string   `json:"command"`
 	Args    []string `json:"args"`
+	Stdin   string   `json:"stdin,omitempty"`
 }
 
 type RunRequest struct {

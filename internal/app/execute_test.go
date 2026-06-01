@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -403,8 +404,11 @@ func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
 		t.Fatalf("unexpected request agent: %#v", request.Agent)
 	}
 	wantPrompt := ".heurema/pactum/runs/" + runID + "/contract/prompt.md"
-	if got := strings.Join(request.WouldRun.Args, " "); !strings.HasSuffix(got, "-- "+wantPrompt) {
-		t.Fatalf("unexpected would_run args: %#v", request.WouldRun.Args)
+	if request.WouldRun.Stdin != wantPrompt {
+		t.Fatalf("unexpected would_run stdin = %q, want %q", request.WouldRun.Stdin, wantPrompt)
+	}
+	if got := strings.Join(request.WouldRun.Args, " "); strings.Contains(got, wantPrompt) {
+		t.Fatalf("would_run args should not pass prompt path positionally: %#v", request.WouldRun.Args)
 	}
 	if request.Artifacts.Prompt != "contract/prompt.md" || request.Artifacts.ExecutorContext != "context/executor-context.md" {
 		t.Fatalf("unexpected request artifacts: %#v", request.Artifacts)
@@ -421,7 +425,7 @@ func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
 	if got := mustReadFile(t, runPaths.LastResultJSON); got != mustReadFile(t, attemptPaths.ResultJSON) {
 		t.Fatalf("last-result.json should copy result.json")
 	}
-	if got := mustReadFile(t, attemptPaths.StdoutLog); !strings.Contains(got, "cwd_is_repo=true") || !strings.Contains(got, "prompt="+wantPrompt) {
+	if got := mustReadFile(t, attemptPaths.StdoutLog); !strings.Contains(got, "cwd_is_repo=true") || !strings.Contains(got, "stdin_has_executor_prompt=true") {
 		t.Fatalf("stdout log mismatch:\n%s", got)
 	}
 	if got := mustReadFile(t, attemptPaths.StderrLog); !strings.Contains(got, "stderr-line") {
@@ -635,11 +639,12 @@ func TestExecutionHelperProcess(t *testing.T) {
 		expectedCWD = resolved
 	}
 	fmt.Printf("cwd_is_repo=%t\n", cwd == expectedCWD)
-	for _, arg := range os.Args {
-		if strings.HasPrefix(arg, ".heurema/") {
-			fmt.Printf("prompt=%s\n", arg)
-		}
+	stdin, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stdin error: %v\n", err)
+		os.Exit(2)
 	}
+	fmt.Printf("stdin_has_executor_prompt=%t\n", strings.Contains(string(stdin), "# Executor Prompt"))
 	fmt.Fprintln(os.Stderr, "stderr-line")
 	if raw := os.Getenv("PACTUM_HELPER_EXIT"); raw != "" {
 		code, err := strconv.Atoi(raw)

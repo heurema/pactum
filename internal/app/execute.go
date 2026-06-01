@@ -98,7 +98,8 @@ func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, allowE
 		Artifacts: plan.Artifacts,
 		WouldRun: agents.DryRunCommand{
 			Command: prep.Adapter.Command,
-			Args:    append(append([]string{}, prep.Adapter.Args...), "--", promptRepoPath),
+			Args:    append([]string{}, prep.Adapter.Args...),
+			Stdin:   promptRepoPath,
 		},
 	}
 	if err := writeJSON(attemptPaths.RequestJSON, request); err != nil {
@@ -268,6 +269,9 @@ func writeExecuteDryRun(stdout io.Writer, state contractRunState, plan agents.Dr
 
 func formatAgentCommand(command agents.DryRunCommand) string {
 	parts := append([]string{command.Command}, command.Args...)
+	if command.Stdin != "" {
+		parts = append(parts, "<", command.Stdin)
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -352,7 +356,8 @@ func dryRunPlanMatches(got agents.DryRunPlan, want agents.DryRunPlan) bool {
 		got.Checks == want.Checks &&
 		got.Artifacts == want.Artifacts &&
 		got.WouldRun.Command == want.WouldRun.Command &&
-		sameStringSlice(got.WouldRun.Args, want.WouldRun.Args)
+		sameStringSlice(got.WouldRun.Args, want.WouldRun.Args) &&
+		got.WouldRun.Stdin == want.WouldRun.Stdin
 }
 
 func sameStringSlice(left []string, right []string) bool {

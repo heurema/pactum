@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -34,7 +35,11 @@ func RunSubprocess(request RunRequest) (RunResult, error) {
 	}
 
 	args := append([]string{}, request.Adapter.Args...)
-	args = append(args, "--", request.PromptRepoPath)
+	promptPath := filepath.Join(request.RepoRoot, filepath.FromSlash(request.PromptRepoPath))
+	prompt, err := os.ReadFile(promptPath)
+	if err != nil {
+		return RunResult{}, err
+	}
 
 	attemptDir := filepath.Join(request.RepoRoot, artifacts.WorkspaceRel, "runs", request.RunID, "execute", "attempts", request.AttemptID)
 	if err := os.MkdirAll(attemptDir, 0o755); err != nil {
@@ -71,6 +76,7 @@ func RunSubprocess(request RunRequest) (RunResult, error) {
 	command.Env = os.Environ()
 	command.Stdout = stdout
 	command.Stderr = stderr
+	command.Stdin = bytes.NewReader(prompt)
 
 	err = command.Run()
 	finished := time.Now().UTC()
