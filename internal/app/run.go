@@ -57,6 +57,7 @@ type draftContract struct {
 	Validation         draftValidation    `json:"validation"`
 	Assumptions        []string           `json:"assumptions"`
 	OpenQuestions      []string           `json:"open_questions"`
+	Clarifications     contractClarifySet `json:"clarifications,omitempty"`
 	MemoryContext      draftMemoryContext `json:"memory_context"`
 }
 
@@ -356,9 +357,10 @@ func draftContractFor(runID string, task string) draftContract {
 		Validation: draftValidation{
 			Commands: []string{},
 		},
-		Assumptions: []string{},
-		OpenQuestions: []string{
-			"Clarification loop is not implemented yet.",
+		Assumptions:   []string{},
+		OpenQuestions: []string{},
+		Clarifications: contractClarifySet{
+			Questions: []contractClarifyQuestion{},
 		},
 		MemoryContext: draftMemoryContext{
 			UsedItems: []string{},
@@ -367,20 +369,42 @@ func draftContractFor(runID string, task string) draftContract {
 }
 
 func renderContractMD(task string, mapRunID string, searchResults int) []byte {
+	contract := draftContractFor("", task)
+	return renderContractMDFromDraft(contract, mapRunID, searchResults)
+}
+
+func renderContractMDFromDraft(contract draftContract, mapRunID string, searchResults int) []byte {
 	var buffer bytes.Buffer
 	fmt.Fprintln(&buffer, "# Contract Draft")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Goal")
-	fmt.Fprintln(&buffer, task)
+	fmt.Fprintln(&buffer, contract.Goal)
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Current status")
-	fmt.Fprintln(&buffer, "Draft only. Clarification and agent execution are not implemented yet.")
+	fmt.Fprintln(&buffer, "Draft only. Manual clarification is available; approval and agent execution are not implemented yet.")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Relevant repository context")
 	fmt.Fprintf(&buffer, "- Map run: %s\n", mapRunID)
 	fmt.Fprintf(&buffer, "- Repo map: %s\n", filepath.ToSlash(filepath.Join(artifacts.WorkspaceRel, "map", "repo-map.md")))
 	fmt.Fprintf(&buffer, "- Search results: context/search-results.json (%d result(s))\n", searchResults)
 	fmt.Fprintln(&buffer)
+	if len(contract.Clarifications.Questions) > 0 {
+		fmt.Fprintln(&buffer, "## Clarifications")
+		fmt.Fprintln(&buffer)
+		for _, question := range contract.Clarifications.Questions {
+			blocking := ""
+			if question.Blocking {
+				blocking = " [blocking]"
+			}
+			fmt.Fprintf(&buffer, "- %s%s — %s\n", question.ID, blocking, question.Question)
+			if question.Answer != "" {
+				fmt.Fprintf(&buffer, "  Answer: %s\n", question.Answer)
+			} else {
+				fmt.Fprintln(&buffer, "  Answer: pending")
+			}
+		}
+		fmt.Fprintln(&buffer)
+	}
 	fmt.Fprintln(&buffer, "## In scope")
 	fmt.Fprintln(&buffer, "TBD")
 	fmt.Fprintln(&buffer)
@@ -391,7 +415,13 @@ func renderContractMD(task string, mapRunID string, searchResults int) []byte {
 	fmt.Fprintln(&buffer, "TBD")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Open questions")
-	fmt.Fprintln(&buffer, "- Clarification loop is not implemented yet.")
+	if len(contract.OpenQuestions) == 0 {
+		fmt.Fprintln(&buffer, "- None")
+	} else {
+		for _, question := range contract.OpenQuestions {
+			fmt.Fprintf(&buffer, "- %s\n", question)
+		}
+	}
 	return buffer.Bytes()
 }
 
@@ -399,7 +429,7 @@ func renderPromptMD(task string) []byte {
 	var buffer bytes.Buffer
 	fmt.Fprintln(&buffer, "# Executor Prompt")
 	fmt.Fprintln(&buffer)
-	fmt.Fprintln(&buffer, "This prompt is not executable yet. Contract clarification and approval are not implemented.")
+	fmt.Fprintln(&buffer, "This prompt is not executable yet. Manual clarification is available, but approval and agent execution are not implemented.")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "Task:")
 	fmt.Fprintln(&buffer, task)

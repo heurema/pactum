@@ -646,16 +646,31 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 	if len(contract.Scope.In) != 0 || len(contract.Scope.Out) != 0 || len(contract.AcceptanceCriteria) != 0 || len(contract.Validation.Commands) != 0 {
 		t.Fatalf("contract draft should keep empty deterministic sections: %#v", contract)
 	}
+	if len(contract.OpenQuestions) != 0 {
+		t.Fatalf("initial contract open_questions = %#v, want empty", contract.OpenQuestions)
+	}
+	if len(contract.Clarifications.Questions) != 0 {
+		t.Fatalf("initial contract clarifications = %#v, want empty", contract.Clarifications.Questions)
+	}
 	contractMD := mustReadFile(t, filepath.Join(runDir, "contract", "contract.md"))
 	if !strings.Contains(contractMD, "## Goal\n"+task) ||
+		!strings.Contains(contractMD, "Manual clarification is available; approval and agent execution are not implemented yet.") ||
 		!strings.Contains(contractMD, "Repo map: .heurema/pactum/map/repo-map.md") ||
 		!strings.Contains(contractMD, "Search results: context/search-results.json") ||
-		!strings.Contains(contractMD, "Clarification loop is not implemented yet.") {
+		!strings.Contains(contractMD, "## Open questions\n- None") {
 		t.Fatalf("contract.md content mismatch:\n%s", contractMD)
 	}
+	for _, stale := range []string{"Clarification loop is not implemented yet.", "Clarification and agent execution are not implemented yet."} {
+		if strings.Contains(contractMD, stale) {
+			t.Fatalf("contract.md contains stale wording %q:\n%s", stale, contractMD)
+		}
+	}
 	promptMD := mustReadFile(t, filepath.Join(runDir, "contract", "prompt.md"))
-	if !strings.Contains(promptMD, "This prompt is not executable yet.") || !strings.Contains(promptMD, task) {
+	if !strings.Contains(promptMD, "This prompt is not executable yet. Manual clarification is available, but approval and agent execution are not implemented.") || !strings.Contains(promptMD, task) {
 		t.Fatalf("prompt.md content mismatch:\n%s", promptMD)
+	}
+	if strings.Contains(promptMD, "Contract clarification and approval are not implemented.") {
+		t.Fatalf("prompt.md contains stale wording:\n%s", promptMD)
 	}
 	var approval approvalState
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, filepath.Join(runDir, "contract", "approval.json"))), &approval))
@@ -967,6 +982,361 @@ func TestStatusJSONIncludesActiveRunCount(t *testing.T) {
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &status))
 	if status.Runs.Active != 1 {
 		t.Fatalf("status --json runs.active = %d, want 1: %#v", status.Runs.Active, status)
+	}
+}
+
+func TestClarifyBeforeInitPrintsGuidance(t *testing.T) {
+	root := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"clarify", "status", "run_x"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify before init exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
+		t.Fatalf("clarify before init output mismatch:\n%s", got)
+	}
+}
+
+func TestClarifyBeforeInitJSONOutput(t *testing.T) {
+	root := t.TempDir()
+
+	for _, args := range [][]string{
+		{"clarify", "ask", "run_x", "Question?", "--json"},
+		{"clarify", "answer", "run_x", "q_001", "Answer.", "--json"},
+		{"clarify", "status", "run_x", "--json"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := testApp(root).Run(args, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("%v exited %d, stderr: %s", args, code, stderr.String())
+		}
+		var response struct {
+			Initialized bool   `json:"initialized"`
+			Message     string `json:"message"`
+		}
+		assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+		if response.Initialized || response.Message != "Pactum is not initialized. Run: pactum init" {
+			t.Fatalf("%v unexpected json response: %#v\n%s", args, response, stdout.String())
+		}
+		if strings.Contains(stdout.String(), "Pactum is not initialized. Run: pactum init\n") && !strings.Contains(stdout.String(), `"message"`) {
+			t.Fatalf("%v should not emit plain text guidance for --json:\n%s", args, stdout.String())
+		}
+	}
+}
+
+func TestClarifyAskBlockingQuestionUpdatesArtifacts(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"clarify", "ask", runID, "Should this feature update existing contract artifacts?", "--blocking"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"Clarification question added",
+		"status: clarifying",
+		"id: q_001",
+		"blocking: true",
+		"status: open",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("clarify ask output missing %q:\n%s", want, got)
+		}
+	}
+
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	questions := readLines(t, runPaths.QuestionsJSONL)
+	if len(questions) != 1 {
+		t.Fatalf("questions line count = %d, want 1: %v", len(questions), questions)
+	}
+	var question clarificationQuestionRecord
+	assertNoError(t, json.Unmarshal([]byte(questions[0]), &question))
+	if question.ID != "q_001" || question.RunID != runID || !question.Blocking || question.Status != "open" || question.Source != "manual" {
+		t.Fatalf("unexpected question record: %#v", question)
+	}
+
+	var state contractRunState
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, runPaths.RunJSON)), &state))
+	if state.Status != "clarifying" {
+		t.Fatalf("run status = %q, want clarifying", state.Status)
+	}
+
+	var contract draftContract
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, runPaths.ContractJSON)), &contract))
+	if len(contract.Clarifications.Questions) != 1 || contract.Clarifications.Questions[0].Status != "open" {
+		t.Fatalf("contract clarification mismatch: %#v", contract.Clarifications)
+	}
+	if len(contract.OpenQuestions) != 1 || contract.OpenQuestions[0] != question.Question {
+		t.Fatalf("contract open_questions mismatch: %#v", contract.OpenQuestions)
+	}
+	contractMD := mustReadFile(t, runPaths.ContractMD)
+	for _, want := range []string{
+		"Draft only. Manual clarification is available; approval and agent execution are not implemented yet.",
+		"## Clarifications",
+		"q_001 [blocking] — Should this feature update existing contract artifacts?",
+		"Answer: pending",
+		"## Open questions\n- Should this feature update existing contract artifacts?",
+	} {
+		if !strings.Contains(contractMD, want) {
+			t.Fatalf("contract.md missing %q:\n%s", want, contractMD)
+		}
+	}
+}
+
+func TestClarifyAnswerQuestionUpdatesArtifacts(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"clarify", "ask", runID, "Should this write to contract.md?", "--blocking"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"clarify", "answer", runID, "q_001", "Yes, update contract artifacts."}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify answer exited %d, stderr: %s", code, stderr.String())
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"Clarification answer recorded",
+		"status: contract_draft",
+		"id: a_001",
+		"question: q_001",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("clarify answer output missing %q:\n%s", want, got)
+		}
+	}
+
+	var answer clarificationAnswerRecord
+	assertNoError(t, json.Unmarshal([]byte(readLines(t, runPaths.AnswersJSONL)[0]), &answer))
+	if answer.ID != "a_001" || answer.QuestionID != "q_001" || answer.Answer != "Yes, update contract artifacts." || answer.Source != "manual" {
+		t.Fatalf("unexpected answer record: %#v", answer)
+	}
+	var decision clarificationDecisionRecord
+	assertNoError(t, json.Unmarshal([]byte(readLines(t, runPaths.DecisionsJSONL)[0]), &decision))
+	if decision.ID != "d_001" || decision.QuestionID != "q_001" || decision.Decision != answer.Answer || decision.Source != "manual_answer" {
+		t.Fatalf("unexpected decision record: %#v", decision)
+	}
+	var state contractRunState
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, runPaths.RunJSON)), &state))
+	if state.Status != "contract_draft" {
+		t.Fatalf("run status = %q, want contract_draft", state.Status)
+	}
+	var contract draftContract
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, runPaths.ContractJSON)), &contract))
+	if len(contract.OpenQuestions) != 0 {
+		t.Fatalf("open_questions = %#v, want empty", contract.OpenQuestions)
+	}
+	if got := contract.Clarifications.Questions[0]; got.Status != "answered" || got.Answer != answer.Answer {
+		t.Fatalf("contract answer mismatch: %#v", got)
+	}
+	if got := mustReadFile(t, runPaths.ContractMD); !strings.Contains(got, "Answer: Yes, update contract artifacts.") || !strings.Contains(got, "## Open questions\n- None") {
+		t.Fatalf("contract.md missing answer:\n%s", got)
+	}
+	events := strings.Join(readLines(t, paths.EventsJSONL), "\n")
+	for _, want := range []string{"clarification_question_added", "clarification_answer_recorded", "clarification_decision_recorded"} {
+		if !strings.Contains(events, want) {
+			t.Fatalf("events missing %q:\n%s", want, events)
+		}
+	}
+}
+
+func TestClarifyMultipleQuestionsStatusCounts(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	for _, args := range [][]string{
+		{"clarify", "ask", runID, "First blocking question?", "--blocking"},
+		{"clarify", "ask", runID, "Second blocking question?", "--blocking"},
+		{"clarify", "answer", runID, "q_001", "First answer."},
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		code := app.Run(args, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("%v exited %d, stderr: %s", args, code, stderr.String())
+		}
+	}
+
+	lines := readLines(t, runPaths.QuestionsJSONL)
+	if len(lines) != 2 {
+		t.Fatalf("questions line count = %d, want 2", len(lines))
+	}
+	var q1, q2 clarificationQuestionRecord
+	assertNoError(t, json.Unmarshal([]byte(lines[0]), &q1))
+	assertNoError(t, json.Unmarshal([]byte(lines[1]), &q2))
+	if q1.ID != "q_001" || q2.ID != "q_002" {
+		t.Fatalf("question ids = %q, %q; want q_001, q_002", q1.ID, q2.ID)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code := app.Run([]string{"clarify", "status", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify status exited %d, stderr: %s", code, stderr.String())
+	}
+	got := stdout.String()
+	for _, want := range []string{"total: 2", "answered: 1", "open: 1", "blocking open: 1", "q_002 [blocking] Second blocking question?"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("clarify status missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestClarifyNonBlockingQuestionKeepsContractDraft(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"clarify", "ask", runID, "Optional context?"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+	}
+	var state contractRunState
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, filepath.Join(paths.RunsDir, runID, "run.json"))), &state))
+	if state.Status != "contract_draft" {
+		t.Fatalf("non-blocking clarify status = %q, want contract_draft", state.Status)
+	}
+}
+
+func TestClarifyStatusJSONOutput(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"clarify", "ask", runID, "Blocking question?", "--blocking"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"clarify", "status", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify status --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var status clarifyStatusResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &status))
+	if status.RunID != runID || status.RunStatus != "clarifying" || status.Total != 1 || status.Open != 1 || status.BlockingOpen != 1 || len(status.Questions) != 1 {
+		t.Fatalf("unexpected clarify status json: %#v", status)
+	}
+}
+
+func TestClarifyLatestAnswerWinsForDisplay(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	for _, args := range [][]string{
+		{"clarify", "ask", runID, "Which answer wins?", "--blocking"},
+		{"clarify", "answer", runID, "q_001", "First answer."},
+		{"clarify", "answer", runID, "q_001", "Second answer."},
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		code := app.Run(args, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("%v exited %d, stderr: %s", args, code, stderr.String())
+		}
+	}
+	if lines := readLines(t, runPaths.AnswersJSONL); len(lines) != 2 {
+		t.Fatalf("answers should be append-only, got %d lines", len(lines))
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code := app.Run([]string{"clarify", "status", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify status --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var status clarifyStatusResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &status))
+	if status.Questions[0].Answer != "Second answer." {
+		t.Fatalf("latest answer = %q, want Second answer.", status.Questions[0].Answer)
+	}
+	var contract draftContract
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, runPaths.ContractJSON)), &contract))
+	if contract.Clarifications.Questions[0].Answer != "Second answer." {
+		t.Fatalf("contract latest answer = %q", contract.Clarifications.Questions[0].Answer)
+	}
+	if got := mustReadFile(t, runPaths.ContractMD); !strings.Contains(got, "Answer: Second answer.") || strings.Contains(got, "Answer: First answer.") {
+		t.Fatalf("contract.md latest answer mismatch:\n%s", got)
+	}
+}
+
+func TestClarifyRunNotFoundReturnsError(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"clarify", "status", "run_missing"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("clarify status missing run should fail")
+	}
+	if got := stderr.String(); !strings.Contains(got, "run not found: run_missing") {
+		t.Fatalf("missing run stderr mismatch:\n%s", got)
+	}
+}
+
+func TestClarifyQuestionNotFoundReturnsError(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"clarify", "answer", runID, "q_999", "No answer."}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("clarify answer missing question should fail")
+	}
+	if got := stderr.String(); !strings.Contains(got, "question not found: q_999") {
+		t.Fatalf("missing question stderr mismatch:\n%s", got)
+	}
+}
+
+func TestClarifyArtifactsUseRepoRelativePaths(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	for _, args := range [][]string{
+		{"clarify", "ask", runID, "Should paths stay portable?", "--blocking"},
+		{"clarify", "answer", runID, "q_001", "Yes, keep them repo-relative."},
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		code := app.Run(args, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("%v exited %d, stderr: %s", args, code, stderr.String())
+		}
+	}
+
+	for name, content := range map[string]string{
+		"questions.jsonl":      mustReadFile(t, runPaths.QuestionsJSONL),
+		"answers.jsonl":        mustReadFile(t, runPaths.AnswersJSONL),
+		"decisions.jsonl":      mustReadFile(t, runPaths.DecisionsJSONL),
+		"run.json":             mustReadFile(t, runPaths.RunJSON),
+		"repo-context.md":      mustReadFile(t, runPaths.RepoContext),
+		"search-results.json":  mustReadFile(t, runPaths.SearchResults),
+		"contract/contract.md": mustReadFile(t, runPaths.ContractMD),
+	} {
+		assertDoesNotContainRoot(t, name, content, root)
 	}
 }
 
@@ -1376,6 +1746,25 @@ func testAppSequence(root string) App {
 			return now
 		},
 	}
+}
+
+func setupContractRun(t *testing.T, root string) (App, artifacts.Paths, string) {
+	t.Helper()
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+	app := testApp(root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"run", "add sqlite cache", "--contract-only"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run --contract-only exited %d, stderr: %s", code, stderr.String())
+	}
+	return app, artifacts.New(root), "run_20260531_184012"
 }
 
 func mustWriteFile(t *testing.T, path string, content string) {
