@@ -72,6 +72,9 @@ func helper() {}
 	if config.ProjectMap.CodeIndex != codeindex.ModeAuto {
 		t.Fatalf("config project_map.code_index = %q, want auto", config.ProjectMap.CodeIndex)
 	}
+	if config.Agents.DefaultExecutor != "codex" || config.Agents.Adapters["codex"].Command != "codex" || config.Agents.Adapters["claude"].Command != "claude" {
+		t.Fatalf("config agents default mismatch: %#v", config.Agents)
+	}
 	configYAML := mustReadFile(t, paths.Config)
 	for _, forbidden := range []string{"include_go_ast", "tree_sitter", "tree_sitter_languages", "entrypoints"} {
 		if strings.Contains(configYAML, forbidden) {

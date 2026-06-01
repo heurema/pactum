@@ -217,6 +217,8 @@ type contractRunPathSet struct {
 	PromptMD       string
 	PromptManifest string
 	ApprovalJSON   string
+
+	DryRunJSON string
 }
 
 func contractRunPaths(runDir string) contractRunPathSet {
@@ -244,6 +246,7 @@ func contractRunPaths(runDir string) contractRunPathSet {
 		PromptMD:        filepath.Join(contractDir, "prompt.md"),
 		PromptManifest:  filepath.Join(contractDir, "prompt-manifest.json"),
 		ApprovalJSON:    filepath.Join(contractDir, "approval.json"),
+		DryRunJSON:      filepath.Join(runDir, "execute", "dry-run.json"),
 	}
 }
 

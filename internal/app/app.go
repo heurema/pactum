@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/heurema/pactum/internal/agents"
 	"github.com/heurema/pactum/internal/artifacts"
 	"github.com/heurema/pactum/internal/codeindex"
 	"github.com/heurema/pactum/internal/ledger"
@@ -28,6 +29,7 @@ type App struct {
 type cli struct {
 	Clarify  clarifyCmd  `cmd:"" help:"Manage manual clarification artifacts."`
 	Contract contractCmd `cmd:"" help:"Inspect, revise, and approve run contracts."`
+	Execute  executeCmd  `cmd:"" help:"Prepare deterministic execution artifacts."`
 	Init     initCmd     `cmd:"" help:"Create a Pactum workspace and project map."`
 	Map      mapCmd      `cmd:"" help:"Advanced project map commands."`
 	Prompt   promptCmd   `cmd:"" help:"Build and inspect executor prompt boundaries."`
@@ -80,6 +82,10 @@ type promptCmd struct {
 	Show  promptShowCmd  `cmd:"" help:"Show a built executor prompt."`
 }
 
+type executeCmd struct {
+	DryRun executeDryRunCmd `cmd:"dry-run" help:"Prepare execution artifacts without running an agent."`
+}
+
 type contractShowCmd struct {
 	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
@@ -109,6 +115,12 @@ type promptBuildCmd struct {
 
 type promptShowCmd struct {
 	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type executeDryRunCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to prepare for execution."`
+	Agent      string `name:"agent" help:"Agent adapter name. Defaults to agents.default_executor."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -153,12 +165,13 @@ type workspaceManifest struct {
 }
 
 type configFile struct {
-	Schema         string           `yaml:"schema"`
-	DefaultProfile string           `yaml:"default_profile"`
-	ProjectMap     projectMapConfig `yaml:"project_map"`
-	Limits         limitsConfig     `yaml:"limits"`
-	Budget         budgetConfig     `yaml:"budget"`
-	Memory         memoryConfig     `yaml:"memory"`
+	Schema         string             `yaml:"schema"`
+	DefaultProfile string             `yaml:"default_profile"`
+	ProjectMap     projectMapConfig   `yaml:"project_map"`
+	Agents         agents.AgentConfig `yaml:"agents"`
+	Limits         limitsConfig       `yaml:"limits"`
+	Budget         budgetConfig       `yaml:"budget"`
+	Memory         memoryConfig       `yaml:"memory"`
 }
 
 type projectMapConfig struct {
@@ -299,6 +312,10 @@ func (c *promptBuildCmd) Run(r *runner) error {
 
 func (c *promptShowCmd) Run(r *runner) error {
 	return r.App.PromptShow(r.Stdout, c.RunID, c.JSONOutput)
+}
+
+func (c *executeDryRunCmd) Run(r *runner) error {
+	return r.App.ExecuteDryRun(r.Stdout, c.RunID, c.Agent, c.JSONOutput)
 }
 
 func (c *searchCmd) Run(r *runner) error {
@@ -580,6 +597,7 @@ func defaultConfigFile() configFile {
 			MaxFileBytes: 500000,
 			CodeIndex:    codeindex.ModeAuto,
 		},
+		Agents: agents.DefaultConfig(),
 		Limits: limitsConfig{
 			Clarify: iterationLimits{
 				MaxIterations:        5,
@@ -649,6 +667,7 @@ func readConfig(path string) (configFile, error) {
 	if config.Schema == "" {
 		return configFile{}, errors.New("config is incomplete")
 	}
+	config.Agents = agents.NormalizeConfig(config.Agents)
 	return config, nil
 }
 
