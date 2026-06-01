@@ -26,11 +26,12 @@ type App struct {
 }
 
 type cli struct {
-	Init   initCmd   `cmd:"" help:"Create a Pactum workspace and project map."`
-	Map    mapCmd    `cmd:"" help:"Advanced project map commands."`
-	Run    runCmd    `cmd:"" help:"Create a Pactum run workspace."`
-	Search searchCmd `cmd:"" help:"Search the Pactum project map."`
-	Status statusCmd `cmd:"" help:"Print Pactum workspace status."`
+	Clarify clarifyCmd `cmd:"" help:"Manage manual clarification artifacts."`
+	Init    initCmd    `cmd:"" help:"Create a Pactum workspace and project map."`
+	Map     mapCmd     `cmd:"" help:"Advanced project map commands."`
+	Run     runCmd     `cmd:"" help:"Create a Pactum run workspace."`
+	Search  searchCmd  `cmd:"" help:"Search the Pactum project map."`
+	Status  statusCmd  `cmd:"" help:"Print Pactum workspace status."`
 }
 
 type initCmd struct {
@@ -39,6 +40,31 @@ type initCmd struct {
 
 type mapCmd struct {
 	Refresh mapRefreshCmd `cmd:"" help:"Rebuild generated project map artifacts."`
+}
+
+type clarifyCmd struct {
+	Ask    clarifyAskCmd    `cmd:"" help:"Add a manual clarification question."`
+	Answer clarifyAnswerCmd `cmd:"" help:"Record a manual clarification answer."`
+	Status clarifyStatusCmd `cmd:"" help:"Print clarification status for a run."`
+}
+
+type clarifyAskCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to clarify."`
+	Question   string `arg:"" name:"question" help:"Clarification question text."`
+	Blocking   bool   `name:"blocking" help:"Mark the question as blocking contract progress."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type clarifyAnswerCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to clarify."`
+	QuestionID string `arg:"" name:"question_id" help:"Clarification question id."`
+	Answer     string `arg:"" name:"answer" help:"Clarification answer text."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type clarifyStatusCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type mapRefreshCmd struct {
@@ -188,6 +214,18 @@ func (c *statusCmd) Run(r *runner) error {
 
 func (c *runCmd) Run(r *runner) error {
 	return r.App.RunContract(r.Stdout, c.Task, c.ContractOnly, c.JSONOutput)
+}
+
+func (c *clarifyAskCmd) Run(r *runner) error {
+	return r.App.ClarifyAsk(r.Stdout, c.RunID, c.Question, c.Blocking, c.JSONOutput)
+}
+
+func (c *clarifyAnswerCmd) Run(r *runner) error {
+	return r.App.ClarifyAnswer(r.Stdout, c.RunID, c.QuestionID, c.Answer, c.JSONOutput)
+}
+
+func (c *clarifyStatusCmd) Run(r *runner) error {
+	return r.App.ClarifyStatus(r.Stdout, c.RunID, c.JSONOutput)
 }
 
 func (c *searchCmd) Run(r *runner) error {
