@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -86,6 +87,53 @@ func TestExecuteStatusAfterHelperRunAndJSON(t *testing.T) {
 		t.Fatalf("unexpected last result json: %#v", response.LastResult)
 	}
 	assertDoesNotContainRoot(t, "execute status json", stdout.String(), root)
+}
+
+func TestExecuteStatusDoesNotPairPreviousResultWithNewerIncompleteAttempt(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := runSuccessfulHelperAttempt(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	assertNoError(t, os.MkdirAll(filepath.Join(runPaths.AttemptsDir, "attempt_002"), 0o755))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "status", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute status exited %d, stderr: %s", code, stderr.String())
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"count: 2",
+		"last: attempt_002",
+		"last completed: attempt_001",
+		"last completed exit code: 0",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("execute status output missing %q:\n%s", want, got)
+		}
+	}
+	for _, forbidden := range []string{
+		"last exit code: 0",
+		"last timed out: false",
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("execute status output should not pair previous result with attempt_002 via %q:\n%s", forbidden, got)
+		}
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"execute", "status", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute status --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var response executeStatusResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.Attempts.Count != 2 || response.Attempts.LastAttemptID != "attempt_002" {
+		t.Fatalf("unexpected attempts json: %#v", response.Attempts)
+	}
+	if !response.LastResult.Exists || response.LastResult.AttemptID != "attempt_001" || response.LastResult.ExitCode != 0 {
+		t.Fatalf("unexpected last result json: %#v", response.LastResult)
+	}
 }
 
 func TestExecuteShowWithNoAttempts(t *testing.T) {

@@ -39,10 +39,11 @@ type executeAttemptsStatus struct {
 }
 
 type executeLastResult struct {
-	Exists   bool   `json:"exists"`
-	Path     string `json:"path"`
-	ExitCode int    `json:"exit_code"`
-	TimedOut bool   `json:"timed_out"`
+	Exists    bool   `json:"exists"`
+	Path      string `json:"path"`
+	AttemptID string `json:"attempt_id,omitempty"`
+	ExitCode  int    `json:"exit_code"`
+	TimedOut  bool   `json:"timed_out"`
 }
 
 type executeShowResponse struct {
@@ -190,6 +191,7 @@ func buildExecuteStatusResponse(context executeReportContext) (executeStatusResp
 		if err := readJSON(context.RunPaths.LastResultJSON, &result); err != nil {
 			return executeStatusResponse{}, err
 		}
+		response.LastResult.AttemptID = result.AttemptID
 		response.LastResult.ExitCode = result.ExitCode
 		response.LastResult.TimedOut = result.TimedOut
 	} else if response.Attempts.LastAttemptID != "" {
@@ -201,6 +203,7 @@ func buildExecuteStatusResponse(context executeReportContext) (executeStatusResp
 			}
 			response.LastResult.Exists = true
 			response.LastResult.Path = filepath.ToSlash(filepath.Join("execute", "attempts", response.Attempts.LastAttemptID, "result.json"))
+			response.LastResult.AttemptID = result.AttemptID
 			response.LastResult.ExitCode = result.ExitCode
 			response.LastResult.TimedOut = result.TimedOut
 		}
@@ -389,8 +392,14 @@ func writeExecuteStatus(stdout io.Writer, response executeStatusResponse) {
 		fmt.Fprintf(stdout, "  last: %s\n", response.Attempts.LastAttemptID)
 	}
 	if response.LastResult.Exists {
-		fmt.Fprintf(stdout, "  last exit code: %d\n", response.LastResult.ExitCode)
-		fmt.Fprintf(stdout, "  last timed out: %t\n", response.LastResult.TimedOut)
+		if response.LastResult.AttemptID == "" || response.LastResult.AttemptID == response.Attempts.LastAttemptID {
+			fmt.Fprintf(stdout, "  last exit code: %d\n", response.LastResult.ExitCode)
+			fmt.Fprintf(stdout, "  last timed out: %t\n", response.LastResult.TimedOut)
+		} else {
+			fmt.Fprintf(stdout, "  last completed: %s\n", response.LastResult.AttemptID)
+			fmt.Fprintf(stdout, "  last completed exit code: %d\n", response.LastResult.ExitCode)
+			fmt.Fprintf(stdout, "  last completed timed out: %t\n", response.LastResult.TimedOut)
+		}
 	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Artifacts:")
