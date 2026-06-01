@@ -31,6 +31,7 @@ type cli struct {
 	Clarify  clarifyCmd  `cmd:"" help:"Manage manual clarification artifacts."`
 	Contract contractCmd `cmd:"" help:"Inspect, revise, and approve run contracts."`
 	Execute  executeCmd  `cmd:"" help:"Prepare deterministic execution artifacts."`
+	Gate     gateCmd     `cmd:"" help:"Run deterministic validation and scope gates."`
 	Init     initCmd     `cmd:"" help:"Create a Pactum workspace and project map."`
 	Map      mapCmd      `cmd:"" help:"Advanced project map commands."`
 	Prompt   promptCmd   `cmd:"" help:"Build and inspect executor prompt boundaries."`
@@ -88,6 +89,11 @@ type executeCmd struct {
 	Run    executeRunCmd    `cmd:"run" help:"Run an external agent behind an explicit safety gate."`
 	Show   executeShowCmd   `cmd:"show" help:"Show captured execution attempt artifacts."`
 	Status executeStatusCmd `cmd:"status" help:"Summarize captured execution artifacts."`
+}
+
+type gateCmd struct {
+	Run  gateRunCmd  `cmd:"run" help:"Run deterministic validation and scope checks."`
+	Show gateShowCmd `cmd:"show" help:"Show the latest gate report."`
 }
 
 type agentsCmd struct {
@@ -149,6 +155,17 @@ type executeShowCmd struct {
 	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
 	AttemptID  string `arg:"" optional:"" name:"attempt_id" help:"Attempt id to inspect. Defaults to the latest result."`
 	Logs       bool   `name:"logs" help:"Include bounded stdout/stderr excerpts."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type gateRunCmd struct {
+	RunID         string `arg:"" name:"run_id" help:"Run id to inspect."`
+	AllowCommands bool   `name:"allow-commands" help:"Required safety flag before running validation commands."`
+	JSONOutput    bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type gateShowCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -361,6 +378,14 @@ func (c *executeStatusCmd) Run(r *runner) error {
 
 func (c *executeShowCmd) Run(r *runner) error {
 	return r.App.ExecuteShow(r.Stdout, c.RunID, c.AttemptID, c.Logs, c.JSONOutput)
+}
+
+func (c *gateRunCmd) Run(r *runner) error {
+	return r.App.GateRun(r.Stdout, c.RunID, c.AllowCommands, c.JSONOutput)
+}
+
+func (c *gateShowCmd) Run(r *runner) error {
+	return r.App.GateShow(r.Stdout, c.RunID, c.JSONOutput)
 }
 
 func (c *agentsDoctorCmd) Run(r *runner) error {

@@ -85,10 +85,11 @@ func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, allowE
 
 	promptRepoPath := executionPromptRepoPath(runID)
 	request := executionRequestDocument{
-		Schema:    executionRequestSchema,
-		RunID:     runID,
-		AttemptID: attemptID,
-		CreatedAt: now.Format(time.RFC3339),
+		Schema:         executionRequestSchema,
+		RunID:          runID,
+		AttemptID:      attemptID,
+		CreatedAt:      now.Format(time.RFC3339),
+		ContractSHA256: prep.ContractSHA256,
 		Agent: executionRequestAgent{
 			Name:    prep.AgentName,
 			Command: prep.Adapter.Command,
@@ -149,12 +150,13 @@ func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, allowE
 }
 
 type executionPreparation struct {
-	Root      string
-	Paths     artifacts.Paths
-	RunPaths  contractRunPathSet
-	State     contractRunState
-	AgentName string
-	Adapter   agents.AdapterConfig
+	Root           string
+	Paths          artifacts.Paths
+	RunPaths       contractRunPathSet
+	State          contractRunState
+	ContractSHA256 string
+	AgentName      string
+	Adapter        agents.AdapterConfig
 }
 
 func (a App) prepareExecution(root string, runID string, agentName string) (executionPreparation, error) {
@@ -233,12 +235,13 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 		return executionPreparation{}, err
 	}
 	return executionPreparation{
-		Root:      root,
-		Paths:     paths,
-		RunPaths:  runPaths,
-		State:     state,
-		AgentName: resolvedAgentName,
-		Adapter:   adapter,
+		Root:           root,
+		Paths:          paths,
+		RunPaths:       runPaths,
+		State:          state,
+		ContractSHA256: hash,
+		AgentName:      resolvedAgentName,
+		Adapter:        adapter,
 	}, nil
 }
 
@@ -281,13 +284,14 @@ const (
 )
 
 type executionRequestDocument struct {
-	Schema    string                 `json:"schema"`
-	RunID     string                 `json:"run_id"`
-	AttemptID string                 `json:"attempt_id"`
-	CreatedAt string                 `json:"created_at"`
-	Agent     executionRequestAgent  `json:"agent"`
-	Artifacts agents.DryRunArtifacts `json:"artifacts"`
-	WouldRun  agents.DryRunCommand   `json:"would_run"`
+	Schema         string                 `json:"schema"`
+	RunID          string                 `json:"run_id"`
+	AttemptID      string                 `json:"attempt_id"`
+	CreatedAt      string                 `json:"created_at"`
+	ContractSHA256 string                 `json:"contract_sha256,omitempty"`
+	Agent          executionRequestAgent  `json:"agent"`
+	Artifacts      agents.DryRunArtifacts `json:"artifacts"`
+	WouldRun       agents.DryRunCommand   `json:"would_run"`
 }
 
 type executionRequestAgent struct {
