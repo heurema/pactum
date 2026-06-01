@@ -176,6 +176,24 @@ func TestGateRunDetectsNewFile(t *testing.T) {
 	}
 }
 
+func TestGateRunDetectsValidationCommandChanges(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PACTUM_GATE_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_GATE_HELPER_WRITE", "generated.go")
+	app, paths, runID := setupGatePreparedRun(t, root, []string{gateValidationCommandForTest()}, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"gate", "run", runID, "--allow-commands"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("gate run with validation write exited %d, stderr: %s", code, stderr.String())
+	}
+	report := readGateReport(t, runPaths.GateReportJSON)
+	if report.Status != "needs_review" || !containsString(report.Changes.NewFiles, "generated.go") {
+		t.Fatalf("validation-created file not reported: %#v", report)
+	}
+}
+
 func TestGateRunDetectsMissingFile(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
@@ -190,6 +208,41 @@ func TestGateRunDetectsMissingFile(t *testing.T) {
 	if report.Status != "needs_review" || !containsString(report.Changes.MissingFiles, "README.md") {
 		t.Fatalf("missing file not reported: %#v", report.Changes)
 	}
+}
+
+func TestGateRunRejectsAttemptFromPreviousApprovedContract(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "revise", runID, "--add-in-scope", "Update gate contract"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract revise exited %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"contract", "approve", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract approve exited %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("prompt build exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("gate run should reject attempt from previous approved contract")
+	}
+	if got := stderr.String(); !strings.Contains(got, "cannot run gate: no completed execution attempts found for current approved contract") {
+		t.Fatalf("stale attempt stderr mismatch:\n%s", got)
+	}
+	assertNoFile(t, runPaths.GateReportJSON)
 }
 
 func TestGateShowBeforeReportPrintsGuidance(t *testing.T) {
@@ -410,6 +463,12 @@ func TestGateValidationHelperProcess(t *testing.T) {
 	fmt.Fprintln(os.Stderr, "validation-stderr")
 	for _, arg := range os.Args[1:] {
 		fmt.Fprintf(os.Stdout, "arg=%s\n", arg)
+	}
+	if path := os.Getenv("PACTUM_GATE_HELPER_WRITE"); path != "" {
+		if err := os.WriteFile(path, []byte("package generated\n"), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "write error: %v\n", err)
+			os.Exit(2)
+		}
 	}
 	if raw := os.Getenv("PACTUM_GATE_HELPER_EXIT"); raw != "" {
 		code, err := strconv.Atoi(raw)

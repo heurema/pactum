@@ -110,13 +110,24 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 	if err := ensureGateContractApproved(context); err != nil {
 		return err
 	}
+	manifest, err := ensureGatePromptReady(context)
+	if err != nil {
+		return err
+	}
 
-	attempt, resultArtifact, found, err := latestCompletedGateExecution(context)
+	attempt, resultArtifact, found, err := latestCompletedGateExecution(context, manifest.ContractSHA256)
 	if err != nil {
 		return err
 	}
 	if !found {
-		return fmt.Errorf("cannot run gate: no completed execution attempts found")
+		hasCompleted, err := hasCompletedGateExecutionAttempt(context.RunPaths)
+		if err != nil {
+			return err
+		}
+		if !hasCompleted {
+			return fmt.Errorf("cannot run gate: no completed execution attempts found")
+		}
+		return fmt.Errorf("cannot run gate: no completed execution attempts found for current approved contract")
 	}
 
 	commands := nonEmptyValidationCommands(context.Contract.Validation.Commands)
@@ -133,7 +144,6 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 		return err
 	}
 
-	changes := buildGateChangeReport(context.Root, context.Paths)
 	validation := gateValidationReport{
 		CommandsAllowed: allowCommands,
 		Commands:        []gateValidationCommandReport{},
@@ -151,6 +161,7 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 			validation.Commands = append(validation.Commands, result)
 		}
 	}
+	changes := buildGateChangeReport(context.Root, context.Paths)
 
 	summary := gateSummary{
 		ExecutionPassed:   attempt.Result.ExitCode == 0 && !attempt.Result.TimedOut,
@@ -275,7 +286,24 @@ func ensureGateContractApproved(context gateContext) error {
 	return nil
 }
 
-func latestCompletedGateExecution(context gateContext) (executionAttemptSummary, string, bool, error) {
+func ensureGatePromptReady(context gateContext) (promptManifest, error) {
+	if !isRegularFile(context.RunPaths.PromptManifest) {
+		return promptManifest{}, fmt.Errorf("cannot run gate: executor prompt has not been built")
+	}
+	manifest, err := readPromptManifest(context.RunPaths.PromptManifest)
+	if err != nil {
+		return promptManifest{}, err
+	}
+	if manifest.Status != "ready" {
+		return promptManifest{}, fmt.Errorf("cannot run gate: executor prompt has not been built")
+	}
+	if context.Approval.ContractSHA256 == nil || manifest.ContractSHA256 != *context.Approval.ContractSHA256 {
+		return promptManifest{}, fmt.Errorf("cannot run gate: executor prompt does not match current approved contract")
+	}
+	return manifest, nil
+}
+
+func latestCompletedGateExecution(context gateContext, contractSHA256 string) (executionAttemptSummary, string, bool, error) {
 	attemptIDs, err := listExecutionAttemptIDs(context.RunPaths.AttemptsDir)
 	if err != nil {
 		return executionAttemptSummary{}, "", false, err
@@ -284,6 +312,9 @@ func latestCompletedGateExecution(context gateContext) (executionAttemptSummary,
 		attemptID := attemptIDs[index]
 		attemptPaths := executionAttemptPaths(context.RunPaths, attemptID)
 		if !isRegularFile(attemptPaths.ResultJSON) {
+			continue
+		}
+		if !gateAttemptMatchesContract(attemptPaths.RequestJSON, contractSHA256) {
 			continue
 		}
 		var result executionResultDocument
@@ -304,6 +335,30 @@ func latestCompletedGateExecution(context gateContext) (executionAttemptSummary,
 		}, artifact, true, nil
 	}
 	return executionAttemptSummary{}, "", false, nil
+}
+
+func hasCompletedGateExecutionAttempt(runPaths contractRunPathSet) (bool, error) {
+	attemptIDs, err := listExecutionAttemptIDs(runPaths.AttemptsDir)
+	if err != nil {
+		return false, err
+	}
+	for _, attemptID := range attemptIDs {
+		if isRegularFile(executionAttemptPaths(runPaths, attemptID).ResultJSON) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func gateAttemptMatchesContract(requestPath string, contractSHA256 string) bool {
+	if !isRegularFile(requestPath) {
+		return false
+	}
+	var request executionRequestDocument
+	if err := readJSON(requestPath, &request); err != nil {
+		return false
+	}
+	return request.ContractSHA256 == contractSHA256
 }
 
 func gateLastResultMatches(path string, attemptID string) bool {
