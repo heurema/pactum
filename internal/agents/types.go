@@ -1,5 +1,7 @@
 package agents
 
+import "time"
+
 type AgentConfig struct {
 	DefaultExecutor string                   `json:"default_executor" yaml:"default_executor"`
 	Adapters        map[string]AdapterConfig `json:"adapters" yaml:"adapters"`
@@ -43,4 +45,26 @@ type DryRunArtifacts struct {
 type DryRunCommand struct {
 	Command string   `json:"command"`
 	Args    []string `json:"args"`
+}
+
+type RunRequest struct {
+	RepoRoot       string
+	RunID          string
+	AttemptID      string
+	AgentName      string
+	Adapter        AdapterConfig
+	PromptRepoPath string
+	Timeout        time.Duration
+}
+
+type RunResult struct {
+	Command        string   `json:"-"`
+	Args           []string `json:"-"`
+	ExitCode       int      `json:"exit_code"`
+	StartedAt      string   `json:"started_at"`
+	FinishedAt     string   `json:"finished_at"`
+	DurationMillis int64    `json:"duration_ms"`
+	TimedOut       bool     `json:"timed_out"`
+	StdoutPath     string   `json:"stdout"`
+	StderrPath     string   `json:"stderr"`
 }

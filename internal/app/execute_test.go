@@ -3,11 +3,15 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/heurema/pactum/internal/agents"
+	"github.com/heurema/pactum/internal/artifacts"
 )
 
 func TestExecuteDryRunBeforeInitPrintsGuidance(t *testing.T) {
@@ -341,9 +345,230 @@ func TestExecuteDryRunUnsupportedInputModeFails(t *testing.T) {
 	}
 }
 
+func TestExecuteRunRequiresAllowExecute(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "run", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute run without allow exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); got != "Refusing to execute external agent without --allow-execute.\n" {
+		t.Fatalf("refusal output mismatch:\n%s", got)
+	}
+	if _, err := os.Stat(runPaths.AttemptsDir); err == nil {
+		t.Fatalf("execute run without allow should not create attempts dir")
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}
+
+func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedBuiltPromptWithHelperAgent(t, root, "helper")
+	t.Setenv("PACTUM_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--allow-execute"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "Execution attempt finished") || !strings.Contains(got, "attempt_001") {
+		t.Fatalf("execute run output mismatch:\n%s", got)
+	}
+
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	attemptPaths := executionAttemptPaths(runPaths, "attempt_001")
+	assertFile(t, attemptPaths.RequestJSON)
+	assertFile(t, attemptPaths.StdoutLog)
+	assertFile(t, attemptPaths.StderrLog)
+	assertFile(t, attemptPaths.ResultJSON)
+	assertFile(t, runPaths.LastResultJSON)
+
+	var request executionRequestDocument
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.RequestJSON)), &request))
+	if request.Schema != executionRequestSchema || request.RunID != runID || request.AttemptID != "attempt_001" {
+		t.Fatalf("unexpected request: %#v", request)
+	}
+	if request.Agent.Name != "helper" || request.Agent.Command != os.Args[0] || request.Agent.Input != agents.InputPromptFile {
+		t.Fatalf("unexpected request agent: %#v", request.Agent)
+	}
+	wantPrompt := ".heurema/pactum/runs/" + runID + "/contract/prompt.md"
+	if got := strings.Join(request.WouldRun.Args, " "); !strings.HasSuffix(got, "-- "+wantPrompt) {
+		t.Fatalf("unexpected would_run args: %#v", request.WouldRun.Args)
+	}
+	if request.Artifacts.Prompt != "contract/prompt.md" || request.Artifacts.ExecutorContext != "context/executor-context.md" {
+		t.Fatalf("unexpected request artifacts: %#v", request.Artifacts)
+	}
+
+	var result executionResultDocument
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.ResultJSON)), &result))
+	if result.Schema != executionResultSchema || result.ExitCode != 0 || result.TimedOut {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if result.Stdout != "execute/attempts/attempt_001/stdout.log" || result.Stderr != "execute/attempts/attempt_001/stderr.log" {
+		t.Fatalf("unexpected output artifact paths: %#v", result)
+	}
+	if got := mustReadFile(t, runPaths.LastResultJSON); got != mustReadFile(t, attemptPaths.ResultJSON) {
+		t.Fatalf("last-result.json should copy result.json")
+	}
+	if got := mustReadFile(t, attemptPaths.StdoutLog); !strings.Contains(got, "cwd_is_repo=true") || !strings.Contains(got, "prompt="+wantPrompt) {
+		t.Fatalf("stdout log mismatch:\n%s", got)
+	}
+	if got := mustReadFile(t, attemptPaths.StderrLog); !strings.Contains(got, "stderr-line") {
+		t.Fatalf("stderr log mismatch:\n%s", got)
+	}
+
+	assertDoesNotContainRoot(t, "request.json", mustReadFile(t, attemptPaths.RequestJSON), root)
+	assertDoesNotContainRoot(t, "result.json", mustReadFile(t, attemptPaths.ResultJSON), root)
+	assertDoesNotContainRoot(t, "last-result.json", mustReadFile(t, runPaths.LastResultJSON), root)
+	if state := readRunState(t, runPaths.RunJSON); state.Status != "contract_approved" {
+		t.Fatalf("execute run should not change status: %#v", state)
+	}
+	if events := strings.Join(readLines(t, paths.EventsJSONL), "\n"); !strings.Contains(events, "execution_attempt_completed") {
+		t.Fatalf("events missing execution_attempt_completed:\n%s", events)
+	}
+}
+
+func TestExecuteRunNonZeroWritesArtifactsAndReturnsNonZero(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedBuiltPromptWithHelperAgent(t, root, "helper")
+	t.Setenv("PACTUM_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_HELPER_EXIT", "7")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--allow-execute"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("execute run should return non-zero for agent failure")
+	}
+	if got := stderr.String(); !strings.Contains(got, "agent process exited with code 7") {
+		t.Fatalf("non-zero stderr mismatch:\n%s", got)
+	}
+
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	attemptPaths := executionAttemptPaths(runPaths, "attempt_001")
+	assertFile(t, attemptPaths.ResultJSON)
+	var result executionResultDocument
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.ResultJSON)), &result))
+	if result.ExitCode != 7 || result.TimedOut {
+		t.Fatalf("unexpected failing result: %#v", result)
+	}
+	if state := readRunState(t, runPaths.RunJSON); state.Status != "contract_approved" {
+		t.Fatalf("execute run should not change status: %#v", state)
+	}
+}
+
+func TestExecuteRunJSONOutput(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupApprovedBuiltPromptWithHelperAgent(t, root, "helper")
+	t.Setenv("PACTUM_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--allow-execute", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute run --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var result executionResultDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &result))
+	if result.AttemptID != "attempt_001" || result.ExitCode != 0 {
+		t.Fatalf("unexpected execute run json: %#v", result)
+	}
+	if strings.Contains(stdout.String(), "Execution attempt finished") {
+		t.Fatalf("json output should not include human output:\n%s", stdout.String())
+	}
+}
+
+func TestNextAttemptIDUsesExistingAttemptDirs(t *testing.T) {
+	root := t.TempDir()
+	attemptsDir := filepath.Join(root, "attempts")
+	id, err := nextAttemptID(attemptsDir)
+	assertNoError(t, err)
+	if id != "attempt_001" {
+		t.Fatalf("next attempt without dir = %q", id)
+	}
+	assertNoError(t, os.MkdirAll(filepath.Join(attemptsDir, "attempt_001"), 0o755))
+	assertNoError(t, os.MkdirAll(filepath.Join(attemptsDir, "attempt_002"), 0o755))
+	mustWriteFile(t, filepath.Join(attemptsDir, "attempt_099.txt"), "not a dir")
+
+	id, err = nextAttemptID(attemptsDir)
+	assertNoError(t, err)
+	if id != "attempt_003" {
+		t.Fatalf("next attempt with existing dirs = %q", id)
+	}
+}
+
 func readDryRunPlan(t *testing.T, path string) agents.DryRunPlan {
 	t.Helper()
 	var plan agents.DryRunPlan
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, path)), &plan))
 	return plan
+}
+
+func configureHelperAgent(t *testing.T, paths artifacts.Paths, name string) {
+	t.Helper()
+	config := defaultConfigFile()
+	config.Agents.Adapters[name] = agents.AdapterConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestExecutionHelperProcess"},
+		Input:   agents.InputPromptFile,
+	}
+	assertNoError(t, writeYAML(paths.Config, config))
+}
+
+func setupApprovedBuiltPromptWithHelperAgent(t *testing.T, root string, name string) (App, artifacts.Paths, string) {
+	t.Helper()
+	app, paths, runID := setupApprovedPromptContract(t, root)
+	configureHelperAgent(t, paths, name)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"map", "refresh"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("prompt build exited %d, stderr: %s", code, stderr.String())
+	}
+	return app, paths, runID
+}
+
+func TestExecutionHelperProcess(t *testing.T) {
+	if os.Getenv("PACTUM_HELPER_PROCESS") != "1" {
+		return
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cwd error: %v\n", err)
+		os.Exit(2)
+	}
+	expectedCWD := os.Getenv("PACTUM_HELPER_EXPECTED_CWD")
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(expectedCWD); err == nil {
+		expectedCWD = resolved
+	}
+	fmt.Printf("cwd_is_repo=%t\n", cwd == expectedCWD)
+	for _, arg := range os.Args {
+		if strings.HasPrefix(arg, ".heurema/") {
+			fmt.Printf("prompt=%s\n", arg)
+		}
+	}
+	fmt.Fprintln(os.Stderr, "stderr-line")
+	if raw := os.Getenv("PACTUM_HELPER_EXIT"); raw != "" {
+		code, err := strconv.Atoi(raw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "bad exit code: %v\n", err)
+			os.Exit(2)
+		}
+		os.Exit(code)
+	}
+	os.Exit(0)
 }
