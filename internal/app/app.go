@@ -30,6 +30,7 @@ type cli struct {
 	Contract contractCmd `cmd:"" help:"Inspect, revise, and approve run contracts."`
 	Init     initCmd     `cmd:"" help:"Create a Pactum workspace and project map."`
 	Map      mapCmd      `cmd:"" help:"Advanced project map commands."`
+	Prompt   promptCmd   `cmd:"" help:"Build and inspect executor prompt boundaries."`
 	Run      runCmd      `cmd:"" help:"Create a Pactum run workspace."`
 	Search   searchCmd   `cmd:"" help:"Search the Pactum project map."`
 	Status   statusCmd   `cmd:"" help:"Print Pactum workspace status."`
@@ -74,6 +75,11 @@ type contractCmd struct {
 	Approve contractApproveCmd `cmd:"" help:"Approve a run contract."`
 }
 
+type promptCmd struct {
+	Build promptBuildCmd `cmd:"" help:"Build deterministic executor prompt artifacts."`
+	Show  promptShowCmd  `cmd:"" help:"Show a built executor prompt."`
+}
+
 type contractShowCmd struct {
 	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
@@ -93,6 +99,16 @@ type contractReviseCmd struct {
 type contractApproveCmd struct {
 	RunID      string `arg:"" name:"run_id" help:"Run id to approve."`
 	By         string `name:"by" default:"manual" help:"Approver name to record."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type promptBuildCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to build prompt artifacts for."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type promptShowCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -275,6 +291,14 @@ func (c *contractReviseCmd) Run(r *runner) error {
 
 func (c *contractApproveCmd) Run(r *runner) error {
 	return r.App.ContractApprove(r.Stdout, c.RunID, c.By, c.JSONOutput)
+}
+
+func (c *promptBuildCmd) Run(r *runner) error {
+	return r.App.PromptBuild(r.Stdout, c.RunID, c.JSONOutput)
+}
+
+func (c *promptShowCmd) Run(r *runner) error {
+	return r.App.PromptShow(r.Stdout, c.RunID, c.JSONOutput)
 }
 
 func (c *searchCmd) Run(r *runner) error {

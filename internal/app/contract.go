@@ -152,6 +152,9 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 	if err := writeContractArtifacts(context.RunPaths, contract, context.State.MapRunID); err != nil {
 		return err
 	}
+	if err := removePromptReadinessArtifacts(context.RunPaths); err != nil {
+		return err
+	}
 	hash, err := fileSHA256(context.RunPaths.ContractJSON)
 	if err != nil {
 		return err
@@ -310,6 +313,9 @@ func resetApprovalIfApproved(paths artifacts.Paths, runPaths contractRunPathSet,
 	}
 	pending := pendingApprovalState()
 	if err := writeJSON(runPaths.ApprovalJSON, pending); err != nil {
+		return approvalState{}, false, err
+	}
+	if err := removePromptReadinessArtifacts(runPaths); err != nil {
 		return approvalState{}, false, err
 	}
 	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "contract_approval_reset", Timestamp: resetAt, RunID: runID, RepoRoot: root}); err != nil {
