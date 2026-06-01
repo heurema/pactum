@@ -136,6 +136,22 @@ func TestReviewAddFindingUpdatesSummaryAndLedger(t *testing.T) {
 	}
 }
 
+func TestReviewAddFindingRefreshesCurrentGateStatus(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	writeReviewGateReportForTest(t, runPaths, runID, "failed")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "add-finding", runID, "gate changed after prepare"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review add-finding exited %d, stderr: %s", code, stderr.String())
+	}
+	review := readReviewDoc(t, runPaths.ReviewJSON)
+	if review.Gate.Status != "failed" {
+		t.Fatalf("review gate status should refresh from current gate report: %#v", review.Gate)
+	}
+}
+
 func TestReviewAddFindingRejectsAbsoluteFilePath(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, _ := setupPreparedReview(t, root, "passed")
@@ -180,6 +196,23 @@ func TestReviewResolveFindingUpdatesStatusAndLedger(t *testing.T) {
 	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
 	if indexOfEvent(eventTypes, "review_finding_resolved") == -1 {
 		t.Fatalf("events missing review_finding_resolved:\n%v", eventTypes)
+	}
+}
+
+func TestReviewResolveRefreshesCurrentGateStatus(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	runReviewCommand(t, app, "review", "add-finding", runID, "blocking process issue", "--blocking")
+	writeReviewGateReportForTest(t, runPaths, runID, "failed")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "resolve", runID, "f_001", "--note", "gate changed after prepare"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review resolve exited %d, stderr: %s", code, stderr.String())
+	}
+	review := readReviewDoc(t, runPaths.ReviewJSON)
+	if review.Gate.Status != "failed" {
+		t.Fatalf("review gate status should refresh from current gate report: %#v", review.Gate)
 	}
 }
 
@@ -348,6 +381,12 @@ func setupRunWithGateReport(t *testing.T, root string, status string) (App, arti
 	t.Helper()
 	app, paths, runID := setupContractRun(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	writeReviewGateReportForTest(t, runPaths, runID, status)
+	return app, paths, runID, runPaths
+}
+
+func writeReviewGateReportForTest(t *testing.T, runPaths contractRunPathSet, runID string, status string) {
+	t.Helper()
 	assertNoError(t, os.MkdirAll(runPaths.GateDir, 0o755))
 	report := gateReportDocument{
 		Schema:    gateReportSchema,
@@ -356,7 +395,6 @@ func setupRunWithGateReport(t *testing.T, root string, status string) (App, arti
 		Status:    status,
 	}
 	assertNoError(t, writeJSON(runPaths.GateReportJSON, report))
-	return app, paths, runID, runPaths
 }
 
 func setupPreparedReview(t *testing.T, root string, gateStatus string) (App, artifacts.Paths, string, contractRunPathSet) {

@@ -228,6 +228,10 @@ func (a App) ReviewAddFinding(stdout io.Writer, runID string, input reviewFindin
 	if err != nil {
 		return err
 	}
+	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
+	if err != nil {
+		return err
+	}
 	now := a.nowUTC()
 	finding := reviewFindingRecord{
 		Schema:    reviewFindingSchema,
@@ -252,7 +256,7 @@ func (a App) ReviewAddFinding(stdout io.Writer, runID string, input reviewFindin
 	if resetApproval {
 		review.Approval = reviewApproval{}
 	}
-	review = refreshReviewDocument(review, runID, review.Gate.Status, findings, resolutions, now.Format(time.RFC3339))
+	review = refreshReviewDocument(review, runID, gateReport.Status, findings, resolutions, now.Format(time.RFC3339))
 	if err := writeJSON(context.RunPaths.ReviewJSON, review); err != nil {
 		return err
 	}
@@ -289,6 +293,10 @@ func (a App) ReviewResolve(stdout io.Writer, runID string, findingID string, not
 	if !hasReviewFinding(findings, findingID) {
 		return fmt.Errorf("review finding not found: %s", findingID)
 	}
+	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
+	if err != nil {
+		return err
+	}
 
 	now := a.nowUTC()
 	resolution := reviewResolutionRecord{
@@ -305,7 +313,7 @@ func (a App) ReviewResolve(stdout io.Writer, runID string, findingID string, not
 	}
 	resolutions = append(resolutions, resolution)
 
-	review = refreshReviewDocument(review, runID, review.Gate.Status, findings, resolutions, now.Format(time.RFC3339))
+	review = refreshReviewDocument(review, runID, gateReport.Status, findings, resolutions, now.Format(time.RFC3339))
 	if err := writeJSON(context.RunPaths.ReviewJSON, review); err != nil {
 		return err
 	}
