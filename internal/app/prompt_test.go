@@ -271,6 +271,37 @@ func TestPromptShowJSONOutput(t *testing.T) {
 	}
 }
 
+func TestContractReapproveRemovesPromptReadiness(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	assertFile(t, runPaths.PromptManifest)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract approve exited %d, stderr: %s", code, stderr.String())
+	}
+	assertNoFile(t, runPaths.PromptManifest)
+	assertFile(t, runPaths.ExecutorContext)
+	if approval := readApproval(t, runPaths.ApprovalJSON); approval.Status != "approved" || approval.ContractSHA256 == nil {
+		t.Fatalf("approval should stay approved after re-approve: %#v", approval)
+	}
+	if state := readRunState(t, runPaths.RunJSON); state.Status != "contract_approved" {
+		t.Fatalf("run status = %q, want contract_approved", state.Status)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"prompt", "show", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("prompt show after re-approve exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "Executor prompt has not been built. Run: pactum prompt build "+runID) {
+		t.Fatalf("prompt show after re-approve output mismatch:\n%s", got)
+	}
+}
+
 func TestContractReviseApprovedContractRemovesPromptReadiness(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)

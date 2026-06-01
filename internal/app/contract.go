@@ -152,6 +152,9 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 	if err := writeContractArtifacts(context.RunPaths, contract, context.State.MapRunID); err != nil {
 		return err
 	}
+	if err := removePromptReadinessArtifacts(context.RunPaths); err != nil {
+		return err
+	}
 	hash, err := fileSHA256(context.RunPaths.ContractJSON)
 	if err != nil {
 		return err
