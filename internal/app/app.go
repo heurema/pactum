@@ -26,12 +26,13 @@ type App struct {
 }
 
 type cli struct {
-	Clarify clarifyCmd `cmd:"" help:"Manage manual clarification artifacts."`
-	Init    initCmd    `cmd:"" help:"Create a Pactum workspace and project map."`
-	Map     mapCmd     `cmd:"" help:"Advanced project map commands."`
-	Run     runCmd     `cmd:"" help:"Create a Pactum run workspace."`
-	Search  searchCmd  `cmd:"" help:"Search the Pactum project map."`
-	Status  statusCmd  `cmd:"" help:"Print Pactum workspace status."`
+	Clarify  clarifyCmd  `cmd:"" help:"Manage manual clarification artifacts."`
+	Contract contractCmd `cmd:"" help:"Inspect, revise, and approve run contracts."`
+	Init     initCmd     `cmd:"" help:"Create a Pactum workspace and project map."`
+	Map      mapCmd      `cmd:"" help:"Advanced project map commands."`
+	Run      runCmd      `cmd:"" help:"Create a Pactum run workspace."`
+	Search   searchCmd   `cmd:"" help:"Search the Pactum project map."`
+	Status   statusCmd   `cmd:"" help:"Print Pactum workspace status."`
 }
 
 type initCmd struct {
@@ -64,6 +65,34 @@ type clarifyAnswerCmd struct {
 
 type clarifyStatusCmd struct {
 	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type contractCmd struct {
+	Show    contractShowCmd    `cmd:"" help:"Show a run contract."`
+	Revise  contractReviseCmd  `cmd:"" help:"Revise deterministic contract fields."`
+	Approve contractApproveCmd `cmd:"" help:"Approve a run contract."`
+}
+
+type contractShowCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type contractReviseCmd struct {
+	RunID         string   `arg:"" name:"run_id" help:"Run id to revise."`
+	Goal          string   `name:"goal" help:"Replace the contract goal."`
+	AddInScope    []string `name:"add-in-scope" sep:"none" help:"Append an in-scope item."`
+	AddOutOfScope []string `name:"add-out-of-scope" sep:"none" help:"Append an out-of-scope item."`
+	AddAcceptance []string `name:"add-acceptance" sep:"none" help:"Append an acceptance criterion."`
+	AddValidation []string `name:"add-validation" sep:"none" help:"Append a validation command."`
+	AddAssumption []string `name:"add-assumption" sep:"none" help:"Append an assumption."`
+	JSONOutput    bool     `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type contractApproveCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to approve."`
+	By         string `name:"by" default:"manual" help:"Approver name to record."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -226,6 +255,26 @@ func (c *clarifyAnswerCmd) Run(r *runner) error {
 
 func (c *clarifyStatusCmd) Run(r *runner) error {
 	return r.App.ClarifyStatus(r.Stdout, c.RunID, c.JSONOutput)
+}
+
+func (c *contractShowCmd) Run(r *runner) error {
+	return r.App.ContractShow(r.Stdout, c.RunID, c.JSONOutput)
+}
+
+func (c *contractReviseCmd) Run(r *runner) error {
+	revision := contractRevision{
+		Goal:          c.Goal,
+		AddInScope:    c.AddInScope,
+		AddOutOfScope: c.AddOutOfScope,
+		AddAcceptance: c.AddAcceptance,
+		AddValidation: c.AddValidation,
+		AddAssumption: c.AddAssumption,
+	}
+	return r.App.ContractRevise(r.Stdout, c.RunID, revision, c.JSONOutput)
+}
+
+func (c *contractApproveCmd) Run(r *runner) error {
+	return r.App.ContractApprove(r.Stdout, c.RunID, c.By, c.JSONOutput)
 }
 
 func (c *searchCmd) Run(r *runner) error {

@@ -209,6 +209,9 @@ func (a App) ClarifyStatus(stdout io.Writer, runID string, jsonOutput bool) erro
 	if err != nil {
 		return err
 	}
+	if context.State.Status == "contract_approved" && status.BlockingOpen == 0 {
+		status.RunStatus = "contract_approved"
+	}
 	if jsonOutput {
 		return writeJSONResponse(stdout, status)
 	}
@@ -266,6 +269,9 @@ func (a App) refreshClarificationArtifacts(context clarifyContext, updatedAt tim
 	state := context.State
 	state.Status = status.RunStatus
 	state.UpdatedAt = updatedAt
+	if _, _, err := resetApprovalIfApproved(context.Paths, context.RunPaths, context.Root, context.State.RunID, updatedAt); err != nil {
+		return clarifyStatusResponse{}, err
+	}
 	if err := writeJSON(context.RunPaths.RunJSON, state); err != nil {
 		return clarifyStatusResponse{}, err
 	}
@@ -274,13 +280,9 @@ func (a App) refreshClarificationArtifacts(context clarifyContext, updatedAt tim
 	if err != nil {
 		return clarifyStatusResponse{}, err
 	}
-	contract.Clarifications = contractClarifySet{Questions: contractClarificationsFromStatus(status.Questions)}
-	contract.OpenQuestions = openClarificationQuestionTexts(status.Questions)
-	if err := writeJSON(context.RunPaths.ContractJSON, contract); err != nil {
-		return clarifyStatusResponse{}, err
-	}
-	searchCount := readRunSearchResultCount(context.RunPaths.SearchResults)
-	if err := os.WriteFile(context.RunPaths.ContractMD, renderContractMDFromDraft(contract, state.MapRunID, searchCount), 0o644); err != nil {
+	applyClarificationStatusToContract(&contract, status)
+	contract.Status = "draft"
+	if err := writeContractArtifacts(context.RunPaths, contract, state.MapRunID); err != nil {
 		return clarifyStatusResponse{}, err
 	}
 	status.RunStatus = state.Status

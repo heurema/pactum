@@ -654,9 +654,12 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 	}
 	contractMD := mustReadFile(t, filepath.Join(runDir, "contract", "contract.md"))
 	if !strings.Contains(contractMD, "## Goal\n"+task) ||
-		!strings.Contains(contractMD, "Manual clarification is available; approval and agent execution are not implemented yet.") ||
+		!strings.Contains(contractMD, "Manual clarification and approval are available; agent execution is not implemented yet.") ||
 		!strings.Contains(contractMD, "Repo map: .heurema/pactum/map/repo-map.md") ||
 		!strings.Contains(contractMD, "Search results: context/search-results.json") ||
+		!strings.Contains(contractMD, "## Clarifications\n- None") ||
+		!strings.Contains(contractMD, "## Validation commands\nTBD") ||
+		!strings.Contains(contractMD, "## Assumptions\nTBD") ||
 		!strings.Contains(contractMD, "## Open questions\n- None") {
 		t.Fatalf("contract.md content mismatch:\n%s", contractMD)
 	}
@@ -666,7 +669,9 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 		}
 	}
 	promptMD := mustReadFile(t, filepath.Join(runDir, "contract", "prompt.md"))
-	if !strings.Contains(promptMD, "This prompt is not executable yet. Manual clarification is available, but approval and agent execution are not implemented.") || !strings.Contains(promptMD, task) {
+	if !strings.Contains(promptMD, "This prompt is not executable yet. Manual clarification and approval are available, but agent execution is not implemented.") ||
+		!strings.Contains(promptMD, "## Goal\n"+task) ||
+		!strings.Contains(promptMD, "## Validation commands\nTBD") {
 		t.Fatalf("prompt.md content mismatch:\n%s", promptMD)
 	}
 	if strings.Contains(promptMD, "Contract clarification and approval are not implemented.") {
@@ -674,7 +679,7 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 	}
 	var approval approvalState
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, filepath.Join(runDir, "contract", "approval.json"))), &approval))
-	if approval.Status != "pending" || approval.ApprovedAt != nil || approval.ApprovedBy != nil {
+	if approval.Schema != approvalSchema || approval.Status != "pending" || approval.ApprovedAt != nil || approval.ApprovedBy != nil || approval.ContractSHA256 != nil {
 		t.Fatalf("unexpected approval.json: %#v", approval)
 	}
 
@@ -985,6 +990,472 @@ func TestStatusJSONIncludesActiveRunCount(t *testing.T) {
 	}
 }
 
+func TestContractBeforeInitPrintsGuidance(t *testing.T) {
+	root := t.TempDir()
+
+	for _, args := range [][]string{
+		{"contract", "show", "run_x"},
+		{"contract", "revise", "run_x", "--goal", "new goal"},
+		{"contract", "approve", "run_x"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := testApp(root).Run(args, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("%v exited %d, stderr: %s", args, code, stderr.String())
+		}
+		if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
+			t.Fatalf("%v output mismatch:\n%s", args, got)
+		}
+	}
+}
+
+func TestContractShowExistingRun(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "show", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract show exited %d, stderr: %s", code, stderr.String())
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"Contract",
+		"id: " + runID,
+		"status: contract_draft",
+		"Approval:",
+		"status: pending",
+		"# Contract Draft",
+		"## Goal\nadd sqlite cache",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("contract show missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestContractShowJSONOutput(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "show", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract show --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var response contractShowResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.RunID != runID || response.RunStatus != "contract_draft" || response.Contract.Goal != "add sqlite cache" || response.Approval.Status != "pending" {
+		t.Fatalf("unexpected contract show json: %#v", response)
+	}
+	if strings.Contains(stdout.String(), "Contract\n") {
+		t.Fatalf("json output should not include human output:\n%s", stdout.String())
+	}
+}
+
+func TestContractRunNotFoundReturnsError(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+
+	var stdout, stderr bytes.Buffer
+	app := testApp(root)
+	code := app.Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"contract", "show", "run_missing"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("contract show missing run should fail")
+	}
+	if got := stderr.String(); !strings.Contains(got, "run not found: run_missing") {
+		t.Fatalf("missing run stderr mismatch:\n%s", got)
+	}
+}
+
+func TestContractReviseGoal(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "revise", runID, "--goal", "add sqlite-backed cache"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract revise exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "Contract revised") || !strings.Contains(got, "status: contract_draft") {
+		t.Fatalf("contract revise output mismatch:\n%s", got)
+	}
+
+	state := readRunState(t, runPaths.RunJSON)
+	if state.Task != "add sqlite cache" || state.Status != "contract_draft" {
+		t.Fatalf("run state should keep original task and draft status: %#v", state)
+	}
+	contract := readContractDraft(t, runPaths.ContractJSON)
+	if contract.Goal != "add sqlite-backed cache" {
+		t.Fatalf("contract goal = %q", contract.Goal)
+	}
+	if got := mustReadFile(t, runPaths.ContractMD); !strings.Contains(got, "## Goal\nadd sqlite-backed cache") {
+		t.Fatalf("contract.md missing revised goal:\n%s", got)
+	}
+	if got := mustReadFile(t, runPaths.PromptMD); !strings.Contains(got, "## Goal\nadd sqlite-backed cache") {
+		t.Fatalf("prompt.md missing revised goal:\n%s", got)
+	}
+	approval := readApproval(t, runPaths.ApprovalJSON)
+	if approval.Status != "pending" || approval.ContractSHA256 != nil {
+		t.Fatalf("approval should remain pending: %#v", approval)
+	}
+	if events := strings.Join(readLines(t, paths.EventsJSONL), "\n"); !strings.Contains(events, "contract_revised") {
+		t.Fatalf("events missing contract_revised:\n%s", events)
+	}
+}
+
+func TestContractReviseAppendsFields(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{
+		"contract", "revise", runID,
+		"--add-in-scope", "Add show, revise, and approve commands",
+		"--add-in-scope", "Persist cache metadata",
+		"--add-in-scope", "Expose status summary",
+		"--add-out-of-scope", "Implement cache eviction",
+		"--add-acceptance", "Cache survives process restart",
+		"--add-validation", "go test ./...",
+		"--add-assumption", "SQLite is available through the standard driver",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract revise exited %d, stderr: %s", code, stderr.String())
+	}
+
+	contract := readContractDraft(t, runPaths.ContractJSON)
+	if len(contract.Scope.In) != 3 || contract.Scope.In[0] != "Add show, revise, and approve commands" {
+		t.Fatalf("contract in-scope should preserve comma-containing item: %#v", contract.Scope.In)
+	}
+	if got := strings.Join(contract.Scope.In, "\n"); !strings.Contains(got, "Persist cache metadata") || !strings.Contains(got, "Expose status summary") {
+		t.Fatalf("contract in-scope mismatch: %#v", contract.Scope.In)
+	}
+	if len(contract.Scope.Out) != 1 || contract.Scope.Out[0] != "Implement cache eviction" {
+		t.Fatalf("contract out-of-scope mismatch: %#v", contract.Scope.Out)
+	}
+	if len(contract.AcceptanceCriteria) != 1 || contract.AcceptanceCriteria[0] != "Cache survives process restart" {
+		t.Fatalf("contract acceptance mismatch: %#v", contract.AcceptanceCriteria)
+	}
+	if len(contract.Validation.Commands) != 1 || contract.Validation.Commands[0] != "go test ./..." {
+		t.Fatalf("contract validation mismatch: %#v", contract.Validation.Commands)
+	}
+	if len(contract.Assumptions) != 1 || contract.Assumptions[0] != "SQLite is available through the standard driver" {
+		t.Fatalf("contract assumptions mismatch: %#v", contract.Assumptions)
+	}
+
+	contractMD := mustReadFile(t, runPaths.ContractMD)
+	for _, want := range []string{
+		"## In scope\n- Add show, revise, and approve commands\n- Persist cache metadata\n- Expose status summary",
+		"## Out of scope\n- Implement cache eviction",
+		"## Acceptance criteria\n- Cache survives process restart",
+		"## Validation commands\n- go test ./...",
+		"## Assumptions\n- SQLite is available through the standard driver",
+	} {
+		if !strings.Contains(contractMD, want) {
+			t.Fatalf("contract.md missing %q:\n%s", want, contractMD)
+		}
+	}
+	promptMD := mustReadFile(t, runPaths.PromptMD)
+	for _, want := range []string{
+		"## In scope\n- Add show, revise, and approve commands\n- Persist cache metadata\n- Expose status summary",
+		"## Out of scope\n- Implement cache eviction",
+		"## Acceptance criteria\n- Cache survives process restart",
+		"## Validation commands\n- go test ./...",
+	} {
+		if !strings.Contains(promptMD, want) {
+			t.Fatalf("prompt.md missing %q:\n%s", want, promptMD)
+		}
+	}
+}
+
+func TestContractReviseWithoutFlagsErrors(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "revise", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("contract revise without flags should fail")
+	}
+	if got := stderr.String(); !strings.Contains(got, "no contract revisions provided") {
+		t.Fatalf("contract revise stderr mismatch:\n%s", got)
+	}
+}
+
+func TestContractApproveSucceedsWithoutBlockingQuestions(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract approve exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "Contract approved") || !strings.Contains(got, "status: contract_approved") || !strings.Contains(got, "approved by: manual") {
+		t.Fatalf("contract approve output mismatch:\n%s", got)
+	}
+
+	state := readRunState(t, runPaths.RunJSON)
+	if state.Status != "contract_approved" {
+		t.Fatalf("run status = %q, want contract_approved", state.Status)
+	}
+	contract := readContractDraft(t, runPaths.ContractJSON)
+	if contract.Status != "approved" {
+		t.Fatalf("contract status = %q, want approved", contract.Status)
+	}
+	if got := mustReadFile(t, runPaths.ContractMD); !strings.Contains(got, "Contract status: approved") || strings.Contains(got, "Contract status: draft") {
+		t.Fatalf("contract.md should show approved status:\n%s", got)
+	}
+	approval := readApproval(t, runPaths.ApprovalJSON)
+	if approval.Schema != approvalSchema || approval.Status != "approved" || approval.ApprovedAt == nil || *approval.ApprovedAt != "2026-05-31T18:40:12Z" || approval.ApprovedBy == nil || *approval.ApprovedBy != "manual" || approval.ContractSHA256 == nil || *approval.ContractSHA256 == "" {
+		t.Fatalf("unexpected approval: %#v", approval)
+	}
+	hash, err := fileSHA256(runPaths.ContractJSON)
+	assertNoError(t, err)
+	if *approval.ContractSHA256 != hash {
+		t.Fatalf("approval hash = %q, want %q", *approval.ContractSHA256, hash)
+	}
+	if events := strings.Join(readLines(t, paths.EventsJSONL), "\n"); !strings.Contains(events, "contract_approved") {
+		t.Fatalf("events missing contract_approved:\n%s", events)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"contract", "show", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract show after approve exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "Contract status: approved") || strings.Contains(got, "Contract status: draft") {
+		t.Fatalf("contract show should render approved status:\n%s", got)
+	}
+}
+
+func TestContractApproveByRecordsApprover(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "approve", runID, "--by", "alice"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract approve --by exited %d, stderr: %s", code, stderr.String())
+	}
+	approval := readApproval(t, runPaths.ApprovalJSON)
+	if approval.ApprovedBy == nil || *approval.ApprovedBy != "alice" {
+		t.Fatalf("approved_by = %#v, want alice", approval.ApprovedBy)
+	}
+}
+
+func TestContractApproveJSONOutput(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "approve", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract approve --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var response contractApproveResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.RunID != runID || response.RunStatus != "contract_approved" || response.Approval.Status != "approved" || response.Approval.ContractSHA256 == nil {
+		t.Fatalf("unexpected approve json: %#v", response)
+	}
+	if strings.Contains(stdout.String(), "Contract approved") {
+		t.Fatalf("json output should not include human output:\n%s", stdout.String())
+	}
+}
+
+func TestContractApproveBlockedByOpenBlockingClarification(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"clarify", "ask", runID, "Should approval wait?", "--blocking"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"contract", "approve", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("contract approve should fail while blocking questions remain")
+	}
+	if got := stderr.String(); !strings.Contains(got, "cannot approve contract: blocking clarification questions remain") {
+		t.Fatalf("approve stderr mismatch:\n%s", got)
+	}
+	if got := stdout.String(); !strings.Contains(got, "Blocking clarification questions remain") || !strings.Contains(got, "q_001 Should approval wait?") {
+		t.Fatalf("approve stdout should list blocking questions:\n%s", got)
+	}
+	if state := readRunState(t, runPaths.RunJSON); state.Status != "clarifying" {
+		t.Fatalf("run status = %q, want clarifying", state.Status)
+	}
+	if approval := readApproval(t, runPaths.ApprovalJSON); approval.Status != "pending" || approval.ContractSHA256 != nil {
+		t.Fatalf("approval should remain pending: %#v", approval)
+	}
+}
+
+func TestContractApproveAllowsNonBlockingOpenClarification(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"clarify", "ask", runID, "Optional context?"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"contract", "approve", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract approve with non-blocking open question exited %d, stderr: %s", code, stderr.String())
+	}
+	if state := readRunState(t, runPaths.RunJSON); state.Status != "contract_approved" {
+		t.Fatalf("run status = %q, want contract_approved", state.Status)
+	}
+	if contract := readContractDraft(t, runPaths.ContractJSON); contract.Status != "approved" || len(contract.OpenQuestions) != 1 || contract.OpenQuestions[0] != "Optional context?" {
+		t.Fatalf("contract should retain non-blocking open question: %#v", contract.OpenQuestions)
+	}
+}
+
+func TestContractReviseApprovedContractResetsApproval(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract approve exited %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"contract", "revise", runID, "--add-in-scope", "Use sqlite"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract revise exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "reset: true") {
+		t.Fatalf("contract revise should report approval reset:\n%s", got)
+	}
+	if state := readRunState(t, runPaths.RunJSON); state.Status != "contract_draft" {
+		t.Fatalf("run status = %q, want contract_draft", state.Status)
+	}
+	if approval := readApproval(t, runPaths.ApprovalJSON); approval.Status != "pending" || approval.ContractSHA256 != nil || approval.ApprovedBy != nil || approval.ApprovedAt != nil {
+		t.Fatalf("approval should reset to pending: %#v", approval)
+	}
+	if contract := readContractDraft(t, runPaths.ContractJSON); contract.Status != "draft" {
+		t.Fatalf("contract status = %q, want draft after revision", contract.Status)
+	}
+	events := strings.Join(readLines(t, paths.EventsJSONL), "\n")
+	for _, want := range []string{"contract_approved", "contract_approval_reset", "contract_revised"} {
+		if !strings.Contains(events, want) {
+			t.Fatalf("events missing %q:\n%s", want, events)
+		}
+	}
+}
+
+func TestClarifyAfterApprovedContractResetsApproval(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract approve exited %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"clarify", "ask", runID, "Need approval reset?", "--blocking"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+	}
+	if state := readRunState(t, runPaths.RunJSON); state.Status != "clarifying" {
+		t.Fatalf("run status = %q, want clarifying", state.Status)
+	}
+	if approval := readApproval(t, runPaths.ApprovalJSON); approval.Status != "pending" || approval.ContractSHA256 != nil {
+		t.Fatalf("approval should reset after clarification: %#v", approval)
+	}
+	if contract := readContractDraft(t, runPaths.ContractJSON); contract.Status != "draft" {
+		t.Fatalf("contract status = %q, want draft after clarification", contract.Status)
+	}
+	if events := strings.Join(readLines(t, paths.EventsJSONL), "\n"); !strings.Contains(events, "contract_approval_reset") {
+		t.Fatalf("events missing contract_approval_reset:\n%s", events)
+	}
+}
+
+func TestContractArtifactsUseRepoRelativePaths(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	for _, args := range [][]string{
+		{"contract", "revise", runID, "--goal", "portable contract", "--add-in-scope", "Use repo-relative paths", "--add-validation", "go test ./..."},
+		{"contract", "approve", runID},
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		code := app.Run(args, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("%v exited %d, stderr: %s", args, code, stderr.String())
+		}
+	}
+
+	for name, content := range map[string]string{
+		"run.json":                    mustReadFile(t, runPaths.RunJSON),
+		"context/repo-context.md":     mustReadFile(t, runPaths.RepoContext),
+		"context/search-results.json": mustReadFile(t, runPaths.SearchResults),
+		"contract/contract.json":      mustReadFile(t, runPaths.ContractJSON),
+		"contract/contract.md":        mustReadFile(t, runPaths.ContractMD),
+		"contract/prompt.md":          mustReadFile(t, runPaths.PromptMD),
+		"contract/approval.json":      mustReadFile(t, runPaths.ApprovalJSON),
+	} {
+		assertDoesNotContainRoot(t, name, content, root)
+	}
+	contractMD := mustReadFile(t, runPaths.ContractMD)
+	for _, want := range []string{
+		"Repo map: .heurema/pactum/map/repo-map.md",
+		"Search results: context/search-results.json",
+	} {
+		if !strings.Contains(contractMD, want) {
+			t.Fatalf("contract.md missing repo-relative path %q:\n%s", want, contractMD)
+		}
+	}
+}
+
+func TestStatusCountsApprovedRunAsActive(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract approve exited %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"status", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("status --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var status statusResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &status))
+	if status.Runs.Active != 1 {
+		t.Fatalf("status runs.active = %d, want 1: %#v", status.Runs.Active, status)
+	}
+}
+
 func TestClarifyBeforeInitPrintsGuidance(t *testing.T) {
 	root := t.TempDir()
 
@@ -1074,7 +1545,7 @@ func TestClarifyAskBlockingQuestionUpdatesArtifacts(t *testing.T) {
 	}
 	contractMD := mustReadFile(t, runPaths.ContractMD)
 	for _, want := range []string{
-		"Draft only. Manual clarification is available; approval and agent execution are not implemented yet.",
+		"Manual clarification and approval are available; agent execution is not implemented yet.",
 		"## Clarifications",
 		"q_001 [blocking] — Should this feature update existing contract artifacts?",
 		"Answer: pending",
@@ -1228,6 +1699,50 @@ func TestClarifyStatusJSONOutput(t *testing.T) {
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &status))
 	if status.RunID != runID || status.RunStatus != "clarifying" || status.Total != 1 || status.Open != 1 || status.BlockingOpen != 1 || len(status.Questions) != 1 {
 		t.Fatalf("unexpected clarify status json: %#v", status)
+	}
+}
+
+func TestClarifyStatusReportsApprovedRun(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract approve exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"clarify", "status", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify status exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "status: contract_approved") {
+		t.Fatalf("clarify status should preserve approved status:\n%s", got)
+	}
+}
+
+func TestClarifyStatusJSONReportsApprovedRun(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract approve exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"clarify", "status", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify status --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var status clarifyStatusResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &status))
+	if status.RunID != runID || status.RunStatus != "contract_approved" || status.BlockingOpen != 0 {
+		t.Fatalf("unexpected approved clarify status json: %#v", status)
 	}
 }
 
@@ -1820,6 +2335,27 @@ func hasCodeItem(items []codeindex.Item, path string, kind string, name string) 
 		}
 	}
 	return false
+}
+
+func readRunState(t *testing.T, path string) contractRunState {
+	t.Helper()
+	var state contractRunState
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, path)), &state))
+	return state
+}
+
+func readContractDraft(t *testing.T, path string) draftContract {
+	t.Helper()
+	var contract draftContract
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, path)), &contract))
+	return contract
+}
+
+func readApproval(t *testing.T, path string) approvalState {
+	t.Helper()
+	var approval approvalState
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, path)), &approval))
+	return approval
 }
 
 func assertDir(t *testing.T, path string) {
