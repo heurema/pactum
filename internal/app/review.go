@@ -18,13 +18,17 @@ const (
 	reviewFindingSchema    = "pactum.review_finding.v1"
 	reviewResolutionSchema = "pactum.review_resolution.v1"
 
-	reviewArtifact            = "review/review.json"
-	reviewFindingsArtifact    = "review/findings.jsonl"
-	reviewResolutionsArtifact = "review/resolutions.jsonl"
-	reviewerContextArtifact   = "review/reviewer-context.md"
-	reviewerPromptArtifact    = "review/reviewer-prompt.md"
-	reviewerDryRunArtifact    = "review/reviewer-dry-run.json"
-	reviewerDryRunSchema      = "pactum.review_dry_run.v1"
+	reviewArtifact             = "review/review.json"
+	reviewFindingsArtifact     = "review/findings.jsonl"
+	reviewResolutionsArtifact  = "review/resolutions.jsonl"
+	reviewerContextArtifact    = "review/reviewer-context.md"
+	reviewerPromptArtifact     = "review/reviewer-prompt.md"
+	reviewerDryRunArtifact     = "review/reviewer-dry-run.json"
+	reviewerDryRunSchema       = "pactum.review_dry_run.v1"
+	reviewerAttemptsArtifact   = "review/reviewer-attempts"
+	reviewerLastResultArtifact = "review/reviewer-last-result.json"
+	reviewerRequestSchema      = "pactum.reviewer_request.v1"
+	reviewerResultSchema       = "pactum.reviewer_result.v1"
 )
 
 type reviewContext struct {
@@ -177,6 +181,46 @@ type reviewerDryRunArtifacts struct {
 	Findings        string `json:"findings"`
 	Resolutions     string `json:"resolutions"`
 	GateReport      string `json:"gate_report"`
+}
+
+type reviewerRequestDocument struct {
+	Schema    string                  `json:"schema"`
+	RunID     string                  `json:"run_id"`
+	AttemptID string                  `json:"attempt_id"`
+	CreatedAt string                  `json:"created_at"`
+	Reviewer  reviewerDryRunAgent     `json:"reviewer"`
+	Artifacts reviewerDryRunArtifacts `json:"artifacts"`
+	WouldRun  agents.DryRunCommand    `json:"would_run"`
+}
+
+type reviewerResultDocument struct {
+	Schema         string `json:"schema"`
+	RunID          string `json:"run_id"`
+	AttemptID      string `json:"attempt_id"`
+	Reviewer       string `json:"reviewer"`
+	StartedAt      string `json:"started_at"`
+	FinishedAt     string `json:"finished_at"`
+	DurationMillis int64  `json:"duration_ms"`
+	ExitCode       int    `json:"exit_code"`
+	TimedOut       bool   `json:"timed_out"`
+	Stdout         string `json:"stdout"`
+	Stderr         string `json:"stderr"`
+}
+
+type reviewerAttemptPathSet struct {
+	Dir         string
+	RequestJSON string
+	StdoutLog   string
+	StderrLog   string
+	ResultJSON  string
+}
+
+type reviewerProcessError struct {
+	ExitCode int
+}
+
+func (e reviewerProcessError) Error() string {
+	return fmt.Sprintf("reviewer process exited with code %d", e.ExitCode)
 }
 
 func (a App) ReviewPrepare(stdout io.Writer, runID string, jsonOutput bool) error {
@@ -446,16 +490,7 @@ func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, j
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(context.RunPaths.ReviewDir, 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(context.RunPaths.ReviewContextMD, []byte(renderReviewerContext(prep)), 0o644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(context.RunPaths.ReviewPromptMD, []byte(renderReviewerPrompt(runID)), 0o644); err != nil {
-		return err
-	}
-	if err := writeJSON(context.RunPaths.ReviewDryRunJSON, plan); err != nil {
+	if err := writeReviewerDryRunArtifacts(prep, plan); err != nil {
 		return err
 	}
 	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_dry_run_prepared", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
@@ -466,6 +501,91 @@ func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, j
 		return writeJSONResponse(stdout, plan)
 	}
 	writeReviewDryRun(stdout, plan)
+	return nil
+}
+
+func (a App) ReviewRun(stdout io.Writer, runID string, reviewerName string, timeout time.Duration, jsonOutput bool) error {
+	context, ok, err := a.loadReviewContext(stdout, runID)
+	if err != nil || !ok {
+		return err
+	}
+	prep, err := a.prepareReviewerRun(context, reviewerName)
+	if err != nil {
+		return err
+	}
+
+	now := a.nowUTC()
+	plan, err := ensureReviewerDryRunArtifacts(prep, now.Format(time.RFC3339))
+	if err != nil {
+		return err
+	}
+
+	attemptID, err := nextReviewerAttemptID(context.RunPaths.ReviewAttemptsDir)
+	if err != nil {
+		return err
+	}
+	attemptPaths := reviewerAttemptPaths(context.RunPaths, attemptID)
+	if err := os.MkdirAll(attemptPaths.Dir, 0o755); err != nil {
+		return err
+	}
+
+	request := reviewerRequestDocument{
+		Schema:    reviewerRequestSchema,
+		RunID:     runID,
+		AttemptID: attemptID,
+		CreatedAt: now.Format(time.RFC3339),
+		Reviewer: reviewerDryRunAgent{
+			Name:    prep.Reviewer.Name,
+			Command: prep.Reviewer.Command,
+			Args:    append([]string{}, prep.Reviewer.Args...),
+			Input:   prep.Reviewer.Input,
+		},
+		Artifacts: plan.Artifacts,
+		WouldRun:  plan.WouldRun,
+	}
+	if err := writeJSON(attemptPaths.RequestJSON, request); err != nil {
+		return err
+	}
+	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "reviewer_attempt_started", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+		return err
+	}
+
+	runResult, runErr := agents.RunSubprocess(agents.RunRequest{
+		RepoRoot:       context.Root,
+		RunID:          runID,
+		AttemptID:      attemptID,
+		Agent:          prep.Reviewer,
+		PromptRepoPath: reviewerPromptRepoPath(runID),
+		ArtifactDir:    reviewerAttemptsArtifact,
+		Timeout:        timeout,
+	})
+	if runErr != nil && runResult.StartedAt == "" {
+		return runErr
+	}
+	result := reviewerResultFromRunResult(runID, attemptID, prep.Reviewer.Name, runResult)
+	if err := writeJSON(attemptPaths.ResultJSON, result); err != nil {
+		return err
+	}
+	if err := writeJSON(context.RunPaths.ReviewLastResultJSON, result); err != nil {
+		return err
+	}
+	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "reviewer_attempt_finished", Timestamp: reviewerResultTimestamp(result, now), RunID: runID, RepoRoot: context.Root}); err != nil {
+		return err
+	}
+
+	if jsonOutput {
+		if err := writeJSONResponse(stdout, result); err != nil {
+			return err
+		}
+	} else {
+		writeReviewRun(stdout, request, result)
+	}
+	if runErr != nil {
+		if result.TimedOut {
+			return fmt.Errorf("reviewer process timed out after %s", timeout)
+		}
+		return reviewerProcessError{ExitCode: result.ExitCode}
+	}
 	return nil
 }
 
@@ -583,6 +703,106 @@ func (a App) prepareReviewerDryRun(context reviewContext, reviewerName string) (
 		Resolutions: resolutions,
 		Reviewer:    reviewer,
 	}, nil
+}
+
+func (a App) prepareReviewerRun(context reviewContext, reviewerName string) (reviewerDryRunPreparation, error) {
+	review, err := requireReviewPrepared(context.RunPaths, context.State.RunID)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	if !isRegularFile(context.RunPaths.GateReportJSON) {
+		return reviewerDryRunPreparation{}, fmt.Errorf("cannot run reviewer: gate report not found")
+	}
+	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	contract, err := readDraftContract(context.RunPaths.ContractJSON)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	approval, err := readApprovalState(context.RunPaths.ApprovalJSON)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	if contract.Status != "approved" || approval.Status != "approved" || approval.ContractSHA256 == nil {
+		return reviewerDryRunPreparation{}, fmt.Errorf("cannot run reviewer: contract is not approved")
+	}
+	hash, err := fileSHA256(context.RunPaths.ContractJSON)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	if hash != *approval.ContractSHA256 {
+		return reviewerDryRunPreparation{}, fmt.Errorf("cannot run reviewer: contract is not approved")
+	}
+	findings, resolutions, err := readReviewRecords(context.RunPaths)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	reviewer, err := a.agentRegistry().ResolveReviewer(reviewerName)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	if reviewer.Input != agents.InputPromptFile {
+		return reviewerDryRunPreparation{}, fmt.Errorf("unsupported agent input mode: %s", reviewer.Input)
+	}
+
+	review = refreshReviewDocument(review, context.State.RunID, gateReport.Status, findings, resolutions, "")
+	return reviewerDryRunPreparation{
+		Context:     context,
+		Contract:    contract,
+		GateReport:  gateReport,
+		Review:      review,
+		Findings:    findings,
+		Resolutions: resolutions,
+		Reviewer:    reviewer,
+	}, nil
+}
+
+func writeReviewerDryRunArtifacts(prep reviewerDryRunPreparation, plan reviewerDryRunDocument) error {
+	if err := os.MkdirAll(prep.Context.RunPaths.ReviewDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(prep.Context.RunPaths.ReviewContextMD, []byte(renderReviewerContext(prep)), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(prep.Context.RunPaths.ReviewPromptMD, []byte(renderReviewerPrompt(prep.Context.State.RunID)), 0o644); err != nil {
+		return err
+	}
+	return writeJSON(prep.Context.RunPaths.ReviewDryRunJSON, plan)
+}
+
+func ensureReviewerDryRunArtifacts(prep reviewerDryRunPreparation, createdAt string) (reviewerDryRunDocument, error) {
+	expected, err := buildReviewerDryRunDocument(prep.Context.State.RunID, createdAt, prep.Reviewer)
+	if err != nil {
+		return reviewerDryRunDocument{}, err
+	}
+	if isRegularFile(prep.Context.RunPaths.ReviewContextMD) &&
+		isRegularFile(prep.Context.RunPaths.ReviewPromptMD) &&
+		isRegularFile(prep.Context.RunPaths.ReviewDryRunJSON) {
+		var existing reviewerDryRunDocument
+		if err := readJSON(prep.Context.RunPaths.ReviewDryRunJSON, &existing); err == nil && reviewerDryRunMatches(existing, expected) {
+			return existing, nil
+		}
+	}
+	if err := writeReviewerDryRunArtifacts(prep, expected); err != nil {
+		return reviewerDryRunDocument{}, err
+	}
+	return expected, nil
+}
+
+func reviewerDryRunMatches(got reviewerDryRunDocument, want reviewerDryRunDocument) bool {
+	return got.Schema == want.Schema &&
+		got.RunID == want.RunID &&
+		got.Reviewer.Name == want.Reviewer.Name &&
+		got.Reviewer.Command == want.Reviewer.Command &&
+		got.Reviewer.Input == want.Reviewer.Input &&
+		sameStringSlice(got.Reviewer.Args, want.Reviewer.Args) &&
+		got.Checks == want.Checks &&
+		got.Artifacts == want.Artifacts &&
+		got.WouldRun.Command == want.WouldRun.Command &&
+		sameStringSlice(got.WouldRun.Args, want.WouldRun.Args) &&
+		got.WouldRun.Stdin == want.WouldRun.Stdin
 }
 
 func readReviewGateReport(path string) (gateReportDocument, error) {
@@ -796,6 +1016,65 @@ func buildReviewerDryRunDocument(runID string, createdAt string, reviewer agents
 	}, nil
 }
 
+func reviewerPromptRepoPath(runID string) string {
+	return runArtifactRepoRel(runID, reviewerPromptArtifact)
+}
+
+func nextReviewerAttemptID(attemptsDir string) (string, error) {
+	entries, err := os.ReadDir(attemptsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "reviewer_attempt_001", nil
+		}
+		return "", err
+	}
+	maxAttempt := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		var number int
+		if _, err := fmt.Sscanf(entry.Name(), "reviewer_attempt_%03d", &number); err == nil && number > maxAttempt {
+			maxAttempt = number
+		}
+	}
+	return fmt.Sprintf("reviewer_attempt_%03d", maxAttempt+1), nil
+}
+
+func reviewerAttemptPaths(runPaths contractRunPathSet, attemptID string) reviewerAttemptPathSet {
+	dir := filepath.Join(runPaths.ReviewAttemptsDir, attemptID)
+	return reviewerAttemptPathSet{
+		Dir:         dir,
+		RequestJSON: filepath.Join(dir, "request.json"),
+		StdoutLog:   filepath.Join(dir, "stdout.log"),
+		StderrLog:   filepath.Join(dir, "stderr.log"),
+		ResultJSON:  filepath.Join(dir, "result.json"),
+	}
+}
+
+func reviewerResultFromRunResult(runID string, attemptID string, reviewer string, result agents.RunResult) reviewerResultDocument {
+	return reviewerResultDocument{
+		Schema:         reviewerResultSchema,
+		RunID:          runID,
+		AttemptID:      attemptID,
+		Reviewer:       reviewer,
+		StartedAt:      result.StartedAt,
+		FinishedAt:     result.FinishedAt,
+		DurationMillis: result.DurationMillis,
+		ExitCode:       result.ExitCode,
+		TimedOut:       result.TimedOut,
+		Stdout:         result.StdoutPath,
+		Stderr:         result.StderrPath,
+	}
+}
+
+func reviewerResultTimestamp(result reviewerResultDocument, fallback time.Time) time.Time {
+	if parsed, err := time.Parse(time.RFC3339Nano, result.FinishedAt); err == nil {
+		return parsed
+	}
+	return fallback
+}
+
 func renderReviewerContext(prep reviewerDryRunPreparation) string {
 	var b strings.Builder
 	state := buildReviewState(prep.Review, prep.Findings, prep.Resolutions)
@@ -879,8 +1158,8 @@ func renderReviewerPrompt(runID string) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Reviewer Prompt")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "This prompt is prepared for a future reviewer agent.")
-	fmt.Fprintln(&b, "Pactum does not execute reviewer agents in this milestone.")
+	fmt.Fprintln(&b, "This prompt is prepared for a reviewer agent subprocess.")
+	fmt.Fprintln(&b, "Pactum captures reviewer output as artifacts but does not parse it into findings in this milestone.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Objective")
 	fmt.Fprintln(&b, "Review the executed task against the approved Pactum contract and gate report.")
@@ -899,8 +1178,8 @@ func renderReviewerPrompt(runID string) string {
 	fmt.Fprintln(&b, "- Prefer concrete findings with file/path evidence.")
 	fmt.Fprintln(&b, "- If uncertain, recommend a blocking manual finding.")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "## Expected future output")
-	fmt.Fprintln(&b, "Future reviewer output should be converted into manual review findings:")
+	fmt.Fprintln(&b, "## Output shape")
+	fmt.Fprintln(&b, "If you report findings, make them easy for a human to convert manually:")
 	fmt.Fprintln(&b, "- message")
 	fmt.Fprintln(&b, "- severity")
 	fmt.Fprintln(&b, "- category")
@@ -1074,6 +1353,29 @@ func writeReviewDryRun(stdout io.Writer, plan reviewerDryRunDocument) {
 	fmt.Fprintf(stdout, "  reviewer prompt: %s\n", runArtifactRepoRel(plan.RunID, reviewerPromptArtifact))
 	fmt.Fprintf(stdout, "  reviewer context: %s\n", runArtifactRepoRel(plan.RunID, reviewerContextArtifact))
 	fmt.Fprintf(stdout, "  dry run: %s\n", runArtifactRepoRel(plan.RunID, reviewerDryRunArtifact))
+}
+
+func writeReviewRun(stdout io.Writer, request reviewerRequestDocument, result reviewerResultDocument) {
+	fmt.Fprintln(stdout, "Reviewer attempt finished")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Run:")
+	fmt.Fprintf(stdout, "  id: %s\n", result.RunID)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Reviewer:")
+	fmt.Fprintf(stdout, "  name: %s\n", request.Reviewer.Name)
+	fmt.Fprintf(stdout, "  command: %s\n", request.Reviewer.Command)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Attempt:")
+	fmt.Fprintf(stdout, "  id: %s\n", result.AttemptID)
+	fmt.Fprintf(stdout, "  exit code: %d\n", result.ExitCode)
+	fmt.Fprintf(stdout, "  timed out: %t\n", result.TimedOut)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Artifacts:")
+	fmt.Fprintf(stdout, "  request: %s\n", runArtifactRepoRel(result.RunID, filepath.ToSlash(filepath.Join(reviewerAttemptsArtifact, result.AttemptID, "request.json"))))
+	fmt.Fprintf(stdout, "  result: %s\n", runArtifactRepoRel(result.RunID, filepath.ToSlash(filepath.Join(reviewerAttemptsArtifact, result.AttemptID, "result.json"))))
+	fmt.Fprintf(stdout, "  stdout: %s\n", runArtifactRepoRel(result.RunID, result.Stdout))
+	fmt.Fprintf(stdout, "  stderr: %s\n", runArtifactRepoRel(result.RunID, result.Stderr))
+	fmt.Fprintf(stdout, "  last result: %s\n", runArtifactRepoRel(result.RunID, reviewerLastResultArtifact))
 }
 
 func writeReviewRunAndGate(stdout io.Writer, state reviewStateResponse) {

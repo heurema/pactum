@@ -106,6 +106,7 @@ type reviewCmd struct {
 	Resolve    reviewResolveCmd    `cmd:"" help:"Resolve a manual review finding."`
 	Approve    reviewApproveCmd    `cmd:"" help:"Approve a manual review."`
 	DryRun     reviewDryRunCmd     `cmd:"dry-run" help:"Prepare reviewer artifacts without running a reviewer."`
+	Run        reviewRunCmd        `cmd:"run" help:"Run a built-in reviewer and capture attempt artifacts."`
 }
 
 type agentsCmd struct {
@@ -223,6 +224,13 @@ type reviewDryRunCmd struct {
 	RunID      string `arg:"" name:"run_id" help:"Run id to prepare reviewer artifacts for."`
 	Reviewer   string `name:"reviewer" help:"Built-in reviewer name. Defaults to codex."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type reviewRunCmd struct {
+	RunID      string        `arg:"" name:"run_id" help:"Run id to review."`
+	Reviewer   string        `name:"reviewer" help:"Built-in reviewer name. Defaults to codex."`
+	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the reviewer process."`
+	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type agentsDoctorCmd struct {
@@ -478,6 +486,10 @@ func (c *reviewApproveCmd) Run(r *runner) error {
 
 func (c *reviewDryRunCmd) Run(r *runner) error {
 	return r.App.ReviewDryRun(r.Stdout, c.RunID, c.Reviewer, c.JSONOutput)
+}
+
+func (c *reviewRunCmd) Run(r *runner) error {
+	return r.App.ReviewRun(r.Stdout, c.RunID, c.Reviewer, c.Timeout, c.JSONOutput)
 }
 
 func (c *agentsDoctorCmd) Run(r *runner) error {

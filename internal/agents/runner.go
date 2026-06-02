@@ -53,6 +53,10 @@ func runSubprocessWithRunner(request RunRequest, runner processRunner) (RunResul
 	if strings.TrimSpace(request.PromptRepoPath) == "" {
 		return RunResult{}, errors.New("prompt path is required")
 	}
+	artifactDir := strings.Trim(strings.TrimSpace(request.ArtifactDir), "/")
+	if artifactDir == "" {
+		artifactDir = filepath.ToSlash(filepath.Join("execute", "attempts"))
+	}
 
 	command := executor.command(request.PromptRepoPath)
 	promptPath := filepath.Join(request.RepoRoot, filepath.FromSlash(request.PromptRepoPath))
@@ -61,13 +65,13 @@ func runSubprocessWithRunner(request RunRequest, runner processRunner) (RunResul
 		return RunResult{}, err
 	}
 
-	attemptDir := filepath.Join(request.RepoRoot, artifacts.WorkspaceRel, "runs", request.RunID, "execute", "attempts", request.AttemptID)
+	attemptDir := filepath.Join(request.RepoRoot, artifacts.WorkspaceRel, "runs", request.RunID, filepath.FromSlash(artifactDir), request.AttemptID)
 	if err := os.MkdirAll(attemptDir, 0o755); err != nil {
 		return RunResult{}, err
 	}
 
-	stdoutArtifact := filepath.ToSlash(filepath.Join("execute", "attempts", request.AttemptID, "stdout.log"))
-	stderrArtifact := filepath.ToSlash(filepath.Join("execute", "attempts", request.AttemptID, "stderr.log"))
+	stdoutArtifact := filepath.ToSlash(filepath.Join(artifactDir, request.AttemptID, "stdout.log"))
+	stderrArtifact := filepath.ToSlash(filepath.Join(artifactDir, request.AttemptID, "stderr.log"))
 	stdoutPath := filepath.Join(attemptDir, "stdout.log")
 	stderrPath := filepath.Join(attemptDir, "stderr.log")
 
@@ -83,12 +87,11 @@ func runSubprocessWithRunner(request RunRequest, runner processRunner) (RunResul
 	}
 	defer stderr.Close()
 
-	ctx := context.Background()
-	var cancel context.CancelFunc
+	ctx, cancel := context.WithCancel(context.Background())
 	if request.Timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, request.Timeout)
-		defer cancel()
 	}
+	defer cancel()
 
 	started := time.Now().UTC()
 	err = runner.Run(ctx, processSpec{
