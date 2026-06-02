@@ -99,14 +99,17 @@ type gateCmd struct {
 }
 
 type reviewCmd struct {
-	Prepare    reviewPrepareCmd    `cmd:"" help:"Prepare manual review artifacts."`
-	Status     reviewStatusCmd     `cmd:"" help:"Show manual review status."`
-	Show       reviewShowCmd       `cmd:"" help:"Show manual review findings."`
-	AddFinding reviewAddFindingCmd `cmd:"add-finding" help:"Append a manual review finding."`
-	Resolve    reviewResolveCmd    `cmd:"" help:"Resolve a manual review finding."`
-	Approve    reviewApproveCmd    `cmd:"" help:"Approve a manual review."`
-	DryRun     reviewDryRunCmd     `cmd:"dry-run" help:"Prepare reviewer artifacts without running a reviewer."`
-	Run        reviewRunCmd        `cmd:"run" help:"Run a built-in reviewer and capture attempt artifacts."`
+	Prepare         reviewPrepareCmd         `cmd:"" help:"Prepare manual review artifacts."`
+	Status          reviewStatusCmd          `cmd:"" help:"Show manual review status."`
+	Show            reviewShowCmd            `cmd:"" help:"Show manual review findings."`
+	AddFinding      reviewAddFindingCmd      `cmd:"add-finding" help:"Append a manual review finding."`
+	Resolve         reviewResolveCmd         `cmd:"" help:"Resolve a manual review finding."`
+	Approve         reviewApproveCmd         `cmd:"" help:"Approve a manual review."`
+	DryRun          reviewDryRunCmd          `cmd:"dry-run" help:"Prepare reviewer artifacts without running a reviewer."`
+	Run             reviewRunCmd             `cmd:"run" help:"Run a built-in reviewer and capture attempt artifacts."`
+	ProposeFindings reviewProposeFindingsCmd `cmd:"propose-findings" help:"Parse reviewer output into pending finding proposals."`
+	AcceptProposal  reviewAcceptProposalCmd  `cmd:"accept-proposal" help:"Accept a pending review finding proposal."`
+	RejectProposal  reviewRejectProposalCmd  `cmd:"reject-proposal" help:"Reject a pending review finding proposal."`
 }
 
 type agentsCmd struct {
@@ -231,6 +234,25 @@ type reviewRunCmd struct {
 	Reviewer   string        `name:"reviewer" help:"Built-in reviewer name. Defaults to codex."`
 	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the reviewer process."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type reviewProposeFindingsCmd struct {
+	RunID             string `arg:"" name:"run_id" help:"Run id to review."`
+	ReviewerAttemptID string `arg:"" optional:"" name:"reviewer_attempt_id" help:"Reviewer attempt id. Defaults to latest completed attempt."`
+	JSONOutput        bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type reviewAcceptProposalCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to review."`
+	ProposalID string `arg:"" name:"proposal_id" help:"Proposal id to accept."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type reviewRejectProposalCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to review."`
+	ProposalID string `arg:"" name:"proposal_id" help:"Proposal id to reject."`
+	Reason     string `name:"reason" help:"Reason for rejecting the proposal."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type agentsDoctorCmd struct {
@@ -490,6 +512,18 @@ func (c *reviewDryRunCmd) Run(r *runner) error {
 
 func (c *reviewRunCmd) Run(r *runner) error {
 	return r.App.ReviewRun(r.Stdout, c.RunID, c.Reviewer, c.Timeout, c.JSONOutput)
+}
+
+func (c *reviewProposeFindingsCmd) Run(r *runner) error {
+	return r.App.ReviewProposeFindings(r.Stdout, c.RunID, c.ReviewerAttemptID, c.JSONOutput)
+}
+
+func (c *reviewAcceptProposalCmd) Run(r *runner) error {
+	return r.App.ReviewAcceptProposal(r.Stdout, c.RunID, c.ProposalID, c.JSONOutput)
+}
+
+func (c *reviewRejectProposalCmd) Run(r *runner) error {
+	return r.App.ReviewRejectProposal(r.Stdout, c.RunID, c.ProposalID, c.Reason, c.JSONOutput)
 }
 
 func (c *agentsDoctorCmd) Run(r *runner) error {
