@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/heurema/pactum/internal/agents"
 	"github.com/heurema/pactum/internal/artifacts"
 	"github.com/heurema/pactum/internal/codeindex"
 	"github.com/heurema/pactum/internal/projectmap"
@@ -72,11 +73,8 @@ func helper() {}
 	if config.ProjectMap.CodeIndex != codeindex.ModeAuto {
 		t.Fatalf("config project_map.code_index = %q, want auto", config.ProjectMap.CodeIndex)
 	}
-	if config.Agents.DefaultExecutor != "codex" || config.Agents.DefaultReviewer != "codex" || config.Agents.Adapters["codex"].Command != "codex" || config.Agents.Adapters["claude"].Command != "claude" {
-		t.Fatalf("config agents default mismatch: %#v", config.Agents)
-	}
 	configYAML := mustReadFile(t, paths.Config)
-	for _, forbidden := range []string{"include_go_ast", "tree_sitter", "tree_sitter_languages", "entrypoints"} {
+	for _, forbidden := range []string{"agents:", "adapters:", "default_executor:", "default_reviewer:", "include_go_ast", "tree_sitter", "tree_sitter_languages", "entrypoints"} {
 		if strings.Contains(configYAML, forbidden) {
 			t.Fatalf("config.yaml should not contain %q:\n%s", forbidden, configYAML)
 		}
@@ -2253,6 +2251,84 @@ func testApp(root string) App {
 			return time.Date(2026, 5, 31, 18, 40, 12, 0, time.UTC)
 		},
 	}
+}
+
+type fixedAgentRegistry struct {
+	defaultExecutor string
+	defaultReviewer string
+	order           []string
+	descriptors     map[string]agents.AgentDescriptor
+}
+
+func testAgentRegistry(extra ...agents.AgentDescriptor) agents.Registry {
+	descriptors := map[string]agents.AgentDescriptor{}
+	order := []string{}
+	for _, descriptor := range agents.ListBuiltins() {
+		descriptors[descriptor.Name] = descriptor
+		order = append(order, descriptor.Name)
+	}
+	for _, descriptor := range extra {
+		if _, ok := descriptors[descriptor.Name]; !ok {
+			order = append(order, descriptor.Name)
+		}
+		descriptors[descriptor.Name] = descriptor
+	}
+	return fixedAgentRegistry{
+		defaultExecutor: agents.DefaultExecutor(),
+		defaultReviewer: agents.DefaultReviewer(),
+		order:           order,
+		descriptors:     descriptors,
+	}
+}
+
+func helperAgentDescriptor(name string) agents.AgentDescriptor {
+	return agents.AgentDescriptor{
+		Name:    name,
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestExecutionHelperProcess"},
+		Input:   agents.InputPromptFile,
+	}
+}
+
+func (r fixedAgentRegistry) DefaultExecutor() string {
+	return r.defaultExecutor
+}
+
+func (r fixedAgentRegistry) DefaultReviewer() string {
+	return r.defaultReviewer
+}
+
+func (r fixedAgentRegistry) ResolveExecutor(name string) (agents.AgentDescriptor, error) {
+	return r.resolve(name, r.defaultExecutor)
+}
+
+func (r fixedAgentRegistry) ResolveReviewer(name string) (agents.AgentDescriptor, error) {
+	return r.resolve(name, r.defaultReviewer)
+}
+
+func (r fixedAgentRegistry) ListBuiltins() []agents.AgentDescriptor {
+	descriptors := make([]agents.AgentDescriptor, 0, len(r.order))
+	for _, name := range r.order {
+		descriptors = append(descriptors, cloneTestAgentDescriptor(r.descriptors[name]))
+	}
+	return descriptors
+}
+
+func (r fixedAgentRegistry) resolve(name string, defaultName string) (agents.AgentDescriptor, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = defaultName
+	}
+	descriptor, ok := r.descriptors[name]
+	if !ok {
+		return agents.AgentDescriptor{}, fmt.Errorf("unsupported agent: %s", name)
+	}
+	return cloneTestAgentDescriptor(descriptor), nil
+}
+
+func cloneTestAgentDescriptor(descriptor agents.AgentDescriptor) agents.AgentDescriptor {
+	descriptor.Args = append([]string{}, descriptor.Args...)
+	return descriptor
 }
 
 func testAppSequence(root string) App {

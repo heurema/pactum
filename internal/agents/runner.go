@@ -24,17 +24,17 @@ func RunSubprocess(request RunRequest) (RunResult, error) {
 	if strings.TrimSpace(request.AttemptID) == "" {
 		return RunResult{}, errors.New("attempt id is required")
 	}
-	if strings.TrimSpace(request.Adapter.Command) == "" {
+	if strings.TrimSpace(request.Agent.Command) == "" {
 		return RunResult{}, errors.New("agent command is required")
 	}
-	if request.Adapter.Input != InputPromptFile {
-		return RunResult{}, fmt.Errorf("unsupported agent input mode: %s", request.Adapter.Input)
+	if request.Agent.Input != InputPromptFile {
+		return RunResult{}, fmt.Errorf("unsupported agent input mode: %s", request.Agent.Input)
 	}
 	if strings.TrimSpace(request.PromptRepoPath) == "" {
 		return RunResult{}, errors.New("prompt path is required")
 	}
 
-	args := append([]string{}, request.Adapter.Args...)
+	args := append([]string{}, request.Agent.Args...)
 	promptPath := filepath.Join(request.RepoRoot, filepath.FromSlash(request.PromptRepoPath))
 	prompt, err := os.ReadFile(promptPath)
 	if err != nil {
@@ -71,7 +71,7 @@ func RunSubprocess(request RunRequest) (RunResult, error) {
 	}
 
 	started := time.Now().UTC()
-	command := exec.CommandContext(ctx, request.Adapter.Command, args...)
+	command := exec.CommandContext(ctx, request.Agent.Command, args...)
 	command.Dir = request.RepoRoot
 	command.Env = os.Environ()
 	command.Stdout = stdout
@@ -97,7 +97,7 @@ func RunSubprocess(request RunRequest) (RunResult, error) {
 	}
 
 	return RunResult{
-		Command:        request.Adapter.Command,
+		Command:        request.Agent.Command,
 		Args:           args,
 		ExitCode:       exitCode,
 		StartedAt:      started.Format(time.RFC3339Nano),

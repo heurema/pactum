@@ -409,7 +409,7 @@ func setupGatePreparedRun(t *testing.T, root string, validationCommands []string
 	if code != 0 {
 		t.Fatalf("contract approve exited %d, stderr: %s", code, stderr.String())
 	}
-	configureHelperAgent(t, paths, "helper")
+	app = configureHelperAgent(app, "helper")
 
 	for _, args := range [][]string{
 		{"map", "refresh"},
@@ -427,7 +427,7 @@ func setupGatePreparedRun(t *testing.T, root string, validationCommands []string
 		t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
 		stdout.Reset()
 		stderr.Reset()
-		code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--allow-execute"}, &stdout, &stderr)
+		code := app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
 		}

@@ -99,7 +99,7 @@ func (a App) ExecuteShow(stdout io.Writer, runID string, attemptID string, logs 
 		return err
 	}
 	if !found {
-		fmt.Fprintf(stdout, "No execution attempts found. Run: pactum execute run %s --allow-execute\n", runID)
+		fmt.Fprintf(stdout, "No execution attempts found. Run: pactum execute run %s\n", runID)
 		return nil
 	}
 

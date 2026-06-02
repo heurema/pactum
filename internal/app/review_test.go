@@ -473,7 +473,7 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 	for _, want := range []string{
 		"Reviewer dry-run prepared",
 		"Would run:",
-		"codex exec --sandbox read-only -- .heurema/pactum/runs/" + runID + "/review/reviewer-prompt.md",
+		"codex exec -- .heurema/pactum/runs/" + runID + "/review/reviewer-prompt.md",
 		".heurema/pactum/runs/" + runID + "/review/reviewer-context.md",
 	} {
 		if !strings.Contains(got, want) {
@@ -484,7 +484,7 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 	if plan.Schema != reviewerDryRunSchema || plan.RunID != runID || plan.Reviewer.Name != "codex" {
 		t.Fatalf("unexpected reviewer dry-run plan: %#v", plan)
 	}
-	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec --sandbox read-only -- .heurema/pactum/runs/"+runID+"/review/reviewer-prompt.md" {
+	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec -- .heurema/pactum/runs/"+runID+"/review/reviewer-prompt.md" {
 		t.Fatalf("unexpected would_run command: %#v", plan.WouldRun)
 	}
 	prompt := mustReadFile(t, runPaths.ReviewPromptMD)
@@ -533,40 +533,30 @@ func TestReviewDryRunUsesDefaultReviewer(t *testing.T) {
 	}
 }
 
-func TestReviewDryRunCustomReviewerAdapter(t *testing.T) {
+func TestReviewDryRunExplicitReviewers(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	config := defaultConfigFile()
-	config.Agents.DefaultReviewer = "custom"
-	config.Agents.Adapters["custom"] = agents.AdapterConfig{
-		Command: "custom-reviewer",
-		Args:    []string{"review", "--dry"},
-		Input:   agents.InputPromptFile,
-	}
-	config.Agents.Adapters["explicit"] = agents.AdapterConfig{
-		Command: "explicit-reviewer",
-		Args:    []string{"check"},
-		Input:   agents.InputPromptFile,
-	}
-	assertNoError(t, writeYAML(paths.Config, config))
+	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 
-	runReviewCommand(t, app, "review", "dry-run", runID)
+	runReviewCommand(t, app, "review", "dry-run", runID, "--reviewer", "codex")
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
-	if plan.Reviewer.Name != "custom" || plan.Reviewer.Command != "custom-reviewer" {
-		t.Fatalf("custom default reviewer mismatch: %#v", plan.Reviewer)
+	if plan.Reviewer.Name != "codex" || plan.Reviewer.Command != "codex" {
+		t.Fatalf("codex reviewer mismatch: %#v", plan.Reviewer)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "review --dry -- .heurema/pactum/runs/"+runID+"/review/reviewer-prompt.md" {
-		t.Fatalf("custom would_run mismatch: %#v", plan.WouldRun)
+	if strings.Join(plan.WouldRun.Args, " ") != "exec -- .heurema/pactum/runs/"+runID+"/review/reviewer-prompt.md" {
+		t.Fatalf("codex would_run mismatch: %#v", plan.WouldRun)
 	}
 
-	runReviewCommand(t, app, "review", "dry-run", runID, "--reviewer", "explicit")
+	runReviewCommand(t, app, "review", "dry-run", runID, "--reviewer", "claude")
 	plan = readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
-	if plan.Reviewer.Name != "explicit" || plan.Reviewer.Command != "explicit-reviewer" {
-		t.Fatalf("explicit reviewer mismatch: %#v", plan.Reviewer)
+	if plan.Reviewer.Name != "claude" || plan.Reviewer.Command != "claude" {
+		t.Fatalf("claude reviewer mismatch: %#v", plan.Reviewer)
+	}
+	if strings.Join(plan.WouldRun.Args, " ") != "-p -- .heurema/pactum/runs/"+runID+"/review/reviewer-prompt.md" {
+		t.Fatalf("claude would_run mismatch: %#v", plan.WouldRun)
 	}
 }
 
-func TestReviewDryRunMissingReviewerAdapterFails(t *testing.T) {
+func TestReviewDryRunUnsupportedReviewerFails(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
 
@@ -575,21 +565,20 @@ func TestReviewDryRunMissingReviewerAdapterFails(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("review dry-run should fail for missing reviewer")
 	}
-	if got := stderr.String(); !strings.Contains(got, "agent adapter not configured: missing") {
+	if got := stderr.String(); !strings.Contains(got, "unsupported agent: missing") {
 		t.Fatalf("missing reviewer stderr mismatch:\n%s", got)
 	}
 }
 
 func TestReviewDryRunUnsupportedInputModeFails(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
-	config := defaultConfigFile()
-	config.Agents.Adapters["bad-input"] = agents.AdapterConfig{
+	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	app.AgentRegistry = testAgentRegistry(agents.AgentDescriptor{
+		Name:    "bad-input",
 		Command: "bad-reviewer",
 		Args:    []string{"dry-run"},
 		Input:   "stdin",
-	}
-	assertNoError(t, writeYAML(paths.Config, config))
+	})
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"review", "dry-run", runID, "--reviewer", "bad-input"}, &stdout, &stderr)

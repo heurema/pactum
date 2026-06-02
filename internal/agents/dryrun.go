@@ -10,13 +10,13 @@ const (
 	DryRunArtifactDryRun         = "execute/dry-run.json"
 )
 
-func BuildDryRunPlan(runID string, createdAt string, agentName string, adapter AdapterConfig) (DryRunPlan, error) {
-	if adapter.Input != InputPromptFile {
-		return DryRunPlan{}, fmt.Errorf("unsupported agent input mode: %s", adapter.Input)
+func BuildDryRunPlan(runID string, createdAt string, agent AgentDescriptor) (DryRunPlan, error) {
+	if agent.Input != InputPromptFile {
+		return DryRunPlan{}, fmt.Errorf("unsupported agent input mode: %s", agent.Input)
 	}
 
-	agentArgs := append([]string{}, adapter.Args...)
-	wouldRunArgs := append([]string{}, adapter.Args...)
+	agentArgs := append([]string{}, agent.Args...)
+	wouldRunArgs := append([]string{}, agent.Args...)
 	wouldRunArgs = append(wouldRunArgs, "--", DryRunArtifactPrompt)
 
 	return DryRunPlan{
@@ -24,10 +24,10 @@ func BuildDryRunPlan(runID string, createdAt string, agentName string, adapter A
 		RunID:     runID,
 		CreatedAt: createdAt,
 		Agent: DryRunAgent{
-			Name:    agentName,
-			Command: adapter.Command,
+			Name:    agent.Name,
+			Command: agent.Command,
 			Args:    agentArgs,
-			Input:   adapter.Input,
+			Input:   agent.Input,
 		},
 		Checks: DryRunChecks{
 			PromptManifestReady:         true,
@@ -40,7 +40,7 @@ func BuildDryRunPlan(runID string, createdAt string, agentName string, adapter A
 			PromptManifest:  DryRunArtifactPromptManifest,
 		},
 		WouldRun: DryRunCommand{
-			Command: adapter.Command,
+			Command: agent.Command,
 			Args:    wouldRunArgs,
 		},
 	}, nil

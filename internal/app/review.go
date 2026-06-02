@@ -144,8 +144,7 @@ type reviewerDryRunPreparation struct {
 	Review      reviewDocument
 	Findings    []reviewFindingRecord
 	Resolutions []reviewResolutionRecord
-	Reviewer    string
-	Adapter     agents.AdapterConfig
+	Reviewer    agents.AgentDescriptor
 }
 
 type reviewerDryRunDocument struct {
@@ -443,7 +442,7 @@ func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, j
 
 	now := a.nowUTC()
 	createdAt := now.Format(time.RFC3339)
-	plan := buildReviewerDryRunDocument(runID, createdAt, prep.Reviewer, prep.Adapter)
+	plan := buildReviewerDryRunDocument(runID, createdAt, prep.Reviewer)
 	if err := os.MkdirAll(context.RunPaths.ReviewDir, 0o755); err != nil {
 		return err
 	}
@@ -563,16 +562,12 @@ func (a App) prepareReviewerDryRun(context reviewContext, reviewerName string) (
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
-	config, err := readConfig(context.Paths.Config)
+	reviewer, err := a.agentRegistry().ResolveReviewer(reviewerName)
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
-	resolvedReviewer, adapter, err := agents.ResolveReviewerAdapter(config.Agents, reviewerName)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	if adapter.Input != agents.InputPromptFile {
-		return reviewerDryRunPreparation{}, fmt.Errorf("unsupported agent input mode: %s", adapter.Input)
+	if reviewer.Input != agents.InputPromptFile {
+		return reviewerDryRunPreparation{}, fmt.Errorf("unsupported agent input mode: %s", reviewer.Input)
 	}
 
 	review = refreshReviewDocument(review, context.State.RunID, gateReport.Status, findings, resolutions, "")
@@ -583,8 +578,7 @@ func (a App) prepareReviewerDryRun(context reviewContext, reviewerName string) (
 		Review:      review,
 		Findings:    findings,
 		Resolutions: resolutions,
-		Reviewer:    resolvedReviewer,
-		Adapter:     adapter,
+		Reviewer:    reviewer,
 	}, nil
 }
 
@@ -761,19 +755,19 @@ func nextReviewID(prefix string, index int) string {
 	return fmt.Sprintf("%s_%03d", prefix, index)
 }
 
-func buildReviewerDryRunDocument(runID string, createdAt string, reviewerName string, adapter agents.AdapterConfig) reviewerDryRunDocument {
-	agentArgs := append([]string{}, adapter.Args...)
-	wouldRunArgs := append([]string{}, adapter.Args...)
+func buildReviewerDryRunDocument(runID string, createdAt string, reviewer agents.AgentDescriptor) reviewerDryRunDocument {
+	agentArgs := append([]string{}, reviewer.Args...)
+	wouldRunArgs := append([]string{}, reviewer.Args...)
 	wouldRunArgs = append(wouldRunArgs, "--", runArtifactRepoRel(runID, reviewerPromptArtifact))
 	return reviewerDryRunDocument{
 		Schema:    reviewerDryRunSchema,
 		RunID:     runID,
 		CreatedAt: createdAt,
 		Reviewer: reviewerDryRunAgent{
-			Name:    reviewerName,
-			Command: adapter.Command,
+			Name:    reviewer.Name,
+			Command: reviewer.Command,
 			Args:    agentArgs,
-			Input:   adapter.Input,
+			Input:   reviewer.Input,
 		},
 		Checks: reviewerDryRunChecks{
 			ReviewPrepared:   true,
@@ -789,7 +783,7 @@ func buildReviewerDryRunDocument(runID string, createdAt string, reviewerName st
 			GateReport:      gateReportArtifact,
 		},
 		WouldRun: agents.DryRunCommand{
-			Command: adapter.Command,
+			Command: reviewer.Command,
 			Args:    wouldRunArgs,
 		},
 	}
