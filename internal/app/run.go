@@ -229,6 +229,9 @@ type contractRunPathSet struct {
 	ReviewJSON             string
 	ReviewFindingsJSONL    string
 	ReviewResolutionsJSONL string
+	ReviewContextMD        string
+	ReviewPromptMD         string
+	ReviewDryRunJSON       string
 }
 
 func contractRunPaths(runDir string) contractRunPathSet {
@@ -267,6 +270,9 @@ func contractRunPaths(runDir string) contractRunPathSet {
 		ReviewJSON:             filepath.Join(runDir, "review", "review.json"),
 		ReviewFindingsJSONL:    filepath.Join(runDir, "review", "findings.jsonl"),
 		ReviewResolutionsJSONL: filepath.Join(runDir, "review", "resolutions.jsonl"),
+		ReviewContextMD:        filepath.Join(runDir, "review", "reviewer-context.md"),
+		ReviewPromptMD:         filepath.Join(runDir, "review", "reviewer-prompt.md"),
+		ReviewDryRunJSON:       filepath.Join(runDir, "review", "reviewer-dry-run.json"),
 	}
 }
 

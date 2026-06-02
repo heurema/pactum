@@ -13,6 +13,7 @@ const (
 func DefaultConfig() AgentConfig {
 	return AgentConfig{
 		DefaultExecutor: DefaultExecutor,
+		DefaultReviewer: DefaultExecutor,
 		Adapters: map[string]AdapterConfig{
 			"codex": {
 				Command: "codex",
@@ -33,6 +34,9 @@ func NormalizeConfig(config AgentConfig) AgentConfig {
 	if strings.TrimSpace(config.DefaultExecutor) == "" {
 		config.DefaultExecutor = defaults.DefaultExecutor
 	}
+	if strings.TrimSpace(config.DefaultReviewer) == "" {
+		config.DefaultReviewer = config.DefaultExecutor
+	}
 	if config.Adapters == nil {
 		config.Adapters = map[string]AdapterConfig{}
 	}
@@ -52,6 +56,19 @@ func ResolveAdapter(config AgentConfig, agentName string) (string, AdapterConfig
 	name := strings.TrimSpace(agentName)
 	if name == "" {
 		name = config.DefaultExecutor
+	}
+	adapter, ok := config.Adapters[name]
+	if !ok || strings.TrimSpace(adapter.Command) == "" {
+		return "", AdapterConfig{}, fmt.Errorf("agent adapter not configured: %s", name)
+	}
+	return name, cloneAdapterConfig(adapter), nil
+}
+
+func ResolveReviewerAdapter(config AgentConfig, reviewerName string) (string, AdapterConfig, error) {
+	config = NormalizeConfig(config)
+	name := strings.TrimSpace(reviewerName)
+	if name == "" {
+		name = config.DefaultReviewer
 	}
 	adapter, ok := config.Adapters[name]
 	if !ok || strings.TrimSpace(adapter.Command) == "" {
