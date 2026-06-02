@@ -218,6 +218,9 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 	if _, err := os.ReadFile(runPaths.ExecutorContext); err != nil {
 		return executionPreparation{}, err
 	}
+	if err := verifyExecutionMemoryBoundary(paths, runPaths, manifest); err != nil {
+		return executionPreparation{}, err
+	}
 
 	agent, err := a.agentRegistry().ResolveExecutor(agentName)
 	if err != nil {
@@ -231,6 +234,38 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 		ContractSHA256: hash,
 		Agent:          agent,
 	}, nil
+}
+
+// verifyExecutionMemoryBoundary refuses execution when the accepted-memory
+// boundary recorded at prompt build no longer matches the current workspace.
+// Run-local memory artifacts and the global accepted-memory source files are
+// both validated by hash. Stale-but-unchanged memory is allowed.
+func verifyExecutionMemoryBoundary(paths artifacts.Paths, runPaths contractRunPathSet, manifest promptManifest) error {
+	if manifest.Memory == nil {
+		return fmt.Errorf("cannot prepare execution: executor prompt memory metadata is missing")
+	}
+	if !isRegularFile(runPaths.MemoryContextMD) || !isRegularFile(runPaths.MemorySelectionJSON) {
+		return fmt.Errorf("cannot prepare execution: memory context changed after prompt build")
+	}
+	contextHash, err := fileSHA256(runPaths.MemoryContextMD)
+	if err != nil {
+		return err
+	}
+	selectionHash, err := fileSHA256(runPaths.MemorySelectionJSON)
+	if err != nil {
+		return err
+	}
+	if contextHash != manifest.Memory.ContextSHA256 || selectionHash != manifest.Memory.SelectionSHA256 {
+		return fmt.Errorf("cannot prepare execution: memory context changed after prompt build")
+	}
+	sourceHash, err := memorySourceSHA256(paths)
+	if err != nil {
+		return err
+	}
+	if sourceHash != manifest.Memory.SourceSHA256 {
+		return fmt.Errorf("cannot prepare execution: accepted memory changed after prompt build")
+	}
+	return nil
 }
 
 func writeExecuteDryRun(stdout io.Writer, state contractRunState, plan agents.DryRunPlan) {

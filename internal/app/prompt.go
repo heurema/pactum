@@ -25,6 +25,7 @@ type promptManifest struct {
 	ApprovedAt     string                  `json:"approved_at"`
 	MapRunID       string                  `json:"map_run_id"`
 	Artifacts      promptManifestArtifacts `json:"artifacts"`
+	Memory         *promptManifestMemory   `json:"memory"`
 	Checks         promptManifestChecks    `json:"checks"`
 }
 
@@ -37,11 +38,35 @@ type promptManifestArtifacts struct {
 	SearchResults   string `json:"search_results"`
 }
 
+type promptManifestMemory struct {
+	Context         string                       `json:"context"`
+	Selection       string                       `json:"selection"`
+	ContextSHA256   string                       `json:"context_sha256"`
+	SelectionSHA256 string                       `json:"selection_sha256"`
+	SourceSHA256    string                       `json:"source_sha256"`
+	Selected        promptManifestMemorySelected `json:"selected"`
+	LatestRefresh   *promptManifestMemoryRefresh `json:"latest_refresh"`
+}
+
+type promptManifestMemorySelected struct {
+	Total   int `json:"total"`
+	Fresh   int `json:"fresh"`
+	Stale   int `json:"stale"`
+	Unknown int `json:"unknown"`
+}
+
+type promptManifestMemoryRefresh struct {
+	ID        string `json:"id"`
+	CreatedAt string `json:"created_at"`
+}
+
 type promptManifestChecks struct {
 	ContractApproved            bool `json:"contract_approved"`
 	ContractHashMatchesApproval bool `json:"contract_hash_matches_approval"`
 	ProjectMapFresh             bool `json:"project_map_fresh"`
 	BlockingClarificationsOpen  int  `json:"blocking_clarifications_open"`
+	MemoryContextReady          bool `json:"memory_context_ready"`
+	MemorySourceCurrent         bool `json:"memory_source_current"`
 }
 
 type promptBuildResponse struct {
@@ -104,10 +129,15 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 	}
 
 	now := a.nowUTC()
-	if err := writeAcceptedMemoryContext(context.Paths, context.RunPaths, runID, memoryQueryFromContract(context.Contract), "contract", defaultMemorySelectionLimit, now); err != nil {
+	selection, err := writeAcceptedMemoryContext(context.Paths, context.RunPaths, runID, memoryQueryFromContract(context.Contract), "contract", defaultMemorySelectionLimit, now)
+	if err != nil {
 		return err
 	}
-	manifest := buildPromptManifest(context, hash, report.ProjectMap.RunID, now)
+	memory, err := buildPromptManifestMemory(context.Paths, context.RunPaths, selection)
+	if err != nil {
+		return err
+	}
+	manifest := buildPromptManifest(context, hash, report.ProjectMap.RunID, now, memory)
 	searchResults, err := readRunSearchResults(context.RunPaths.SearchResults)
 	if err != nil {
 		return err
@@ -117,10 +147,10 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 		return err
 	}
 
-	if err := os.WriteFile(context.RunPaths.ExecutorContext, renderExecutorContext(context.State, report.ProjectMap.RunID, hash, searchResults, decisions), 0o644); err != nil {
+	if err := os.WriteFile(context.RunPaths.ExecutorContext, renderExecutorContext(context.State, report.ProjectMap.RunID, hash, searchResults, decisions, memory.Selected), 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(context.RunPaths.PromptMD, renderApprovedPromptMD(context.Contract, context.State.RunID, hash), 0o644); err != nil {
+	if err := os.WriteFile(context.RunPaths.PromptMD, renderApprovedPromptMD(context.Contract, context.State.RunID, hash, selection), 0o644); err != nil {
 		return err
 	}
 	if err := writeJSON(context.RunPaths.PromptManifest, manifest); err != nil {
@@ -182,7 +212,7 @@ func (a App) PromptShow(stdout io.Writer, runID string, jsonOutput bool) error {
 	return nil
 }
 
-func buildPromptManifest(context contractContext, contractSHA256 string, mapRunID string, builtAt time.Time) promptManifest {
+func buildPromptManifest(context contractContext, contractSHA256 string, mapRunID string, builtAt time.Time, memory promptManifestMemory) promptManifest {
 	approvedBy := ""
 	if context.Approval.ApprovedBy != nil {
 		approvedBy = *context.Approval.ApprovedBy
@@ -191,6 +221,7 @@ func buildPromptManifest(context contractContext, contractSHA256 string, mapRunI
 	if context.Approval.ApprovedAt != nil {
 		approvedAt = *context.Approval.ApprovedAt
 	}
+	memoryCopy := memory
 	return promptManifest{
 		Schema:         promptManifestSchema,
 		RunID:          context.State.RunID,
@@ -209,13 +240,50 @@ func buildPromptManifest(context contractContext, contractSHA256 string, mapRunI
 			RepoContext:     "context/repo-context.md",
 			SearchResults:   "context/search-results.json",
 		},
+		Memory: &memoryCopy,
 		Checks: promptManifestChecks{
 			ContractApproved:            true,
 			ContractHashMatchesApproval: true,
 			ProjectMapFresh:             true,
 			BlockingClarificationsOpen:  0,
+			MemoryContextReady:          true,
+			MemorySourceCurrent:         true,
 		},
 	}
+}
+
+// buildPromptManifestMemory computes the memory boundary metadata recorded in
+// the prompt manifest. It hashes the run-local memory artifacts and the global
+// accepted-memory source files so execution can detect drift after prompt build.
+func buildPromptManifestMemory(paths artifacts.Paths, runPaths contractRunPathSet, selection memorySelectionDocument) (promptManifestMemory, error) {
+	contextHash, err := fileSHA256(runPaths.MemoryContextMD)
+	if err != nil {
+		return promptManifestMemory{}, err
+	}
+	selectionHash, err := fileSHA256(runPaths.MemorySelectionJSON)
+	if err != nil {
+		return promptManifestMemory{}, err
+	}
+	sourceHash, err := memorySourceSHA256(paths)
+	if err != nil {
+		return promptManifestMemory{}, err
+	}
+	memory := promptManifestMemory{
+		Context:         "context/memory-context.md",
+		Selection:       "context/memory-selection.json",
+		ContextSHA256:   contextHash,
+		SelectionSHA256: selectionHash,
+		SourceSHA256:    sourceHash,
+		Selected:        memorySelectionCounts(selection),
+	}
+	refresh, ok, err := latestMemoryRefresh(paths.MemoryRefreshes)
+	if err != nil {
+		return promptManifestMemory{}, err
+	}
+	if ok {
+		memory.LatestRefresh = &promptManifestMemoryRefresh{ID: refresh.ID, CreatedAt: refresh.CreatedAt}
+	}
+	return memory, nil
 }
 
 func readPromptManifest(path string) (promptManifest, error) {
@@ -252,7 +320,7 @@ func removePromptReadinessArtifacts(runPaths contractRunPathSet) error {
 	return nil
 }
 
-func renderExecutorContext(state contractRunState, mapRunID string, contractSHA256 string, searchResults runSearchResults, decisions []clarificationDecisionRecord) []byte {
+func renderExecutorContext(state contractRunState, mapRunID string, contractSHA256 string, searchResults runSearchResults, decisions []clarificationDecisionRecord, memory promptManifestMemorySelected) []byte {
 	var buffer bytes.Buffer
 	fmt.Fprintln(&buffer, "# Executor Context")
 	fmt.Fprintln(&buffer)
@@ -276,7 +344,12 @@ func renderExecutorContext(state contractRunState, mapRunID string, contractSHA2
 	fmt.Fprintln(&buffer, "## Accepted memory")
 	fmt.Fprintln(&buffer, "- Memory context: context/memory-context.md")
 	fmt.Fprintln(&buffer, "- Selection: context/memory-selection.json")
+	fmt.Fprintf(&buffer, "- Selected items: %d\n", memory.Total)
+	fmt.Fprintf(&buffer, "- Fresh: %d\n", memory.Fresh)
+	fmt.Fprintf(&buffer, "- Stale: %d\n", memory.Stale)
+	fmt.Fprintf(&buffer, "- Unknown: %d\n", memory.Unknown)
 	fmt.Fprintln(&buffer, "- Treat memory as context, not semantic truth.")
+	fmt.Fprintln(&buffer, "- Stale memory must be verified before use.")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Relevant search results")
 	if len(searchResults.Results) == 0 {
@@ -312,12 +385,13 @@ func renderExecutorContext(state contractRunState, mapRunID string, contractSHA2
 	return buffer.Bytes()
 }
 
-func renderApprovedPromptMD(contract draftContract, runID string, contractSHA256 string) []byte {
+func renderApprovedPromptMD(contract draftContract, runID string, contractSHA256 string, selection memorySelectionDocument) []byte {
 	var buffer bytes.Buffer
 	fmt.Fprintln(&buffer, "# Executor Prompt")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "This prompt is prepared from an approved Pactum contract.")
-	fmt.Fprintln(&buffer, "Pactum does not execute agents in this milestone.")
+	fmt.Fprintln(&buffer, "This prompt is prepared for the selected built-in agent when `pactum execute run` is used.")
+	fmt.Fprintln(&buffer, "Pactum records execution artifacts and validates contract, map, and memory boundaries before execution.")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Contract status")
 	fmt.Fprintf(&buffer, "- Run: %s\n", runID)
@@ -361,14 +435,52 @@ func renderApprovedPromptMD(contract draftContract, runID string, contractSHA256
 	fmt.Fprintln(&buffer, "- Search results: context/search-results.json")
 	fmt.Fprintln(&buffer, "- Accepted memory context: context/memory-context.md")
 	fmt.Fprintln(&buffer)
+	writeApprovedPromptMemorySection(&buffer, selection)
 	fmt.Fprintln(&buffer, "## Instructions for future executor")
 	fmt.Fprintln(&buffer, "- Follow the approved contract.")
 	fmt.Fprintln(&buffer, "- Do not implement out-of-scope work.")
 	fmt.Fprintln(&buffer, "- Search before creating new code.")
 	fmt.Fprintln(&buffer, "- Prefer existing code items when applicable.")
 	fmt.Fprintln(&buffer, "- If the contract is ambiguous, stop and request clarification.")
-	fmt.Fprintln(&buffer, "- Run listed validation commands when execution becomes available.")
+	fmt.Fprintln(&buffer, "- Use the listed validation commands as expected checks.")
+	fmt.Fprintln(&buffer, "- Pactum gate can run approved validation commands after execution.")
 	return buffer.Bytes()
+}
+
+func writeApprovedPromptMemorySection(buffer *bytes.Buffer, selection memorySelectionDocument) {
+	counts := memorySelectionCounts(selection)
+	fmt.Fprintln(buffer, "## Accepted memory")
+	fmt.Fprintln(buffer)
+	fmt.Fprintln(buffer, "Memory context:")
+	fmt.Fprintln(buffer, "- context/memory-context.md")
+	fmt.Fprintln(buffer)
+	fmt.Fprintln(buffer, "Selected memory:")
+	fmt.Fprintf(buffer, "- total: %d\n", counts.Total)
+	fmt.Fprintf(buffer, "- fresh: %d\n", counts.Fresh)
+	fmt.Fprintf(buffer, "- stale: %d\n", counts.Stale)
+	fmt.Fprintf(buffer, "- unknown: %d\n", counts.Unknown)
+	fmt.Fprintln(buffer)
+	fmt.Fprintln(buffer, "Items:")
+	if len(selection.Selected) == 0 {
+		fmt.Fprintln(buffer, "- none")
+	} else {
+		for _, item := range selection.Selected {
+			status := normalizeMemoryFreshnessStatus(item.Freshness.Status)
+			fmt.Fprintf(buffer, "- %s [%s] score=%d — %s\n", item.ID, status, item.Score, compactMemoryContextText(item.Title))
+			if status != memoryFreshnessFresh {
+				for _, reason := range item.Freshness.Reasons {
+					fmt.Fprintf(buffer, "  reason: %s\n", reason)
+				}
+			}
+		}
+	}
+	fmt.Fprintln(buffer)
+	fmt.Fprintln(buffer, "Rules:")
+	fmt.Fprintln(buffer, "- Accepted memory is context, not semantic truth.")
+	fmt.Fprintln(buffer, "- Stale memory may be outdated; verify before using.")
+	fmt.Fprintln(buffer, "- Use `pactum search \"<term>\"` and inspect current source files before relying on memory.")
+	fmt.Fprintln(buffer, "- Do not implement from memory alone.")
+	fmt.Fprintln(buffer)
 }
 
 func writePromptBuild(stdout io.Writer, response promptBuildResponse) {
@@ -393,6 +505,15 @@ func writePromptShow(stdout io.Writer, response promptShowResponse) {
 	fmt.Fprintln(stdout, "Executor Prompt")
 	fmt.Fprintf(stdout, "Run: %s\n", response.RunID)
 	fmt.Fprintf(stdout, "Status: %s\n", response.RunStatus)
+	if response.Manifest.Memory != nil {
+		selected := response.Manifest.Memory.Selected
+		fmt.Fprintln(stdout)
+		fmt.Fprintln(stdout, "Memory:")
+		fmt.Fprintf(stdout, "  selected: %d\n", selected.Total)
+		fmt.Fprintf(stdout, "  fresh: %d\n", selected.Fresh)
+		fmt.Fprintf(stdout, "  stale: %d\n", selected.Stale)
+		fmt.Fprintf(stdout, "  unknown: %d\n", selected.Unknown)
+	}
 	fmt.Fprintln(stdout)
 	fmt.Fprint(stdout, response.Prompt)
 	if !strings.HasSuffix(response.Prompt, "\n") {

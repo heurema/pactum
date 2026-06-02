@@ -1,6 +1,8 @@
 package app
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -123,15 +125,60 @@ func buildAcceptedMemorySelection(paths artifacts.Paths, runID string, query str
 	}, nil
 }
 
-func writeAcceptedMemoryContext(paths artifacts.Paths, runPaths contractRunPathSet, runID string, query string, querySource string, limit int, createdAt time.Time) error {
+func writeAcceptedMemoryContext(paths artifacts.Paths, runPaths contractRunPathSet, runID string, query string, querySource string, limit int, createdAt time.Time) (memorySelectionDocument, error) {
 	selection, err := buildAcceptedMemorySelection(paths, runID, query, querySource, limit, createdAt.Format(time.RFC3339))
 	if err != nil {
-		return err
+		return memorySelectionDocument{}, err
 	}
 	if err := writeJSON(runPaths.MemorySelectionJSON, selection); err != nil {
-		return err
+		return memorySelectionDocument{}, err
 	}
-	return os.WriteFile(runPaths.MemoryContextMD, []byte(renderMemoryContextMD(selection)), 0o644)
+	if err := os.WriteFile(runPaths.MemoryContextMD, []byte(renderMemoryContextMD(selection)), 0o644); err != nil {
+		return memorySelectionDocument{}, err
+	}
+	return selection, nil
+}
+
+// memorySelectionCounts summarizes selected memory items by freshness status.
+func memorySelectionCounts(selection memorySelectionDocument) promptManifestMemorySelected {
+	counts := promptManifestMemorySelected{Total: len(selection.Selected)}
+	for _, item := range selection.Selected {
+		switch normalizeMemoryFreshnessStatus(item.Freshness.Status) {
+		case memoryFreshnessFresh:
+			counts.Fresh++
+		case memoryFreshnessStale:
+			counts.Stale++
+		default:
+			counts.Unknown++
+		}
+	}
+	return counts
+}
+
+// memorySourceSHA256 returns a deterministic hash over the global accepted
+// memory source files. Missing and empty files hash to distinct, stable values
+// so execution can detect any change to accepted memory after prompt build.
+func memorySourceSHA256(paths artifacts.Paths) (string, error) {
+	hasher := sha256.New()
+	for _, source := range []struct {
+		label string
+		path  string
+	}{
+		{label: "items.jsonl", path: paths.MemoryItems},
+		{label: "refreshes.jsonl", path: paths.MemoryRefreshes},
+	} {
+		data, err := os.ReadFile(source.path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				fmt.Fprintf(hasher, "%s\x00missing\x00", source.label)
+				continue
+			}
+			return "", err
+		}
+		fmt.Fprintf(hasher, "%s\x00present\x00%d\x00", source.label, len(data))
+		hasher.Write(data)
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 func selectAcceptedMemoryItems(paths artifacts.Paths, query string, limit int) ([]memorySelectedItem, bool, error) {
