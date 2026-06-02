@@ -1125,6 +1125,38 @@ func reviewerResultTimestamp(result reviewerResultDocument, fallback time.Time) 
 	return fallback
 }
 
+// writeReviewerMemorySection summarizes the accepted-memory prompt boundary for
+// the reviewer. When the prompt manifest records memory metadata, the selected
+// freshness counts are shown; otherwise the boundary is reported as not built.
+func writeReviewerMemorySection(b *strings.Builder, runPaths contractRunPathSet) {
+	memory, hasManifestMemory := promptManifestMemoryForReview(runPaths.PromptManifest)
+	fmt.Fprintln(b, "## Accepted memory")
+	if hasManifestMemory || isRegularFile(runPaths.MemoryContextMD) {
+		fmt.Fprintln(b, "- Memory context: context/memory-context.md")
+	}
+	if hasManifestMemory {
+		fmt.Fprintf(b, "- Selected items: %d\n", memory.Selected.Total)
+		fmt.Fprintf(b, "- Fresh: %d\n", memory.Selected.Fresh)
+		fmt.Fprintf(b, "- Stale: %d\n", memory.Selected.Stale)
+		fmt.Fprintf(b, "- Unknown: %d\n", memory.Selected.Unknown)
+		fmt.Fprintln(b, "- Stale memory may be outdated and must be verified.")
+	} else {
+		fmt.Fprintln(b, "- Memory prompt boundary: not built")
+	}
+	fmt.Fprintln(b)
+}
+
+func promptManifestMemoryForReview(path string) (promptManifestMemory, bool) {
+	if !isRegularFile(path) {
+		return promptManifestMemory{}, false
+	}
+	manifest, err := readPromptManifest(path)
+	if err != nil || manifest.Memory == nil {
+		return promptManifestMemory{}, false
+	}
+	return *manifest.Memory, true
+}
+
 func renderReviewerContext(prep reviewerDryRunPreparation) string {
 	var b strings.Builder
 	state := buildReviewStateWithProposals(prep.Review, prep.Findings, prep.Resolutions, prep.Proposals, prep.ProposalDecisions)
@@ -1142,11 +1174,7 @@ func renderReviewerContext(prep reviewerDryRunPreparation) string {
 	writeMarkdownStringList(&b, "- Acceptance criteria:", prep.Contract.AcceptanceCriteria)
 	writeMarkdownStringList(&b, "- Validation commands:", prep.Contract.Validation.Commands)
 	fmt.Fprintln(&b)
-	if isRegularFile(prep.Context.RunPaths.MemoryContextMD) {
-		fmt.Fprintln(&b, "## Accepted memory")
-		fmt.Fprintln(&b, "- Memory context: context/memory-context.md")
-		fmt.Fprintln(&b)
-	}
+	writeReviewerMemorySection(&b, prep.Context.RunPaths)
 	fmt.Fprintln(&b, "## Gate report")
 	fmt.Fprintf(&b, "- Gate status: %s\n", prep.GateReport.Status)
 	fmt.Fprintf(&b, "- Execution attempt id: %s\n", valueOrNone(prep.GateReport.Execution.AttemptID))
