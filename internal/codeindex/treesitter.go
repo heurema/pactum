@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_c_sharp "github.com/tree-sitter/tree-sitter-c-sharp/bindings/go"
@@ -522,7 +523,7 @@ func isExportedGo(name string) bool {
 	if name == "" {
 		return false
 	}
-	r, _ := utf8Rune(name)
+	r, _ := utf8.DecodeRuneInString(name)
 	return unicode.IsUpper(r)
 }
 
@@ -567,13 +568,6 @@ func cleanName(name string) string {
 	name = strings.TrimSpace(name)
 	name = strings.Trim(name, "`'\"")
 	return name
-}
-
-func utf8Rune(value string) (rune, int) {
-	for idx, r := range value {
-		return r, idx
-	}
-	return 0, 0
 }
 
 func dedupeItems(items []Item) []Item {

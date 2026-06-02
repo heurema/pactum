@@ -7,16 +7,12 @@ func Extract(path string, language string, source []byte) Result {
 		return Result{}
 	}
 	result := extractWithTreeSitter(path, language, source)
-	sortItems(result.Items)
+	SortItems(result.Items)
 	sort.Strings(result.Warnings)
 	return result
 }
 
 func SortItems(items []Item) {
-	sortItems(items)
-}
-
-func sortItems(items []Item) {
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Path != items[j].Path {
 			return items[i].Path < items[j].Path

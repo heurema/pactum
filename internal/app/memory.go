@@ -549,7 +549,7 @@ func memoryDecisionsFromArtifacts(root string, contract draftContract, clarifica
 		}
 	}
 	for _, command := range gateReport.Validation.Commands {
-		if command.Result == "passed" || (command.ExitCode == 0 && !command.TimedOut) {
+		if command.ExitCode == 0 && !command.TimedOut {
 			decisions = append(decisions, memoryCandidateDecision{Kind: "validation", Text: sanitizeMemoryText(root, command.Command) + " passed"})
 		}
 	}
