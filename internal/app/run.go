@@ -161,14 +161,20 @@ func (a App) createContractOnlyRun(root string, task string) (contractRunState, 
 
 	searchResults := buildRunSearchResults(paths, report.ProjectMap, task)
 	contract := draftContractFor(runID, task)
+	memorySelection, err := buildAcceptedMemorySelection(paths.MemoryItems, root, runID, task, "task", defaultMemorySelectionLimit, createdAt.Format(time.RFC3339))
+	if err != nil {
+		return contractRunState{}, err
+	}
 	files := map[string][]byte{
-		runPaths.TaskMD:         renderTaskMD(task, createdAt),
-		runPaths.RepoContext:    renderRepoContext(root, paths, report.ProjectMap.RunID, createdAt),
-		runPaths.ContractMD:     renderContractMDFromDraft(contract, report.ProjectMap.RunID, len(searchResults.Results)),
-		runPaths.PromptMD:       renderPromptMDFromDraft(contract),
-		runPaths.QuestionsJSONL: nil,
-		runPaths.AnswersJSONL:   nil,
-		runPaths.DecisionsJSONL: nil,
+		runPaths.TaskMD:              renderTaskMD(task, createdAt),
+		runPaths.RepoContext:         renderRepoContext(root, paths, report.ProjectMap.RunID, createdAt),
+		runPaths.MemoryContextMD:     []byte(renderMemoryContextMD(memorySelection)),
+		runPaths.QuestionsJSONL:      nil,
+		runPaths.AnswersJSONL:        nil,
+		runPaths.DecisionsJSONL:      nil,
+		runPaths.ContractMD:          renderContractMDFromDraft(contract, report.ProjectMap.RunID, len(searchResults.Results)),
+		runPaths.PromptMD:            renderPromptMDFromDraft(contract),
+		runPaths.MemorySelectionJSON: mustMarshalJSON(memorySelection),
 	}
 	files[runPaths.SearchResults] = mustMarshalJSON(searchResults)
 	files[runPaths.ContractJSON] = mustMarshalJSON(contract)
@@ -204,8 +210,10 @@ type contractRunPathSet struct {
 	RunJSON string
 	TaskMD  string
 
-	RepoContext   string
-	SearchResults string
+	RepoContext         string
+	SearchResults       string
+	MemoryContextMD     string
+	MemorySelectionJSON string
 
 	ExecutorContext string
 
@@ -262,6 +270,8 @@ func contractRunPaths(runDir string) contractRunPathSet {
 		TaskMD:                       filepath.Join(runDir, "task.md"),
 		RepoContext:                  filepath.Join(contextDir, "repo-context.md"),
 		SearchResults:                filepath.Join(contextDir, "search-results.json"),
+		MemoryContextMD:              filepath.Join(contextDir, "memory-context.md"),
+		MemorySelectionJSON:          filepath.Join(contextDir, "memory-selection.json"),
 		ExecutorContext:              filepath.Join(contextDir, "executor-context.md"),
 		QuestionsJSONL:               filepath.Join(clarifyDir, "questions.jsonl"),
 		AnswersJSONL:                 filepath.Join(clarifyDir, "answers.jsonl"),
@@ -332,7 +342,9 @@ func renderRepoContext(root string, paths artifacts.Paths, mapRunID string, gene
 	fmt.Fprintf(&buffer, "Map run: %s\n", mapRunID)
 	fmt.Fprintf(&buffer, "Repo map path: %s\n", toRepoRel(root, paths.RepoMap))
 	fmt.Fprintf(&buffer, "LLMS path: %s\n", toRepoRel(root, paths.LLMS))
-	fmt.Fprintf(&buffer, "Search index path: %s\n\n", toRepoRel(root, paths.SearchSQLite))
+	fmt.Fprintf(&buffer, "Search index path: %s\n", toRepoRel(root, paths.SearchSQLite))
+	fmt.Fprintln(&buffer, "Accepted memory context: context/memory-context.md")
+	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "Notes:")
 	fmt.Fprintln(&buffer, "- Pactum has not yet done agentic clarification.")
 	fmt.Fprintln(&buffer, "- This is deterministic context assembled from existing map artifacts.")
@@ -505,6 +517,9 @@ func renderPromptMDFromDraft(contract draftContract) []byte {
 	writeMarkdownListSection(&buffer, "Acceptance criteria", contract.AcceptanceCriteria)
 	fmt.Fprintln(&buffer)
 	writeMarkdownListSection(&buffer, "Validation commands", contract.Validation.Commands)
+	fmt.Fprintln(&buffer)
+	fmt.Fprintln(&buffer, "## Project context")
+	fmt.Fprintln(&buffer, "- Accepted memory context: context/memory-context.md")
 	return buffer.Bytes()
 }
 

@@ -1142,6 +1142,11 @@ func renderReviewerContext(prep reviewerDryRunPreparation) string {
 	writeMarkdownStringList(&b, "- Acceptance criteria:", prep.Contract.AcceptanceCriteria)
 	writeMarkdownStringList(&b, "- Validation commands:", prep.Contract.Validation.Commands)
 	fmt.Fprintln(&b)
+	if isRegularFile(prep.Context.RunPaths.MemoryContextMD) {
+		fmt.Fprintln(&b, "## Accepted memory")
+		fmt.Fprintln(&b, "- Memory context: context/memory-context.md")
+		fmt.Fprintln(&b)
+	}
 	fmt.Fprintln(&b, "## Gate report")
 	fmt.Fprintf(&b, "- Gate status: %s\n", prep.GateReport.Status)
 	fmt.Fprintf(&b, "- Execution attempt id: %s\n", valueOrNone(prep.GateReport.Execution.AttemptID))
