@@ -390,7 +390,8 @@ func renderApprovedPromptMD(contract draftContract, runID string, contractSHA256
 	fmt.Fprintln(&buffer, "# Executor Prompt")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "This prompt is prepared from an approved Pactum contract.")
-	fmt.Fprintln(&buffer, "Pactum does not execute agents in this milestone.")
+	fmt.Fprintln(&buffer, "This prompt is prepared for the selected built-in agent when `pactum execute run` is used.")
+	fmt.Fprintln(&buffer, "Pactum records execution artifacts and validates contract, map, and memory boundaries before execution.")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Contract status")
 	fmt.Fprintf(&buffer, "- Run: %s\n", runID)
@@ -441,7 +442,8 @@ func renderApprovedPromptMD(contract draftContract, runID string, contractSHA256
 	fmt.Fprintln(&buffer, "- Search before creating new code.")
 	fmt.Fprintln(&buffer, "- Prefer existing code items when applicable.")
 	fmt.Fprintln(&buffer, "- If the contract is ambiguous, stop and request clarification.")
-	fmt.Fprintln(&buffer, "- Run listed validation commands when execution becomes available.")
+	fmt.Fprintln(&buffer, "- Use the listed validation commands as expected checks.")
+	fmt.Fprintln(&buffer, "- Pactum gate can run approved validation commands after execution.")
 	return buffer.Bytes()
 }
 

@@ -156,6 +156,31 @@ func TestPromptMDMemorySectionEmpty(t *testing.T) {
 	}
 }
 
+func TestPromptMDExecutorWordingIsCurrent(t *testing.T) {
+	root := t.TempDir()
+	_, _, runID := setupApprovedAndBuiltPrompt(t, root)
+	runPaths := contractRunPaths(filepath.Join(artifacts.New(root).RunsDir, runID))
+
+	prompt := mustReadFile(t, runPaths.PromptMD)
+	for _, forbidden := range []string{
+		"does not execute agents in this milestone",
+		"when execution becomes available",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("prompt.md contains stale milestone wording %q:\n%s", forbidden, prompt)
+		}
+	}
+	for _, want := range []string{
+		"`pactum execute run`",
+		"validates contract, map, and memory boundaries",
+		"Pactum gate can run approved validation commands after execution",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt.md missing current wording %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestExecutorContextIncludesMemoryCounts(t *testing.T) {
 	root := t.TempDir()
 	_, _, _, runPaths := setupApprovedPromptWithMemoryItems(t, root,
