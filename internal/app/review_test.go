@@ -608,10 +608,18 @@ func TestReviewDryRunContextIncludesManualFindings(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	runReviewCommand(t, app, "review", "add-finding", runID, "Manual review artifacts should stay append-only", "--category", "process", "--severity", "medium")
+	appendReviewProposalForTest(t, runPaths, runID, "p_001", "Pending proposal should be visible to reviewer", true)
 
 	runReviewCommand(t, app, "review", "dry-run", runID)
 	context := mustReadFile(t, runPaths.ReviewContextMD)
-	for _, want := range []string{"f_001", "Manual review artifacts should stay append-only", "status=open"} {
+	for _, want := range []string{
+		"f_001",
+		"Manual review artifacts should stay append-only",
+		"status=open",
+		"Existing proposals:",
+		"p_001 severity=medium category=quality blocking=true status=pending",
+		"Pending proposal should be visible to reviewer",
+	} {
 		if !strings.Contains(context, want) {
 			t.Fatalf("reviewer context missing %q:\n%s", want, context)
 		}
@@ -1468,6 +1476,9 @@ func TestReviewPromptIncludesStructuredProposalContract(t *testing.T) {
 	for _, want := range []string{
 		"## Optional structured finding proposals",
 		`"schema": "pactum.reviewer_findings.v1"`,
+		"Focus on real problems, not style preferences.",
+		"Read the actual file and surrounding context before proposing a finding.",
+		"Check whether the issue is already mitigated or already represented in existing findings/proposals.",
 		"Important: Pactum does not trust this output automatically. A human must accept proposals.",
 	} {
 		if !strings.Contains(prompt, want) {

@@ -1180,6 +1180,21 @@ func renderReviewerContext(prep reviewerDryRunPreparation) string {
 		}
 	}
 	fmt.Fprintf(&b, "- Proposal summary: pending=%d accepted=%d rejected=%d\n", state.ProposalSummary.Pending, state.ProposalSummary.Accepted, state.ProposalSummary.Rejected)
+	fmt.Fprintln(&b, "- Existing proposals:")
+	if len(state.Proposals) == 0 {
+		fmt.Fprintln(&b, "  - none")
+	} else {
+		for _, proposal := range state.Proposals {
+			fmt.Fprintf(&b, "  - %s severity=%s category=%s blocking=%t status=%s source=%s attempt=%s: %s\n", proposal.ID, proposal.Severity, proposal.Category, proposal.Blocking, proposal.Status, proposal.Source, proposal.ReviewerAttemptID, proposal.Message)
+			if proposal.File != "" {
+				location := proposal.File
+				if proposal.Line > 0 {
+					location = fmt.Sprintf("%s:%d", location, proposal.Line)
+				}
+				fmt.Fprintf(&b, "    location: %s\n", location)
+			}
+		}
+	}
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Artifacts")
 	fmt.Fprintln(&b, "- Contract: contract/contract.json")
@@ -1231,6 +1246,9 @@ func renderReviewerPrompt(runID string) string {
 	fmt.Fprintln(&b, "- Do not approve the review.")
 	fmt.Fprintln(&b, "- Do not claim semantic correctness without evidence.")
 	fmt.Fprintln(&b, "- Prefer concrete findings with file/path evidence.")
+	fmt.Fprintln(&b, "- Focus on real problems, not style preferences.")
+	fmt.Fprintln(&b, "- Read the actual file and surrounding context before proposing a finding.")
+	fmt.Fprintln(&b, "- Check whether the issue is already mitigated or already represented in existing findings/proposals.")
 	fmt.Fprintln(&b, "- If uncertain, recommend a blocking manual finding.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Output shape")
