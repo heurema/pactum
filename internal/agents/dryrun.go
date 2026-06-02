@@ -1,7 +1,5 @@
 package agents
 
-import "fmt"
-
 const (
 	DryRunSchema                 = "pactum.execute_dry_run.v1"
 	DryRunArtifactPrompt         = "contract/prompt.md"
@@ -11,12 +9,12 @@ const (
 )
 
 func BuildDryRunPlan(runID string, createdAt string, agent AgentDescriptor, promptRepoPath string) (DryRunPlan, error) {
-	if agent.Input != InputPromptFile {
-		return DryRunPlan{}, fmt.Errorf("unsupported agent input mode: %s", agent.Input)
+	wouldRun, err := BuildCommand(agent, promptRepoPath)
+	if err != nil {
+		return DryRunPlan{}, err
 	}
 
 	agentArgs := append([]string{}, agent.Args...)
-	wouldRunArgs := append([]string{}, agent.Args...)
 
 	return DryRunPlan{
 		Schema:    DryRunSchema,
@@ -39,9 +37,9 @@ func BuildDryRunPlan(runID string, createdAt string, agent AgentDescriptor, prom
 			PromptManifest:  DryRunArtifactPromptManifest,
 		},
 		WouldRun: DryRunCommand{
-			Command: agent.Command,
-			Args:    wouldRunArgs,
-			Stdin:   promptRepoPath,
+			Command: wouldRun.Command,
+			Args:    append([]string{}, wouldRun.Args...),
+			Stdin:   wouldRun.Stdin,
 		},
 	}, nil
 }

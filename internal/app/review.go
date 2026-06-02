@@ -442,7 +442,10 @@ func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, j
 
 	now := a.nowUTC()
 	createdAt := now.Format(time.RFC3339)
-	plan := buildReviewerDryRunDocument(runID, createdAt, prep.Reviewer)
+	plan, err := buildReviewerDryRunDocument(runID, createdAt, prep.Reviewer)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(context.RunPaths.ReviewDir, 0o755); err != nil {
 		return err
 	}
@@ -755,10 +758,13 @@ func nextReviewID(prefix string, index int) string {
 	return fmt.Sprintf("%s_%03d", prefix, index)
 }
 
-func buildReviewerDryRunDocument(runID string, createdAt string, reviewer agents.AgentDescriptor) reviewerDryRunDocument {
+func buildReviewerDryRunDocument(runID string, createdAt string, reviewer agents.AgentDescriptor) (reviewerDryRunDocument, error) {
 	agentArgs := append([]string{}, reviewer.Args...)
-	wouldRunArgs := append([]string{}, reviewer.Args...)
 	reviewerPromptPath := runArtifactRepoRel(runID, reviewerPromptArtifact)
+	wouldRun, err := agents.BuildCommand(reviewer, reviewerPromptPath)
+	if err != nil {
+		return reviewerDryRunDocument{}, err
+	}
 	return reviewerDryRunDocument{
 		Schema:    reviewerDryRunSchema,
 		RunID:     runID,
@@ -783,11 +789,11 @@ func buildReviewerDryRunDocument(runID string, createdAt string, reviewer agents
 			GateReport:      gateReportArtifact,
 		},
 		WouldRun: agents.DryRunCommand{
-			Command: reviewer.Command,
-			Args:    wouldRunArgs,
-			Stdin:   reviewerPromptPath,
+			Command: wouldRun.Command,
+			Args:    append([]string{}, wouldRun.Args...),
+			Stdin:   wouldRun.Stdin,
 		},
-	}
+	}, nil
 }
 
 func renderReviewerContext(prep reviewerDryRunPreparation) string {

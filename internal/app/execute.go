@@ -93,9 +93,9 @@ func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, timeou
 		},
 		Artifacts: plan.Artifacts,
 		WouldRun: agents.DryRunCommand{
-			Command: prep.Agent.Command,
-			Args:    append([]string{}, prep.Agent.Args...),
-			Stdin:   promptRepoPath,
+			Command: plan.WouldRun.Command,
+			Args:    append([]string{}, plan.WouldRun.Args...),
+			Stdin:   plan.WouldRun.Stdin,
 		},
 	}
 	if err := writeJSON(attemptPaths.RequestJSON, request); err != nil {
