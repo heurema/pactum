@@ -28,7 +28,7 @@ func (a App) ExecuteDryRun(stdout io.Writer, runID string, agentName string, jso
 		return err
 	}
 	now := a.nowUTC()
-	plan, err := agents.BuildDryRunPlan(runID, now.Format(time.RFC3339), prep.Agent)
+	plan, err := agents.BuildDryRunPlan(runID, now.Format(time.RFC3339), prep.Agent, executionPromptRepoPath(runID))
 	if err != nil {
 		return err
 	}
@@ -319,7 +319,7 @@ func (e executionProcessError) Error() string {
 }
 
 func ensureDryRunPlan(prep executionPreparation, createdAt string) (agents.DryRunPlan, error) {
-	expected, err := agents.BuildDryRunPlan(prep.State.RunID, createdAt, prep.Agent)
+	expected, err := agents.BuildDryRunPlan(prep.State.RunID, createdAt, prep.Agent, executionPromptRepoPath(prep.State.RunID))
 	if err != nil {
 		return agents.DryRunPlan{}, err
 	}

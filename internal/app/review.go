@@ -758,7 +758,7 @@ func nextReviewID(prefix string, index int) string {
 func buildReviewerDryRunDocument(runID string, createdAt string, reviewer agents.AgentDescriptor) reviewerDryRunDocument {
 	agentArgs := append([]string{}, reviewer.Args...)
 	wouldRunArgs := append([]string{}, reviewer.Args...)
-	wouldRunArgs = append(wouldRunArgs, "--", runArtifactRepoRel(runID, reviewerPromptArtifact))
+	reviewerPromptPath := runArtifactRepoRel(runID, reviewerPromptArtifact)
 	return reviewerDryRunDocument{
 		Schema:    reviewerDryRunSchema,
 		RunID:     runID,
@@ -785,6 +785,7 @@ func buildReviewerDryRunDocument(runID string, createdAt string, reviewer agents
 		WouldRun: agents.DryRunCommand{
 			Command: reviewer.Command,
 			Args:    wouldRunArgs,
+			Stdin:   reviewerPromptPath,
 		},
 	}
 }

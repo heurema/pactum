@@ -79,7 +79,7 @@ func TestExecuteDryRunSucceedsAfterPromptBuild(t *testing.T) {
 	for _, want := range []string{
 		"Execution dry-run prepared",
 		"Would run:",
-		"codex exec -- contract/prompt.md",
+		"codex exec < .heurema/pactum/runs/" + runID + "/contract/prompt.md",
 		".heurema/pactum/runs/" + runID + "/execute/dry-run.json",
 	} {
 		if !strings.Contains(got, want) {
@@ -91,9 +91,11 @@ func TestExecuteDryRunSucceedsAfterPromptBuild(t *testing.T) {
 	if plan.Schema != agents.DryRunSchema || plan.RunID != runID || plan.Agent.Name != "codex" {
 		t.Fatalf("unexpected dry-run plan: %#v", plan)
 	}
-	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec -- contract/prompt.md" {
+	wantPrompt := executionPromptRepoPath(runID)
+	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec" || plan.WouldRun.Stdin != wantPrompt {
 		t.Fatalf("unexpected would_run command: %#v", plan.WouldRun)
 	}
+	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", wantPrompt)
 }
 
 func TestExecuteDryRunJSONOutput(t *testing.T) {
@@ -110,7 +112,7 @@ func TestExecuteDryRunJSONOutput(t *testing.T) {
 	if plan.Agent.Name != "codex" || !plan.Checks.PromptManifestReady || plan.Artifacts.Prompt != "contract/prompt.md" {
 		t.Fatalf("unexpected dry-run json: %#v", plan)
 	}
-	if plan.WouldRun.Command != "codex" || len(plan.WouldRun.Args) == 0 {
+	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
 		t.Fatalf("missing would_run json: %#v", plan.WouldRun)
 	}
 	if strings.Contains(stdout.String(), "Execution dry-run prepared") {
@@ -162,9 +164,10 @@ func TestExecuteDryRunExplicitCodex(t *testing.T) {
 	if plan.Agent.Name != "codex" || plan.Agent.Command != "codex" {
 		t.Fatalf("codex agent mismatch: %#v", plan.Agent)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "exec -- contract/prompt.md" {
+	if strings.Join(plan.WouldRun.Args, " ") != "exec" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
 		t.Fatalf("codex would_run mismatch: %#v", plan.WouldRun)
 	}
+	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", executionPromptRepoPath(runID))
 }
 
 func TestExecuteDryRunExplicitClaude(t *testing.T) {
@@ -181,9 +184,10 @@ func TestExecuteDryRunExplicitClaude(t *testing.T) {
 	if plan.Agent.Name != "claude" || plan.Agent.Command != "claude" {
 		t.Fatalf("claude agent mismatch: %#v", plan.Agent)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "-p -- contract/prompt.md" {
+	if strings.Join(plan.WouldRun.Args, " ") != "-p" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
 		t.Fatalf("claude would_run mismatch: %#v", plan.WouldRun)
 	}
+	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", executionPromptRepoPath(runID))
 }
 
 func TestLegacyAgentConfigIsToleratedAndIgnored(t *testing.T) {
@@ -408,7 +412,16 @@ func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
 	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "helper"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute dry-run helper exited %d, stderr: %s", code, stderr.String())
+	}
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	dryRunPlan := readDryRunPlan(t, runPaths.DryRunJSON)
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
 	}
@@ -416,7 +429,6 @@ func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
 		t.Fatalf("execute run output mismatch:\n%s", got)
 	}
 
-	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	attemptPaths := executionAttemptPaths(runPaths, "attempt_001")
 	assertFile(t, attemptPaths.RequestJSON)
 	assertFile(t, attemptPaths.StdoutLog)
@@ -432,13 +444,16 @@ func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
 	if request.Agent.Name != "helper" || request.Agent.Command != os.Args[0] || request.Agent.Input != agents.InputPromptFile {
 		t.Fatalf("unexpected request agent: %#v", request.Agent)
 	}
-	wantPrompt := ".heurema/pactum/runs/" + runID + "/contract/prompt.md"
+	wantPrompt := executionPromptRepoPath(runID)
 	if request.WouldRun.Stdin != wantPrompt {
 		t.Fatalf("unexpected would_run stdin = %q, want %q", request.WouldRun.Stdin, wantPrompt)
 	}
-	if got := strings.Join(request.WouldRun.Args, " "); strings.Contains(got, wantPrompt) {
-		t.Fatalf("would_run args should not pass prompt path positionally: %#v", request.WouldRun.Args)
+	if dryRunPlan.WouldRun.Command != request.WouldRun.Command ||
+		!sameStringSlice(dryRunPlan.WouldRun.Args, request.WouldRun.Args) ||
+		dryRunPlan.WouldRun.Stdin != request.WouldRun.Stdin {
+		t.Fatalf("dry-run would_run should match request would_run\ndry-run: %#v\nrequest: %#v", dryRunPlan.WouldRun, request.WouldRun)
 	}
+	assertCommandArgsDoNotContain(t, request.WouldRun.Args, "contract/prompt.md", wantPrompt)
 	if request.Artifacts.Prompt != "contract/prompt.md" || request.Artifacts.ExecutorContext != "context/executor-context.md" {
 		t.Fatalf("unexpected request artifacts: %#v", request.Artifacts)
 	}
@@ -586,6 +601,16 @@ func readDryRunPlan(t *testing.T, path string) agents.DryRunPlan {
 	var plan agents.DryRunPlan
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, path)), &plan))
 	return plan
+}
+
+func assertCommandArgsDoNotContain(t *testing.T, args []string, forbidden ...string) {
+	t.Helper()
+	joined := strings.Join(args, " ")
+	for _, value := range forbidden {
+		if strings.Contains(joined, value) {
+			t.Fatalf("command args should not contain %q: %#v", value, args)
+		}
+	}
 }
 
 func ledgerEventTypes(t *testing.T, path string) []string {

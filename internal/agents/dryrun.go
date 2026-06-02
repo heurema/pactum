@@ -10,14 +10,13 @@ const (
 	DryRunArtifactDryRun         = "execute/dry-run.json"
 )
 
-func BuildDryRunPlan(runID string, createdAt string, agent AgentDescriptor) (DryRunPlan, error) {
+func BuildDryRunPlan(runID string, createdAt string, agent AgentDescriptor, promptRepoPath string) (DryRunPlan, error) {
 	if agent.Input != InputPromptFile {
 		return DryRunPlan{}, fmt.Errorf("unsupported agent input mode: %s", agent.Input)
 	}
 
 	agentArgs := append([]string{}, agent.Args...)
 	wouldRunArgs := append([]string{}, agent.Args...)
-	wouldRunArgs = append(wouldRunArgs, "--", DryRunArtifactPrompt)
 
 	return DryRunPlan{
 		Schema:    DryRunSchema,
@@ -42,6 +41,7 @@ func BuildDryRunPlan(runID string, createdAt string, agent AgentDescriptor) (Dry
 		WouldRun: DryRunCommand{
 			Command: agent.Command,
 			Args:    wouldRunArgs,
+			Stdin:   promptRepoPath,
 		},
 	}, nil
 }

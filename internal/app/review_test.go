@@ -473,7 +473,7 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 	for _, want := range []string{
 		"Reviewer dry-run prepared",
 		"Would run:",
-		"codex exec -- .heurema/pactum/runs/" + runID + "/review/reviewer-prompt.md",
+		"codex exec < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt.md",
 		".heurema/pactum/runs/" + runID + "/review/reviewer-context.md",
 	} {
 		if !strings.Contains(got, want) {
@@ -484,9 +484,11 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 	if plan.Schema != reviewerDryRunSchema || plan.RunID != runID || plan.Reviewer.Name != "codex" {
 		t.Fatalf("unexpected reviewer dry-run plan: %#v", plan)
 	}
-	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec -- .heurema/pactum/runs/"+runID+"/review/reviewer-prompt.md" {
+	wantPrompt := runArtifactRepoRel(runID, reviewerPromptArtifact)
+	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec" || plan.WouldRun.Stdin != wantPrompt {
 		t.Fatalf("unexpected would_run command: %#v", plan.WouldRun)
 	}
+	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, reviewerPromptArtifact, wantPrompt)
 	prompt := mustReadFile(t, runPaths.ReviewPromptMD)
 	for _, want := range []string{
 		"Reviewer context: .heurema/pactum/runs/" + runID + "/review/reviewer-context.md",
@@ -514,7 +516,11 @@ func TestReviewDryRunJSONOutput(t *testing.T) {
 	if plan.Reviewer.Name != "codex" || !plan.Checks.ReviewPrepared || !plan.Checks.GateReportReady || !plan.Checks.ContractApproved {
 		t.Fatalf("unexpected reviewer dry-run json: %#v", plan)
 	}
-	if plan.Artifacts.ReviewerPrompt != reviewerPromptArtifact || plan.Artifacts.ReviewerContext != reviewerContextArtifact || plan.WouldRun.Command != "codex" {
+	if plan.Artifacts.ReviewerPrompt != reviewerPromptArtifact ||
+		plan.Artifacts.ReviewerContext != reviewerContextArtifact ||
+		plan.WouldRun.Command != "codex" ||
+		strings.Join(plan.WouldRun.Args, " ") != "exec" ||
+		plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
 		t.Fatalf("reviewer dry-run json missing artifacts/would_run: %#v", plan)
 	}
 	if strings.Contains(stdout.String(), "Reviewer dry-run prepared") {
@@ -531,6 +537,9 @@ func TestReviewDryRunUsesDefaultReviewer(t *testing.T) {
 	if plan.Reviewer.Name != "codex" || plan.Reviewer.Command != "codex" {
 		t.Fatalf("default reviewer mismatch: %#v", plan.Reviewer)
 	}
+	if strings.Join(plan.WouldRun.Args, " ") != "exec" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
+		t.Fatalf("default reviewer would_run mismatch: %#v", plan.WouldRun)
+	}
 }
 
 func TestReviewDryRunExplicitReviewers(t *testing.T) {
@@ -542,18 +551,20 @@ func TestReviewDryRunExplicitReviewers(t *testing.T) {
 	if plan.Reviewer.Name != "codex" || plan.Reviewer.Command != "codex" {
 		t.Fatalf("codex reviewer mismatch: %#v", plan.Reviewer)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "exec -- .heurema/pactum/runs/"+runID+"/review/reviewer-prompt.md" {
+	if strings.Join(plan.WouldRun.Args, " ") != "exec" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
 		t.Fatalf("codex would_run mismatch: %#v", plan.WouldRun)
 	}
+	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, reviewerPromptArtifact, runArtifactRepoRel(runID, reviewerPromptArtifact))
 
 	runReviewCommand(t, app, "review", "dry-run", runID, "--reviewer", "claude")
 	plan = readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	if plan.Reviewer.Name != "claude" || plan.Reviewer.Command != "claude" {
 		t.Fatalf("claude reviewer mismatch: %#v", plan.Reviewer)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "-p -- .heurema/pactum/runs/"+runID+"/review/reviewer-prompt.md" {
+	if strings.Join(plan.WouldRun.Args, " ") != "-p" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
 		t.Fatalf("claude would_run mismatch: %#v", plan.WouldRun)
 	}
+	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, reviewerPromptArtifact, runArtifactRepoRel(runID, reviewerPromptArtifact))
 }
 
 func TestReviewDryRunUnsupportedReviewerFails(t *testing.T) {
