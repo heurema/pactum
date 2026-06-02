@@ -79,7 +79,7 @@ func TestExecuteDryRunSucceedsAfterPromptBuild(t *testing.T) {
 	for _, want := range []string{
 		"Execution dry-run prepared",
 		"Would run:",
-		"codex exec --sandbox read-only -- contract/prompt.md",
+		"codex exec --dangerously-bypass-approvals-and-sandbox < .heurema/pactum/runs/" + runID + "/contract/prompt.md",
 		".heurema/pactum/runs/" + runID + "/execute/dry-run.json",
 	} {
 		if !strings.Contains(got, want) {
@@ -91,9 +91,11 @@ func TestExecuteDryRunSucceedsAfterPromptBuild(t *testing.T) {
 	if plan.Schema != agents.DryRunSchema || plan.RunID != runID || plan.Agent.Name != "codex" {
 		t.Fatalf("unexpected dry-run plan: %#v", plan)
 	}
-	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec --sandbox read-only -- contract/prompt.md" {
+	wantPrompt := executionPromptRepoPath(runID)
+	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec --dangerously-bypass-approvals-and-sandbox" || plan.WouldRun.Stdin != wantPrompt {
 		t.Fatalf("unexpected would_run command: %#v", plan.WouldRun)
 	}
+	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", wantPrompt)
 }
 
 func TestExecuteDryRunJSONOutput(t *testing.T) {
@@ -110,7 +112,7 @@ func TestExecuteDryRunJSONOutput(t *testing.T) {
 	if plan.Agent.Name != "codex" || !plan.Checks.PromptManifestReady || plan.Artifacts.Prompt != "contract/prompt.md" {
 		t.Fatalf("unexpected dry-run json: %#v", plan)
 	}
-	if plan.WouldRun.Command != "codex" || len(plan.WouldRun.Args) == 0 {
+	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec --dangerously-bypass-approvals-and-sandbox" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
 		t.Fatalf("missing would_run json: %#v", plan.WouldRun)
 	}
 	if strings.Contains(stdout.String(), "Execution dry-run prepared") {
@@ -118,16 +120,16 @@ func TestExecuteDryRunJSONOutput(t *testing.T) {
 	}
 }
 
-func TestExecuteDryRunMissingAgentAdapterFails(t *testing.T) {
+func TestExecuteDryRunUnsupportedAgentFails(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupApprovedAndBuiltPrompt(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "missing-agent"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "missing"}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("execute dry-run should fail for missing agent")
 	}
-	if got := stderr.String(); !strings.Contains(got, "agent adapter not configured: missing-agent") {
+	if got := stderr.String(); !strings.Contains(got, "unsupported agent: missing") {
 		t.Fatalf("missing agent stderr mismatch:\n%s", got)
 	}
 }
@@ -148,42 +150,90 @@ func TestExecuteDryRunUsesDefaultExecutor(t *testing.T) {
 	}
 }
 
-func TestExecuteDryRunCustomAdapter(t *testing.T) {
+func TestExecuteDryRunExplicitCodex(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID := setupApprovedPromptContract(t, root)
-	config := defaultConfigFile()
-	config.Agents.Adapters["custom"] = agents.AdapterConfig{
-		Command: "custom-agent",
-		Args:    []string{"prepare", "--mode", "dry"},
-		Input:   agents.InputPromptFile,
-	}
-	assertNoError(t, writeYAML(paths.Config, config))
+	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"map", "refresh"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "codex"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
-	}
-	stdout.Reset()
-	stderr.Reset()
-	code = app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("prompt build exited %d, stderr: %s", code, stderr.String())
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = app.Run([]string{"execute", "dry-run", runID, "--agent", "custom"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("execute dry-run custom exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute dry-run codex exited %d, stderr: %s", code, stderr.String())
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
-	if plan.Agent.Name != "custom" || plan.Agent.Command != "custom-agent" {
-		t.Fatalf("custom agent mismatch: %#v", plan.Agent)
+	if plan.Agent.Name != "codex" || plan.Agent.Command != "codex" {
+		t.Fatalf("codex agent mismatch: %#v", plan.Agent)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "prepare --mode dry -- contract/prompt.md" {
-		t.Fatalf("custom would_run mismatch: %#v", plan.WouldRun)
+	if strings.Join(plan.WouldRun.Args, " ") != "exec --dangerously-bypass-approvals-and-sandbox" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
+		t.Fatalf("codex would_run mismatch: %#v", plan.WouldRun)
+	}
+	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", executionPromptRepoPath(runID))
+}
+
+func TestExecuteDryRunExplicitClaude(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "claude"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute dry-run claude exited %d, stderr: %s", code, stderr.String())
+	}
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	plan := readDryRunPlan(t, runPaths.DryRunJSON)
+	if plan.Agent.Name != "claude" || plan.Agent.Command != "claude" {
+		t.Fatalf("claude agent mismatch: %#v", plan.Agent)
+	}
+	if strings.Join(plan.WouldRun.Args, " ") != "-p" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
+		t.Fatalf("claude would_run mismatch: %#v", plan.WouldRun)
+	}
+	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", executionPromptRepoPath(runID))
+}
+
+func TestLegacyAgentConfigIsToleratedAndIgnored(t *testing.T) {
+	root := t.TempDir()
+	paths := artifacts.New(root)
+	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
+	config := defaultConfigFile()
+	config.Agents = agents.AgentConfig{
+		DefaultExecutor: "legacy-helper",
+		DefaultReviewer: "legacy-reviewer",
+		Adapters: map[string]agents.AdapterConfig{
+			"legacy-helper": {
+				Command: "legacy-helper",
+				Args:    []string{"run"},
+				Input:   agents.InputPromptFile,
+			},
+			"legacy-reviewer": {
+				Command: "legacy-reviewer",
+				Args:    []string{"review"},
+				Input:   agents.InputPromptFile,
+			},
+		},
+	}
+	assertNoError(t, writeYAML(paths.Config, config))
+
+	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute dry-run with legacy config exited %d, stderr: %s", code, stderr.String())
+	}
+	plan := readDryRunPlan(t, runPaths.DryRunJSON)
+	if plan.Agent.Name != "codex" || plan.Agent.Command != "codex" {
+		t.Fatalf("legacy config should be ignored by runtime, got: %#v", plan.Agent)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"execute", "dry-run", runID, "--agent", "legacy-helper"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("legacy adapter name should not be supported")
+	}
+	if got := stderr.String(); !strings.Contains(got, "unsupported agent: legacy-helper") {
+		t.Fatalf("legacy adapter stderr mismatch:\n%s", got)
 	}
 }
 
@@ -314,30 +364,18 @@ func TestExecuteDryRunWritesLedgerEvent(t *testing.T) {
 
 func TestExecuteDryRunUnsupportedInputModeFails(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID := setupApprovedPromptContract(t, root)
-	config := defaultConfigFile()
-	config.Agents.Adapters["bad-input"] = agents.AdapterConfig{
+	app, _, runID := setupApprovedAndBuiltPrompt(t, root)
+	app.AgentRegistry = testAgentRegistry(agents.AgentDescriptor{
+		Name:    "bad-input",
 		Command: "bad-agent",
 		Args:    []string{"dry-run"},
 		Input:   "stdin",
-	}
-	assertNoError(t, writeYAML(paths.Config, config))
+	})
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"map", "refresh"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
-	}
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("prompt build exited %d, stderr: %s", code, stderr.String())
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = app.Run([]string{"execute", "dry-run", runID, "--agent", "bad-input"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "bad-input"}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("execute dry-run should fail for unsupported input mode")
 	}
@@ -346,28 +384,23 @@ func TestExecuteDryRunUnsupportedInputModeFails(t *testing.T) {
 	}
 }
 
-func TestExecuteRunRequiresAllowExecute(t *testing.T) {
+func TestExecuteRunDoesNotRequireAllowExecute(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
+	app, paths, runID := setupApprovedBuiltPromptWithHelperAgent(t, root, "helper")
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	t.Setenv("PACTUM_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute run without allow exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); got != "Refusing to execute external agent without --allow-execute.\n" {
-		t.Fatalf("refusal output mismatch:\n%s", got)
-	}
-	if _, err := os.Stat(runPaths.AttemptsDir); err == nil {
-		t.Fatalf("execute run without allow should not create attempts dir")
-	} else if !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
+	assertFile(t, executionAttemptPaths(runPaths, "attempt_001").ResultJSON)
 	events := strings.Join(readLines(t, paths.EventsJSONL), "\n")
-	for _, forbidden := range []string{"execution_attempt_started", "execution_attempt_finished"} {
-		if strings.Contains(events, forbidden) {
-			t.Fatalf("refused execute run should not write %s:\n%s", forbidden, events)
+	for _, want := range []string{"execution_attempt_started", "execution_attempt_finished"} {
+		if !strings.Contains(events, want) {
+			t.Fatalf("execute run should write %s:\n%s", want, events)
 		}
 	}
 }
@@ -379,7 +412,16 @@ func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
 	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--allow-execute"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "helper"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute dry-run helper exited %d, stderr: %s", code, stderr.String())
+	}
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	dryRunPlan := readDryRunPlan(t, runPaths.DryRunJSON)
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
 	}
@@ -387,7 +429,6 @@ func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
 		t.Fatalf("execute run output mismatch:\n%s", got)
 	}
 
-	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	attemptPaths := executionAttemptPaths(runPaths, "attempt_001")
 	assertFile(t, attemptPaths.RequestJSON)
 	assertFile(t, attemptPaths.StdoutLog)
@@ -403,13 +444,16 @@ func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
 	if request.Agent.Name != "helper" || request.Agent.Command != os.Args[0] || request.Agent.Input != agents.InputPromptFile {
 		t.Fatalf("unexpected request agent: %#v", request.Agent)
 	}
-	wantPrompt := ".heurema/pactum/runs/" + runID + "/contract/prompt.md"
+	wantPrompt := executionPromptRepoPath(runID)
 	if request.WouldRun.Stdin != wantPrompt {
 		t.Fatalf("unexpected would_run stdin = %q, want %q", request.WouldRun.Stdin, wantPrompt)
 	}
-	if got := strings.Join(request.WouldRun.Args, " "); strings.Contains(got, wantPrompt) {
-		t.Fatalf("would_run args should not pass prompt path positionally: %#v", request.WouldRun.Args)
+	if dryRunPlan.WouldRun.Command != request.WouldRun.Command ||
+		!sameStringSlice(dryRunPlan.WouldRun.Args, request.WouldRun.Args) ||
+		dryRunPlan.WouldRun.Stdin != request.WouldRun.Stdin {
+		t.Fatalf("dry-run would_run should match request would_run\ndry-run: %#v\nrequest: %#v", dryRunPlan.WouldRun, request.WouldRun)
 	}
+	assertCommandArgsDoNotContain(t, request.WouldRun.Args, "contract/prompt.md", wantPrompt)
 	if request.Artifacts.Prompt != "contract/prompt.md" || request.Artifacts.ExecutorContext != "context/executor-context.md" {
 		t.Fatalf("unexpected request artifacts: %#v", request.Artifacts)
 	}
@@ -457,7 +501,7 @@ func TestExecuteRunNonZeroWritesArtifactsAndReturnsNonZero(t *testing.T) {
 	t.Setenv("PACTUM_HELPER_EXIT", "7")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--allow-execute"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("execute run should return non-zero for agent failure")
 	}
@@ -489,7 +533,7 @@ func TestExecuteRunJSONOutput(t *testing.T) {
 	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--allow-execute", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute run --json exited %d, stderr: %s", code, stderr.String())
 	}
@@ -530,7 +574,7 @@ func TestExecuteRunCreatesIncrementingAttemptsAndLedgerEvents(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		var stdout, stderr bytes.Buffer
-		code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--allow-execute"}, &stdout, &stderr)
+		code := app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("execute run %d exited %d, stderr: %s", i+1, code, stderr.String())
 		}
@@ -557,6 +601,16 @@ func readDryRunPlan(t *testing.T, path string) agents.DryRunPlan {
 	var plan agents.DryRunPlan
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, path)), &plan))
 	return plan
+}
+
+func assertCommandArgsDoNotContain(t *testing.T, args []string, forbidden ...string) {
+	t.Helper()
+	joined := strings.Join(args, " ")
+	for _, value := range forbidden {
+		if strings.Contains(joined, value) {
+			t.Fatalf("command args should not contain %q: %#v", value, args)
+		}
+	}
 }
 
 func ledgerEventTypes(t *testing.T, path string) []string {
@@ -592,21 +646,15 @@ func countEvents(events []string, eventType string) int {
 	return count
 }
 
-func configureHelperAgent(t *testing.T, paths artifacts.Paths, name string) {
-	t.Helper()
-	config := defaultConfigFile()
-	config.Agents.Adapters[name] = agents.AdapterConfig{
-		Command: os.Args[0],
-		Args:    []string{"-test.run=TestExecutionHelperProcess"},
-		Input:   agents.InputPromptFile,
-	}
-	assertNoError(t, writeYAML(paths.Config, config))
+func configureHelperAgent(app App, name string) App {
+	app.AgentRegistry = testAgentRegistry(helperAgentDescriptor(name))
+	return app
 }
 
 func setupApprovedBuiltPromptWithHelperAgent(t *testing.T, root string, name string) (App, artifacts.Paths, string) {
 	t.Helper()
 	app, paths, runID := setupApprovedPromptContract(t, root)
-	configureHelperAgent(t, paths, name)
+	app = configureHelperAgent(app, name)
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"map", "refresh"}, &stdout, &stderr)

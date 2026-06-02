@@ -28,7 +28,7 @@ func (a App) ExecuteDryRun(stdout io.Writer, runID string, agentName string, jso
 		return err
 	}
 	now := a.nowUTC()
-	plan, err := agents.BuildDryRunPlan(runID, now.Format(time.RFC3339), prep.AgentName, prep.Adapter)
+	plan, err := agents.BuildDryRunPlan(runID, now.Format(time.RFC3339), prep.Agent, executionPromptRepoPath(runID))
 	if err != nil {
 		return err
 	}
@@ -49,12 +49,7 @@ func (a App) ExecuteDryRun(stdout io.Writer, runID string, agentName string, jso
 	return nil
 }
 
-func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, allowExecute bool, timeout time.Duration, jsonOutput bool) error {
-	if !allowExecute {
-		fmt.Fprintln(stdout, "Refusing to execute external agent without --allow-execute.")
-		return nil
-	}
-
+func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, timeout time.Duration, jsonOutput bool) error {
 	root, workspace, err := a.resolveStatusRoot()
 	if err != nil {
 		return err
@@ -91,16 +86,16 @@ func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, allowE
 		CreatedAt:      now.Format(time.RFC3339),
 		ContractSHA256: prep.ContractSHA256,
 		Agent: executionRequestAgent{
-			Name:    prep.AgentName,
-			Command: prep.Adapter.Command,
-			Args:    append([]string{}, prep.Adapter.Args...),
-			Input:   prep.Adapter.Input,
+			Name:    prep.Agent.Name,
+			Command: prep.Agent.Command,
+			Args:    append([]string{}, prep.Agent.Args...),
+			Input:   prep.Agent.Input,
 		},
 		Artifacts: plan.Artifacts,
 		WouldRun: agents.DryRunCommand{
-			Command: prep.Adapter.Command,
-			Args:    append([]string{}, prep.Adapter.Args...),
-			Stdin:   promptRepoPath,
+			Command: plan.WouldRun.Command,
+			Args:    append([]string{}, plan.WouldRun.Args...),
+			Stdin:   plan.WouldRun.Stdin,
 		},
 	}
 	if err := writeJSON(attemptPaths.RequestJSON, request); err != nil {
@@ -114,8 +109,7 @@ func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, allowE
 		RepoRoot:       root,
 		RunID:          runID,
 		AttemptID:      attemptID,
-		AgentName:      prep.AgentName,
-		Adapter:        prep.Adapter,
+		Agent:          prep.Agent,
 		PromptRepoPath: promptRepoPath,
 		Timeout:        timeout,
 	})
@@ -155,8 +149,7 @@ type executionPreparation struct {
 	RunPaths       contractRunPathSet
 	State          contractRunState
 	ContractSHA256 string
-	AgentName      string
-	Adapter        agents.AdapterConfig
+	Agent          agents.AgentDescriptor
 }
 
 func (a App) prepareExecution(root string, runID string, agentName string) (executionPreparation, error) {
@@ -226,11 +219,7 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 		return executionPreparation{}, err
 	}
 
-	config, err := readConfig(paths.Config)
-	if err != nil {
-		return executionPreparation{}, err
-	}
-	resolvedAgentName, adapter, err := agents.ResolveAdapter(config.Agents, agentName)
+	agent, err := a.agentRegistry().ResolveExecutor(agentName)
 	if err != nil {
 		return executionPreparation{}, err
 	}
@@ -240,8 +229,7 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 		RunPaths:       runPaths,
 		State:          state,
 		ContractSHA256: hash,
-		AgentName:      resolvedAgentName,
-		Adapter:        adapter,
+		Agent:          agent,
 	}, nil
 }
 
@@ -331,7 +319,7 @@ func (e executionProcessError) Error() string {
 }
 
 func ensureDryRunPlan(prep executionPreparation, createdAt string) (agents.DryRunPlan, error) {
-	expected, err := agents.BuildDryRunPlan(prep.State.RunID, createdAt, prep.AgentName, prep.Adapter)
+	expected, err := agents.BuildDryRunPlan(prep.State.RunID, createdAt, prep.Agent, executionPromptRepoPath(prep.State.RunID))
 	if err != nil {
 		return agents.DryRunPlan{}, err
 	}

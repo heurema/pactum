@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -36,8 +35,9 @@ func TestAgentsDoctorDefaultConfig(t *testing.T) {
 	}
 	got := stdout.String()
 	for _, want := range []string{
-		"Agent adapters",
+		"Built-in agents",
 		"Default executor: codex",
+		"Default reviewer: codex",
 		"claude:",
 		"codex:",
 		"status:",
@@ -59,38 +59,40 @@ func TestAgentsDoctorJSON(t *testing.T) {
 	}
 	var report agents.DoctorReport
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &report))
-	if report.DefaultExecutor != "codex" || len(report.Adapters) < 2 {
+	if report.DefaultExecutor != "codex" || report.DefaultReviewer != "codex" || len(report.Agents) != 2 {
 		t.Fatalf("unexpected doctor json: %#v", report)
 	}
-	if !doctorReportHasAdapter(report, "codex") || !doctorReportHasAdapter(report, "claude") {
-		t.Fatalf("doctor json missing default adapters: %#v", report)
+	if !doctorReportHasAgent(report, "codex") || !doctorReportHasAgent(report, "claude") {
+		t.Fatalf("doctor json missing built-in agents: %#v", report)
 	}
 }
 
-func TestAgentsDoctorCustomHelperAdapter(t *testing.T) {
+func TestAgentsDoctorSelectedBuiltIn(t *testing.T) {
 	root := t.TempDir()
-	_, paths := setupInitializedWorkspace(t, root)
-	configureHelperAgent(t, paths, "helper")
+	_, _ = setupInitializedWorkspace(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"agents", "doctor", "--agent", "helper"}, &stdout, &stderr)
+	code := testApp(root).Run([]string{"agents", "doctor", "--agent", "codex"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("agents doctor helper exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("agents doctor codex exited %d, stderr: %s", code, stderr.String())
 	}
 	got := stdout.String()
 	for _, want := range []string{
-		"helper:",
-		"command: " + os.Args[0],
+		"codex:",
+		"command: codex",
 		"input: prompt_file",
-		"status: ready",
+		"status:",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("agents doctor helper output missing %q:\n%s", want, got)
+			t.Fatalf("agents doctor codex output missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "claude:") {
+		t.Fatalf("selected doctor should not include claude:\n%s", got)
 	}
 }
 
-func TestAgentsDoctorMissingAdapterFails(t *testing.T) {
+func TestAgentsDoctorMissingAgentFails(t *testing.T) {
 	root := t.TempDir()
 	_, _ = setupInitializedWorkspace(t, root)
 
@@ -99,36 +101,8 @@ func TestAgentsDoctorMissingAdapterFails(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("agents doctor missing adapter should fail")
 	}
-	if got := stderr.String(); !strings.Contains(got, "agent adapter not configured: missing") {
+	if got := stderr.String(); !strings.Contains(got, "unsupported agent: missing") {
 		t.Fatalf("missing adapter stderr mismatch:\n%s", got)
-	}
-}
-
-func TestAgentsDoctorUnsupportedInput(t *testing.T) {
-	root := t.TempDir()
-	_, paths := setupInitializedWorkspace(t, root)
-	config := defaultConfigFile()
-	config.Agents.Adapters["bad-input"] = agents.AdapterConfig{
-		Command: os.Args[0],
-		Args:    []string{"-test.run=TestExecutionHelperProcess"},
-		Input:   "stdin",
-	}
-	assertNoError(t, writeYAML(paths.Config, config))
-
-	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"agents", "doctor", "--agent", "bad-input"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("agents doctor unsupported input exited %d, stderr: %s", code, stderr.String())
-	}
-	got := stdout.String()
-	for _, want := range []string{
-		"bad-input:",
-		"status: unsupported_input",
-		"unsupported input mode: stdin",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("unsupported input output missing %q:\n%s", want, got)
-		}
 	}
 }
 
@@ -165,9 +139,9 @@ func setupInitializedWorkspace(t *testing.T, root string) (App, artifacts.Paths)
 	return app, artifacts.New(root)
 }
 
-func doctorReportHasAdapter(report agents.DoctorReport, name string) bool {
-	for _, adapter := range report.Adapters {
-		if adapter.Name == name {
+func doctorReportHasAgent(report agents.DoctorReport, name string) bool {
+	for _, agent := range report.Agents {
+		if agent.Name == name {
 			return true
 		}
 	}

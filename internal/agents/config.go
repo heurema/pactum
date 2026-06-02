@@ -6,78 +6,84 @@ import (
 )
 
 const (
-	DefaultExecutor = "codex"
+	BuiltinCodex    = "codex"
+	BuiltinClaude   = "claude"
 	InputPromptFile = "prompt_file"
 )
 
-func DefaultConfig() AgentConfig {
-	return AgentConfig{
-		DefaultExecutor: DefaultExecutor,
-		DefaultReviewer: DefaultExecutor,
-		Adapters: map[string]AdapterConfig{
-			"codex": {
-				Command: "codex",
-				Args:    []string{"exec", "--sandbox", "read-only"},
-				Input:   InputPromptFile,
-			},
-			"claude": {
-				Command: "claude",
-				Args:    []string{"-p"},
-				Input:   InputPromptFile,
-			},
+type BuiltinRegistry struct{}
+
+func DefaultExecutor() string {
+	return BuiltinCodex
+}
+
+func DefaultReviewer() string {
+	return BuiltinCodex
+}
+
+func ResolveExecutor(name string) (AgentDescriptor, error) {
+	return BuiltinRegistry{}.ResolveExecutor(name)
+}
+
+func ResolveReviewer(name string) (AgentDescriptor, error) {
+	return BuiltinRegistry{}.ResolveReviewer(name)
+}
+
+func ListBuiltins() []AgentDescriptor {
+	return BuiltinRegistry{}.ListBuiltins()
+}
+
+func (BuiltinRegistry) DefaultExecutor() string {
+	return DefaultExecutor()
+}
+
+func (BuiltinRegistry) DefaultReviewer() string {
+	return DefaultReviewer()
+}
+
+func (BuiltinRegistry) ResolveExecutor(name string) (AgentDescriptor, error) {
+	return resolveBuiltin(name, DefaultExecutor())
+}
+
+func (BuiltinRegistry) ResolveReviewer(name string) (AgentDescriptor, error) {
+	return resolveBuiltin(name, DefaultReviewer())
+}
+
+func (BuiltinRegistry) ListBuiltins() []AgentDescriptor {
+	builtins := []AgentDescriptor{
+		{
+			Name:    BuiltinCodex,
+			Command: "codex",
+			Args:    []string{"exec", "--dangerously-bypass-approvals-and-sandbox"},
+			Input:   InputPromptFile,
+		},
+		{
+			Name:    BuiltinClaude,
+			Command: "claude",
+			Args:    []string{"-p"},
+			Input:   InputPromptFile,
 		},
 	}
+	for i := range builtins {
+		builtins[i].Args = append([]string{}, builtins[i].Args...)
+	}
+	return builtins
 }
 
-func NormalizeConfig(config AgentConfig) AgentConfig {
-	defaults := DefaultConfig()
-	if strings.TrimSpace(config.DefaultExecutor) == "" {
-		config.DefaultExecutor = defaults.DefaultExecutor
+func resolveBuiltin(name string, defaultName string) (AgentDescriptor, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = defaultName
 	}
-	if strings.TrimSpace(config.DefaultReviewer) == "" {
-		config.DefaultReviewer = config.DefaultExecutor
-	}
-	if config.Adapters == nil {
-		config.Adapters = map[string]AdapterConfig{}
-	}
-	for name, adapter := range defaults.Adapters {
-		if _, ok := config.Adapters[name]; !ok {
-			config.Adapters[name] = cloneAdapterConfig(adapter)
+	for _, descriptor := range ListBuiltins() {
+		if descriptor.Name == name {
+			return cloneDescriptor(descriptor), nil
 		}
 	}
-	for name, adapter := range config.Adapters {
-		config.Adapters[name] = cloneAdapterConfig(adapter)
-	}
-	return config
+	return AgentDescriptor{}, fmt.Errorf("unsupported agent: %s", name)
 }
 
-func ResolveAdapter(config AgentConfig, agentName string) (string, AdapterConfig, error) {
-	config = NormalizeConfig(config)
-	name := strings.TrimSpace(agentName)
-	if name == "" {
-		name = config.DefaultExecutor
-	}
-	adapter, ok := config.Adapters[name]
-	if !ok || strings.TrimSpace(adapter.Command) == "" {
-		return "", AdapterConfig{}, fmt.Errorf("agent adapter not configured: %s", name)
-	}
-	return name, cloneAdapterConfig(adapter), nil
-}
-
-func ResolveReviewerAdapter(config AgentConfig, reviewerName string) (string, AdapterConfig, error) {
-	config = NormalizeConfig(config)
-	name := strings.TrimSpace(reviewerName)
-	if name == "" {
-		name = config.DefaultReviewer
-	}
-	adapter, ok := config.Adapters[name]
-	if !ok || strings.TrimSpace(adapter.Command) == "" {
-		return "", AdapterConfig{}, fmt.Errorf("agent adapter not configured: %s", name)
-	}
-	return name, cloneAdapterConfig(adapter), nil
-}
-
-func cloneAdapterConfig(adapter AdapterConfig) AdapterConfig {
-	adapter.Args = append([]string{}, adapter.Args...)
-	return adapter
+func cloneDescriptor(descriptor AgentDescriptor) AgentDescriptor {
+	descriptor.Args = append([]string{}, descriptor.Args...)
+	return descriptor
 }

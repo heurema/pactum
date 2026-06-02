@@ -22,12 +22,13 @@ import (
 )
 
 type App struct {
-	WorkingDir string
-	Now        func() time.Time
+	WorkingDir    string
+	Now           func() time.Time
+	AgentRegistry agents.Registry
 }
 
 type cli struct {
-	Agents   agentsCmd   `cmd:"" help:"Diagnose configured agent adapters."`
+	Agents   agentsCmd   `cmd:"" help:"Diagnose built-in agents."`
 	Clarify  clarifyCmd  `cmd:"" help:"Manage manual clarification artifacts."`
 	Contract contractCmd `cmd:"" help:"Inspect, revise, and approve run contracts."`
 	Execute  executeCmd  `cmd:"" help:"Prepare deterministic execution artifacts."`
@@ -87,7 +88,7 @@ type promptCmd struct {
 
 type executeCmd struct {
 	DryRun executeDryRunCmd `cmd:"dry-run" help:"Prepare execution artifacts without running an agent."`
-	Run    executeRunCmd    `cmd:"run" help:"Run an external agent behind an explicit safety gate."`
+	Run    executeRunCmd    `cmd:"run" help:"Run the selected built-in agent directly in the repository."`
 	Show   executeShowCmd   `cmd:"show" help:"Show captured execution attempt artifacts."`
 	Status executeStatusCmd `cmd:"status" help:"Summarize captured execution artifacts."`
 }
@@ -108,7 +109,7 @@ type reviewCmd struct {
 }
 
 type agentsCmd struct {
-	Doctor agentsDoctorCmd `cmd:"" help:"Diagnose configured agent adapters without launching them."`
+	Doctor agentsDoctorCmd `cmd:"" help:"Diagnose built-in agents without launching them."`
 }
 
 type contractShowCmd struct {
@@ -145,16 +146,15 @@ type promptShowCmd struct {
 
 type executeDryRunCmd struct {
 	RunID      string `arg:"" name:"run_id" help:"Run id to prepare for execution."`
-	Agent      string `name:"agent" help:"Agent adapter name. Defaults to agents.default_executor."`
+	Agent      string `name:"agent" help:"Built-in agent name. Defaults to codex."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type executeRunCmd struct {
-	RunID        string        `arg:"" name:"run_id" help:"Run id to execute."`
-	Agent        string        `name:"agent" help:"Agent adapter name. Defaults to agents.default_executor."`
-	AllowExecute bool          `name:"allow-execute" help:"Required safety flag before launching an external agent."`
-	Timeout      time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the external agent process."`
-	JSONOutput   bool          `name:"json" help:"Print machine-readable JSON output."`
+	RunID      string        `arg:"" name:"run_id" help:"Run id to execute."`
+	Agent      string        `name:"agent" help:"Built-in agent name. Defaults to codex."`
+	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the built-in agent process."`
+	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type executeStatusCmd struct {
@@ -221,12 +221,12 @@ type reviewApproveCmd struct {
 
 type reviewDryRunCmd struct {
 	RunID      string `arg:"" name:"run_id" help:"Run id to prepare reviewer artifacts for."`
-	Reviewer   string `name:"reviewer" help:"Reviewer adapter name. Defaults to agents.default_reviewer."`
+	Reviewer   string `name:"reviewer" help:"Built-in reviewer name. Defaults to codex."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type agentsDoctorCmd struct {
-	Agent      string `name:"agent" help:"Agent adapter name to inspect."`
+	Agent      string `name:"agent" help:"Built-in agent name to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -274,7 +274,7 @@ type configFile struct {
 	Schema         string             `yaml:"schema"`
 	DefaultProfile string             `yaml:"default_profile"`
 	ProjectMap     projectMapConfig   `yaml:"project_map"`
-	Agents         agents.AgentConfig `yaml:"agents"`
+	Agents         agents.AgentConfig `yaml:"agents,omitempty"`
 	Limits         limitsConfig       `yaml:"limits"`
 	Budget         budgetConfig       `yaml:"budget"`
 	Memory         memoryConfig       `yaml:"memory"`
@@ -425,7 +425,7 @@ func (c *executeDryRunCmd) Run(r *runner) error {
 }
 
 func (c *executeRunCmd) Run(r *runner) error {
-	return r.App.ExecuteRun(r.Stdout, c.RunID, c.Agent, c.AllowExecute, c.Timeout, c.JSONOutput)
+	return r.App.ExecuteRun(r.Stdout, c.RunID, c.Agent, c.Timeout, c.JSONOutput)
 }
 
 func (c *executeStatusCmd) Run(r *runner) error {
@@ -763,7 +763,6 @@ func defaultConfigFile() configFile {
 			MaxFileBytes: 500000,
 			CodeIndex:    codeindex.ModeAuto,
 		},
-		Agents: agents.DefaultConfig(),
 		Limits: limitsConfig{
 			Clarify: iterationLimits{
 				MaxIterations:        5,
@@ -833,8 +832,14 @@ func readConfig(path string) (configFile, error) {
 	if config.Schema == "" {
 		return configFile{}, errors.New("config is incomplete")
 	}
-	config.Agents = agents.NormalizeConfig(config.Agents)
 	return config, nil
+}
+
+func (a App) agentRegistry() agents.Registry {
+	if a.AgentRegistry != nil {
+		return a.AgentRegistry
+	}
+	return agents.BuiltinRegistry{}
 }
 
 func readMapManifest(path string) (projectmap.Manifest, error) {

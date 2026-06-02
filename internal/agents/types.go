@@ -14,6 +14,21 @@ type AdapterConfig struct {
 	Input   string   `json:"input" yaml:"input"`
 }
 
+type AgentDescriptor struct {
+	Name    string   `json:"name"`
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
+	Input   string   `json:"input"`
+}
+
+type Registry interface {
+	DefaultExecutor() string
+	DefaultReviewer() string
+	ResolveExecutor(name string) (AgentDescriptor, error)
+	ResolveReviewer(name string) (AgentDescriptor, error)
+	ListBuiltins() []AgentDescriptor
+}
+
 type DryRunPlan struct {
 	Schema    string          `json:"schema"`
 	RunID     string          `json:"run_id"`
@@ -53,8 +68,7 @@ type RunRequest struct {
 	RepoRoot       string
 	RunID          string
 	AttemptID      string
-	AgentName      string
-	Adapter        AdapterConfig
+	Agent          AgentDescriptor
 	PromptRepoPath string
 	Timeout        time.Duration
 }

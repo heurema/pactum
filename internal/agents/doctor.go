@@ -1,25 +1,22 @@
 package agents
 
 import (
-	"fmt"
 	"os/exec"
-	"sort"
 	"strings"
 )
 
 const (
-	DoctorStatusReady            = "ready"
-	DoctorStatusMissingCommand   = "missing_command"
-	DoctorStatusUnsupportedInput = "unsupported_input"
-	DoctorStatusInvalidConfig    = "invalid_config"
+	DoctorStatusReady          = "ready"
+	DoctorStatusMissingCommand = "missing_command"
 )
 
 type DoctorReport struct {
-	DefaultExecutor string          `json:"default_executor"`
-	Adapters        []AdapterDoctor `json:"adapters"`
+	DefaultExecutor string        `json:"default_executor"`
+	DefaultReviewer string        `json:"default_reviewer"`
+	Agents          []AgentDoctor `json:"agents"`
 }
 
-type AdapterDoctor struct {
+type AgentDoctor struct {
 	Name    string   `json:"name"`
 	Command string   `json:"command"`
 	Input   string   `json:"input"`
@@ -28,70 +25,47 @@ type AdapterDoctor struct {
 	Issues  []string `json:"issues"`
 }
 
-func DiagnoseAdapters(config AgentConfig, selectedAgent string) (DoctorReport, error) {
-	config = NormalizeConfig(config)
+func DiagnoseAgents(registry Registry, selectedAgent string) (DoctorReport, error) {
+	if registry == nil {
+		registry = BuiltinRegistry{}
+	}
 	selectedAgent = strings.TrimSpace(selectedAgent)
 
-	names := make([]string, 0, len(config.Adapters))
+	descriptors := registry.ListBuiltins()
 	if selectedAgent != "" {
-		if _, ok := config.Adapters[selectedAgent]; !ok {
-			return DoctorReport{}, fmt.Errorf("agent adapter not configured: %s", selectedAgent)
+		descriptor, err := registry.ResolveExecutor(selectedAgent)
+		if err != nil {
+			return DoctorReport{}, err
 		}
-		names = append(names, selectedAgent)
-	} else {
-		for name := range config.Adapters {
-			names = append(names, name)
-		}
-		sort.Strings(names)
+		descriptors = []AgentDescriptor{descriptor}
 	}
 
 	report := DoctorReport{
-		DefaultExecutor: config.DefaultExecutor,
-		Adapters:        make([]AdapterDoctor, 0, len(names)),
+		DefaultExecutor: registry.DefaultExecutor(),
+		DefaultReviewer: registry.DefaultReviewer(),
+		Agents:          make([]AgentDoctor, 0, len(descriptors)),
 	}
-	for _, name := range names {
-		report.Adapters = append(report.Adapters, diagnoseAdapter(name, config.Adapters[name]))
+	for _, descriptor := range descriptors {
+		report.Agents = append(report.Agents, diagnoseAgent(descriptor))
 	}
 	return report, nil
 }
 
-func diagnoseAdapter(name string, adapter AdapterConfig) AdapterDoctor {
-	command := strings.TrimSpace(adapter.Command)
-	input := strings.TrimSpace(adapter.Input)
-	doctor := AdapterDoctor{
-		Name:    name,
-		Command: adapter.Command,
-		Input:   adapter.Input,
+func diagnoseAgent(agent AgentDescriptor) AgentDoctor {
+	doctor := AgentDoctor{
+		Name:    agent.Name,
+		Command: agent.Command,
+		Input:   agent.Input,
 		Status:  DoctorStatusReady,
 		Issues:  []string{},
 	}
 
-	if command == "" {
-		doctor.Status = DoctorStatusInvalidConfig
-		doctor.Issues = append(doctor.Issues, "command is required")
+	path, err := exec.LookPath(agent.Command)
+	if err != nil {
+		doctor.Status = DoctorStatusMissingCommand
+		doctor.Issues = append(doctor.Issues, "command not found on PATH")
+	} else {
+		doctor.Path = path
 	}
-	if input == "" {
-		if doctor.Status == DoctorStatusReady {
-			doctor.Status = DoctorStatusInvalidConfig
-		}
-		doctor.Issues = append(doctor.Issues, "input mode is required")
-	} else if input != InputPromptFile {
-		if doctor.Status == DoctorStatusReady {
-			doctor.Status = DoctorStatusUnsupportedInput
-		}
-		doctor.Issues = append(doctor.Issues, "unsupported input mode: "+input)
-	}
-	if command != "" {
-		path, err := exec.LookPath(command)
-		if err != nil {
-			if doctor.Status == DoctorStatusReady {
-				doctor.Status = DoctorStatusMissingCommand
-			}
-			doctor.Issues = append(doctor.Issues, "command not found on PATH")
-		} else {
-			doctor.Path = path
-		}
-	}
-
 	return doctor
 }
