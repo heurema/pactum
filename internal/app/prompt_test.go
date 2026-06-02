@@ -336,7 +336,7 @@ func TestContractReviseApprovedContractRemovesPromptReadiness(t *testing.T) {
 	if approval := readApproval(t, runPaths.ApprovalJSON); approval.Status != "pending" || approval.ContractSHA256 != nil {
 		t.Fatalf("approval should be pending after revise: %#v", approval)
 	}
-	if got := mustReadFile(t, runPaths.PromptMD); !strings.Contains(got, "This prompt is not executable yet.") {
+	if got := mustReadFile(t, runPaths.PromptMD); !strings.Contains(got, "This is a contract-draft placeholder.") {
 		t.Fatalf("prompt.md should return to preview after revise:\n%s", got)
 	}
 

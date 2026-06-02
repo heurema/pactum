@@ -94,7 +94,7 @@ func (a App) RunContract(stdout io.Writer, task string, contractOnly bool, jsonO
 		return nil
 	}
 	if !contractOnly {
-		fmt.Fprintln(stdout, "Execution is not implemented yet. Use --contract-only.")
+		fmt.Fprintln(stdout, "pactum run prepares a contract draft. Re-run with --contract-only, then use: clarify, contract approve, prompt build, execute.")
 		return nil
 	}
 
@@ -451,7 +451,7 @@ func renderContractMDFromDraft(contract draftContract, mapRunID string, searchRe
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Current status")
 	fmt.Fprintf(&buffer, "Contract status: %s\n", contract.Status)
-	fmt.Fprintln(&buffer, "Manual clarification and approval are available; agent execution is not implemented yet.")
+	fmt.Fprintln(&buffer, "Manual clarification, contract approval, prompt build, and agent execution are available through staged Pactum commands.")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Relevant repository context")
 	fmt.Fprintf(&buffer, "- Map run: %s\n", mapRunID)
@@ -505,7 +505,7 @@ func renderPromptMDFromDraft(contract draftContract) []byte {
 	var buffer bytes.Buffer
 	fmt.Fprintln(&buffer, "# Executor Prompt")
 	fmt.Fprintln(&buffer)
-	fmt.Fprintln(&buffer, "This prompt is not executable yet. Manual clarification and approval are available, but agent execution is not implemented.")
+	fmt.Fprintln(&buffer, "This is a contract-draft placeholder. Run `pactum prompt build` after the contract is approved to build the executor prompt for `pactum execute`.")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Goal")
 	writeMarkdownValue(&buffer, contract.Goal)
