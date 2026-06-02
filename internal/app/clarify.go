@@ -228,19 +228,11 @@ type clarifyContext struct {
 }
 
 func (a App) loadClarifyContext(stdout io.Writer, runID string, jsonOutput bool) (clarifyContext, bool, error) {
-	root, workspace, err := a.resolveStatusRoot()
-	if err != nil {
+	root, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
+	if err != nil || !ok {
 		return clarifyContext{}, false, err
 	}
-	if workspace == "" {
-		if jsonOutput {
-			return clarifyContext{}, false, writeStatusNotInitialized(stdout)
-		}
-		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
-		return clarifyContext{}, false, nil
-	}
 
-	paths := artifacts.New(root)
 	runDir := filepath.Join(paths.RunsDir, runID)
 	info, err := os.Stat(runDir)
 	if err != nil {
@@ -338,12 +330,12 @@ func buildClarificationStatus(runPaths contractRunPathSet, state contractRunStat
 
 func readContractRunState(path string) (contractRunState, error) {
 	var state contractRunState
-	return state, readJSONFile(path, &state)
+	return state, readJSON(path, &state)
 }
 
 func readDraftContract(path string) (draftContract, error) {
 	var contract draftContract
-	return contract, readJSONFile(path, &contract)
+	return contract, readJSON(path, &contract)
 }
 
 func readClarificationQuestions(path string) ([]clarificationQuestionRecord, error) {
@@ -356,14 +348,6 @@ func readClarificationAnswers(path string) ([]clarificationAnswerRecord, error) 
 
 func readClarificationDecisions(path string) ([]clarificationDecisionRecord, error) {
 	return readJSONLines[clarificationDecisionRecord](path)
-}
-
-func readJSONFile(path string, value any) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, value)
 }
 
 func readJSONLines[T any](path string) ([]T, error) {
@@ -402,12 +386,6 @@ func appendJSONLine(path string, value any) error {
 	}
 	defer file.Close()
 	encoder := json.NewEncoder(file)
-	return encoder.Encode(value)
-}
-
-func writeJSONResponse(stdout io.Writer, value any) error {
-	encoder := json.NewEncoder(stdout)
-	encoder.SetIndent("", "  ")
 	return encoder.Encode(value)
 }
 
@@ -458,7 +436,7 @@ func openClarificationQuestionTexts(questions []clarifyQuestionStatus) []string 
 
 func readRunSearchResultCount(path string) int {
 	var results runSearchResults
-	if err := readJSONFile(path, &results); err != nil {
+	if err := readJSON(path, &results); err != nil {
 		return 0
 	}
 	return len(results.Results)

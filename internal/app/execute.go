@@ -14,13 +14,9 @@ import (
 )
 
 func (a App) ExecuteDryRun(stdout io.Writer, runID string, agentName string, jsonOutput bool) error {
-	root, workspace, err := a.resolveStatusRoot()
-	if err != nil {
+	root, _, ok, err := a.requireWorkspace(stdout, false)
+	if err != nil || !ok {
 		return err
-	}
-	if workspace == "" {
-		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
-		return nil
 	}
 
 	prep, err := a.prepareExecution(root, runID, agentName)
@@ -50,13 +46,9 @@ func (a App) ExecuteDryRun(stdout io.Writer, runID string, agentName string, jso
 }
 
 func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, timeout time.Duration, jsonOutput bool) error {
-	root, workspace, err := a.resolveStatusRoot()
-	if err != nil {
+	root, _, ok, err := a.requireWorkspace(stdout, false)
+	if err != nil || !ok {
 		return err
-	}
-	if workspace == "" {
-		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
-		return nil
 	}
 
 	prep, err := a.prepareExecution(root, runID, agentName)

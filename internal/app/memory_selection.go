@@ -73,16 +73,11 @@ type scoredMemoryItem struct {
 }
 
 func (a App) MemorySearch(stdout io.Writer, query string, limit int, jsonOutput bool) error {
-	root, workspace, err := a.resolveStatusRoot()
-	if err != nil {
+	_, paths, ok, err := a.requireWorkspace(stdout, false)
+	if err != nil || !ok {
 		return err
 	}
-	if workspace == "" {
-		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
-		return nil
-	}
 
-	paths := artifacts.New(root)
 	limit = normalizeMemorySelectionLimit(limit)
 	selected, _, err := selectAcceptedMemoryItems(paths, query, limit)
 	if err != nil {

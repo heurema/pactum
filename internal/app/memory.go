@@ -298,19 +298,11 @@ func (a App) MemoryAccept(stdout io.Writer, runID string, acceptedBy string, jso
 }
 
 func (a App) loadMemoryContext(stdout io.Writer, runID string, jsonOutput bool) (memoryContext, bool, error) {
-	root, workspace, err := a.resolveStatusRoot()
-	if err != nil {
+	root, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
+	if err != nil || !ok {
 		return memoryContext{}, false, err
 	}
-	if workspace == "" {
-		if jsonOutput {
-			return memoryContext{}, false, writeStatusNotInitialized(stdout)
-		}
-		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
-		return memoryContext{}, false, nil
-	}
 
-	paths := artifacts.New(root)
 	runDir := filepath.Join(paths.RunsDir, runID)
 	info, err := os.Stat(runDir)
 	if err != nil {

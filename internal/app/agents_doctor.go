@@ -8,13 +8,9 @@ import (
 )
 
 func (a App) AgentsDoctor(stdout io.Writer, agentName string, jsonOutput bool) error {
-	_, workspace, err := a.resolveStatusRoot()
-	if err != nil {
+	_, _, ok, err := a.requireWorkspace(stdout, false)
+	if err != nil || !ok {
 		return err
-	}
-	if workspace == "" {
-		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
-		return nil
 	}
 
 	report, err := agents.DiagnoseAgents(a.agentRegistry(), agentName)

@@ -288,12 +288,12 @@ func buildPromptManifestMemory(paths artifacts.Paths, runPaths contractRunPathSe
 
 func readPromptManifest(path string) (promptManifest, error) {
 	var manifest promptManifest
-	return manifest, readJSONFile(path, &manifest)
+	return manifest, readJSON(path, &manifest)
 }
 
 func readRunSearchResults(path string) (runSearchResults, error) {
 	var results runSearchResults
-	err := readJSONFile(path, &results)
+	err := readJSON(path, &results)
 	return results, err
 }
 

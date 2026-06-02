@@ -634,16 +634,11 @@ func (a App) loadPreparedReviewState(stdout io.Writer, runID string) (reviewStat
 }
 
 func (a App) loadReviewContext(stdout io.Writer, runID string) (reviewContext, bool, error) {
-	root, workspace, err := a.resolveStatusRoot()
-	if err != nil {
+	root, paths, ok, err := a.requireWorkspace(stdout, false)
+	if err != nil || !ok {
 		return reviewContext{}, false, err
 	}
-	if workspace == "" {
-		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
-		return reviewContext{}, false, nil
-	}
 
-	paths := artifacts.New(root)
 	runDir := filepath.Join(paths.RunsDir, runID)
 	info, err := os.Stat(runDir)
 	if err != nil {
