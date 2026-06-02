@@ -182,14 +182,11 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 	if manifest.Status != "ready" {
 		return executionPreparation{}, fmt.Errorf("cannot prepare execution: executor prompt has not been built")
 	}
-	if contract.Status != "approved" || approval.Status != "approved" || approval.ContractSHA256 == nil {
-		return executionPreparation{}, fmt.Errorf("cannot prepare execution: contract is not approved")
-	}
-	hash, err := fileSHA256(runPaths.ContractJSON)
+	hash, err := verifyApprovedContract(runPaths, contract, approval, "prepare execution")
 	if err != nil {
 		return executionPreparation{}, err
 	}
-	if hash != *approval.ContractSHA256 || manifest.ContractSHA256 != hash {
+	if manifest.ContractSHA256 != hash {
 		return executionPreparation{}, fmt.Errorf("cannot prepare execution: approved contract hash does not match current contract")
 	}
 

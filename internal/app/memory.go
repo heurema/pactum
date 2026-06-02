@@ -396,17 +396,8 @@ func (a App) prepareMemoryCandidate(context runContext) (preparedMemoryCandidate
 }
 
 func ensureMemoryContractApproved(context runContext) error {
-	if context.Contract.Status != "approved" || context.Approval.Status != "approved" || context.Approval.ContractSHA256 == nil {
-		return fmt.Errorf("cannot propose memory: contract is not approved")
-	}
-	hash, err := fileSHA256(context.RunPaths.ContractJSON)
-	if err != nil {
-		return err
-	}
-	if hash != *context.Approval.ContractSHA256 {
-		return fmt.Errorf("cannot propose memory: approved contract hash does not match current contract")
-	}
-	return nil
+	_, err := verifyApprovedContract(context.RunPaths, context.Contract, context.Approval, "propose memory")
+	return err
 }
 
 func buildMemoryCandidate(context runContext, gateReport gateReportDocument, reviewState reviewStateResponse, createdAt string) memoryCandidateDocument {

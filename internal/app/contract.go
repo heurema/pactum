@@ -272,6 +272,23 @@ func readApprovalState(path string) (approvalState, error) {
 	return approval, nil
 }
 
+// verifyApprovedContract confirms the run's contract is approved and that the
+// contract on disk still hashes to the approved hash, returning that hash.
+// action names the operation for error messages, e.g. "run gate".
+func verifyApprovedContract(runPaths contractRunPathSet, contract draftContract, approval approvalState, action string) (string, error) {
+	if contract.Status != "approved" || approval.Status != "approved" || approval.ContractSHA256 == nil {
+		return "", fmt.Errorf("cannot %s: contract is not approved", action)
+	}
+	hash, err := fileSHA256(runPaths.ContractJSON)
+	if err != nil {
+		return "", err
+	}
+	if hash != *approval.ContractSHA256 {
+		return "", fmt.Errorf("cannot %s: approved contract hash does not match current contract", action)
+	}
+	return hash, nil
+}
+
 func pendingApprovalState() approvalState {
 	return approvalState{
 		Schema:         approvalSchema,

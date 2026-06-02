@@ -103,15 +103,9 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 	if status.BlockingOpen > 0 {
 		return fmt.Errorf("cannot build executor prompt: blocking clarification questions remain")
 	}
-	if context.Approval.Status != "approved" || context.Approval.ContractSHA256 == nil {
-		return fmt.Errorf("cannot build executor prompt: contract is not approved")
-	}
-	hash, err := fileSHA256(context.RunPaths.ContractJSON)
+	hash, err := verifyApprovedContract(context.RunPaths, context.Contract, context.Approval, "build executor prompt")
 	if err != nil {
 		return err
-	}
-	if hash != *context.Approval.ContractSHA256 {
-		return fmt.Errorf("cannot build executor prompt: approved contract hash does not match current contract")
 	}
 
 	report, err := a.workspaceStatus(context.Root)

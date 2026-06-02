@@ -493,7 +493,7 @@ func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, j
 	if err != nil || !ok {
 		return err
 	}
-	prep, err := a.prepareReviewerDryRun(context, reviewerName)
+	prep, err := a.prepareReviewer(context, reviewerName, "prepare reviewer dry-run")
 	if err != nil {
 		return err
 	}
@@ -523,7 +523,7 @@ func (a App) ReviewRun(stdout io.Writer, runID string, reviewerName string, time
 	if err != nil || !ok {
 		return err
 	}
-	prep, err := a.prepareReviewerRun(context, reviewerName)
+	prep, err := a.prepareReviewer(context, reviewerName, "run reviewer")
 	if err != nil {
 		return err
 	}
@@ -663,13 +663,15 @@ func (a App) loadReviewContext(stdout io.Writer, runID string) (reviewContext, b
 	}, true, nil
 }
 
-func (a App) prepareReviewerDryRun(context reviewContext, reviewerName string) (reviewerDryRunPreparation, error) {
+// prepareReviewer loads the reviewer inputs for a prepared, approved run.
+// action names the operation for error messages, e.g. "run reviewer".
+func (a App) prepareReviewer(context reviewContext, reviewerName string, action string) (reviewerDryRunPreparation, error) {
 	review, err := requireReviewPrepared(context.RunPaths, context.State.RunID)
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
 	if !isRegularFile(context.RunPaths.GateReportJSON) {
-		return reviewerDryRunPreparation{}, fmt.Errorf("cannot prepare reviewer dry-run: gate report not found")
+		return reviewerDryRunPreparation{}, fmt.Errorf("cannot %s: gate report not found", action)
 	}
 	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
 	if err != nil {
@@ -683,75 +685,8 @@ func (a App) prepareReviewerDryRun(context reviewContext, reviewerName string) (
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
-	if contract.Status != "approved" || approval.Status != "approved" || approval.ContractSHA256 == nil {
-		return reviewerDryRunPreparation{}, fmt.Errorf("cannot prepare reviewer dry-run: contract is not approved")
-	}
-	hash, err := fileSHA256(context.RunPaths.ContractJSON)
-	if err != nil {
+	if _, err := verifyApprovedContract(context.RunPaths, contract, approval, action); err != nil {
 		return reviewerDryRunPreparation{}, err
-	}
-	if hash != *approval.ContractSHA256 {
-		return reviewerDryRunPreparation{}, fmt.Errorf("cannot prepare reviewer dry-run: contract is not approved")
-	}
-	findings, resolutions, err := readReviewRecords(context.RunPaths)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	proposals, proposalDecisions, err := readReviewProposalRecords(context.RunPaths)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	reviewer, err := a.agentRegistry().ResolveReviewer(reviewerName)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	if reviewer.Input != agents.InputPromptFile {
-		return reviewerDryRunPreparation{}, fmt.Errorf("unsupported agent input mode: %s", reviewer.Input)
-	}
-
-	review = refreshReviewDocument(review, context.State.RunID, gateReport.Status, findings, resolutions, "")
-	return reviewerDryRunPreparation{
-		Context:           context,
-		Contract:          contract,
-		GateReport:        gateReport,
-		Review:            review,
-		Findings:          findings,
-		Resolutions:       resolutions,
-		Proposals:         proposals,
-		ProposalDecisions: proposalDecisions,
-		Reviewer:          reviewer,
-	}, nil
-}
-
-func (a App) prepareReviewerRun(context reviewContext, reviewerName string) (reviewerDryRunPreparation, error) {
-	review, err := requireReviewPrepared(context.RunPaths, context.State.RunID)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	if !isRegularFile(context.RunPaths.GateReportJSON) {
-		return reviewerDryRunPreparation{}, fmt.Errorf("cannot run reviewer: gate report not found")
-	}
-	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	contract, err := readDraftContract(context.RunPaths.ContractJSON)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	approval, err := readApprovalState(context.RunPaths.ApprovalJSON)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	if contract.Status != "approved" || approval.Status != "approved" || approval.ContractSHA256 == nil {
-		return reviewerDryRunPreparation{}, fmt.Errorf("cannot run reviewer: contract is not approved")
-	}
-	hash, err := fileSHA256(context.RunPaths.ContractJSON)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	if hash != *approval.ContractSHA256 {
-		return reviewerDryRunPreparation{}, fmt.Errorf("cannot run reviewer: contract is not approved")
 	}
 	findings, resolutions, err := readReviewRecords(context.RunPaths)
 	if err != nil {

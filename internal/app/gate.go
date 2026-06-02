@@ -257,17 +257,8 @@ func (a App) loadGateContext(stdout io.Writer, runID string) (runContext, bool, 
 }
 
 func ensureGateContractApproved(context runContext) error {
-	if context.Contract.Status != "approved" || context.Approval.Status != "approved" || context.Approval.ContractSHA256 == nil {
-		return fmt.Errorf("cannot run gate: contract is not approved")
-	}
-	hash, err := fileSHA256(context.RunPaths.ContractJSON)
-	if err != nil {
-		return err
-	}
-	if hash != *context.Approval.ContractSHA256 {
-		return fmt.Errorf("cannot run gate: approved contract hash does not match current contract")
-	}
-	return nil
+	_, err := verifyApprovedContract(context.RunPaths, context.Contract, context.Approval, "run gate")
+	return err
 }
 
 func ensureGatePromptReady(context runContext) (promptManifest, error) {
