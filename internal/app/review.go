@@ -85,17 +85,22 @@ type reviewFindingInput struct {
 	Blocking bool
 }
 
+// findingCore is the shared body of a review finding and a review proposal.
+type findingCore struct {
+	Message  string `json:"message"`
+	Severity string `json:"severity"`
+	Category string `json:"category"`
+	File     string `json:"file,omitempty"`
+	Line     int    `json:"line,omitempty"`
+	Blocking bool   `json:"blocking"`
+	Evidence string `json:"evidence,omitempty"`
+}
+
 type reviewFindingRecord struct {
-	Schema    string `json:"schema"`
-	ID        string `json:"id"`
-	RunID     string `json:"run_id"`
-	Message   string `json:"message"`
-	Severity  string `json:"severity"`
-	Category  string `json:"category"`
-	File      string `json:"file,omitempty"`
-	Line      int    `json:"line,omitempty"`
-	Blocking  bool   `json:"blocking"`
-	Evidence  string `json:"evidence,omitempty"`
+	Schema string `json:"schema"`
+	ID     string `json:"id"`
+	RunID  string `json:"run_id"`
+	findingCore
 	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
 	Source    string `json:"source"`
@@ -112,19 +117,7 @@ type reviewResolutionRecord struct {
 }
 
 type reviewFindingView struct {
-	Schema           string                  `json:"schema"`
-	ID               string                  `json:"id"`
-	RunID            string                  `json:"run_id"`
-	Message          string                  `json:"message"`
-	Severity         string                  `json:"severity"`
-	Category         string                  `json:"category"`
-	File             string                  `json:"file,omitempty"`
-	Line             int                     `json:"line,omitempty"`
-	Blocking         bool                    `json:"blocking"`
-	Evidence         string                  `json:"evidence,omitempty"`
-	Status           string                  `json:"status"`
-	CreatedAt        string                  `json:"created_at"`
-	Source           string                  `json:"source"`
+	reviewFindingRecord
 	LatestResolution *reviewResolutionRecord `json:"latest_resolution,omitempty"`
 }
 
@@ -310,15 +303,17 @@ func (a App) ReviewAddFinding(stdout io.Writer, runID string, input reviewFindin
 	}
 	now := a.nowUTC()
 	finding := reviewFindingRecord{
-		Schema:    reviewFindingSchema,
-		ID:        nextReviewID("f", len(findings)+1),
-		RunID:     runID,
-		Message:   input.Message,
-		Severity:  input.Severity,
-		Category:  input.Category,
-		File:      filepath.ToSlash(input.File),
-		Line:      input.Line,
-		Blocking:  input.Blocking,
+		Schema: reviewFindingSchema,
+		ID:     nextReviewID("f", len(findings)+1),
+		RunID:  runID,
+		findingCore: findingCore{
+			Message:  input.Message,
+			Severity: input.Severity,
+			Category: input.Category,
+			File:     filepath.ToSlash(input.File),
+			Line:     input.Line,
+			Blocking: input.Blocking,
+		},
 		Status:    "open",
 		CreatedAt: now.Format(time.RFC3339),
 		Source:    "manual",
@@ -865,21 +860,8 @@ func buildReviewStateWithProposals(review reviewDocument, findings []reviewFindi
 	latest := latestReviewResolutions(resolutions)
 	views := make([]reviewFindingView, 0, len(findings))
 	for _, finding := range findings {
-		view := reviewFindingView{
-			Schema:    finding.Schema,
-			ID:        finding.ID,
-			RunID:     finding.RunID,
-			Message:   finding.Message,
-			Severity:  finding.Severity,
-			Category:  finding.Category,
-			File:      finding.File,
-			Line:      finding.Line,
-			Blocking:  finding.Blocking,
-			Evidence:  finding.Evidence,
-			Status:    "open",
-			CreatedAt: finding.CreatedAt,
-			Source:    finding.Source,
-		}
+		view := reviewFindingView{reviewFindingRecord: finding}
+		view.Status = "open"
 		if resolution, ok := latest[finding.ID]; ok {
 			view.Status = "resolved"
 			resolutionCopy := resolution

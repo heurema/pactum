@@ -69,8 +69,8 @@ type memoryCandidateClarification struct {
 }
 
 type memoryCandidateReview struct {
-	Findings        []memoryCandidateFinding       `json:"findings"`
-	ProposalSummary memoryCandidateProposalSummary `json:"proposal_summary"`
+	Findings        []memoryCandidateFinding `json:"findings"`
+	ProposalSummary reviewProposalSummary    `json:"proposal_summary"`
 }
 
 type memoryCandidateFinding struct {
@@ -83,12 +83,6 @@ type memoryCandidateFinding struct {
 	Blocking   bool   `json:"blocking"`
 	Status     string `json:"status"`
 	Resolution string `json:"resolution"`
-}
-
-type memoryCandidateProposalSummary struct {
-	Pending  int `json:"pending"`
-	Accepted int `json:"accepted"`
-	Rejected int `json:"rejected"`
 }
 
 type memoryCandidateDecision struct {
@@ -431,12 +425,8 @@ func buildMemoryCandidate(context runContext, gateReport gateReportDocument, rev
 		},
 		Clarifications: clarifications,
 		Review: memoryCandidateReview{
-			Findings: findings,
-			ProposalSummary: memoryCandidateProposalSummary{
-				Pending:  reviewState.ProposalSummary.Pending,
-				Accepted: reviewState.ProposalSummary.Accepted,
-				Rejected: reviewState.ProposalSummary.Rejected,
-			},
+			Findings:        findings,
+			ProposalSummary: reviewState.ProposalSummary,
 		},
 		Decisions: memoryDecisionsFromArtifacts(context.Root, contract, clarifications, reviewState, gateReport),
 		Artifacts: memoryCandidateArtifacts{

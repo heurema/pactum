@@ -1590,15 +1590,17 @@ func appendReviewProposalForTest(t *testing.T, runPaths contractRunPathSet, runI
 		RunID:             runID,
 		Source:            "reviewer_attempt",
 		ReviewerAttemptID: "reviewer_attempt_001",
-		Message:           message,
-		Severity:          "medium",
-		Category:          "quality",
-		File:              "internal/app/review.go",
-		Line:              12,
-		Blocking:          blocking,
-		Evidence:          "fixture evidence",
-		Status:            "pending",
-		CreatedAt:         "2026-06-01T22:00:00Z",
+		findingCore: findingCore{
+			Message:  message,
+			Severity: "medium",
+			Category: "quality",
+			File:     "internal/app/review.go",
+			Line:     12,
+			Blocking: blocking,
+			Evidence: "fixture evidence",
+		},
+		Status:    "pending",
+		CreatedAt: "2026-06-01T22:00:00Z",
 	}
 	assertNoError(t, appendJSONLine(runPaths.ReviewProposalsJSONL, record))
 }
