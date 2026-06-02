@@ -3,8 +3,11 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -668,6 +671,392 @@ func TestReviewDryRunDoesNotMutateManualReviewArtifacts(t *testing.T) {
 	}
 }
 
+func TestReviewRunBeforeInitPrintsGuidance(t *testing.T) {
+	root := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"review", "run", "run_x"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review run before init exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
+		t.Fatalf("review run before init output mismatch:\n%s", got)
+	}
+}
+
+func TestReviewRunMissingRunReturnsError(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+
+	var stdout, stderr bytes.Buffer
+	app := testApp(root)
+	code := app.Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"review", "run", "run_missing"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review run missing run should fail")
+	}
+	if got := stderr.String(); !strings.Contains(got, "run not found: run_missing") {
+		t.Fatalf("missing run stderr mismatch:\n%s", got)
+	}
+}
+
+func TestReviewRunBeforeReviewPreparedFails(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, _ := setupRunWithGateReport(t, root, "passed")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review run should fail before review prepare")
+	}
+	if got := stderr.String(); !strings.Contains(got, "review has not been prepared: "+runID) {
+		t.Fatalf("review not prepared stderr mismatch:\n%s", got)
+	}
+}
+
+func TestReviewRunMissingGateReportFails(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedReviewWithoutGateReport(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review run should fail without gate report")
+	}
+	if got := stderr.String(); !strings.Contains(got, "cannot run reviewer: gate report not found") {
+		t.Fatalf("missing gate stderr mismatch:\n%s", got)
+	}
+	if _, err := os.Stat(runPaths.ReviewAttemptsDir); err == nil {
+		t.Fatalf("review run missing gate should not create attempts dir")
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}
+
+func TestReviewRunContractNotApprovedFails(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review run should fail without approved contract")
+	}
+	if got := stderr.String(); !strings.Contains(got, "cannot run reviewer: contract is not approved") {
+		t.Fatalf("unapproved contract stderr mismatch:\n%s", got)
+	}
+	assertNoFile(t, runPaths.ReviewDryRunJSON)
+}
+
+func TestReviewRunUnsupportedReviewerFails(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "missing"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review run should fail for missing reviewer")
+	}
+	if got := stderr.String(); !strings.Contains(got, "unsupported agent: missing") {
+		t.Fatalf("missing reviewer stderr mismatch:\n%s", got)
+	}
+}
+
+func TestReviewRunUnsupportedInputModeFails(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	app.AgentRegistry = testAgentRegistry(agents.AgentDescriptor{
+		Name:    "bad-input",
+		Command: "bad-reviewer",
+		Args:    []string{"run"},
+		Input:   "stdin",
+	})
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "bad-input"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review run should fail for unsupported input mode")
+	}
+	if got := stderr.String(); !strings.Contains(got, "unsupported agent input mode: stdin") {
+		t.Fatalf("unsupported input stderr mismatch:\n%s", got)
+	}
+}
+
+func TestReviewRunWritesAttemptArtifacts(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
+
+	beforeReview := mustReadFile(t, runPaths.ReviewJSON)
+	beforeFindings := mustReadFile(t, runPaths.ReviewFindingsJSONL)
+	beforeResolutions := mustReadFile(t, runPaths.ReviewResolutionsJSONL)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "Reviewer attempt finished") || !strings.Contains(got, "reviewer_attempt_001") {
+		t.Fatalf("review run output mismatch:\n%s", got)
+	}
+
+	attemptPaths := reviewerAttemptPaths(runPaths, "reviewer_attempt_001")
+	assertFile(t, attemptPaths.RequestJSON)
+	assertFile(t, attemptPaths.StdoutLog)
+	assertFile(t, attemptPaths.StderrLog)
+	assertFile(t, attemptPaths.ResultJSON)
+	assertFile(t, runPaths.ReviewLastResultJSON)
+
+	var request reviewerRequestDocument
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.RequestJSON)), &request))
+	if request.Schema != reviewerRequestSchema || request.RunID != runID || request.AttemptID != "reviewer_attempt_001" {
+		t.Fatalf("unexpected request: %#v", request)
+	}
+	if request.Reviewer.Name != "helper" || request.Reviewer.Command != os.Args[0] || request.Reviewer.Input != agents.InputPromptFile {
+		t.Fatalf("unexpected request reviewer: %#v", request.Reviewer)
+	}
+	wantPrompt := ".heurema/pactum/runs/" + runID + "/review/reviewer-prompt.md"
+	if request.WouldRun.Stdin != wantPrompt {
+		t.Fatalf("unexpected would_run stdin = %q, want %q", request.WouldRun.Stdin, wantPrompt)
+	}
+	if got := strings.Join(request.WouldRun.Args, " "); strings.Contains(got, wantPrompt) {
+		t.Fatalf("would_run args should not pass prompt path positionally: %#v", request.WouldRun.Args)
+	}
+	if request.Artifacts.ReviewerPrompt != reviewerPromptArtifact || request.Artifacts.GateReport != gateReportArtifact {
+		t.Fatalf("unexpected request artifacts: %#v", request.Artifacts)
+	}
+
+	var result reviewerResultDocument
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.ResultJSON)), &result))
+	if result.Schema != reviewerResultSchema || result.Reviewer != "helper" || result.ExitCode != 0 || result.TimedOut {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if result.Stdout != "review/reviewer-attempts/reviewer_attempt_001/stdout.log" || result.Stderr != "review/reviewer-attempts/reviewer_attempt_001/stderr.log" {
+		t.Fatalf("unexpected output artifact paths: %#v", result)
+	}
+	if got := mustReadFile(t, runPaths.ReviewLastResultJSON); got != mustReadFile(t, attemptPaths.ResultJSON) {
+		t.Fatalf("reviewer-last-result.json should copy result.json")
+	}
+	if got := mustReadFile(t, attemptPaths.StdoutLog); !strings.Contains(got, "cwd_is_repo=true") || !strings.Contains(got, "stdin_has_reviewer_prompt=true") {
+		t.Fatalf("stdout log mismatch:\n%s", got)
+	}
+	if got := mustReadFile(t, attemptPaths.StderrLog); !strings.Contains(got, "reviewer-stderr-line") {
+		t.Fatalf("stderr log mismatch:\n%s", got)
+	}
+	if got := mustReadFile(t, runPaths.ReviewJSON); got != beforeReview {
+		t.Fatalf("review run mutated review.json")
+	}
+	if got := mustReadFile(t, runPaths.ReviewFindingsJSONL); got != beforeFindings {
+		t.Fatalf("review run mutated findings.jsonl")
+	}
+	if got := mustReadFile(t, runPaths.ReviewResolutionsJSONL); got != beforeResolutions {
+		t.Fatalf("review run mutated resolutions.jsonl")
+	}
+
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	startedIndex := indexOfEvent(eventTypes, "reviewer_attempt_started")
+	finishedIndex := indexOfEvent(eventTypes, "reviewer_attempt_finished")
+	if startedIndex == -1 || finishedIndex == -1 || startedIndex > finishedIndex {
+		t.Fatalf("events missing ordered reviewer attempt lifecycle:\n%v", eventTypes)
+	}
+}
+
+func TestReviewRunNonZeroWritesArtifactsAndReturnsNonZero(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_REVIEWER_EXIT", "7")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review run should return non-zero for reviewer failure")
+	}
+	if got := stderr.String(); !strings.Contains(got, "reviewer process exited with code 7") {
+		t.Fatalf("non-zero stderr mismatch:\n%s", got)
+	}
+
+	attemptPaths := reviewerAttemptPaths(runPaths, "reviewer_attempt_001")
+	assertFile(t, attemptPaths.ResultJSON)
+	var result reviewerResultDocument
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.ResultJSON)), &result))
+	if result.ExitCode != 7 || result.TimedOut {
+		t.Fatalf("unexpected failing result: %#v", result)
+	}
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "reviewer_attempt_started") != 1 || countEvents(eventTypes, "reviewer_attempt_finished") != 1 {
+		t.Fatalf("non-zero review run should write started and finished events:\n%v", eventTypes)
+	}
+}
+
+func TestReviewRunCreatesIncrementingAttempts(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
+
+	for i := 0; i < 2; i++ {
+		var stdout, stderr bytes.Buffer
+		code := app.Run([]string{"review", "run", runID, "--reviewer", "helper"}, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("review run %d exited %d, stderr: %s", i+1, code, stderr.String())
+		}
+	}
+	for _, attemptID := range []string{"reviewer_attempt_001", "reviewer_attempt_002"} {
+		attemptPaths := reviewerAttemptPaths(runPaths, attemptID)
+		assertFile(t, attemptPaths.RequestJSON)
+		assertFile(t, attemptPaths.ResultJSON)
+	}
+}
+
+func TestReviewRunStoresCrossReviewerAttempts(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperReviewers(t, app, paths, "helper-a", "helper-a", "helper-b")
+	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
+
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper-a")
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper-b")
+
+	for attemptID, wantReviewer := range map[string]string{
+		"reviewer_attempt_001": "helper-a",
+		"reviewer_attempt_002": "helper-b",
+	} {
+		attemptPaths := reviewerAttemptPaths(runPaths, attemptID)
+		assertFile(t, attemptPaths.ResultJSON)
+		var result reviewerResultDocument
+		assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.ResultJSON)), &result))
+		if result.Reviewer != wantReviewer {
+			t.Fatalf("%s reviewer = %q, want %q", attemptID, result.Reviewer, wantReviewer)
+		}
+	}
+}
+
+func TestReviewRunAutoBuildsDryRunArtifacts(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
+	_ = os.Remove(runPaths.ReviewDryRunJSON)
+	_ = os.Remove(runPaths.ReviewPromptMD)
+	_ = os.Remove(runPaths.ReviewContextMD)
+
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper")
+	assertFile(t, runPaths.ReviewDryRunJSON)
+	assertFile(t, runPaths.ReviewPromptMD)
+	assertFile(t, runPaths.ReviewContextMD)
+}
+
+func TestReviewRunRequestWouldRunMatchesDryRun(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	runReviewCommand(t, app, "review", "dry-run", runID, "--reviewer", "helper")
+	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
+
+	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper")
+
+	var request reviewerRequestDocument
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_001").RequestJSON)), &request))
+	if request.WouldRun.Command != plan.WouldRun.Command || request.WouldRun.Stdin != plan.WouldRun.Stdin || !sameStringSlice(request.WouldRun.Args, plan.WouldRun.Args) {
+		t.Fatalf("request would_run does not match dry-run:\nrequest=%#v\nplan=%#v", request.WouldRun, plan.WouldRun)
+	}
+}
+
+func TestReviewRunArtifactsArePortable(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
+
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper")
+	attemptPaths := reviewerAttemptPaths(runPaths, "reviewer_attempt_001")
+	for name, content := range map[string]string{
+		"review/request.json":              mustReadFile(t, attemptPaths.RequestJSON),
+		"review/result.json":               mustReadFile(t, attemptPaths.ResultJSON),
+		"review/reviewer-last-result.json": mustReadFile(t, runPaths.ReviewLastResultJSON),
+	} {
+		assertDoesNotContainRoot(t, name, content, root)
+	}
+}
+
+func TestReviewRunDoesNotCreateFindingsFromReviewerOutput(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_REVIEWER_FINDING_TEXT", "1")
+	beforeFindings := mustReadFile(t, runPaths.ReviewFindingsJSONL)
+
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper")
+	if got := mustReadFile(t, runPaths.ReviewFindingsJSONL); got != beforeFindings {
+		t.Fatalf("review run should not create findings from stdout")
+	}
+	if got := mustReadFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_001").StdoutLog); !strings.Contains(got, "FINDING:") {
+		t.Fatalf("helper stdout should contain finding-like text:\n%s", got)
+	}
+}
+
+func TestReviewRunJSONOutput(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review run --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var result reviewerResultDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &result))
+	if result.AttemptID != "reviewer_attempt_001" || result.Reviewer != "helper" || result.ExitCode != 0 {
+		t.Fatalf("unexpected review run json: %#v", result)
+	}
+	if strings.Contains(stdout.String(), "Reviewer attempt finished") {
+		t.Fatalf("json output should not include human output:\n%s", stdout.String())
+	}
+}
+
+func TestReviewRunPreconditionFailuresDoNotWriteAttemptEvents(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, _ := setupRunWithGateReport(t, root, "passed")
+	beforeEvents := readLines(t, paths.EventsJSONL)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review run should fail before review prepare")
+	}
+	afterEvents := readLines(t, paths.EventsJSONL)
+	if len(afterEvents) != len(beforeEvents) {
+		t.Fatalf("precondition failure should not append ledger events:\nbefore=%v\nafter=%v", beforeEvents, afterEvents)
+	}
+	for _, forbidden := range []string{"reviewer_attempt_started", "reviewer_attempt_finished"} {
+		if strings.Contains(strings.Join(afterEvents, "\n"), forbidden) {
+			t.Fatalf("precondition failure should not write %s:\n%v", forbidden, afterEvents)
+		}
+	}
+}
+
 func setupRunWithGateReport(t *testing.T, root string, status string) (App, artifacts.Paths, string, contractRunPathSet) {
 	t.Helper()
 	app, paths, runID := setupContractRun(t, root)
@@ -760,4 +1149,63 @@ func readReviewerDryRunPlan(t *testing.T, path string) reviewerDryRunDocument {
 	var plan reviewerDryRunDocument
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, path)), &plan))
 	return plan
+}
+
+func configureHelperReviewers(t *testing.T, app App, paths artifacts.Paths, defaultReviewer string, names ...string) App {
+	t.Helper()
+	_ = paths
+	descriptors := make([]agents.AgentDescriptor, 0, len(names))
+	for _, name := range names {
+		descriptors = append(descriptors, agents.AgentDescriptor{
+			Name:    name,
+			Command: os.Args[0],
+			Args:    []string{"-test.run=TestReviewerHelperProcess"},
+			Input:   agents.InputPromptFile,
+		})
+	}
+	registry := testAgentRegistry(descriptors...)
+	if fixed, ok := registry.(fixedAgentRegistry); ok {
+		fixed.defaultReviewer = defaultReviewer
+		registry = fixed
+	}
+	app.AgentRegistry = registry
+	return app
+}
+
+func TestReviewerHelperProcess(t *testing.T) {
+	if os.Getenv("PACTUM_REVIEWER_HELPER_PROCESS") != "1" {
+		return
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cwd error: %v\n", err)
+		os.Exit(2)
+	}
+	expectedCWD := os.Getenv("PACTUM_REVIEWER_EXPECTED_CWD")
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(expectedCWD); err == nil {
+		expectedCWD = resolved
+	}
+	fmt.Printf("cwd_is_repo=%t\n", cwd == expectedCWD)
+	stdin, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stdin error: %v\n", err)
+		os.Exit(2)
+	}
+	fmt.Printf("stdin_has_reviewer_prompt=%t\n", strings.Contains(string(stdin), "# Reviewer Prompt"))
+	if os.Getenv("PACTUM_REVIEWER_FINDING_TEXT") == "1" {
+		fmt.Println("FINDING: critical issue in generated code")
+	}
+	fmt.Fprintln(os.Stderr, "reviewer-stderr-line")
+	if raw := os.Getenv("PACTUM_REVIEWER_EXIT"); raw != "" {
+		code, err := strconv.Atoi(raw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "bad exit code: %v\n", err)
+			os.Exit(2)
+		}
+		os.Exit(code)
+	}
+	os.Exit(0)
 }

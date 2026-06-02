@@ -70,6 +70,7 @@ type RunRequest struct {
 	AttemptID      string
 	Agent          AgentDescriptor
 	PromptRepoPath string
+	ArtifactDir    string
 	Timeout        time.Duration
 }
 

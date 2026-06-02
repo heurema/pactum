@@ -232,6 +232,8 @@ type contractRunPathSet struct {
 	ReviewContextMD        string
 	ReviewPromptMD         string
 	ReviewDryRunJSON       string
+	ReviewAttemptsDir      string
+	ReviewLastResultJSON   string
 }
 
 func contractRunPaths(runDir string) contractRunPathSet {
@@ -240,13 +242,14 @@ func contractRunPaths(runDir string) contractRunPathSet {
 	contractDir := filepath.Join(runDir, "contract")
 	executeDir := filepath.Join(runDir, "execute")
 	gateDir := filepath.Join(runDir, "gate")
+	reviewDir := filepath.Join(runDir, "review")
 	return contractRunPathSet{
 		ContextDir:             contextDir,
 		ClarifyDir:             clarifyDir,
 		ContractDir:            contractDir,
 		ExecuteDir:             executeDir,
 		GateDir:                gateDir,
-		ReviewDir:              filepath.Join(runDir, "review"),
+		ReviewDir:              reviewDir,
 		MemoryDir:              filepath.Join(runDir, "memory"),
 		LedgerDir:              filepath.Join(runDir, "ledger"),
 		RunJSON:                filepath.Join(runDir, "run.json"),
@@ -267,12 +270,14 @@ func contractRunPaths(runDir string) contractRunPathSet {
 		LastResultJSON:         filepath.Join(executeDir, "last-result.json"),
 		GateReportJSON:         filepath.Join(gateDir, "gate-report.json"),
 		GateValidationDir:      filepath.Join(gateDir, "validation"),
-		ReviewJSON:             filepath.Join(runDir, "review", "review.json"),
-		ReviewFindingsJSONL:    filepath.Join(runDir, "review", "findings.jsonl"),
-		ReviewResolutionsJSONL: filepath.Join(runDir, "review", "resolutions.jsonl"),
-		ReviewContextMD:        filepath.Join(runDir, "review", "reviewer-context.md"),
-		ReviewPromptMD:         filepath.Join(runDir, "review", "reviewer-prompt.md"),
-		ReviewDryRunJSON:       filepath.Join(runDir, "review", "reviewer-dry-run.json"),
+		ReviewJSON:             filepath.Join(reviewDir, "review.json"),
+		ReviewFindingsJSONL:    filepath.Join(reviewDir, "findings.jsonl"),
+		ReviewResolutionsJSONL: filepath.Join(reviewDir, "resolutions.jsonl"),
+		ReviewContextMD:        filepath.Join(reviewDir, "reviewer-context.md"),
+		ReviewPromptMD:         filepath.Join(reviewDir, "reviewer-prompt.md"),
+		ReviewDryRunJSON:       filepath.Join(reviewDir, "reviewer-dry-run.json"),
+		ReviewAttemptsDir:      filepath.Join(reviewDir, "reviewer-attempts"),
+		ReviewLastResultJSON:   filepath.Join(reviewDir, "reviewer-last-result.json"),
 	}
 }
 
