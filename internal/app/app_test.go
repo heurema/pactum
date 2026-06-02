@@ -55,6 +55,7 @@ func helper() {}
 		paths.SearchSQLite,
 		filepath.Join(paths.MapRunsDir, "map_20260531_184012.json"),
 		paths.ProjectMemory,
+		paths.MemoryItems,
 		paths.StaleReport,
 		paths.EventsJSONL,
 		paths.UsageJSONL,
