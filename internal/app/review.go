@@ -163,17 +163,10 @@ type reviewerDryRunDocument struct {
 	Schema    string                  `json:"schema"`
 	RunID     string                  `json:"run_id"`
 	CreatedAt string                  `json:"created_at"`
-	Reviewer  reviewerDryRunAgent     `json:"reviewer"`
+	Reviewer  agents.AgentDescriptor  `json:"reviewer"`
 	Checks    reviewerDryRunChecks    `json:"checks"`
 	Artifacts reviewerDryRunArtifacts `json:"artifacts"`
 	WouldRun  agents.DryRunCommand    `json:"would_run"`
-}
-
-type reviewerDryRunAgent struct {
-	Name    string   `json:"name"`
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
-	Input   string   `json:"input"`
 }
 
 type reviewerDryRunChecks struct {
@@ -198,39 +191,17 @@ type reviewerRequestDocument struct {
 	RunID     string                  `json:"run_id"`
 	AttemptID string                  `json:"attempt_id"`
 	CreatedAt string                  `json:"created_at"`
-	Reviewer  reviewerDryRunAgent     `json:"reviewer"`
+	Reviewer  agents.AgentDescriptor  `json:"reviewer"`
 	Artifacts reviewerDryRunArtifacts `json:"artifacts"`
 	WouldRun  agents.DryRunCommand    `json:"would_run"`
 }
 
 type reviewerResultDocument struct {
-	Schema         string `json:"schema"`
-	RunID          string `json:"run_id"`
-	AttemptID      string `json:"attempt_id"`
-	Reviewer       string `json:"reviewer"`
-	StartedAt      string `json:"started_at"`
-	FinishedAt     string `json:"finished_at"`
-	DurationMillis int64  `json:"duration_ms"`
-	ExitCode       int    `json:"exit_code"`
-	TimedOut       bool   `json:"timed_out"`
-	Stdout         string `json:"stdout"`
-	Stderr         string `json:"stderr"`
-}
-
-type reviewerAttemptPathSet struct {
-	Dir         string
-	RequestJSON string
-	StdoutLog   string
-	StderrLog   string
-	ResultJSON  string
-}
-
-type reviewerProcessError struct {
-	ExitCode int
-}
-
-func (e reviewerProcessError) Error() string {
-	return fmt.Sprintf("reviewer process exited with code %d", e.ExitCode)
+	Schema    string `json:"schema"`
+	RunID     string `json:"run_id"`
+	AttemptID string `json:"attempt_id"`
+	Reviewer  string `json:"reviewer"`
+	processResult
 }
 
 func (a App) ReviewPrepare(stdout io.Writer, runID string, jsonOutput bool) error {
@@ -548,7 +519,7 @@ func (a App) ReviewRun(stdout io.Writer, runID string, reviewerName string, time
 		RunID:     runID,
 		AttemptID: attemptID,
 		CreatedAt: now.Format(time.RFC3339),
-		Reviewer: reviewerDryRunAgent{
+		Reviewer: agents.AgentDescriptor{
 			Name:    prep.Reviewer.Name,
 			Command: prep.Reviewer.Command,
 			Args:    append([]string{}, prep.Reviewer.Args...),
@@ -598,7 +569,7 @@ func (a App) ReviewRun(stdout io.Writer, runID string, reviewerName string, time
 		if result.TimedOut {
 			return fmt.Errorf("reviewer process timed out after %s", timeout)
 		}
-		return reviewerProcessError{ExitCode: result.ExitCode}
+		return processExitError{Kind: "reviewer", ExitCode: result.ExitCode}
 	}
 	return nil
 }
@@ -965,7 +936,7 @@ func buildReviewerDryRunDocument(runID string, createdAt string, reviewer agents
 		Schema:    reviewerDryRunSchema,
 		RunID:     runID,
 		CreatedAt: createdAt,
-		Reviewer: reviewerDryRunAgent{
+		Reviewer: agents.AgentDescriptor{
 			Name:    reviewer.Name,
 			Command: reviewer.Command,
 			Args:    agentArgs,
@@ -1019,30 +990,17 @@ func nextReviewerAttemptID(attemptsDir string) (string, error) {
 	return fmt.Sprintf("reviewer_attempt_%03d", maxAttempt+1), nil
 }
 
-func reviewerAttemptPaths(runPaths contractRunPathSet, attemptID string) reviewerAttemptPathSet {
-	dir := filepath.Join(runPaths.ReviewAttemptsDir, attemptID)
-	return reviewerAttemptPathSet{
-		Dir:         dir,
-		RequestJSON: filepath.Join(dir, "request.json"),
-		StdoutLog:   filepath.Join(dir, "stdout.log"),
-		StderrLog:   filepath.Join(dir, "stderr.log"),
-		ResultJSON:  filepath.Join(dir, "result.json"),
-	}
+func reviewerAttemptPaths(runPaths contractRunPathSet, attemptID string) attemptPathSet {
+	return newAttemptPaths(filepath.Join(runPaths.ReviewAttemptsDir, attemptID))
 }
 
 func reviewerResultFromRunResult(runID string, attemptID string, reviewer string, result agents.RunResult) reviewerResultDocument {
 	return reviewerResultDocument{
-		Schema:         reviewerResultSchema,
-		RunID:          runID,
-		AttemptID:      attemptID,
-		Reviewer:       reviewer,
-		StartedAt:      result.StartedAt,
-		FinishedAt:     result.FinishedAt,
-		DurationMillis: result.DurationMillis,
-		ExitCode:       result.ExitCode,
-		TimedOut:       result.TimedOut,
-		Stdout:         result.StdoutPath,
-		Stderr:         result.StderrPath,
+		Schema:        reviewerResultSchema,
+		RunID:         runID,
+		AttemptID:     attemptID,
+		Reviewer:      reviewer,
+		processResult: processResultFromRunResult(result),
 	}
 }
 

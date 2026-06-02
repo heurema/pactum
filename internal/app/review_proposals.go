@@ -351,15 +351,15 @@ func readReviewProposalRecords(runPaths contractRunPathSet) ([]reviewProposalRec
 	return proposals, decisions, nil
 }
 
-func resolveReviewerAttemptForProposals(runPaths contractRunPathSet, reviewerAttemptID string) (string, reviewerAttemptPathSet, error) {
+func resolveReviewerAttemptForProposals(runPaths contractRunPathSet, reviewerAttemptID string) (string, attemptPathSet, error) {
 	if strings.TrimSpace(reviewerAttemptID) != "" {
 		attemptID := strings.TrimSpace(reviewerAttemptID)
 		paths := reviewerAttemptPaths(runPaths, attemptID)
 		if !isDir(paths.Dir) {
-			return "", reviewerAttemptPathSet{}, fmt.Errorf("reviewer attempt not found: %s", attemptID)
+			return "", attemptPathSet{}, fmt.Errorf("reviewer attempt not found: %s", attemptID)
 		}
 		if !isRegularFile(paths.ResultJSON) {
-			return "", reviewerAttemptPathSet{}, fmt.Errorf("reviewer attempt is not completed: %s", attemptID)
+			return "", attemptPathSet{}, fmt.Errorf("reviewer attempt is not completed: %s", attemptID)
 		}
 		return attemptID, paths, nil
 	}
@@ -367,9 +367,9 @@ func resolveReviewerAttemptForProposals(runPaths contractRunPathSet, reviewerAtt
 	entries, err := os.ReadDir(runPaths.ReviewAttemptsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", reviewerAttemptPathSet{}, fmt.Errorf("no completed reviewer attempts found")
+			return "", attemptPathSet{}, fmt.Errorf("no completed reviewer attempts found")
 		}
-		return "", reviewerAttemptPathSet{}, err
+		return "", attemptPathSet{}, err
 	}
 	attemptIDs := make([]string, 0, len(entries))
 	for _, entry := range entries {
@@ -387,7 +387,7 @@ func resolveReviewerAttemptForProposals(runPaths contractRunPathSet, reviewerAtt
 		}
 	}
 	if len(attemptIDs) == 0 {
-		return "", reviewerAttemptPathSet{}, fmt.Errorf("no completed reviewer attempts found")
+		return "", attemptPathSet{}, fmt.Errorf("no completed reviewer attempts found")
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(attemptIDs)))
 	attemptID := attemptIDs[0]

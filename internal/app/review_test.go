@@ -1553,17 +1553,19 @@ func writeReviewerAttemptForTest(t *testing.T, runPaths contractRunPathSet, runI
 		return
 	}
 	result := reviewerResultDocument{
-		Schema:         reviewerResultSchema,
-		RunID:          runID,
-		AttemptID:      attemptID,
-		Reviewer:       "fixture",
-		StartedAt:      "2026-06-01T22:00:00Z",
-		FinishedAt:     "2026-06-01T22:00:01Z",
-		DurationMillis: 1000,
-		ExitCode:       0,
-		TimedOut:       false,
-		Stdout:         filepath.ToSlash(filepath.Join(reviewerAttemptsArtifact, attemptID, "stdout.log")),
-		Stderr:         filepath.ToSlash(filepath.Join(reviewerAttemptsArtifact, attemptID, "stderr.log")),
+		Schema:    reviewerResultSchema,
+		RunID:     runID,
+		AttemptID: attemptID,
+		Reviewer:  "fixture",
+		processResult: processResult{
+			StartedAt:      "2026-06-01T22:00:00Z",
+			FinishedAt:     "2026-06-01T22:00:01Z",
+			DurationMillis: 1000,
+			ExitCode:       0,
+			TimedOut:       false,
+			Stdout:         filepath.ToSlash(filepath.Join(reviewerAttemptsArtifact, attemptID, "stdout.log")),
+			Stderr:         filepath.ToSlash(filepath.Join(reviewerAttemptsArtifact, attemptID, "stderr.log")),
+		},
 	}
 	assertNoError(t, writeJSON(attemptPaths.ResultJSON, result))
 }

@@ -39,12 +39,9 @@ type DryRunPlan struct {
 	WouldRun  DryRunCommand   `json:"would_run"`
 }
 
-type DryRunAgent struct {
-	Name    string   `json:"name"`
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
-	Input   string   `json:"input"`
-}
+// DryRunAgent describes the agent a dry-run plan would launch. It is the same
+// shape as AgentDescriptor.
+type DryRunAgent = AgentDescriptor
 
 type DryRunChecks struct {
 	PromptManifestReady         bool `json:"prompt_manifest_ready"`

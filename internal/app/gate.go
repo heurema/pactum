@@ -72,16 +72,10 @@ type gateSummary struct {
 }
 
 type validationCommandResultDocument struct {
-	Schema         string `json:"schema"`
-	ID             string `json:"id"`
-	Command        string `json:"command"`
-	StartedAt      string `json:"started_at"`
-	FinishedAt     string `json:"finished_at"`
-	DurationMillis int64  `json:"duration_ms"`
-	ExitCode       int    `json:"exit_code"`
-	TimedOut       bool   `json:"timed_out"`
-	Stdout         string `json:"stdout"`
-	Stderr         string `json:"stderr"`
+	Schema  string `json:"schema"`
+	ID      string `json:"id"`
+	Command string `json:"command"`
+	processResult
 }
 
 type gateProcessError struct {
@@ -504,16 +498,18 @@ func (a App) runGateValidationCommand(root string, runPaths contractRunPathSet, 
 	}
 
 	result := validationCommandResultDocument{
-		Schema:         validationCommandResultSchema,
-		ID:             id,
-		Command:        commandText,
-		StartedAt:      started.Format(time.RFC3339Nano),
-		FinishedAt:     finished.Format(time.RFC3339Nano),
-		DurationMillis: finished.Sub(started).Milliseconds(),
-		ExitCode:       exitCode,
-		TimedOut:       timedOut,
-		Stdout:         stdoutArtifact,
-		Stderr:         stderrArtifact,
+		Schema:  validationCommandResultSchema,
+		ID:      id,
+		Command: commandText,
+		processResult: processResult{
+			StartedAt:      started.Format(time.RFC3339Nano),
+			FinishedAt:     finished.Format(time.RFC3339Nano),
+			DurationMillis: finished.Sub(started).Milliseconds(),
+			ExitCode:       exitCode,
+			TimedOut:       timedOut,
+			Stdout:         stdoutArtifact,
+			Stderr:         stderrArtifact,
+		},
 	}
 	if err := writeJSON(resultPath, result); err != nil {
 		return gateValidationCommandReport{}, err
