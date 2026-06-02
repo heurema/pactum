@@ -125,17 +125,18 @@ type memoryAcceptanceDocument struct {
 }
 
 type memoryItemRecord struct {
-	Schema     string   `json:"schema"`
-	ID         string   `json:"id"`
-	RunID      string   `json:"run_id"`
-	AcceptedAt string   `json:"accepted_at"`
-	AcceptedBy string   `json:"accepted_by"`
-	Source     string   `json:"source"`
-	Title      string   `json:"title"`
-	Summary    string   `json:"summary"`
-	Files      []string `json:"files"`
-	Tags       []string `json:"tags"`
-	Candidate  string   `json:"candidate"`
+	Schema     string               `json:"schema"`
+	ID         string               `json:"id"`
+	RunID      string               `json:"run_id"`
+	AcceptedAt string               `json:"accepted_at"`
+	AcceptedBy string               `json:"accepted_by"`
+	Source     string               `json:"source"`
+	Title      string               `json:"title"`
+	Summary    string               `json:"summary"`
+	Files      []string             `json:"files"`
+	Tags       []string             `json:"tags"`
+	Candidate  string               `json:"candidate"`
+	Freshness  *memoryItemFreshness `json:"freshness,omitempty"`
 }
 
 type memoryShowResponse struct {
@@ -261,11 +262,16 @@ func (a App) MemoryAccept(stdout io.Writer, runID string, acceptedBy string, jso
 	acceptedAt := now.Format(time.RFC3339)
 	itemID := nextMemoryItemID(len(items) + 1)
 	item := memoryItemFromCandidate(candidate, itemID, acceptedAt, strings.TrimSpace(acceptedBy))
+	item.Freshness = buildAcceptedMemoryItemFreshness(context.Root, item.Files, acceptedAt)
 	if err := appendJSONLine(context.Paths.MemoryItems, item); err != nil {
 		return err
 	}
 	items = append(items, item)
-	if err := os.WriteFile(context.Paths.ProjectMemory, []byte(renderProjectMemoryMD(items)), 0o644); err != nil {
+	freshnessByID, err := readLatestMemoryFreshness(context.Paths, items)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(context.Paths.ProjectMemory, []byte(renderProjectMemoryMD(context.Root, items, freshnessByID)), 0o644); err != nil {
 		return err
 	}
 
@@ -736,7 +742,7 @@ func renderMemoryCandidateMD(candidate memoryCandidateDocument) string {
 	return b.String()
 }
 
-func renderProjectMemoryMD(items []memoryItemRecord) string {
+func renderProjectMemoryMD(root string, items []memoryItemRecord, freshnessByID map[string]memoryEffectiveFreshness) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Project Memory")
 	fmt.Fprintln(&b)
@@ -748,15 +754,18 @@ func renderProjectMemoryMD(items []memoryItemRecord) string {
 	}
 	for _, item := range items {
 		fmt.Fprintln(&b)
-		fmt.Fprintf(&b, "### %s - %s\n", item.ID, valueOrNone(item.Title))
+		fmt.Fprintf(&b, "### %s - %s\n", item.ID, valueOrNone(sanitizeMemoryText(root, item.Title)))
 		fmt.Fprintf(&b, "- Run: %s\n", item.RunID)
-		if len(item.Files) == 0 {
+		freshness := effectiveMemoryFreshnessForItem(item, freshnessByID)
+		fmt.Fprintf(&b, "- Freshness: %s\n", freshness.Status)
+		files := sanitizeSelectedMemoryPaths(root, item.Files)
+		if len(files) == 0 {
 			fmt.Fprintln(&b, "- Files: none")
 		} else {
-			fmt.Fprintf(&b, "- Files: %s\n", strings.Join(item.Files, ", "))
+			fmt.Fprintf(&b, "- Files: %s\n", strings.Join(files, ", "))
 		}
-		fmt.Fprintf(&b, "- Summary: %s\n", valueOrNone(item.Summary))
-		fmt.Fprintf(&b, "- Candidate: %s\n", item.Candidate)
+		fmt.Fprintf(&b, "- Summary: %s\n", valueOrNone(sanitizeMemoryText(root, item.Summary)))
+		fmt.Fprintf(&b, "- Candidate: %s\n", sanitizeSelectedMemoryPath(root, item.Candidate))
 	}
 	return b.String()
 }

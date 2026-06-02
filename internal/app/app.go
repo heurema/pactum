@@ -122,6 +122,8 @@ type memoryCmd struct {
 	Show    memoryShowCmd    `cmd:"" help:"Show a run memory candidate."`
 	Accept  memoryAcceptCmd  `cmd:"" help:"Accept a run memory candidate into project memory."`
 	Search  memorySearchCmd  `cmd:"" help:"Search accepted project memory deterministically."`
+	Refresh memoryRefreshCmd `cmd:"" help:"Refresh accepted memory freshness metadata."`
+	Stale   memoryStaleCmd   `cmd:"" help:"Show stale and unknown accepted memory items."`
 }
 
 type contractShowCmd struct {
@@ -288,6 +290,14 @@ type memorySearchCmd struct {
 	Query      string `arg:"" name:"query" help:"Accepted memory search query."`
 	Limit      int    `name:"limit" help:"Maximum number of memory items." default:"5"`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type memoryRefreshCmd struct {
+	JSONOutput bool `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type memoryStaleCmd struct {
+	JSONOutput bool `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type mapRefreshCmd struct {
@@ -574,6 +584,14 @@ func (c *memoryAcceptCmd) Run(r *runner) error {
 
 func (c *memorySearchCmd) Run(r *runner) error {
 	return r.App.MemorySearch(r.Stdout, c.Query, c.Limit, c.JSONOutput)
+}
+
+func (c *memoryRefreshCmd) Run(r *runner) error {
+	return r.App.MemoryRefresh(r.Stdout, c.JSONOutput)
+}
+
+func (c *memoryStaleCmd) Run(r *runner) error {
+	return r.App.MemoryStale(r.Stdout, c.JSONOutput)
 }
 
 func (c *searchCmd) Run(r *runner) error {
