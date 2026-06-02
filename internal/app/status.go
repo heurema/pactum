@@ -49,9 +49,7 @@ type usageStatus struct {
 }
 
 func writeStatusNotInitialized(stdout io.Writer) error {
-	encoder := json.NewEncoder(stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(struct {
+	return writeJSONResponse(stdout, struct {
 		Initialized bool   `json:"initialized"`
 		Message     string `json:"message"`
 	}{

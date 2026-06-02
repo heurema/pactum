@@ -88,19 +88,11 @@ type memoryFreshnessCounts struct {
 }
 
 func (a App) MemoryRefresh(stdout io.Writer, jsonOutput bool) error {
-	root, workspace, err := a.resolveStatusRoot()
-	if err != nil {
+	root, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
+	if err != nil || !ok {
 		return err
 	}
-	if workspace == "" {
-		if jsonOutput {
-			return writeStatusNotInitialized(stdout)
-		}
-		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
-		return nil
-	}
 
-	paths := artifacts.New(root)
 	items, err := readMemoryItems(paths.MemoryItems)
 	if err != nil {
 		return err
@@ -133,19 +125,11 @@ func (a App) MemoryRefresh(stdout io.Writer, jsonOutput bool) error {
 }
 
 func (a App) MemoryStale(stdout io.Writer, jsonOutput bool) error {
-	root, workspace, err := a.resolveStatusRoot()
-	if err != nil {
+	root, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
+	if err != nil || !ok {
 		return err
 	}
-	if workspace == "" {
-		if jsonOutput {
-			return writeStatusNotInitialized(stdout)
-		}
-		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
-		return nil
-	}
 
-	paths := artifacts.New(root)
 	items, err := readMemoryItems(paths.MemoryItems)
 	if err != nil {
 		return err

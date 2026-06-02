@@ -85,13 +85,9 @@ type approvalState struct {
 }
 
 func (a App) RunContract(stdout io.Writer, task string, contractOnly bool, jsonOutput bool) error {
-	root, workspace, err := a.resolveStatusRoot()
-	if err != nil {
+	root, _, ok, err := a.requireWorkspace(stdout, false)
+	if err != nil || !ok {
 		return err
-	}
-	if workspace == "" {
-		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
-		return nil
 	}
 	if !contractOnly {
 		fmt.Fprintln(stdout, "pactum run prepares a contract draft. Re-run with --contract-only, then use: clarify, contract approve, prompt build, execute.")
@@ -103,9 +99,7 @@ func (a App) RunContract(stdout io.Writer, task string, contractOnly bool, jsonO
 		return err
 	}
 	if jsonOutput {
-		encoder := json.NewEncoder(stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(result)
+		return writeJSONResponse(stdout, result)
 	}
 	writeRunCreated(stdout, result)
 	return nil

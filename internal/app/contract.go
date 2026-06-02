@@ -183,19 +183,11 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 }
 
 func (a App) loadContractContext(stdout io.Writer, runID string, jsonOutput bool) (contractContext, bool, error) {
-	root, workspace, err := a.resolveStatusRoot()
-	if err != nil {
+	root, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
+	if err != nil || !ok {
 		return contractContext{}, false, err
 	}
-	if workspace == "" {
-		if jsonOutput {
-			return contractContext{}, false, writeStatusNotInitialized(stdout)
-		}
-		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
-		return contractContext{}, false, nil
-	}
 
-	paths := artifacts.New(root)
 	runDir := filepath.Join(paths.RunsDir, runID)
 	info, err := os.Stat(runDir)
 	if err != nil {
@@ -270,7 +262,7 @@ func applyClarificationStatusToContract(contract *draftContract, status clarifyS
 
 func readApprovalState(path string) (approvalState, error) {
 	var approval approvalState
-	if err := readJSONFile(path, &approval); err != nil {
+	if err := readJSON(path, &approval); err != nil {
 		return approvalState{}, err
 	}
 	if approval.Schema == "" {

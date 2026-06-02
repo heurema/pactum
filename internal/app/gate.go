@@ -226,16 +226,11 @@ func (a App) GateShow(stdout io.Writer, runID string, jsonOutput bool) error {
 }
 
 func (a App) loadGateContext(stdout io.Writer, runID string) (gateContext, bool, error) {
-	root, workspace, err := a.resolveStatusRoot()
-	if err != nil {
+	root, paths, ok, err := a.requireWorkspace(stdout, false)
+	if err != nil || !ok {
 		return gateContext{}, false, err
 	}
-	if workspace == "" {
-		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
-		return gateContext{}, false, nil
-	}
 
-	paths := artifacts.New(root)
 	runDir := filepath.Join(paths.RunsDir, runID)
 	info, err := os.Stat(runDir)
 	if err != nil {

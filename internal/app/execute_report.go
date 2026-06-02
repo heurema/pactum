@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/heurema/pactum/internal/artifacts"
 )
 
 const (
@@ -129,16 +127,12 @@ func (a App) ExecuteShow(stdout io.Writer, runID string, attemptID string, logs 
 }
 
 func (a App) loadExecuteReportContext(stdout io.Writer, runID string) (executeReportContext, bool, error) {
-	root, workspace, err := a.resolveStatusRoot()
-	if err != nil {
+	_, paths, ok, err := a.requireWorkspace(stdout, false)
+	if err != nil || !ok {
 		return executeReportContext{}, false, err
 	}
-	if workspace == "" {
-		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
-		return executeReportContext{}, false, nil
-	}
 
-	runDir := filepath.Join(artifacts.New(root).RunsDir, runID)
+	runDir := filepath.Join(paths.RunsDir, runID)
 	info, err := os.Stat(runDir)
 	if err != nil {
 		if os.IsNotExist(err) {

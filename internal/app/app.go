@@ -629,9 +629,7 @@ func (c *mapRefreshCmd) Run(r *runner) error {
 		return err
 	}
 	if c.JSONOutput {
-		encoder := json.NewEncoder(r.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(result)
+		return writeJSONResponse(r.Stdout, result)
 	}
 	writeMapRefreshResult(r.Stdout, result)
 	return nil
@@ -675,16 +673,9 @@ func (a App) Init(root string) error {
 }
 
 func (a App) Status(stdout io.Writer, jsonOutput bool) error {
-	root, workspace, err := a.resolveStatusRoot()
-	if err != nil {
+	root, _, ok, err := a.requireWorkspace(stdout, jsonOutput)
+	if err != nil || !ok {
 		return err
-	}
-	if workspace == "" {
-		if jsonOutput {
-			return writeStatusNotInitialized(stdout)
-		}
-		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
-		return nil
 	}
 
 	report, err := a.workspaceStatus(root)
@@ -692,9 +683,7 @@ func (a App) Status(stdout io.Writer, jsonOutput bool) error {
 		return err
 	}
 	if jsonOutput {
-		encoder := json.NewEncoder(stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(report)
+		return writeJSONResponse(stdout, report)
 	}
 	writeWorkspaceStatus(stdout, report)
 	return nil
@@ -747,16 +736,11 @@ func writeWorkspaceStatus(stdout io.Writer, report statusResponse) {
 }
 
 func (a App) Search(stdout io.Writer, query string, limit int, kind string, jsonOutput bool) error {
-	root, workspace, err := a.resolveStatusRoot()
-	if err != nil {
+	_, paths, ok, err := a.requireWorkspace(stdout, false)
+	if err != nil || !ok {
 		return err
 	}
-	if workspace == "" {
-		fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
-		return nil
-	}
 
-	paths := artifacts.New(root)
 	response, err := searchpkg.Query(paths.SearchSQLite, searchpkg.QueryOptions{
 		Query: query,
 		Limit: limit,
@@ -771,9 +755,7 @@ func (a App) Search(stdout io.Writer, query string, limit int, kind string, json
 	}
 
 	if jsonOutput {
-		encoder := json.NewEncoder(stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(response)
+		return writeJSONResponse(stdout, response)
 	}
 
 	writeSearchResults(stdout, response)
@@ -821,6 +803,32 @@ func (a App) resolveStatusRoot() (root string, workspace string, err error) {
 		}
 	}
 	return start, "", nil
+}
+
+// requireWorkspace resolves the repository root and confirms that a Pactum
+// workspace has been initialized. When it has not, it emits the standard notice
+// (in the requested format) and returns ok=false so callers can return their
+// zero value immediately.
+func (a App) requireWorkspace(stdout io.Writer, jsonOutput bool) (root string, paths artifacts.Paths, ok bool, err error) {
+	root, workspace, err := a.resolveStatusRoot()
+	if err != nil {
+		return "", artifacts.Paths{}, false, err
+	}
+	if workspace == "" {
+		return "", artifacts.Paths{}, false, notInitialized(stdout, jsonOutput)
+	}
+	return root, artifacts.New(root), true, nil
+}
+
+// notInitialized writes the standard "workspace not initialized" notice. The
+// returned error is the encoder error (nil for the text form), so callers can
+// return it directly as a graceful exit.
+func notInitialized(stdout io.Writer, jsonOutput bool) error {
+	if jsonOutput {
+		return writeStatusNotInitialized(stdout)
+	}
+	fmt.Fprintln(stdout, "Pactum is not initialized. Run: pactum init")
+	return nil
 }
 
 func findUp(start, marker string) (string, bool) {
@@ -921,6 +929,14 @@ func writeJSON(path string, value any) error {
 	}
 	data = append(data, '\n')
 	return os.WriteFile(path, data, 0o644)
+}
+
+// writeJSONResponse encodes value as indented JSON to stdout. It is the shared
+// formatter for every command's --json output.
+func writeJSONResponse(stdout io.Writer, value any) error {
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(value)
 }
 
 func writeYAML(path string, value any) error {
