@@ -18,6 +18,11 @@ import (
 
 const maxRepoMapContextBytes = 20000
 
+const (
+	runSchema      = "pactum.run.v1"
+	contractSchema = "pactum.contract.v1"
+)
+
 type contractRunState struct {
 	Schema    string               `json:"schema"`
 	RunID     string               `json:"run_id"`
@@ -131,7 +136,7 @@ func (a App) createContractOnlyRun(root string, task string) (contractRunState, 
 	}
 
 	state := contractRunState{
-		Schema:    "pactum.run.v1",
+		Schema:    runSchema,
 		RunID:     runID,
 		Status:    "contract_draft",
 		Task:      task,
@@ -408,7 +413,7 @@ func buildRunSearchResults(paths artifacts.Paths, mapStatus projectMapStatus, ta
 
 func draftContractFor(runID string, task string) draftContract {
 	return draftContract{
-		Schema: "pactum.contract.v1",
+		Schema: contractSchema,
 		RunID:  runID,
 		Status: "draft",
 		Goal:   task,

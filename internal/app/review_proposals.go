@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -494,22 +495,20 @@ func proposalRecordFromReviewerInput(root string, runID string, attemptID string
 	}, ""
 }
 
+// reviewSeverities and reviewCategories are the canonical enum value sets for
+// review findings, shared by the proposal validators and the reviewer prompt.
+// (The CLI kong `enum:` tags in app.go must stay literal struct tags.)
+var (
+	reviewSeverities = []string{"low", "medium", "high", "critical"}
+	reviewCategories = []string{"correctness", "scope", "quality", "validation", "process", "other"}
+)
+
 func validReviewSeverity(value string) bool {
-	switch value {
-	case "low", "medium", "high", "critical":
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(reviewSeverities, value)
 }
 
 func validReviewCategory(value string) bool {
-	switch value {
-	case "correctness", "scope", "quality", "validation", "process", "other":
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(reviewCategories, value)
 }
 
 func isRepoRelativeReviewFile(file string) bool {

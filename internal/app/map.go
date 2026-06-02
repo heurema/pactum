@@ -16,6 +16,8 @@ import (
 	searchpkg "github.com/heurema/pactum/internal/search"
 )
 
+const mapManifestSchema = "pactum.map.manifest.v1"
+
 type MapRefreshResult struct {
 	RunID        string    `json:"run_id"`
 	StartedAt    time.Time `json:"started_at"`
@@ -113,7 +115,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 	}
 
 	mapManifest := projectmap.Manifest{
-		Schema:       "pactum.map.manifest.v1",
+		Schema:       mapManifestSchema,
 		RunID:        runID,
 		GeneratedAt:  startedAt,
 		RepoRoot:     ".",
