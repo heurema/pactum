@@ -1057,6 +1057,425 @@ func TestReviewRunPreconditionFailuresDoNotWriteAttemptEvents(t *testing.T) {
 	}
 }
 
+func TestReviewProposeFindingsBeforeInitPrintsGuidance(t *testing.T) {
+	root := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"review", "propose-findings", "run_x"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review propose-findings before init exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
+		t.Fatalf("review propose-findings before init output mismatch:\n%s", got)
+	}
+}
+
+func TestReviewProposeFindingsMissingRunReturnsError(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+
+	var stdout, stderr bytes.Buffer
+	app := testApp(root)
+	code := app.Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"review", "propose-findings", "run_missing"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review propose-findings missing run should fail")
+	}
+	if got := stderr.String(); !strings.Contains(got, "run not found: run_missing") {
+		t.Fatalf("missing run stderr mismatch:\n%s", got)
+	}
+}
+
+func TestReviewProposeFindingsBeforeReviewPreparedFails(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, _ := setupRunWithGateReport(t, root, "passed")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "propose-findings", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review propose-findings should fail before review prepare")
+	}
+	if got := stderr.String(); !strings.Contains(got, "review has not been prepared: "+runID) {
+		t.Fatalf("review not prepared stderr mismatch:\n%s", got)
+	}
+}
+
+func TestReviewProposeFindingsWithNoReviewerAttemptsFails(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, _ := setupPreparedReview(t, root, "passed")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "propose-findings", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review propose-findings should fail without attempts")
+	}
+	if got := stderr.String(); !strings.Contains(got, "no completed reviewer attempts found") {
+		t.Fatalf("no attempts stderr mismatch:\n%s", got)
+	}
+}
+
+func TestReviewProposeFindingsWithNoStructuredBlockDoesNotWrite(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupPreparedReview(t, root, "passed")
+	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", "plain prose only\n", true)
+	beforeEvents := readLines(t, paths.EventsJSONL)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "propose-findings", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review propose-findings exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "No structured reviewer finding proposals found.") {
+		t.Fatalf("no proposal output mismatch:\n%s", got)
+	}
+	assertNoFile(t, runPaths.ReviewProposalsJSONL)
+	afterEvents := readLines(t, paths.EventsJSONL)
+	if len(afterEvents) != len(beforeEvents) || indexOfEvent(ledgerEventTypes(t, paths.EventsJSONL), "review_findings_proposed") != -1 {
+		t.Fatalf("no structured block should not append proposal event:\nbefore=%v\nafter=%v", beforeEvents, afterEvents)
+	}
+}
+
+func TestReviewProposeFindingsParsesValidStructuredBlock(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupPreparedReview(t, root, "passed")
+	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", reviewerStructuredOutput([]map[string]any{
+		{
+			"message":  "review output should stay behind proposal boundary",
+			"severity": "medium",
+			"category": "quality",
+			"file":     "internal/app/review.go",
+			"line":     42,
+			"blocking": true,
+			"evidence": "stdout proposal block",
+		},
+		{
+			"message":  "nonblocking process concern",
+			"severity": "low",
+			"category": "process",
+		},
+	}), true)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "propose-findings", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review propose-findings exited %d, stderr: %s", code, stderr.String())
+	}
+	proposals := readReviewProposals(t, runPaths.ReviewProposalsJSONL)
+	if len(proposals) != 2 || proposals[0].ID != "p_001" || proposals[1].ID != "p_002" || !proposals[0].Blocking {
+		t.Fatalf("unexpected proposals: %#v", proposals)
+	}
+	if got := stdout.String(); !strings.Contains(got, "Review finding proposals created") || !strings.Contains(got, "created: 2") {
+		t.Fatalf("proposal output mismatch:\n%s", got)
+	}
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if indexOfEvent(eventTypes, "review_findings_proposed") == -1 {
+		t.Fatalf("events missing review_findings_proposed:\n%v", eventTypes)
+	}
+}
+
+func TestReviewProposeFindingsSkipsInvalidProposals(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", "```json\n{malformed\n```\n"+reviewerStructuredOutput([]map[string]any{
+		{
+			"message":  "valid proposal",
+			"severity": "high",
+			"category": "correctness",
+			"file":     "internal/app/review.go",
+		},
+		{
+			"message":  "invalid severity",
+			"severity": "urgent",
+			"category": "quality",
+		},
+		{
+			"message":  "absolute path",
+			"severity": "medium",
+			"category": "quality",
+			"file":     filepath.Join(root, "internal/app/review.go"),
+		},
+	}), true)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "propose-findings", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review propose-findings --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var response reviewProposeFindingsResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if len(response.Created) != 1 || response.Created[0].Message != "valid proposal" {
+		t.Fatalf("unexpected created proposals: %#v", response.Created)
+	}
+	warnings := strings.Join(response.Warnings, "\n")
+	for _, want := range []string{"invalid JSON", "severity must be", "file must be repo-relative"} {
+		if !strings.Contains(warnings, want) {
+			t.Fatalf("warnings missing %q:\n%v", want, response.Warnings)
+		}
+	}
+}
+
+func TestReviewProposeFindingsUsesExplicitAttemptID(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", reviewerStructuredOutput([]map[string]any{
+		{"message": "first attempt", "severity": "medium", "category": "quality"},
+	}), true)
+	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_002", reviewerStructuredOutput([]map[string]any{
+		{"message": "second attempt", "severity": "medium", "category": "quality"},
+	}), true)
+
+	runReviewCommand(t, app, "review", "propose-findings", runID, "reviewer_attempt_001")
+	proposals := readReviewProposals(t, runPaths.ReviewProposalsJSONL)
+	if len(proposals) != 1 || proposals[0].ReviewerAttemptID != "reviewer_attempt_001" || proposals[0].Message != "first attempt" {
+		t.Fatalf("explicit attempt not used: %#v", proposals)
+	}
+}
+
+func TestReviewProposeFindingsUsesLatestCompletedAttempt(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", reviewerStructuredOutput([]map[string]any{
+		{"message": "completed attempt", "severity": "medium", "category": "quality"},
+	}), true)
+	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_002", reviewerStructuredOutput([]map[string]any{
+		{"message": "incomplete attempt", "severity": "medium", "category": "quality"},
+	}), false)
+
+	runReviewCommand(t, app, "review", "propose-findings", runID)
+	proposals := readReviewProposals(t, runPaths.ReviewProposalsJSONL)
+	if len(proposals) != 1 || proposals[0].ReviewerAttemptID != "reviewer_attempt_001" || proposals[0].Message != "completed attempt" {
+		t.Fatalf("latest completed attempt not used: %#v", proposals)
+	}
+}
+
+func TestReviewAcceptProposalCreatesFinding(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupPreparedReview(t, root, "passed")
+	appendReviewProposalForTest(t, runPaths, runID, "p_001", "accepted proposal", true)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "accept-proposal", runID, "p_001"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review accept-proposal exited %d, stderr: %s", code, stderr.String())
+	}
+	findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL)
+	if len(findings) != 1 || findings[0].ID != "f_001" || findings[0].Source != "reviewer_proposal" || !findings[0].Blocking {
+		t.Fatalf("unexpected findings: %#v", findings)
+	}
+	decisions := readReviewProposalDecisions(t, runPaths.ReviewProposalDecisionsJSONL)
+	if len(decisions) != 1 || decisions[0].ID != "pd_001" || decisions[0].Decision != "accepted" || decisions[0].FindingID != "f_001" {
+		t.Fatalf("unexpected decisions: %#v", decisions)
+	}
+	review := readReviewDoc(t, runPaths.ReviewJSON)
+	if review.Status != "changes_requested" || review.Summary.Findings != 1 || review.Summary.BlockingOpen != 1 {
+		t.Fatalf("unexpected review after accept: %#v", review)
+	}
+	if got := stdout.String(); !strings.Contains(got, "Review proposal accepted") || !strings.Contains(got, "id: f_001") {
+		t.Fatalf("accept output mismatch:\n%s", got)
+	}
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	for _, want := range []string{"review_proposal_accepted", "review_finding_added"} {
+		if indexOfEvent(eventTypes, want) == -1 {
+			t.Fatalf("events missing %s:\n%v", want, eventTypes)
+		}
+	}
+}
+
+func TestReviewRejectProposalRecordsDecisionOnly(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupPreparedReview(t, root, "passed")
+	appendReviewProposalForTest(t, runPaths, runID, "p_001", "reject proposal", false)
+	beforeReview := mustReadFile(t, runPaths.ReviewJSON)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "reject-proposal", runID, "p_001", "--reason", "not relevant"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review reject-proposal exited %d, stderr: %s", code, stderr.String())
+	}
+	if findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL); len(findings) != 0 {
+		t.Fatalf("reject should not create findings: %#v", findings)
+	}
+	decisions := readReviewProposalDecisions(t, runPaths.ReviewProposalDecisionsJSONL)
+	if len(decisions) != 1 || decisions[0].Decision != "rejected" || decisions[0].Reason != "not relevant" {
+		t.Fatalf("unexpected decisions: %#v", decisions)
+	}
+	if got := mustReadFile(t, runPaths.ReviewJSON); got != beforeReview {
+		t.Fatalf("reject should not mutate review.json")
+	}
+	if got := stdout.String(); !strings.Contains(got, "Review proposal rejected") || !strings.Contains(got, "not relevant") {
+		t.Fatalf("reject output mismatch:\n%s", got)
+	}
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if indexOfEvent(eventTypes, "review_proposal_rejected") == -1 {
+		t.Fatalf("events missing review_proposal_rejected:\n%v", eventTypes)
+	}
+}
+
+func TestReviewProposalCannotBeDecidedTwice(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	appendReviewProposalForTest(t, runPaths, runID, "p_001", "decide once", false)
+	runReviewCommand(t, app, "review", "accept-proposal", runID, "p_001")
+
+	for _, args := range [][]string{
+		{"review", "accept-proposal", runID, "p_001"},
+		{"review", "reject-proposal", runID, "p_001"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := app.Run(args, &stdout, &stderr)
+		if code == 0 {
+			t.Fatalf("%v should fail after proposal is decided", args)
+		}
+		if got := stderr.String(); !strings.Contains(got, "review proposal already decided: p_001") {
+			t.Fatalf("already decided stderr mismatch for %v:\n%s", args, got)
+		}
+	}
+}
+
+func TestReviewProposalLatestDecisionWinsForDisplay(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	appendReviewProposalForTest(t, runPaths, runID, "p_001", "defensive display", false)
+	appendProposalDecisionForTest(t, runPaths, runID, "pd_001", "p_001", "rejected", "")
+	appendProposalDecisionForTest(t, runPaths, runID, "pd_002", "p_001", "accepted", "f_001")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "status", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review status --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var state reviewStateResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &state))
+	if state.ProposalSummary.Accepted != 1 || state.ProposalSummary.Rejected != 0 || state.Proposals[0].Status != "accepted" {
+		t.Fatalf("latest decision should win: %#v", state)
+	}
+}
+
+func TestReviewAcceptProposalAfterApprovedReviewResetsApproval(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupPreparedReview(t, root, "passed")
+	runReviewCommand(t, app, "review", "approve", runID, "--by", "manual")
+	appendReviewProposalForTest(t, runPaths, runID, "p_001", "new blocking proposal", true)
+
+	runReviewCommand(t, app, "review", "accept-proposal", runID, "p_001")
+	review := readReviewDoc(t, runPaths.ReviewJSON)
+	if review.Status != "changes_requested" || review.Approval.ApprovedAt != nil || review.Approval.ApprovedBy != nil {
+		t.Fatalf("approval should reset after accepted proposal: %#v", review)
+	}
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if indexOfEvent(eventTypes, "review_approval_reset") == -1 {
+		t.Fatalf("events missing review_approval_reset:\n%v", eventTypes)
+	}
+}
+
+func TestReviewStatusIncludesProposalSummary(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	appendReviewProposalForTest(t, runPaths, runID, "p_001", "pending proposal", false)
+	appendReviewProposalForTest(t, runPaths, runID, "p_002", "accepted proposal", false)
+	appendReviewProposalForTest(t, runPaths, runID, "p_003", "rejected proposal", false)
+	appendProposalDecisionForTest(t, runPaths, runID, "pd_001", "p_002", "accepted", "f_001")
+	appendProposalDecisionForTest(t, runPaths, runID, "pd_002", "p_003", "rejected", "")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "status", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review status exited %d, stderr: %s", code, stderr.String())
+	}
+	got := stdout.String()
+	for _, want := range []string{"Proposals:", "pending: 1", "accepted: 1", "rejected: 1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("status missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestReviewShowIncludesPendingProposals(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	appendReviewProposalForTest(t, runPaths, runID, "p_001", "pending proposal", true)
+	appendReviewProposalForTest(t, runPaths, runID, "p_002", "accepted proposal", false)
+	appendProposalDecisionForTest(t, runPaths, runID, "pd_001", "p_002", "accepted", "f_001")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "show", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review show exited %d, stderr: %s", code, stderr.String())
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "Proposals:") || !strings.Contains(got, "p_001 [medium] [blocking] quality: pending proposal") {
+		t.Fatalf("show should include pending proposal:\n%s", got)
+	}
+	if strings.Contains(got, "accepted proposal") {
+		t.Fatalf("show should omit accepted proposal from pending list:\n%s", got)
+	}
+}
+
+func TestReviewJSONOutputIncludesProposalsAndDecisions(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	appendReviewProposalForTest(t, runPaths, runID, "p_001", "json proposal", false)
+	appendProposalDecisionForTest(t, runPaths, runID, "pd_001", "p_001", "rejected", "")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "show", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review show --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var state reviewStateResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &state))
+	if len(state.Proposals) != 1 || len(state.ProposalDecisions) != 1 || state.ProposalSummary.Rejected != 1 {
+		t.Fatalf("json missing proposal records: %#v", state)
+	}
+}
+
+func TestReviewProposalArtifactsArePortable(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", reviewerStructuredOutput([]map[string]any{
+		{
+			"message":  "path should be sanitized from " + root,
+			"severity": "medium",
+			"category": "quality",
+			"file":     "internal/app/review.go",
+			"evidence": "observed in " + root,
+		},
+	}), true)
+
+	runReviewCommand(t, app, "review", "propose-findings", runID)
+	runReviewCommand(t, app, "review", "accept-proposal", runID, "p_001")
+	for name, content := range map[string]string{
+		"review/proposals.jsonl":          mustReadFile(t, runPaths.ReviewProposalsJSONL),
+		"review/proposal-decisions.jsonl": mustReadFile(t, runPaths.ReviewProposalDecisionsJSONL),
+		"review/findings.jsonl":           mustReadFile(t, runPaths.ReviewFindingsJSONL),
+	} {
+		assertDoesNotContainRoot(t, name, content, root)
+	}
+}
+
+func TestReviewPromptIncludesStructuredProposalContract(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+
+	runReviewCommand(t, app, "review", "dry-run", runID)
+	prompt := mustReadFile(t, runPaths.ReviewPromptMD)
+	for _, want := range []string{
+		"## Optional structured finding proposals",
+		`"schema": "pactum.reviewer_findings.v1"`,
+		"Important: Pactum does not trust this output automatically. A human must accept proposals.",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("reviewer prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func setupRunWithGateReport(t *testing.T, root string, status string) (App, artifacts.Paths, string, contractRunPathSet) {
 	t.Helper()
 	app, paths, runID := setupContractRun(t, root)
@@ -1113,6 +1532,79 @@ func runReviewCommand(t *testing.T, app App, args ...string) {
 	}
 }
 
+func writeReviewerAttemptForTest(t *testing.T, runPaths contractRunPathSet, runID string, attemptID string, stdout string, completed bool) {
+	t.Helper()
+	attemptPaths := reviewerAttemptPaths(runPaths, attemptID)
+	assertNoError(t, os.MkdirAll(attemptPaths.Dir, 0o755))
+	mustWriteFile(t, attemptPaths.StdoutLog, stdout)
+	mustWriteFile(t, attemptPaths.StderrLog, "")
+	if !completed {
+		return
+	}
+	result := reviewerResultDocument{
+		Schema:         reviewerResultSchema,
+		RunID:          runID,
+		AttemptID:      attemptID,
+		Reviewer:       "fixture",
+		StartedAt:      "2026-06-01T22:00:00Z",
+		FinishedAt:     "2026-06-01T22:00:01Z",
+		DurationMillis: 1000,
+		ExitCode:       0,
+		TimedOut:       false,
+		Stdout:         filepath.ToSlash(filepath.Join(reviewerAttemptsArtifact, attemptID, "stdout.log")),
+		Stderr:         filepath.ToSlash(filepath.Join(reviewerAttemptsArtifact, attemptID, "stderr.log")),
+	}
+	assertNoError(t, writeJSON(attemptPaths.ResultJSON, result))
+}
+
+func reviewerStructuredOutput(findings []map[string]any) string {
+	block := map[string]any{
+		"schema":   reviewerFindingsSchema,
+		"findings": findings,
+	}
+	data, err := json.MarshalIndent(block, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	return "reviewer notes\n```json\n" + string(data) + "\n```\n"
+}
+
+func appendReviewProposalForTest(t *testing.T, runPaths contractRunPathSet, runID string, proposalID string, message string, blocking bool) {
+	t.Helper()
+	record := reviewProposalRecord{
+		Schema:            reviewProposalSchema,
+		ID:                proposalID,
+		RunID:             runID,
+		Source:            "reviewer_attempt",
+		ReviewerAttemptID: "reviewer_attempt_001",
+		Message:           message,
+		Severity:          "medium",
+		Category:          "quality",
+		File:              "internal/app/review.go",
+		Line:              12,
+		Blocking:          blocking,
+		Evidence:          "fixture evidence",
+		Status:            "pending",
+		CreatedAt:         "2026-06-01T22:00:00Z",
+	}
+	assertNoError(t, appendJSONLine(runPaths.ReviewProposalsJSONL, record))
+}
+
+func appendProposalDecisionForTest(t *testing.T, runPaths contractRunPathSet, runID string, decisionID string, proposalID string, decision string, findingID string) {
+	t.Helper()
+	record := reviewProposalDecisionRecord{
+		Schema:     reviewProposalDecisionSchema,
+		ID:         decisionID,
+		RunID:      runID,
+		ProposalID: proposalID,
+		Decision:   decision,
+		FindingID:  findingID,
+		CreatedAt:  "2026-06-01T22:00:01Z",
+		Source:     "manual",
+	}
+	assertNoError(t, appendJSONLine(runPaths.ReviewProposalDecisionsJSONL, record))
+}
+
 func readReviewDoc(t *testing.T, path string) reviewDocument {
 	t.Helper()
 	var review reviewDocument
@@ -1138,6 +1630,30 @@ func readReviewResolutions(t *testing.T, path string) []reviewResolutionRecord {
 	records := make([]reviewResolutionRecord, 0, len(lines))
 	for _, line := range lines {
 		var record reviewResolutionRecord
+		assertNoError(t, json.Unmarshal([]byte(line), &record))
+		records = append(records, record)
+	}
+	return records
+}
+
+func readReviewProposals(t *testing.T, path string) []reviewProposalRecord {
+	t.Helper()
+	lines := readLines(t, path)
+	records := make([]reviewProposalRecord, 0, len(lines))
+	for _, line := range lines {
+		var record reviewProposalRecord
+		assertNoError(t, json.Unmarshal([]byte(line), &record))
+		records = append(records, record)
+	}
+	return records
+}
+
+func readReviewProposalDecisions(t *testing.T, path string) []reviewProposalDecisionRecord {
+	t.Helper()
+	lines := readLines(t, path)
+	records := make([]reviewProposalDecisionRecord, 0, len(lines))
+	for _, line := range lines {
+		var record reviewProposalDecisionRecord
 		assertNoError(t, json.Unmarshal([]byte(line), &record))
 		records = append(records, record)
 	}

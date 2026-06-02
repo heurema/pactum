@@ -69,10 +69,12 @@ type reviewApproval struct {
 }
 
 type reviewArtifacts struct {
-	Review      string `json:"review"`
-	Findings    string `json:"findings"`
-	Resolutions string `json:"resolutions"`
-	GateReport  string `json:"gate_report"`
+	Review            string `json:"review"`
+	Findings          string `json:"findings"`
+	Resolutions       string `json:"resolutions"`
+	Proposals         string `json:"proposals"`
+	ProposalDecisions string `json:"proposal_decisions"`
+	GateReport        string `json:"gate_report"`
 }
 
 type reviewFindingInput struct {
@@ -94,6 +96,7 @@ type reviewFindingRecord struct {
 	File      string `json:"file,omitempty"`
 	Line      int    `json:"line,omitempty"`
 	Blocking  bool   `json:"blocking"`
+	Evidence  string `json:"evidence,omitempty"`
 	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
 	Source    string `json:"source"`
@@ -119,6 +122,7 @@ type reviewFindingView struct {
 	File             string                  `json:"file,omitempty"`
 	Line             int                     `json:"line,omitempty"`
 	Blocking         bool                    `json:"blocking"`
+	Evidence         string                  `json:"evidence,omitempty"`
 	Status           string                  `json:"status"`
 	CreatedAt        string                  `json:"created_at"`
 	Source           string                  `json:"source"`
@@ -126,9 +130,12 @@ type reviewFindingView struct {
 }
 
 type reviewStateResponse struct {
-	Review      reviewDocument           `json:"review"`
-	Findings    []reviewFindingView      `json:"findings"`
-	Resolutions []reviewResolutionRecord `json:"resolutions"`
+	Review            reviewDocument                 `json:"review"`
+	Findings          []reviewFindingView            `json:"findings"`
+	Resolutions       []reviewResolutionRecord       `json:"resolutions"`
+	Proposals         []reviewProposalView           `json:"proposals"`
+	ProposalDecisions []reviewProposalDecisionRecord `json:"proposal_decisions"`
+	ProposalSummary   reviewProposalSummary          `json:"proposal_summary"`
 }
 
 type reviewAddFindingResponse struct {
@@ -142,13 +149,15 @@ type reviewResolveResponse struct {
 }
 
 type reviewerDryRunPreparation struct {
-	Context     reviewContext
-	Contract    draftContract
-	GateReport  gateReportDocument
-	Review      reviewDocument
-	Findings    []reviewFindingRecord
-	Resolutions []reviewResolutionRecord
-	Reviewer    agents.AgentDescriptor
+	Context           reviewContext
+	Contract          draftContract
+	GateReport        gateReportDocument
+	Review            reviewDocument
+	Findings          []reviewFindingRecord
+	Resolutions       []reviewResolutionRecord
+	Proposals         []reviewProposalRecord
+	ProposalDecisions []reviewProposalDecisionRecord
+	Reviewer          agents.AgentDescriptor
 }
 
 type reviewerDryRunDocument struct {
@@ -175,12 +184,14 @@ type reviewerDryRunChecks struct {
 }
 
 type reviewerDryRunArtifacts struct {
-	ReviewerPrompt  string `json:"reviewer_prompt"`
-	ReviewerContext string `json:"reviewer_context"`
-	Review          string `json:"review"`
-	Findings        string `json:"findings"`
-	Resolutions     string `json:"resolutions"`
-	GateReport      string `json:"gate_report"`
+	ReviewerPrompt    string `json:"reviewer_prompt"`
+	ReviewerContext   string `json:"reviewer_context"`
+	Review            string `json:"review"`
+	Findings          string `json:"findings"`
+	Resolutions       string `json:"resolutions"`
+	Proposals         string `json:"proposals"`
+	ProposalDecisions string `json:"proposal_decisions"`
+	GateReport        string `json:"gate_report"`
 }
 
 type reviewerRequestDocument struct {
@@ -259,6 +270,10 @@ func (a App) ReviewPrepare(stdout io.Writer, runID string, jsonOutput bool) erro
 	if err != nil {
 		return err
 	}
+	proposals, proposalDecisions, err := readReviewProposalRecords(context.RunPaths)
+	if err != nil {
+		return err
+	}
 	review = refreshReviewDocument(review, runID, gateReport.Status, findings, resolutions, now.Format(time.RFC3339))
 	if err := writeJSON(context.RunPaths.ReviewJSON, review); err != nil {
 		return err
@@ -267,7 +282,7 @@ func (a App) ReviewPrepare(stdout io.Writer, runID string, jsonOutput bool) erro
 		return err
 	}
 
-	state := buildReviewState(review, findings, resolutions)
+	state := buildReviewStateWithProposals(review, findings, resolutions, proposals, proposalDecisions)
 	if jsonOutput {
 		return writeJSONResponse(stdout, state)
 	}
@@ -610,8 +625,12 @@ func (a App) loadPreparedReviewState(stdout io.Writer, runID string) (reviewStat
 	if err != nil {
 		return reviewStateResponse{}, false, err
 	}
+	proposals, proposalDecisions, err := readReviewProposalRecords(context.RunPaths)
+	if err != nil {
+		return reviewStateResponse{}, false, err
+	}
 	review = refreshReviewDocument(review, runID, gateReport.Status, findings, resolutions, "")
-	return buildReviewState(review, findings, resolutions), true, nil
+	return buildReviewStateWithProposals(review, findings, resolutions, proposals, proposalDecisions), true, nil
 }
 
 func (a App) loadReviewContext(stdout io.Writer, runID string) (reviewContext, bool, error) {
@@ -685,6 +704,10 @@ func (a App) prepareReviewerDryRun(context reviewContext, reviewerName string) (
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
+	proposals, proposalDecisions, err := readReviewProposalRecords(context.RunPaths)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
 	reviewer, err := a.agentRegistry().ResolveReviewer(reviewerName)
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
@@ -695,13 +718,15 @@ func (a App) prepareReviewerDryRun(context reviewContext, reviewerName string) (
 
 	review = refreshReviewDocument(review, context.State.RunID, gateReport.Status, findings, resolutions, "")
 	return reviewerDryRunPreparation{
-		Context:     context,
-		Contract:    contract,
-		GateReport:  gateReport,
-		Review:      review,
-		Findings:    findings,
-		Resolutions: resolutions,
-		Reviewer:    reviewer,
+		Context:           context,
+		Contract:          contract,
+		GateReport:        gateReport,
+		Review:            review,
+		Findings:          findings,
+		Resolutions:       resolutions,
+		Proposals:         proposals,
+		ProposalDecisions: proposalDecisions,
+		Reviewer:          reviewer,
 	}, nil
 }
 
@@ -739,6 +764,10 @@ func (a App) prepareReviewerRun(context reviewContext, reviewerName string) (rev
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
+	proposals, proposalDecisions, err := readReviewProposalRecords(context.RunPaths)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
 	reviewer, err := a.agentRegistry().ResolveReviewer(reviewerName)
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
@@ -749,13 +778,15 @@ func (a App) prepareReviewerRun(context reviewContext, reviewerName string) (rev
 
 	review = refreshReviewDocument(review, context.State.RunID, gateReport.Status, findings, resolutions, "")
 	return reviewerDryRunPreparation{
-		Context:     context,
-		Contract:    contract,
-		GateReport:  gateReport,
-		Review:      review,
-		Findings:    findings,
-		Resolutions: resolutions,
-		Reviewer:    reviewer,
+		Context:           context,
+		Contract:          contract,
+		GateReport:        gateReport,
+		Review:            review,
+		Findings:          findings,
+		Resolutions:       resolutions,
+		Proposals:         proposals,
+		ProposalDecisions: proposalDecisions,
+		Reviewer:          reviewer,
 	}, nil
 }
 
@@ -892,10 +923,12 @@ func refreshReviewDocument(review reviewDocument, runID string, gateStatus strin
 
 func defaultReviewArtifacts() reviewArtifacts {
 	return reviewArtifacts{
-		Review:      reviewArtifact,
-		Findings:    reviewFindingsArtifact,
-		Resolutions: reviewResolutionsArtifact,
-		GateReport:  gateReportArtifact,
+		Review:            reviewArtifact,
+		Findings:          reviewFindingsArtifact,
+		Resolutions:       reviewResolutionsArtifact,
+		Proposals:         reviewProposalsArtifact,
+		ProposalDecisions: reviewProposalDecisionsArtifact,
+		GateReport:        gateReportArtifact,
 	}
 }
 
@@ -926,6 +959,10 @@ func reviewStatus(approval reviewApproval, summary reviewSummary) string {
 }
 
 func buildReviewState(review reviewDocument, findings []reviewFindingRecord, resolutions []reviewResolutionRecord) reviewStateResponse {
+	return buildReviewStateWithProposals(review, findings, resolutions, nil, nil)
+}
+
+func buildReviewStateWithProposals(review reviewDocument, findings []reviewFindingRecord, resolutions []reviewResolutionRecord, proposals []reviewProposalRecord, proposalDecisions []reviewProposalDecisionRecord) reviewStateResponse {
 	latest := latestReviewResolutions(resolutions)
 	views := make([]reviewFindingView, 0, len(findings))
 	for _, finding := range findings {
@@ -939,6 +976,7 @@ func buildReviewState(review reviewDocument, findings []reviewFindingRecord, res
 			File:      finding.File,
 			Line:      finding.Line,
 			Blocking:  finding.Blocking,
+			Evidence:  finding.Evidence,
 			Status:    "open",
 			CreatedAt: finding.CreatedAt,
 			Source:    finding.Source,
@@ -950,10 +988,20 @@ func buildReviewState(review reviewDocument, findings []reviewFindingRecord, res
 		}
 		views = append(views, view)
 	}
+	if resolutions == nil {
+		resolutions = []reviewResolutionRecord{}
+	}
+	if proposalDecisions == nil {
+		proposalDecisions = []reviewProposalDecisionRecord{}
+	}
+	proposalViews := buildReviewProposalViews(proposals, proposalDecisions)
 	return reviewStateResponse{
-		Review:      review,
-		Findings:    views,
-		Resolutions: resolutions,
+		Review:            review,
+		Findings:          views,
+		Resolutions:       resolutions,
+		Proposals:         proposalViews,
+		ProposalDecisions: proposalDecisions,
+		ProposalSummary:   summarizeReviewProposals(proposalViews),
 	}
 }
 
@@ -1001,12 +1049,14 @@ func buildReviewerDryRunDocument(runID string, createdAt string, reviewer agents
 			ContractApproved: true,
 		},
 		Artifacts: reviewerDryRunArtifacts{
-			ReviewerPrompt:  reviewerPromptArtifact,
-			ReviewerContext: reviewerContextArtifact,
-			Review:          reviewArtifact,
-			Findings:        reviewFindingsArtifact,
-			Resolutions:     reviewResolutionsArtifact,
-			GateReport:      gateReportArtifact,
+			ReviewerPrompt:    reviewerPromptArtifact,
+			ReviewerContext:   reviewerContextArtifact,
+			Review:            reviewArtifact,
+			Findings:          reviewFindingsArtifact,
+			Resolutions:       reviewResolutionsArtifact,
+			Proposals:         reviewProposalsArtifact,
+			ProposalDecisions: reviewProposalDecisionsArtifact,
+			GateReport:        gateReportArtifact,
 		},
 		WouldRun: agents.DryRunCommand{
 			Command: wouldRun.Command,
@@ -1077,7 +1127,7 @@ func reviewerResultTimestamp(result reviewerResultDocument, fallback time.Time) 
 
 func renderReviewerContext(prep reviewerDryRunPreparation) string {
 	var b strings.Builder
-	state := buildReviewState(prep.Review, prep.Findings, prep.Resolutions)
+	state := buildReviewStateWithProposals(prep.Review, prep.Findings, prep.Resolutions, prep.Proposals, prep.ProposalDecisions)
 
 	fmt.Fprintln(&b, "# Reviewer Context")
 	fmt.Fprintln(&b)
@@ -1129,6 +1179,7 @@ func renderReviewerContext(prep reviewerDryRunPreparation) string {
 			fmt.Fprintf(&b, "  - %s finding=%s source=%s note=%s\n", resolution.ID, resolution.FindingID, resolution.Source, note)
 		}
 	}
+	fmt.Fprintf(&b, "- Proposal summary: pending=%d accepted=%d rejected=%d\n", state.ProposalSummary.Pending, state.ProposalSummary.Accepted, state.ProposalSummary.Rejected)
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Artifacts")
 	fmt.Fprintln(&b, "- Contract: contract/contract.json")
@@ -1136,6 +1187,8 @@ func renderReviewerContext(prep reviewerDryRunPreparation) string {
 	fmt.Fprintln(&b, "- Review: review/review.json")
 	fmt.Fprintln(&b, "- Findings: review/findings.jsonl")
 	fmt.Fprintln(&b, "- Resolutions: review/resolutions.jsonl")
+	fmt.Fprintln(&b, "- Proposals: review/proposals.jsonl")
+	fmt.Fprintln(&b, "- Proposal decisions: review/proposal-decisions.jsonl")
 	fmt.Fprintln(&b, "- Execution result: execute/last-result.json")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Reviewer guidance")
@@ -1154,12 +1207,14 @@ func renderReviewerPrompt(runID string) string {
 	reviewPath := runArtifactRepoRel(runID, reviewArtifact)
 	findingsPath := runArtifactRepoRel(runID, reviewFindingsArtifact)
 	resolutionsPath := runArtifactRepoRel(runID, reviewResolutionsArtifact)
+	proposalsPath := runArtifactRepoRel(runID, reviewProposalsArtifact)
+	proposalDecisionsPath := runArtifactRepoRel(runID, reviewProposalDecisionsArtifact)
 
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Reviewer Prompt")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "This prompt is prepared for a reviewer agent subprocess.")
-	fmt.Fprintln(&b, "Pactum captures reviewer output as artifacts but does not parse it into findings in this milestone.")
+	fmt.Fprintln(&b, "Pactum captures reviewer output as artifacts and may parse optional structured proposal blocks, but it does not trust reviewer output automatically.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Objective")
 	fmt.Fprintln(&b, "Review the executed task against the approved Pactum contract and gate report.")
@@ -1168,7 +1223,7 @@ func renderReviewerPrompt(runID string) string {
 	fmt.Fprintf(&b, "- Reviewer context: %s\n", reviewerContextPath)
 	fmt.Fprintf(&b, "- Contract: %s\n", contractPath)
 	fmt.Fprintf(&b, "- Gate report: %s\n", gateReportPath)
-	fmt.Fprintf(&b, "- Review artifacts: %s, %s, %s\n", reviewPath, findingsPath, resolutionsPath)
+	fmt.Fprintf(&b, "- Review artifacts: %s, %s, %s, %s, %s\n", reviewPath, findingsPath, resolutionsPath, proposalsPath, proposalDecisionsPath)
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Review boundaries")
 	fmt.Fprintln(&b, "- Do not apply patches.")
@@ -1179,7 +1234,7 @@ func renderReviewerPrompt(runID string) string {
 	fmt.Fprintln(&b, "- If uncertain, recommend a blocking manual finding.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Output shape")
-	fmt.Fprintln(&b, "If you report findings, make them easy for a human to convert manually:")
+	fmt.Fprintln(&b, "If you report findings in prose, make them easy for a human to convert manually:")
 	fmt.Fprintln(&b, "- message")
 	fmt.Fprintln(&b, "- severity")
 	fmt.Fprintln(&b, "- category")
@@ -1187,7 +1242,35 @@ func renderReviewerPrompt(runID string) string {
 	fmt.Fprintln(&b, "- line")
 	fmt.Fprintln(&b, "- blocking")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "This PR does not parse reviewer output.")
+	fmt.Fprintln(&b, "## Optional structured finding proposals")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "If you propose findings, include a fenced JSON block exactly like:")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "```json")
+	fmt.Fprintln(&b, "{")
+	fmt.Fprintln(&b, `  "schema": "pactum.reviewer_findings.v1",`)
+	fmt.Fprintln(&b, `  "findings": [`)
+	fmt.Fprintln(&b, "    {")
+	fmt.Fprintln(&b, `      "message": "Explain the issue clearly.",`)
+	fmt.Fprintln(&b, `      "severity": "medium",`)
+	fmt.Fprintln(&b, `      "category": "quality",`)
+	fmt.Fprintln(&b, `      "file": "internal/app/example.go",`)
+	fmt.Fprintln(&b, `      "line": 42,`)
+	fmt.Fprintln(&b, `      "blocking": true,`)
+	fmt.Fprintln(&b, `      "evidence": "Short evidence from reviewed artifacts."`)
+	fmt.Fprintln(&b, "    }")
+	fmt.Fprintln(&b, "  ]")
+	fmt.Fprintln(&b, "}")
+	fmt.Fprintln(&b, "```")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "Rules:")
+	fmt.Fprintln(&b, "- Use repo-relative file paths only.")
+	fmt.Fprintln(&b, "- Do not include absolute paths.")
+	fmt.Fprintln(&b, "- Use severity: low, medium, high, critical.")
+	fmt.Fprintln(&b, "- Use category: correctness, scope, quality, validation, process, other.")
+	fmt.Fprintln(&b, "- If uncertain, set blocking=true and explain uncertainty in evidence.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "Important: Pactum does not trust this output automatically. A human must accept proposals.")
 	return b.String()
 }
 
@@ -1257,6 +1340,11 @@ func writeReviewStatus(stdout io.Writer, state reviewStateResponse) {
 			fmt.Fprintf(stdout, "  approved by: %s\n", *state.Review.Approval.ApprovedBy)
 		}
 	}
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Proposals:")
+	fmt.Fprintf(stdout, "  pending: %d\n", state.ProposalSummary.Pending)
+	fmt.Fprintf(stdout, "  accepted: %d\n", state.ProposalSummary.Accepted)
+	fmt.Fprintf(stdout, "  rejected: %d\n", state.ProposalSummary.Rejected)
 }
 
 func writeReviewShow(stdout io.Writer, state reviewStateResponse) {
@@ -1271,26 +1359,28 @@ func writeReviewShow(stdout io.Writer, state reviewStateResponse) {
 	fmt.Fprintln(stdout, "Findings:")
 	if len(state.Findings) == 0 {
 		fmt.Fprintln(stdout, "  none")
-		return
-	}
-	for _, finding := range state.Findings {
-		blocking := ""
-		if finding.Blocking {
-			blocking = " [blocking]"
-		}
-		fmt.Fprintf(stdout, "  - %s [%s]%s %s: %s\n", finding.ID, finding.Severity, blocking, finding.Category, finding.Message)
-		if finding.File != "" {
-			location := finding.File
-			if finding.Line > 0 {
-				location = fmt.Sprintf("%s:%d", location, finding.Line)
+	} else {
+		for _, finding := range state.Findings {
+			blocking := ""
+			if finding.Blocking {
+				blocking = " [blocking]"
 			}
-			fmt.Fprintf(stdout, "    location: %s\n", location)
-		}
-		fmt.Fprintf(stdout, "    status: %s\n", finding.Status)
-		if finding.LatestResolution != nil && finding.LatestResolution.Note != "" {
-			fmt.Fprintf(stdout, "    resolution: %s\n", finding.LatestResolution.Note)
+			fmt.Fprintf(stdout, "  - %s [%s]%s %s: %s\n", finding.ID, finding.Severity, blocking, finding.Category, finding.Message)
+			if finding.File != "" {
+				location := finding.File
+				if finding.Line > 0 {
+					location = fmt.Sprintf("%s:%d", location, finding.Line)
+				}
+				fmt.Fprintf(stdout, "    location: %s\n", location)
+			}
+			fmt.Fprintf(stdout, "    status: %s\n", finding.Status)
+			if finding.LatestResolution != nil && finding.LatestResolution.Note != "" {
+				fmt.Fprintf(stdout, "    resolution: %s\n", finding.LatestResolution.Note)
+			}
 		}
 	}
+	fmt.Fprintln(stdout)
+	writeReviewPendingProposals(stdout, state.Proposals)
 }
 
 func writeReviewFindingAdded(stdout io.Writer, response reviewAddFindingResponse) {
