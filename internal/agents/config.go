@@ -54,7 +54,7 @@ func (BuiltinRegistry) ListBuiltins() []AgentDescriptor {
 		{
 			Name:    BuiltinCodex,
 			Command: "codex",
-			Args:    []string{"exec"},
+			Args:    []string{"exec", "--dangerously-bypass-approvals-and-sandbox"},
 			Input:   InputPromptFile,
 		},
 		{

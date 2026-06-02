@@ -79,7 +79,7 @@ func TestExecuteDryRunSucceedsAfterPromptBuild(t *testing.T) {
 	for _, want := range []string{
 		"Execution dry-run prepared",
 		"Would run:",
-		"codex exec < .heurema/pactum/runs/" + runID + "/contract/prompt.md",
+		"codex exec --dangerously-bypass-approvals-and-sandbox < .heurema/pactum/runs/" + runID + "/contract/prompt.md",
 		".heurema/pactum/runs/" + runID + "/execute/dry-run.json",
 	} {
 		if !strings.Contains(got, want) {
@@ -92,7 +92,7 @@ func TestExecuteDryRunSucceedsAfterPromptBuild(t *testing.T) {
 		t.Fatalf("unexpected dry-run plan: %#v", plan)
 	}
 	wantPrompt := executionPromptRepoPath(runID)
-	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec" || plan.WouldRun.Stdin != wantPrompt {
+	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec --dangerously-bypass-approvals-and-sandbox" || plan.WouldRun.Stdin != wantPrompt {
 		t.Fatalf("unexpected would_run command: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", wantPrompt)
@@ -112,7 +112,7 @@ func TestExecuteDryRunJSONOutput(t *testing.T) {
 	if plan.Agent.Name != "codex" || !plan.Checks.PromptManifestReady || plan.Artifacts.Prompt != "contract/prompt.md" {
 		t.Fatalf("unexpected dry-run json: %#v", plan)
 	}
-	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
+	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec --dangerously-bypass-approvals-and-sandbox" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
 		t.Fatalf("missing would_run json: %#v", plan.WouldRun)
 	}
 	if strings.Contains(stdout.String(), "Execution dry-run prepared") {
@@ -164,7 +164,7 @@ func TestExecuteDryRunExplicitCodex(t *testing.T) {
 	if plan.Agent.Name != "codex" || plan.Agent.Command != "codex" {
 		t.Fatalf("codex agent mismatch: %#v", plan.Agent)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "exec" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
+	if strings.Join(plan.WouldRun.Args, " ") != "exec --dangerously-bypass-approvals-and-sandbox" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
 		t.Fatalf("codex would_run mismatch: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", executionPromptRepoPath(runID))

@@ -24,11 +24,11 @@ func TestBuildCommandUsesStdinForBuiltInAgents(t *testing.T) {
 			agent: AgentDescriptor{
 				Name:    BuiltinCodex,
 				Command: "codex",
-				Args:    []string{"exec"},
+				Args:    []string{"exec", "--dangerously-bypass-approvals-and-sandbox"},
 				Input:   InputPromptFile,
 			},
 			command: "codex",
-			args:    []string{"exec"},
+			args:    []string{"exec", "--dangerously-bypass-approvals-and-sandbox"},
 		},
 		{
 			name: "claude",
@@ -69,16 +69,16 @@ func TestRunSubprocessCodexUsesTypedRunnerStdinAndEnv(t *testing.T) {
 		RepoRoot:       root,
 		RunID:          "run_123",
 		AttemptID:      "attempt_001",
-		Agent:          AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec"}, Input: InputPromptFile},
+		Agent:          AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
 		PromptRepoPath: promptRepoPath,
 	}, runner)
 	if err != nil {
 		t.Fatalf("RunSubprocess returned error: %v", err)
 	}
-	if result.Command != "codex" || !sameStringSlice(result.Args, []string{"exec"}) || result.ExitCode != 0 {
+	if result.Command != "codex" || !sameStringSlice(result.Args, []string{"exec", "--dangerously-bypass-approvals-and-sandbox"}) || result.ExitCode != 0 {
 		t.Fatalf("unexpected result: %#v", result)
 	}
-	if runner.spec.Command != "codex" || !sameStringSlice(runner.spec.Args, []string{"exec"}) {
+	if runner.spec.Command != "codex" || !sameStringSlice(runner.spec.Args, []string{"exec", "--dangerously-bypass-approvals-and-sandbox"}) {
 		t.Fatalf("unexpected process spec: %#v", runner.spec)
 	}
 	if runner.spec.Dir != root {

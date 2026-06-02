@@ -473,7 +473,7 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 	for _, want := range []string{
 		"Reviewer dry-run prepared",
 		"Would run:",
-		"codex exec < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt.md",
+		"codex exec --dangerously-bypass-approvals-and-sandbox < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt.md",
 		".heurema/pactum/runs/" + runID + "/review/reviewer-context.md",
 	} {
 		if !strings.Contains(got, want) {
@@ -485,7 +485,7 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 		t.Fatalf("unexpected reviewer dry-run plan: %#v", plan)
 	}
 	wantPrompt := runArtifactRepoRel(runID, reviewerPromptArtifact)
-	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec" || plan.WouldRun.Stdin != wantPrompt {
+	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec --dangerously-bypass-approvals-and-sandbox" || plan.WouldRun.Stdin != wantPrompt {
 		t.Fatalf("unexpected would_run command: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, reviewerPromptArtifact, wantPrompt)
@@ -519,7 +519,7 @@ func TestReviewDryRunJSONOutput(t *testing.T) {
 	if plan.Artifacts.ReviewerPrompt != reviewerPromptArtifact ||
 		plan.Artifacts.ReviewerContext != reviewerContextArtifact ||
 		plan.WouldRun.Command != "codex" ||
-		strings.Join(plan.WouldRun.Args, " ") != "exec" ||
+		strings.Join(plan.WouldRun.Args, " ") != "exec --dangerously-bypass-approvals-and-sandbox" ||
 		plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
 		t.Fatalf("reviewer dry-run json missing artifacts/would_run: %#v", plan)
 	}
@@ -537,7 +537,7 @@ func TestReviewDryRunUsesDefaultReviewer(t *testing.T) {
 	if plan.Reviewer.Name != "codex" || plan.Reviewer.Command != "codex" {
 		t.Fatalf("default reviewer mismatch: %#v", plan.Reviewer)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "exec" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
+	if strings.Join(plan.WouldRun.Args, " ") != "exec --dangerously-bypass-approvals-and-sandbox" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
 		t.Fatalf("default reviewer would_run mismatch: %#v", plan.WouldRun)
 	}
 }
@@ -551,7 +551,7 @@ func TestReviewDryRunExplicitReviewers(t *testing.T) {
 	if plan.Reviewer.Name != "codex" || plan.Reviewer.Command != "codex" {
 		t.Fatalf("codex reviewer mismatch: %#v", plan.Reviewer)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "exec" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
+	if strings.Join(plan.WouldRun.Args, " ") != "exec --dangerously-bypass-approvals-and-sandbox" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
 		t.Fatalf("codex would_run mismatch: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, reviewerPromptArtifact, runArtifactRepoRel(runID, reviewerPromptArtifact))
