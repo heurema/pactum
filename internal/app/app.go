@@ -121,6 +121,7 @@ type memoryCmd struct {
 	Propose memoryProposeCmd `cmd:"" help:"Create a deterministic memory candidate for a reviewed run."`
 	Show    memoryShowCmd    `cmd:"" help:"Show a run memory candidate."`
 	Accept  memoryAcceptCmd  `cmd:"" help:"Accept a run memory candidate into project memory."`
+	Search  memorySearchCmd  `cmd:"" help:"Search accepted project memory deterministically."`
 }
 
 type contractShowCmd struct {
@@ -280,6 +281,12 @@ type memoryShowCmd struct {
 type memoryAcceptCmd struct {
 	RunID      string `arg:"" name:"run_id" help:"Run id to accept memory for."`
 	By         string `name:"by" default:"manual" help:"Acceptance name to record."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type memorySearchCmd struct {
+	Query      string `arg:"" name:"query" help:"Accepted memory search query."`
+	Limit      int    `name:"limit" help:"Maximum number of memory items." default:"5"`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -563,6 +570,10 @@ func (c *memoryShowCmd) Run(r *runner) error {
 
 func (c *memoryAcceptCmd) Run(r *runner) error {
 	return r.App.MemoryAccept(r.Stdout, c.RunID, c.By, c.JSONOutput)
+}
+
+func (c *memorySearchCmd) Run(r *runner) error {
+	return r.App.MemorySearch(r.Stdout, c.Query, c.Limit, c.JSONOutput)
 }
 
 func (c *searchCmd) Run(r *runner) error {

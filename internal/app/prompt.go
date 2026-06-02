@@ -104,6 +104,9 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 	}
 
 	now := a.nowUTC()
+	if err := writeAcceptedMemoryContext(context.Paths, context.RunPaths, runID, memoryQueryFromContract(context.Contract), "contract", defaultMemorySelectionLimit, now); err != nil {
+		return err
+	}
 	manifest := buildPromptManifest(context, hash, report.ProjectMap.RunID, now)
 	searchResults, err := readRunSearchResults(context.RunPaths.SearchResults)
 	if err != nil {
@@ -270,6 +273,11 @@ func renderExecutorContext(state contractRunState, mapRunID string, contractSHA2
 	fmt.Fprintln(&buffer, "- If ownership is unclear, stop and ask for clarification.")
 	fmt.Fprintln(&buffer, "- Do not rely on this map as complete semantic truth.")
 	fmt.Fprintln(&buffer)
+	fmt.Fprintln(&buffer, "## Accepted memory")
+	fmt.Fprintln(&buffer, "- Memory context: context/memory-context.md")
+	fmt.Fprintln(&buffer, "- Selection: context/memory-selection.json")
+	fmt.Fprintln(&buffer, "- Treat memory as context, not semantic truth.")
+	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Relevant search results")
 	if len(searchResults.Results) == 0 {
 		fmt.Fprintln(&buffer, "- None")
@@ -351,6 +359,7 @@ func renderApprovedPromptMD(contract draftContract, runID string, contractSHA256
 	fmt.Fprintln(&buffer, "- Executor context: context/executor-context.md")
 	fmt.Fprintf(&buffer, "- Repo map: %s\n", artifacts.WorkspaceRel+"/map/repo-map.md")
 	fmt.Fprintln(&buffer, "- Search results: context/search-results.json")
+	fmt.Fprintln(&buffer, "- Accepted memory context: context/memory-context.md")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Instructions for future executor")
 	fmt.Fprintln(&buffer, "- Follow the approved contract.")
