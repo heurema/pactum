@@ -226,6 +226,10 @@ type contractRunPathSet struct {
 	GateReportJSON    string
 	GateValidationDir string
 
+	MemoryCandidateJSON  string
+	MemoryCandidateMD    string
+	MemoryAcceptanceJSON string
+
 	ReviewJSON                   string
 	ReviewFindingsJSONL          string
 	ReviewResolutionsJSONL       string
@@ -272,6 +276,9 @@ func contractRunPaths(runDir string) contractRunPathSet {
 		LastResultJSON:               filepath.Join(executeDir, "last-result.json"),
 		GateReportJSON:               filepath.Join(gateDir, "gate-report.json"),
 		GateValidationDir:            filepath.Join(gateDir, "validation"),
+		MemoryCandidateJSON:          filepath.Join(runDir, "memory", "memory-candidate.json"),
+		MemoryCandidateMD:            filepath.Join(runDir, "memory", "memory-candidate.md"),
+		MemoryAcceptanceJSON:         filepath.Join(runDir, "memory", "memory-acceptance.json"),
 		ReviewJSON:                   filepath.Join(reviewDir, "review.json"),
 		ReviewFindingsJSONL:          filepath.Join(reviewDir, "findings.jsonl"),
 		ReviewResolutionsJSONL:       filepath.Join(reviewDir, "resolutions.jsonl"),

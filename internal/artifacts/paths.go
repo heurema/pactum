@@ -32,6 +32,7 @@ type Paths struct {
 
 	MemoryDir        string
 	ProjectMemory    string
+	MemoryItems      string
 	FeaturesDir      string
 	DecisionsDir     string
 	PatternsDir      string
@@ -80,6 +81,7 @@ func New(root string) Paths {
 
 		MemoryDir:        memoryDir,
 		ProjectMemory:    filepath.Join(memoryDir, "project-memory.md"),
+		MemoryItems:      filepath.Join(memoryDir, "items.jsonl"),
 		FeaturesDir:      filepath.Join(memoryDir, "features"),
 		DecisionsDir:     filepath.Join(memoryDir, "decisions"),
 		PatternsDir:      filepath.Join(memoryDir, "patterns"),

@@ -35,6 +35,7 @@ type cli struct {
 	Gate     gateCmd     `cmd:"" help:"Run deterministic validation and scope gates."`
 	Init     initCmd     `cmd:"" help:"Create a Pactum workspace and project map."`
 	Map      mapCmd      `cmd:"" help:"Advanced project map commands."`
+	Memory   memoryCmd   `cmd:"" help:"Propose, inspect, and accept deterministic project memory."`
 	Prompt   promptCmd   `cmd:"" help:"Build and inspect executor prompt boundaries."`
 	Review   reviewCmd   `cmd:"" help:"Manage manual review artifacts."`
 	Run      runCmd      `cmd:"" help:"Create a Pactum run workspace."`
@@ -114,6 +115,12 @@ type reviewCmd struct {
 
 type agentsCmd struct {
 	Doctor agentsDoctorCmd `cmd:"" help:"Diagnose built-in agents without launching them."`
+}
+
+type memoryCmd struct {
+	Propose memoryProposeCmd `cmd:"" help:"Create a deterministic memory candidate for a reviewed run."`
+	Show    memoryShowCmd    `cmd:"" help:"Show a run memory candidate."`
+	Accept  memoryAcceptCmd  `cmd:"" help:"Accept a run memory candidate into project memory."`
 }
 
 type contractShowCmd struct {
@@ -257,6 +264,22 @@ type reviewRejectProposalCmd struct {
 
 type agentsDoctorCmd struct {
 	Agent      string `name:"agent" help:"Built-in agent name to inspect."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type memoryProposeCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to propose memory for."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type memoryShowCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type memoryAcceptCmd struct {
+	RunID      string `arg:"" name:"run_id" help:"Run id to accept memory for."`
+	By         string `name:"by" default:"manual" help:"Acceptance name to record."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -530,6 +553,18 @@ func (c *agentsDoctorCmd) Run(r *runner) error {
 	return r.App.AgentsDoctor(r.Stdout, c.Agent, c.JSONOutput)
 }
 
+func (c *memoryProposeCmd) Run(r *runner) error {
+	return r.App.MemoryPropose(r.Stdout, c.RunID, c.JSONOutput)
+}
+
+func (c *memoryShowCmd) Run(r *runner) error {
+	return r.App.MemoryShow(r.Stdout, c.RunID, c.JSONOutput)
+}
+
+func (c *memoryAcceptCmd) Run(r *runner) error {
+	return r.App.MemoryAccept(r.Stdout, c.RunID, c.By, c.JSONOutput)
+}
+
 func (c *searchCmd) Run(r *runner) error {
 	return r.App.Search(r.Stdout, c.Query, c.Limit, c.Kind, c.JSONOutput)
 }
@@ -779,6 +814,7 @@ runs/*/execute/
 runs/*/review/
 `) + "\n"),
 		paths.ProjectMemory: []byte("# Project Memory\n\nNo project memory has been extracted yet.\n"),
+		paths.MemoryItems:   nil,
 		paths.StaleReport:   []byte("{\"stale\":0,\"items\":[]}\n"),
 		paths.UsageJSONL:    nil,
 		paths.CostJSON:      []byte("{\"total_tokens\":0,\"estimated_cost_usd\":0}\n"),

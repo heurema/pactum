@@ -82,6 +82,10 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 	if err != nil {
 		return statusResponse{}, err
 	}
+	memoryItems, err := countMemoryItems(paths)
+	if err != nil {
+		return statusResponse{}, err
+	}
 
 	return statusResponse{
 		Initialized: true,
@@ -89,9 +93,17 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 		Workspace:   paths.Workspace,
 		ProjectMap:  mapStatus,
 		Runs:        runsStatus{Active: activeRuns},
-		Memory:      memoryStatus{Items: 0, Stale: 0},
+		Memory:      memoryStatus{Items: memoryItems, Stale: 0},
 		Usage:       usageStatus{TotalTokens: 0, EstimatedCostUSD: 0},
 	}, nil
+}
+
+func countMemoryItems(paths artifacts.Paths) (int, error) {
+	items, err := readJSONLines[memoryItemRecord](paths.MemoryItems)
+	if err != nil {
+		return 0, err
+	}
+	return len(items), nil
 }
 
 func countActiveRuns(paths artifacts.Paths) (int, error) {
