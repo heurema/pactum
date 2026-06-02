@@ -533,8 +533,11 @@ func TestRunWithoutContractOnlyPrintsGuidance(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run without --contract-only exited %d, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Execution is not implemented yet. Use --contract-only.") {
+	if got := stdout.String(); !strings.Contains(got, "pactum run prepares a contract draft. Re-run with --contract-only, then use: clarify, contract approve, prompt build, execute.") {
 		t.Fatalf("run without --contract-only output mismatch:\n%s", got)
+	}
+	if got := stdout.String(); strings.Contains(got, "not implemented yet") {
+		t.Fatalf("run without --contract-only output contains stale wording:\n%s", got)
 	}
 }
 
@@ -656,7 +659,7 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 	}
 	contractMD := mustReadFile(t, filepath.Join(runDir, "contract", "contract.md"))
 	if !strings.Contains(contractMD, "## Goal\n"+task) ||
-		!strings.Contains(contractMD, "Manual clarification and approval are available; agent execution is not implemented yet.") ||
+		!strings.Contains(contractMD, "Manual clarification, contract approval, prompt build, and agent execution are available through staged Pactum commands.") ||
 		!strings.Contains(contractMD, "Repo map: .heurema/pactum/map/repo-map.md") ||
 		!strings.Contains(contractMD, "Search results: context/search-results.json") ||
 		!strings.Contains(contractMD, "## Clarifications\n- None") ||
@@ -665,19 +668,21 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 		!strings.Contains(contractMD, "## Open questions\n- None") {
 		t.Fatalf("contract.md content mismatch:\n%s", contractMD)
 	}
-	for _, stale := range []string{"Clarification loop is not implemented yet.", "Clarification and agent execution are not implemented yet."} {
+	for _, stale := range []string{"Clarification loop is not implemented yet.", "Clarification and agent execution are not implemented yet.", "not implemented yet"} {
 		if strings.Contains(contractMD, stale) {
 			t.Fatalf("contract.md contains stale wording %q:\n%s", stale, contractMD)
 		}
 	}
 	promptMD := mustReadFile(t, filepath.Join(runDir, "contract", "prompt.md"))
-	if !strings.Contains(promptMD, "This prompt is not executable yet. Manual clarification and approval are available, but agent execution is not implemented.") ||
+	if !strings.Contains(promptMD, "This is a contract-draft placeholder. Run `pactum prompt build` after the contract is approved to build the executor prompt for `pactum execute`.") ||
 		!strings.Contains(promptMD, "## Goal\n"+task) ||
 		!strings.Contains(promptMD, "## Validation commands\nTBD") {
 		t.Fatalf("prompt.md content mismatch:\n%s", promptMD)
 	}
-	if strings.Contains(promptMD, "Contract clarification and approval are not implemented.") {
-		t.Fatalf("prompt.md contains stale wording:\n%s", promptMD)
+	for _, stale := range []string{"Contract clarification and approval are not implemented.", "not implemented yet", "not executable yet"} {
+		if strings.Contains(promptMD, stale) {
+			t.Fatalf("prompt.md contains stale wording %q:\n%s", stale, promptMD)
+		}
 	}
 	var approval approvalState
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, filepath.Join(runDir, "contract", "approval.json"))), &approval))
@@ -1547,7 +1552,7 @@ func TestClarifyAskBlockingQuestionUpdatesArtifacts(t *testing.T) {
 	}
 	contractMD := mustReadFile(t, runPaths.ContractMD)
 	for _, want := range []string{
-		"Manual clarification and approval are available; agent execution is not implemented yet.",
+		"Manual clarification, contract approval, prompt build, and agent execution are available through staged Pactum commands.",
 		"## Clarifications",
 		"q_001 [blocking] — Should this feature update existing contract artifacts?",
 		"Answer: pending",

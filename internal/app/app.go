@@ -394,7 +394,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return App{WorkingDir: wd, Now: time.Now}.Run(args, stdout, stderr)
 }
 
-func (a App) Run(args []string, stdout, stderr io.Writer) int {
+// kongExit carries the exit code kong requests (for example from --help) out
+// through a panic so App.Run can return it instead of letting kong terminate the
+// process with os.Exit. This keeps help/parse exits testable in-process and lets
+// Pactum be embedded without the parser killing the host process.
+type kongExit struct{ code int }
+
+func (a App) Run(args []string, stdout, stderr io.Writer) (code int) {
 	if a.Now == nil {
 		a.Now = time.Now
 	}
@@ -407,6 +413,16 @@ func (a App) Run(args []string, stdout, stderr io.Writer) int {
 		a.WorkingDir = wd
 	}
 
+	defer func() {
+		if r := recover(); r != nil {
+			exit, ok := r.(kongExit)
+			if !ok {
+				panic(r)
+			}
+			code = exit.code
+		}
+	}()
+
 	var command cli
 	parser, err := kong.New(
 		&command,
@@ -414,6 +430,7 @@ func (a App) Run(args []string, stdout, stderr io.Writer) int {
 		kong.Description("Contract-first CLI for agentic software work."),
 		kong.UsageOnError(),
 		kong.Writers(stdout, stderr),
+		kong.Exit(func(c int) { panic(kongExit{code: c}) }),
 	)
 	if err != nil {
 		fmt.Fprintf(stderr, "pactum: %v\n", err)
