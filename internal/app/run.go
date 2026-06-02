@@ -161,7 +161,7 @@ func (a App) createContractOnlyRun(root string, task string) (contractRunState, 
 
 	searchResults := buildRunSearchResults(paths, report.ProjectMap, task)
 	contract := draftContractFor(runID, task)
-	memorySelection, err := buildAcceptedMemorySelection(paths.MemoryItems, root, runID, task, "task", defaultMemorySelectionLimit, createdAt.Format(time.RFC3339))
+	memorySelection, err := buildAcceptedMemorySelection(paths, runID, task, "task", defaultMemorySelectionLimit, createdAt.Format(time.RFC3339))
 	if err != nil {
 		return contractRunState{}, err
 	}

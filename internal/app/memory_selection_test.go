@@ -110,7 +110,7 @@ func TestMemorySelectorDeterministicOrdering(t *testing.T) {
 	appendAcceptedMemoryItemForTest(t, paths, memoryItemRecord{ID: "mem_001", AcceptedAt: "2026-06-02T09:00:00Z", Title: "Cache boundary"})
 	appendAcceptedMemoryItemForTest(t, paths, memoryItemRecord{ID: "mem_003", AcceptedAt: "2026-06-02T10:00:00Z", Title: "Cache boundary"})
 
-	selected, noUsefulTokens, err := selectAcceptedMemoryItems(paths.MemoryItems, root, "cache", 5)
+	selected, noUsefulTokens, err := selectAcceptedMemoryItems(paths, "cache", 5)
 	assertNoError(t, err)
 	if noUsefulTokens {
 		t.Fatalf("selector unexpectedly reported no useful tokens")

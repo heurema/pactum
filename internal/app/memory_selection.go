@@ -48,14 +48,15 @@ type memorySelectionDocument struct {
 }
 
 type memorySelectedItem struct {
-	ID         string   `json:"id"`
-	Score      int      `json:"score"`
-	Title      string   `json:"title"`
-	Summary    string   `json:"summary"`
-	Files      []string `json:"files"`
-	Tags       []string `json:"tags"`
-	Candidate  string   `json:"candidate"`
-	AcceptedAt string   `json:"accepted_at"`
+	ID         string                 `json:"id"`
+	Score      int                    `json:"score"`
+	Title      string                 `json:"title"`
+	Summary    string                 `json:"summary"`
+	Files      []string               `json:"files"`
+	Tags       []string               `json:"tags"`
+	Candidate  string                 `json:"candidate"`
+	AcceptedAt string                 `json:"accepted_at"`
+	Freshness  memoryFreshnessSummary `json:"freshness"`
 }
 
 type memorySearchResponse struct {
@@ -81,7 +82,7 @@ func (a App) MemorySearch(stdout io.Writer, query string, limit int, jsonOutput 
 
 	paths := artifacts.New(root)
 	limit = normalizeMemorySelectionLimit(limit)
-	selected, _, err := selectAcceptedMemoryItems(paths.MemoryItems, root, query, limit)
+	selected, _, err := selectAcceptedMemoryItems(paths, query, limit)
 	if err != nil {
 		return err
 	}
@@ -97,9 +98,9 @@ func (a App) MemorySearch(stdout io.Writer, query string, limit int, jsonOutput 
 	return nil
 }
 
-func buildAcceptedMemorySelection(itemsPath string, root string, runID string, query string, querySource string, limit int, createdAt string) (memorySelectionDocument, error) {
+func buildAcceptedMemorySelection(paths artifacts.Paths, runID string, query string, querySource string, limit int, createdAt string) (memorySelectionDocument, error) {
 	limit = normalizeMemorySelectionLimit(limit)
-	selected, noUsefulTokens, err := selectAcceptedMemoryItems(itemsPath, root, query, limit)
+	selected, noUsefulTokens, err := selectAcceptedMemoryItems(paths, query, limit)
 	if err != nil {
 		return memorySelectionDocument{}, err
 	}
@@ -114,7 +115,7 @@ func buildAcceptedMemorySelection(itemsPath string, root string, runID string, q
 		Schema:      memorySelectionSchema,
 		RunID:       runID,
 		CreatedAt:   createdAt,
-		Query:       sanitizeMemoryText(root, query),
+		Query:       sanitizeMemoryText(paths.Root, query),
 		QuerySource: querySource,
 		Limit:       limit,
 		Selected:    selected,
@@ -123,7 +124,7 @@ func buildAcceptedMemorySelection(itemsPath string, root string, runID string, q
 }
 
 func writeAcceptedMemoryContext(paths artifacts.Paths, runPaths contractRunPathSet, runID string, query string, querySource string, limit int, createdAt time.Time) error {
-	selection, err := buildAcceptedMemorySelection(paths.MemoryItems, paths.Root, runID, query, querySource, limit, createdAt.Format(time.RFC3339))
+	selection, err := buildAcceptedMemorySelection(paths, runID, query, querySource, limit, createdAt.Format(time.RFC3339))
 	if err != nil {
 		return err
 	}
@@ -133,19 +134,27 @@ func writeAcceptedMemoryContext(paths artifacts.Paths, runPaths contractRunPathS
 	return os.WriteFile(runPaths.MemoryContextMD, []byte(renderMemoryContextMD(selection)), 0o644)
 }
 
-func selectAcceptedMemoryItems(itemsPath string, root string, query string, limit int) ([]memorySelectedItem, bool, error) {
+func selectAcceptedMemoryItems(paths artifacts.Paths, query string, limit int) ([]memorySelectedItem, bool, error) {
 	limit = normalizeMemorySelectionLimit(limit)
 	queryTokens := memoryTokenSet(query)
 	if len(queryTokens) == 0 {
 		return []memorySelectedItem{}, true, nil
 	}
-	items, err := readMemoryItems(itemsPath)
+	items, err := readMemoryItems(paths.MemoryItems)
+	if err != nil {
+		return nil, false, err
+	}
+	freshnessByID, err := readLatestMemoryFreshness(paths, items)
 	if err != nil {
 		return nil, false, err
 	}
 	scored := make([]scoredMemoryItem, 0, len(items))
 	for _, item := range items {
 		score := scoreMemoryItem(queryTokens, item)
+		freshness := effectiveMemoryFreshnessForItem(item, freshnessByID)
+		if freshness.Status == memoryFreshnessStale {
+			score -= 2
+		}
 		if score <= 0 {
 			continue
 		}
@@ -167,7 +176,7 @@ func selectAcceptedMemoryItems(itemsPath string, root string, query string, limi
 	}
 	selected := make([]memorySelectedItem, 0, len(scored))
 	for _, item := range scored {
-		selected = append(selected, memorySelectedItemFromRecord(root, item.record, item.score))
+		selected = append(selected, memorySelectedItemFromRecord(paths.Root, item.record, item.score, effectiveMemoryFreshnessForItem(item.record, freshnessByID)))
 	}
 	return selected, false, nil
 }
@@ -217,7 +226,7 @@ func memoryTokenSet(value string) map[string]struct{} {
 	return tokens
 }
 
-func memorySelectedItemFromRecord(root string, item memoryItemRecord, score int) memorySelectedItem {
+func memorySelectedItemFromRecord(root string, item memoryItemRecord, score int, freshness memoryEffectiveFreshness) memorySelectedItem {
 	return memorySelectedItem{
 		ID:         item.ID,
 		Score:      score,
@@ -227,6 +236,10 @@ func memorySelectedItemFromRecord(root string, item memoryItemRecord, score int)
 		Tags:       sanitizeMemoryTexts(root, item.Tags),
 		Candidate:  sanitizeSelectedMemoryPath(root, item.Candidate),
 		AcceptedAt: item.AcceptedAt,
+		Freshness: memoryFreshnessSummary{
+			Status:  freshness.Status,
+			Reasons: sanitizeMemoryTexts(root, freshness.Reasons),
+		},
 	}
 }
 
@@ -286,6 +299,7 @@ func renderMemoryContextMD(selection memorySelectionDocument) string {
 	fmt.Fprintln(&b, "- Accepted memory is context, not semantic truth.")
 	fmt.Fprintln(&b, "- Verify against repo map, search, and source files before using it.")
 	fmt.Fprintln(&b, "- Do not treat memory as a substitute for current code.")
+	fmt.Fprintln(&b, "- Stale memory may be outdated. Verify before using.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Selected memory items")
 	fmt.Fprintln(&b)
@@ -299,6 +313,8 @@ func renderMemoryContextMD(selection memorySelectionDocument) string {
 		}
 		fmt.Fprintf(&b, "### %s - %s\n", item.ID, compactMemoryContextText(item.Title))
 		fmt.Fprintf(&b, "- Score: %d\n", item.Score)
+		fmt.Fprintf(&b, "- Freshness: %s\n", item.Freshness.Status)
+		fmt.Fprintf(&b, "- Reasons: %s\n", memoryContextListValue(item.Freshness.Reasons))
 		fmt.Fprintf(&b, "- Summary: %s\n", compactMemoryContextText(item.Summary))
 		fmt.Fprintf(&b, "- Files: %s\n", memoryContextListValue(item.Files))
 		fmt.Fprintf(&b, "- Tags: %s\n", memoryContextListValue(item.Tags))
@@ -336,6 +352,10 @@ func writeMemorySearch(stdout io.Writer, response memorySearchResponse) {
 	for index, item := range response.Selected {
 		fmt.Fprintf(stdout, "  %d. %s score=%d\n", index+1, item.ID, item.Score)
 		fmt.Fprintf(stdout, "     title: %s\n", item.Title)
+		fmt.Fprintf(stdout, "     freshness: %s\n", item.Freshness.Status)
+		if len(item.Freshness.Reasons) > 0 {
+			fmt.Fprintf(stdout, "     reasons: %s\n", memoryContextListValue(item.Freshness.Reasons))
+		}
 		fmt.Fprintf(stdout, "     summary: %s\n", item.Summary)
 		fmt.Fprintf(stdout, "     files: %s\n", memoryContextListValue(item.Files))
 	}
