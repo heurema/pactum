@@ -423,7 +423,7 @@ func draftContractFor(runID string, task string) draftContract {
 		Assumptions:   []string{},
 		OpenQuestions: []string{},
 		Clarifications: contractClarifySet{
-			Questions: []contractClarifyQuestion{},
+			Questions: []clarifyQuestionStatus{},
 		},
 		MemoryContext: draftMemoryContext{
 			UsedItems: []string{},

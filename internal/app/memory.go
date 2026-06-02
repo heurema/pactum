@@ -25,16 +25,6 @@ const (
 	memoryAcceptanceArtifact  = "memory/memory-acceptance.json"
 )
 
-type memoryContext struct {
-	Root     string
-	Paths    artifacts.Paths
-	RunDir   string
-	RunPaths contractRunPathSet
-	State    contractRunState
-	Contract draftContract
-	Approval approvalState
-}
-
 type memoryCandidateDocument struct {
 	Schema         string                         `json:"schema"`
 	RunID          string                         `json:"run_id"`
@@ -297,41 +287,40 @@ func (a App) MemoryAccept(stdout io.Writer, runID string, acceptedBy string, jso
 	return nil
 }
 
-func (a App) loadMemoryContext(stdout io.Writer, runID string, jsonOutput bool) (memoryContext, bool, error) {
+func (a App) loadMemoryContext(stdout io.Writer, runID string, jsonOutput bool) (runContext, bool, error) {
 	root, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
 	if err != nil || !ok {
-		return memoryContext{}, false, err
+		return runContext{}, false, err
 	}
 
 	runDir := filepath.Join(paths.RunsDir, runID)
 	info, err := os.Stat(runDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return memoryContext{}, false, fmt.Errorf("run not found: %s", runID)
+			return runContext{}, false, fmt.Errorf("run not found: %s", runID)
 		}
-		return memoryContext{}, false, err
+		return runContext{}, false, err
 	}
 	if !info.IsDir() {
-		return memoryContext{}, false, fmt.Errorf("run not found: %s", runID)
+		return runContext{}, false, fmt.Errorf("run not found: %s", runID)
 	}
 
 	runPaths := contractRunPaths(runDir)
 	state, err := readContractRunState(runPaths.RunJSON)
 	if err != nil {
-		return memoryContext{}, false, err
+		return runContext{}, false, err
 	}
 	contract, err := readDraftContract(runPaths.ContractJSON)
 	if err != nil {
-		return memoryContext{}, false, err
+		return runContext{}, false, err
 	}
 	approval, err := readApprovalState(runPaths.ApprovalJSON)
 	if err != nil {
-		return memoryContext{}, false, err
+		return runContext{}, false, err
 	}
-	return memoryContext{
+	return runContext{
 		Root:     root,
 		Paths:    paths,
-		RunDir:   runDir,
 		RunPaths: runPaths,
 		State:    state,
 		Contract: contract,
@@ -339,7 +328,7 @@ func (a App) loadMemoryContext(stdout io.Writer, runID string, jsonOutput bool) 
 	}, true, nil
 }
 
-func (a App) prepareMemoryCandidate(context memoryContext) (preparedMemoryCandidate, error) {
+func (a App) prepareMemoryCandidate(context runContext) (preparedMemoryCandidate, error) {
 	if err := ensureMemoryContractApproved(context); err != nil {
 		return preparedMemoryCandidate{}, err
 	}
@@ -406,7 +395,7 @@ func (a App) prepareMemoryCandidate(context memoryContext) (preparedMemoryCandid
 	}, nil
 }
 
-func ensureMemoryContractApproved(context memoryContext) error {
+func ensureMemoryContractApproved(context runContext) error {
 	if context.Contract.Status != "approved" || context.Approval.Status != "approved" || context.Approval.ContractSHA256 == nil {
 		return fmt.Errorf("cannot propose memory: contract is not approved")
 	}
@@ -420,7 +409,7 @@ func ensureMemoryContractApproved(context memoryContext) error {
 	return nil
 }
 
-func buildMemoryCandidate(context memoryContext, gateReport gateReportDocument, reviewState reviewStateResponse, createdAt string) memoryCandidateDocument {
+func buildMemoryCandidate(context runContext, gateReport gateReportDocument, reviewState reviewStateResponse, createdAt string) memoryCandidateDocument {
 	contract := context.Contract
 	clarifications := memoryClarificationsFromContract(context.Root, contract)
 	findings := memoryFindingsFromReviewState(context.Root, reviewState)

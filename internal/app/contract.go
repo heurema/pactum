@@ -23,10 +23,12 @@ type contractRevision struct {
 	AddAssumption []string
 }
 
-type contractContext struct {
+// runContext is the fully-loaded state of a run directory: its resolved paths,
+// run state, contract draft, and approval. Shared by the contract, prompt, and
+// gate commands.
+type runContext struct {
 	Root     string
 	Paths    artifacts.Paths
-	RunDir   string
 	RunPaths contractRunPathSet
 	State    contractRunState
 	Contract draftContract
@@ -182,41 +184,40 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 	return nil
 }
 
-func (a App) loadContractContext(stdout io.Writer, runID string, jsonOutput bool) (contractContext, bool, error) {
+func (a App) loadContractContext(stdout io.Writer, runID string, jsonOutput bool) (runContext, bool, error) {
 	root, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
 	if err != nil || !ok {
-		return contractContext{}, false, err
+		return runContext{}, false, err
 	}
 
 	runDir := filepath.Join(paths.RunsDir, runID)
 	info, err := os.Stat(runDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return contractContext{}, false, fmt.Errorf("run not found: %s", runID)
+			return runContext{}, false, fmt.Errorf("run not found: %s", runID)
 		}
-		return contractContext{}, false, err
+		return runContext{}, false, err
 	}
 	if !info.IsDir() {
-		return contractContext{}, false, fmt.Errorf("run not found: %s", runID)
+		return runContext{}, false, fmt.Errorf("run not found: %s", runID)
 	}
 
 	runPaths := contractRunPaths(runDir)
 	state, err := readContractRunState(runPaths.RunJSON)
 	if err != nil {
-		return contractContext{}, false, err
+		return runContext{}, false, err
 	}
 	contract, err := readDraftContract(runPaths.ContractJSON)
 	if err != nil {
-		return contractContext{}, false, err
+		return runContext{}, false, err
 	}
 	approval, err := readApprovalState(runPaths.ApprovalJSON)
 	if err != nil {
-		return contractContext{}, false, err
+		return runContext{}, false, err
 	}
-	return contractContext{
+	return runContext{
 		Root:     root,
 		Paths:    paths,
-		RunDir:   runDir,
 		RunPaths: runPaths,
 		State:    state,
 		Contract: contract,
@@ -256,7 +257,7 @@ func writeContractArtifacts(runPaths contractRunPathSet, contract draftContract,
 }
 
 func applyClarificationStatusToContract(contract *draftContract, status clarifyStatusResponse) {
-	contract.Clarifications = contractClarifySet{Questions: contractClarificationsFromStatus(status.Questions)}
+	contract.Clarifications = contractClarifySet{Questions: status.Questions}
 	contract.OpenQuestions = openClarificationQuestionTexts(status.Questions)
 }
 

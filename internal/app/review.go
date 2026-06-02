@@ -34,7 +34,6 @@ const (
 type reviewContext struct {
 	Root     string
 	Paths    artifacts.Paths
-	RunDir   string
 	RunPaths contractRunPathSet
 	State    contractRunState
 }
@@ -659,7 +658,6 @@ func (a App) loadReviewContext(stdout io.Writer, runID string) (reviewContext, b
 	return reviewContext{
 		Root:     root,
 		Paths:    paths,
-		RunDir:   runDir,
 		RunPaths: runPaths,
 		State:    state,
 	}, true, nil

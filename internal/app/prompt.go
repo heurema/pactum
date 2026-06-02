@@ -212,7 +212,7 @@ func (a App) PromptShow(stdout io.Writer, runID string, jsonOutput bool) error {
 	return nil
 }
 
-func buildPromptManifest(context contractContext, contractSHA256 string, mapRunID string, builtAt time.Time, memory promptManifestMemory) promptManifest {
+func buildPromptManifest(context runContext, contractSHA256 string, mapRunID string, builtAt time.Time, memory promptManifestMemory) promptManifest {
 	approvedBy := ""
 	if context.Approval.ApprovedBy != nil {
 		approvedBy = *context.Approval.ApprovedBy
