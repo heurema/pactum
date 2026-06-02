@@ -487,6 +487,17 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec --sandbox read-only -- .heurema/pactum/runs/"+runID+"/review/reviewer-prompt.md" {
 		t.Fatalf("unexpected would_run command: %#v", plan.WouldRun)
 	}
+	prompt := mustReadFile(t, runPaths.ReviewPromptMD)
+	for _, want := range []string{
+		"Reviewer context: .heurema/pactum/runs/" + runID + "/review/reviewer-context.md",
+		"Contract: .heurema/pactum/runs/" + runID + "/contract/contract.json",
+		"Gate report: .heurema/pactum/runs/" + runID + "/gate/gate-report.json",
+		"Review artifacts: .heurema/pactum/runs/" + runID + "/review/review.json",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("reviewer prompt missing runnable path %q:\n%s", want, prompt)
+		}
+	}
 }
 
 func TestReviewDryRunJSONOutput(t *testing.T) {

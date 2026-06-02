@@ -450,7 +450,7 @@ func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, j
 	if err := os.WriteFile(context.RunPaths.ReviewContextMD, []byte(renderReviewerContext(prep)), 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(context.RunPaths.ReviewPromptMD, []byte(renderReviewerPrompt()), 0o644); err != nil {
+	if err := os.WriteFile(context.RunPaths.ReviewPromptMD, []byte(renderReviewerPrompt(runID)), 0o644); err != nil {
 		return err
 	}
 	if err := writeJSON(context.RunPaths.ReviewDryRunJSON, plan); err != nil {
@@ -867,39 +867,48 @@ func renderReviewerContext(prep reviewerDryRunPreparation) string {
 	return b.String()
 }
 
-func renderReviewerPrompt() string {
-	return strings.TrimSpace(`# Reviewer Prompt
+func renderReviewerPrompt(runID string) string {
+	reviewerContextPath := runArtifactRepoRel(runID, reviewerContextArtifact)
+	contractPath := runArtifactRepoRel(runID, "contract/contract.json")
+	gateReportPath := runArtifactRepoRel(runID, gateReportArtifact)
+	reviewPath := runArtifactRepoRel(runID, reviewArtifact)
+	findingsPath := runArtifactRepoRel(runID, reviewFindingsArtifact)
+	resolutionsPath := runArtifactRepoRel(runID, reviewResolutionsArtifact)
 
-This prompt is prepared for a future reviewer agent.
-Pactum does not execute reviewer agents in this milestone.
-
-## Objective
-Review the executed task against the approved Pactum contract and gate report.
-
-## Inputs
-- Reviewer context: review/reviewer-context.md
-- Contract: contract/contract.json
-- Gate report: gate/gate-report.json
-- Review artifacts: review/review.json, review/findings.jsonl, review/resolutions.jsonl
-
-## Review boundaries
-- Do not apply patches.
-- Do not modify files.
-- Do not approve the review.
-- Do not claim semantic correctness without evidence.
-- Prefer concrete findings with file/path evidence.
-- If uncertain, recommend a blocking manual finding.
-
-## Expected future output
-Future reviewer output should be converted into manual review findings:
-- message
-- severity
-- category
-- file
-- line
-- blocking
-
-This PR does not parse reviewer output.`) + "\n"
+	var b strings.Builder
+	fmt.Fprintln(&b, "# Reviewer Prompt")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "This prompt is prepared for a future reviewer agent.")
+	fmt.Fprintln(&b, "Pactum does not execute reviewer agents in this milestone.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Objective")
+	fmt.Fprintln(&b, "Review the executed task against the approved Pactum contract and gate report.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Inputs")
+	fmt.Fprintf(&b, "- Reviewer context: %s\n", reviewerContextPath)
+	fmt.Fprintf(&b, "- Contract: %s\n", contractPath)
+	fmt.Fprintf(&b, "- Gate report: %s\n", gateReportPath)
+	fmt.Fprintf(&b, "- Review artifacts: %s, %s, %s\n", reviewPath, findingsPath, resolutionsPath)
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Review boundaries")
+	fmt.Fprintln(&b, "- Do not apply patches.")
+	fmt.Fprintln(&b, "- Do not modify files.")
+	fmt.Fprintln(&b, "- Do not approve the review.")
+	fmt.Fprintln(&b, "- Do not claim semantic correctness without evidence.")
+	fmt.Fprintln(&b, "- Prefer concrete findings with file/path evidence.")
+	fmt.Fprintln(&b, "- If uncertain, recommend a blocking manual finding.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Expected future output")
+	fmt.Fprintln(&b, "Future reviewer output should be converted into manual review findings:")
+	fmt.Fprintln(&b, "- message")
+	fmt.Fprintln(&b, "- severity")
+	fmt.Fprintln(&b, "- category")
+	fmt.Fprintln(&b, "- file")
+	fmt.Fprintln(&b, "- line")
+	fmt.Fprintln(&b, "- blocking")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "This PR does not parse reviewer output.")
+	return b.String()
 }
 
 func writeMarkdownStringList(b *strings.Builder, heading string, values []string) {
