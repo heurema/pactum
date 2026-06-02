@@ -283,6 +283,45 @@ func TestProjectMemoryIncludesFreshnessAfterRefresh(t *testing.T) {
 	}
 }
 
+func TestMemoryAcceptPreservesLatestRefreshInProjectMemory(t *testing.T) {
+	root := t.TempDir()
+	app, paths, _, _ := setupAcceptedMemoryWithExistingFile(t, root)
+	mustWriteFile(t, filepath.Join(root, "internal/app/memory.go"), "package app\n\nconst changed = true\n")
+	runMemoryCommand(t, app, "memory", "refresh")
+
+	runID := runContractOnlyForTask(t, app, "second memory item")
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	candidate := memoryCandidateDocument{
+		Schema:    memoryCandidateSchema,
+		RunID:     runID,
+		CreatedAt: "2026-06-02T10:00:00Z",
+		Source:    "deterministic",
+		Status:    "proposed",
+		Contract:  memoryCandidateContract{Goal: "second memory item"},
+		Outcome: memoryCandidateOutcome{
+			GateStatus:   "passed",
+			ReviewStatus: "approved",
+		},
+		Changes: memoryCandidateChanges{},
+		Review:  memoryCandidateReview{},
+		Artifacts: memoryCandidateArtifacts{
+			Contract: "contract/contract.json",
+		},
+	}
+	assertNoError(t, writeJSON(runPaths.MemoryCandidateJSON, candidate))
+	runMemoryCommand(t, app, "memory", "accept", runID)
+
+	projectMemory := mustReadFile(t, paths.ProjectMemory)
+	mem001 := projectMemorySection(t, projectMemory, "mem_001")
+	if !strings.Contains(mem001, "- Freshness: stale") {
+		t.Fatalf("mem_001 should preserve latest stale refresh after accepting mem_002:\n%s", projectMemory)
+	}
+	mem002 := projectMemorySection(t, projectMemory, "mem_002")
+	if !strings.Contains(mem002, "- Freshness: unknown") {
+		t.Fatalf("new memory item should use embedded accept freshness fallback:\n%s", projectMemory)
+	}
+}
+
 func TestMemoryFreshnessBackwardCompatibilityUnknown(t *testing.T) {
 	root := t.TempDir()
 	app, paths := setupInitializedMemoryWorkspace(t, root)
@@ -368,4 +407,18 @@ func hasString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func projectMemorySection(t *testing.T, content string, itemID string) string {
+	t.Helper()
+	start := strings.Index(content, "### "+itemID+" ")
+	if start < 0 {
+		t.Fatalf("project memory missing %s:\n%s", itemID, content)
+	}
+	rest := content[start:]
+	next := strings.Index(rest[len("### "):], "\n### ")
+	if next < 0 {
+		return rest
+	}
+	return rest[:len("### ")+next]
 }

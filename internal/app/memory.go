@@ -267,7 +267,11 @@ func (a App) MemoryAccept(stdout io.Writer, runID string, acceptedBy string, jso
 		return err
 	}
 	items = append(items, item)
-	if err := os.WriteFile(context.Paths.ProjectMemory, []byte(renderProjectMemoryMD(context.Root, items, effectiveMemoryFreshnessFromItems(items))), 0o644); err != nil {
+	freshnessByID, err := readLatestMemoryFreshness(context.Paths, items)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(context.Paths.ProjectMemory, []byte(renderProjectMemoryMD(context.Root, items, freshnessByID)), 0o644); err != nil {
 		return err
 	}
 
