@@ -5,9 +5,10 @@
 # Builds the pactum binary from source, creates a throwaway git repository in a
 # temp directory, and exercises the safe, deterministic command surface:
 #
+#   pactum version
 #   pactum init
 #   pactum status
-#   pactum run "<task>" --contract-only
+#   pactum task new "<task>"
 #   pactum agents doctor
 #
 # It never launches a real agent and never calls Codex or Claude. The temp
@@ -69,14 +70,17 @@ EOF
 git add -A
 git commit -q -m "smoke baseline"
 
+step "pactum version"
+"${PACTUM_BIN}" version
+
 step "pactum init"
 "${PACTUM_BIN}" init
 
 step "pactum status"
 "${PACTUM_BIN}" status
 
-step "pactum run (contract-only, no execution)"
-"${PACTUM_BIN}" run "smoke test Pactum install" --contract-only
+step "pactum task new (contract-only, no execution)"
+"${PACTUM_BIN}" task new "smoke test Pactum install"
 
 step "pactum agents doctor (PATH check only)"
 "${PACTUM_BIN}" agents doctor

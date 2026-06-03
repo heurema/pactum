@@ -13,7 +13,7 @@ report, the review, and the accepted memory are all files you can read.
 | --- | --- | --- | --- |
 | Init / map | `pactum init`, `pactum map refresh` | `manifest.json`, `config.yaml`, `map/` (`repo-map.md`, `llms.txt`, `files.jsonl`, `code-items.jsonl`, `hashes.jsonl`, `search.sqlite`) | Yes |
 | Status / search | `pactum status`, `pactum search "<query>"` | — (reads map + workspace) | No |
-| Run | `pactum run "<task>" --contract-only` | `runs/<id>/run.json`, `task.md`, `context/repo-context.md`, `context/search-results.json`, `context/memory-context.md`, `contract/contract.json`, `contract/contract.md`, `contract/approval.json` | Yes |
+| Task | `pactum task new "<task>"`, `pactum task list`, `pactum task show`, `pactum task use`, `pactum task current` | `runs/<id>/run.json`, `task.md`, `context/repo-context.md`, `context/search-results.json`, `context/memory-context.md`, `contract/contract.json`, `contract/contract.md`, `contract/approval.json`, `cache/current-run` | `new`/`use`: Yes; `list`/`show`/`current`: No |
 | Clarify | `pactum clarify ask`, `pactum clarify answer`, `pactum clarify status` | `clarify/questions.jsonl`, `clarify/answers.jsonl`, `clarify/decisions.jsonl` | `ask`/`answer`: Yes; `status`: No |
 | Contract | `pactum contract revise`, `pactum contract approve`, `pactum contract show` | `contract/contract.json`, `contract/contract.md`, `contract/approval.json` | `revise`/`approve`: Yes; `show`: No |
 | Prompt | `pactum prompt build`, `pactum prompt show` | `contract/prompt.md`, `contract/prompt-manifest.json`, `context/executor-context.md`, `context/memory-context.md`, `context/memory-selection.json` | `build`: Yes; `show`: No |
@@ -43,14 +43,20 @@ the map is fresh or stale (for example, when tracked files changed since the
 last scan) and points you at `pactum map refresh` when a refresh is needed.
 `pactum search "<query>"` queries the lexical index.
 
-### Run
+### Task
 
-`pactum run "<task>" --contract-only` creates a run directory and a **draft
-contract**. The draft records the goal and empty scope/acceptance/validation
-sections for you to fill in, alongside deterministic context: a repository
-context excerpt, the lexical search results for the task, and the accepted
-memory selected for the task. Running without `--contract-only` only prints
-guidance and does not create a run.
+`pactum task new "<task>"` creates a run directory and a **draft contract**. The
+draft records the goal and empty scope/acceptance/validation sections for you to
+fill in, alongside deterministic context: a repository context excerpt, the
+lexical search results for the task, and the accepted memory selected for the
+task. The new run is recorded as the **current run** (a local-only pointer at
+`cache/current-run`), so the staged commands below can omit the run id.
+
+`pactum task list` lists every run with its derived lifecycle status, `pactum
+task show [run_id|--latest]` shows one run and its next step, `pactum task use
+<run_id>` changes the current run, and `pactum task current` prints it. When a
+staged command's run id is omitted, Pactum resolves it to the current run, or to
+the sole active run if no current run is set; otherwise it asks you to pick one.
 
 ### Clarify
 
@@ -80,15 +86,18 @@ prints the built prompt.
 
 ### Execute
 
-`pactum execute dry-run <run_id> --agent codex` writes the exact command Pactum
-would run (`execute/dry-run.json`) without launching anything. `pactum execute
-run <run_id> --agent codex` runs the agent as a subprocess and captures the
-attempt (request, result, stdout, stderr) under `execute/attempts/`. Both first
-re-verify the boundaries recorded at prompt build: the contract hash still
-matches the approval, the project map is still fresh and matches the prompt
-manifest, and the accepted-memory boundary is unchanged. `pactum execute
-status/show` inspect captured attempts. See [agents.md](agents.md) for the
-execution model.
+Always inspect `pactum execute dry-run --agent codex` before `pactum execute
+run`. `dry-run` writes the exact command Pactum would run
+(`execute/dry-run.json`) without launching anything. `pactum execute run --agent
+codex` runs the agent as a subprocess and captures the attempt (request, result,
+stdout, stderr) under `execute/attempts/`. Because direct execution is
+unsandboxed, `execute run` asks for confirmation on an interactive terminal and
+**requires `--yes`** for non-interactive/automated use; `dry-run` never needs
+`--yes`. Both first re-verify the boundaries recorded at prompt build: the
+contract hash still matches the approval, the project map is still fresh and
+matches the prompt manifest, and the accepted-memory boundary is unchanged.
+`pactum execute status/show` inspect captured attempts. See
+[agents.md](agents.md) for the execution model.
 
 ### Gate
 

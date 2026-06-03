@@ -116,8 +116,7 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 
 	commands := nonEmptyValidationCommands(context.Contract.Validation.Commands)
 	if len(commands) > 0 && !allowCommands {
-		fmt.Fprintln(stdout, "Refusing to run validation commands without --allow-commands.")
-		return nil
+		return errors.New("refusing to run validation commands without --allow-commands")
 	}
 
 	startedAt := a.nowUTC()
@@ -194,8 +193,8 @@ func (a App) GateShow(stdout io.Writer, runID string, jsonOutput bool) error {
 		return err
 	}
 	if !isRegularFile(context.RunPaths.GateReportJSON) {
-		fmt.Fprintf(stdout, "Gate report has not been created. Run: pactum gate run %s --allow-commands\n", runID)
-		return nil
+		suggested := fmt.Sprintf("pactum gate run %s --allow-commands", runID)
+		return writeNotReady(stdout, jsonOutput, runID, "Gate report has not been created. Run: "+suggested, suggested)
 	}
 
 	var report gateReportDocument

@@ -70,7 +70,10 @@ There is also **no Docker support yet**.
 - `pactum execute run <run_id> --agent codex` launches the agent subprocess and
   captures the attempt — request, result (exit code, timing, timeout flag), and
   stdout/stderr logs — under `execute/attempts/`. It honors `--timeout` (default
-  10 minutes).
+  10 minutes). Because execution is **unsandboxed**, `execute run` asks for
+  confirmation on an interactive terminal and **requires `--yes`** when stdin is
+  not a terminal (CI/automation), so it never launches an agent unattended by
+  accident. `execute dry-run` never needs `--yes`.
 
 Both first re-verify the prompt boundary: the contract is still approved and its
 hash matches, the project map is fresh and matches the prompt manifest, and the
@@ -90,7 +93,10 @@ automatically.
   `review/reviewer-dry-run.json`) without launching a reviewer.
 - `pactum review run <run_id> --reviewer codex` launches the reviewer subprocess
   (same direct-subprocess model as execution, with `--timeout`) and captures its
-  attempt under `review/reviewer-attempts/`.
+  attempt under `review/reviewer-attempts/`. Like `execute run`, it is
+  unsandboxed agent execution, so it asks for confirmation on an interactive
+  terminal and **requires `--yes`** for non-interactive/automated use; `review
+  dry-run` never needs `--yes`.
 
 A reviewer can emit optional structured finding proposals as a fenced JSON block.
 `pactum review propose-findings <run_id>` parses the captured reviewer stdout

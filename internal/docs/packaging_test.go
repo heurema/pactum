@@ -27,7 +27,7 @@ func TestMakefileHasLocalTargets(t *testing.T) {
 			t.Errorf("Makefile is missing a %q target", target)
 		}
 	}
-	if !strings.Contains(content, "go build -o bin/pactum ./cmd/pactum") {
+	if !strings.Contains(content, "go build") || !strings.Contains(content, "-o bin/pactum ./cmd/pactum") {
 		t.Errorf("Makefile build target does not compile ./cmd/pactum into bin/pactum")
 	}
 }
@@ -46,8 +46,8 @@ func TestSmokeScriptExists(t *testing.T) {
 	for _, mention := range []string{
 		"pactum init",
 		"pactum status",
+		"pactum task new",
 		"pactum agents doctor",
-		"--contract-only",
 	} {
 		if !strings.Contains(content, mention) {
 			t.Errorf("scripts/smoke.sh does not reference %q", mention)

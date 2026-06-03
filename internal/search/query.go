@@ -11,7 +11,7 @@ import (
 const defaultLimit = 10
 
 func Query(dbPath string, options QueryOptions) (Response, error) {
-	response := Response{Query: options.Query}
+	response := Response{Schema: ResponseSchema, Query: options.Query}
 	if _, err := os.Stat(dbPath); err != nil {
 		if os.IsNotExist(err) {
 			return response, ErrMissingIndex(dbPath)

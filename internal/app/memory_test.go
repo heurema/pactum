@@ -16,11 +16,11 @@ func TestMemoryProposeBeforeInitPrintsGuidance(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := testApp(root).Run([]string{"memory", "propose", "run_x"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("memory propose before init exited %d, stderr: %s", code, stderr.String())
+	if code != 1 {
+		t.Fatalf("memory propose before init exited %d, want 1, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
-		t.Fatalf("memory propose before init output mismatch:\n%s", got)
+	if got := stderr.String(); !strings.Contains(got, "not initialized") {
+		t.Fatalf("memory propose before init stderr mismatch:\n%s", got)
 	}
 }
 

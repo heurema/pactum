@@ -45,7 +45,7 @@ func (a App) ExecuteDryRun(stdout io.Writer, runID string, agentName string, jso
 	return nil
 }
 
-func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, timeout time.Duration, jsonOutput bool) error {
+func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, timeout time.Duration, confirm bool, jsonOutput bool) error {
 	root, _, ok, err := a.requireWorkspace(stdout, false)
 	if err != nil || !ok {
 		return err
@@ -55,6 +55,19 @@ func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, timeou
 	if err != nil {
 		return err
 	}
+
+	// Direct execution runs an external agent in the repository with no sandbox.
+	// Require an explicit confirmation (interactive prompt or --yes) first.
+	if !confirm {
+		proceed, err := confirmDirectExecution(stdout)
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			return fmt.Errorf("execution cancelled")
+		}
+	}
+
 	now := a.nowUTC()
 	plan, err := ensureDryRunPlan(prep, now.Format(time.RFC3339))
 	if err != nil {

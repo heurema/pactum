@@ -20,11 +20,11 @@ func TestExecuteDryRunBeforeInitPrintsGuidance(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := testApp(root).Run([]string{"execute", "dry-run", "run_x"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("execute dry-run before init exited %d, stderr: %s", code, stderr.String())
+	if code != 1 {
+		t.Fatalf("execute dry-run before init exited %d, want 1, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
-		t.Fatalf("execute dry-run before init output mismatch:\n%s", got)
+	if got := stderr.String(); !strings.Contains(got, "not initialized") {
+		t.Fatalf("execute dry-run before init stderr mismatch:\n%s", got)
 	}
 }
 
@@ -392,7 +392,7 @@ func TestExecuteRunDoesNotRequireAllowExecute(t *testing.T) {
 	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
 	}
@@ -421,7 +421,7 @@ func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
+	code = app.Run([]string{"execute", "run", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
 	}
@@ -501,7 +501,7 @@ func TestExecuteRunNonZeroWritesArtifactsAndReturnsNonZero(t *testing.T) {
 	t.Setenv("PACTUM_HELPER_EXIT", "7")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("execute run should return non-zero for agent failure")
 	}
@@ -533,7 +533,7 @@ func TestExecuteRunJSONOutput(t *testing.T) {
 	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--yes", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute run --json exited %d, stderr: %s", code, stderr.String())
 	}
@@ -574,7 +574,7 @@ func TestExecuteRunCreatesIncrementingAttemptsAndLedgerEvents(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		var stdout, stderr bytes.Buffer
-		code := app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
+		code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("execute run %d exited %d, stderr: %s", i+1, code, stderr.String())
 		}

@@ -188,8 +188,8 @@ func (a App) MemoryShow(stdout io.Writer, runID string, jsonOutput bool) error {
 		return err
 	}
 	if !isRegularFile(context.RunPaths.MemoryCandidateJSON) {
-		fmt.Fprintf(stdout, "Memory candidate has not been created. Run: pactum memory propose %s\n", runID)
-		return nil
+		suggested := fmt.Sprintf("pactum memory propose %s", runID)
+		return writeNotReady(stdout, jsonOutput, runID, "Memory candidate has not been created. Run: "+suggested, suggested)
 	}
 	candidate, err := readMemoryCandidate(context.RunPaths.MemoryCandidateJSON)
 	if err != nil {

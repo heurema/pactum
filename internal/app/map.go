@@ -18,7 +18,10 @@ import (
 
 const mapManifestSchema = "pactum.map.manifest.v1"
 
+const mapRefreshSchema = "pactum.map_refresh.v1"
+
 type MapRefreshResult struct {
+	Schema       string    `json:"schema"`
 	RunID        string    `json:"run_id"`
 	StartedAt    time.Time `json:"started_at"`
 	FinishedAt   time.Time `json:"finished_at"`
@@ -148,6 +151,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 
 	finishedAt := a.nowUTC()
 	result := MapRefreshResult{
+		Schema:       mapRefreshSchema,
 		RunID:        runID,
 		StartedAt:    startedAt,
 		FinishedAt:   finishedAt,

@@ -40,9 +40,13 @@ artifacts, the accepted project memory, the event ledger, and scratch space.
 │   ├── project-memory.md
 │   └── refreshes.jsonl
 ├── ledger/                  # workspace event + usage ledger
-├── cache/                   # scratch cache
+├── cache/                   # scratch cache (e.g. current-run pointer)
 └── tmp/                     # scratch temp
 ```
+
+The `cache/current-run` file records the **current run** that `pactum task new`
+and `pactum task use` set, so staged commands can omit the run id. It is
+local-only generated state — never commit it.
 
 ## Generated vs durable artifacts
 

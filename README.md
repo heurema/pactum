@@ -104,49 +104,67 @@ The examples below use `pactum <command>`; substitute `go run ./cmd/pactum
 
 ## Quick start
 
+Pactum tracks a **current run**, so after `pactum task new` you can omit the run
+id from the staged commands below — they default to the current run (override
+with an explicit id or `pactum task use <run_id>`).
+
 ```sh
 # 1. Initialize the workspace and build the project map.
 pactum init
 pactum status
 
-# 2. Create a contract-first run for a task.
-pactum run "add feature X" --contract-only
+# 2. Create a contract-first run for a task (this becomes the current run).
+pactum task new "add feature X"
 
-# (run prints a run id such as run_20260603_120000 — use it below)
+# Inspect runs at any time:
+pactum task list
+pactum task current
 
 # 3. Clarify open questions before approving the contract.
-pactum clarify ask <run_id> "Question?" --blocking
-pactum clarify answer <run_id> q_001 "Answer"
+pactum clarify ask "Question?" --blocking
+pactum clarify answer q_001 "Answer"
 
 # 4. Shape and approve the contract.
-pactum contract revise <run_id> \
+pactum contract revise \
   --goal "..." \
   --add-in-scope "..." \
   --add-acceptance "..." \
   --add-validation "go test ./..."
-pactum contract approve <run_id> --by manual
+pactum contract approve
 
 # 5. Build the deterministic executor prompt boundary.
-pactum prompt build <run_id>
+pactum prompt build
 
-# 6. Inspect the planned execution, then run the agent.
-pactum execute dry-run <run_id> --agent codex
-pactum execute run <run_id> --agent codex
+# 6. Inspect the planned execution, then run the agent. `execute run` runs the
+#    agent directly in your repository; it asks for confirmation on a terminal,
+#    or pass --yes for non-interactive use.
+pactum execute dry-run --agent codex
+pactum execute run --agent codex --yes
 
 # 7. Gate the result. Validation commands run only with --allow-commands.
-pactum gate run <run_id> --allow-commands
+pactum gate run --allow-commands
 
 # 8. Review the run manually.
-pactum review prepare <run_id>
-pactum review add-finding <run_id> "..." --blocking --severity medium --category quality
-pactum review resolve <run_id> f_001 --note "Fixed"
-pactum review approve <run_id> --by manual
+pactum review prepare
+pactum review add-finding "..." --blocking --severity medium --category quality
+pactum review resolve f_001 --note "Fixed"
+pactum review approve
 
 # 9. Capture reusable project memory from the reviewed run.
-pactum memory propose <run_id>
-pactum memory show <run_id>
-pactum memory accept <run_id> --by manual
+pactum memory propose
+pactum memory accept
+
+# At any point, see where you are and what to run next:
+pactum status
+
+# Print the version:
+pactum version
 ```
+
+> Every staged command still accepts an explicit run id (for example
+> `pactum contract approve run_20260603_120000`) and the secondary-id commands
+> accept either form, e.g. `pactum review resolve f_001` or
+> `pactum review resolve <run_id> f_001`.
 
 ## Documentation
 

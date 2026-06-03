@@ -18,6 +18,7 @@ import (
 	"github.com/heurema/pactum/internal/ledger"
 	"github.com/heurema/pactum/internal/projectmap"
 	searchpkg "github.com/heurema/pactum/internal/search"
+	"github.com/heurema/pactum/internal/version"
 	"gopkg.in/yaml.v3"
 )
 
@@ -43,9 +44,10 @@ type cli struct {
 	Memory   memoryCmd   `cmd:"" help:"Propose, inspect, and accept deterministic project memory."`
 	Prompt   promptCmd   `cmd:"" help:"Build and inspect executor prompt boundaries."`
 	Review   reviewCmd   `cmd:"" help:"Manage manual review artifacts."`
-	Run      runCmd      `cmd:"" help:"Create a Pactum run workspace."`
 	Search   searchCmd   `cmd:"" help:"Search the Pactum project map."`
 	Status   statusCmd   `cmd:"" help:"Print Pactum workspace status."`
+	Task     taskCmd     `cmd:"" help:"Create and manage contract-first runs."`
+	Version  versionCmd  `cmd:"" help:"Print the Pactum version."`
 }
 
 type initCmd struct {
@@ -63,21 +65,18 @@ type clarifyCmd struct {
 }
 
 type clarifyAskCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to clarify."`
-	Question   string `arg:"" name:"question" help:"Clarification question text."`
-	Blocking   bool   `name:"blocking" help:"Mark the question as blocking contract progress."`
-	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <question>"`
+	Blocking   bool     `name:"blocking" help:"Mark the question as blocking contract progress."`
+	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type clarifyAnswerCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to clarify."`
-	QuestionID string `arg:"" name:"question_id" help:"Clarification question id."`
-	Answer     string `arg:"" name:"answer" help:"Clarification answer text."`
-	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <question_id> <answer>"`
+	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type clarifyStatusCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -132,12 +131,12 @@ type memoryCmd struct {
 }
 
 type contractShowCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type contractReviseCmd struct {
-	RunID         string   `arg:"" name:"run_id" help:"Run id to revise."`
+	RunID         string   `arg:"" optional:"" name:"run_id" help:"Run id to revise."`
 	Goal          string   `name:"goal" help:"Replace the contract goal."`
 	AddInScope    []string `name:"add-in-scope" sep:"none" help:"Append an in-scope item."`
 	AddOutOfScope []string `name:"add-out-of-scope" sep:"none" help:"Append an out-of-scope item."`
@@ -148,126 +147,122 @@ type contractReviseCmd struct {
 }
 
 type contractApproveCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to approve."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to approve."`
 	By         string `name:"by" default:"manual" help:"Approver name to record."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type promptBuildCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to build prompt artifacts for."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to build prompt artifacts for."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type promptShowCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type executeDryRunCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to prepare for execution."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to prepare for execution."`
 	Agent      string `name:"agent" help:"Built-in agent name. Defaults to codex."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type executeRunCmd struct {
-	RunID      string        `arg:"" name:"run_id" help:"Run id to execute."`
+	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to execute."`
 	Agent      string        `name:"agent" help:"Built-in agent name. Defaults to codex."`
 	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the built-in agent process."`
+	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type executeStatusCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type executeShowCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
-	AttemptID  string `arg:"" optional:"" name:"attempt_id" help:"Attempt id to inspect. Defaults to the latest result."`
-	Logs       bool   `name:"logs" help:"Include bounded stdout/stderr excerpts."`
-	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] [attempt_id]"`
+	Logs       bool     `name:"logs" help:"Include bounded stdout/stderr excerpts."`
+	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type gateRunCmd struct {
-	RunID         string `arg:"" name:"run_id" help:"Run id to inspect."`
+	RunID         string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
 	AllowCommands bool   `name:"allow-commands" help:"Required safety flag before running validation commands."`
 	JSONOutput    bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type gateShowCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewPrepareCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to review."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to review."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewStatusCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewShowCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewAddFindingCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to review."`
-	Message    string `arg:"" name:"message" help:"Finding message."`
-	Severity   string `name:"severity" default:"medium" enum:"low,medium,high,critical" help:"Finding severity."`
-	Category   string `name:"category" default:"other" enum:"correctness,scope,quality,validation,process,other" help:"Finding category."`
-	File       string `name:"file" help:"Repo-relative file path."`
-	Line       int    `name:"line" help:"Optional line number."`
-	Blocking   bool   `name:"blocking" help:"Block review approval until resolved."`
-	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <message>"`
+	Severity   string   `name:"severity" default:"medium" enum:"low,medium,high,critical" help:"Finding severity."`
+	Category   string   `name:"category" default:"other" enum:"correctness,scope,quality,validation,process,other" help:"Finding category."`
+	File       string   `name:"file" help:"Repo-relative file path."`
+	Line       int      `name:"line" help:"Optional line number."`
+	Blocking   bool     `name:"blocking" help:"Block review approval until resolved."`
+	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewResolveCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to review."`
-	FindingID  string `arg:"" name:"finding_id" help:"Finding id to resolve."`
-	Note       string `name:"note" help:"Resolution note."`
-	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <finding_id>"`
+	Note       string   `name:"note" help:"Resolution note."`
+	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewApproveCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to review."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to review."`
 	By         string `name:"by" default:"manual" help:"Approver name to record."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewDryRunCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to prepare reviewer artifacts for."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to prepare reviewer artifacts for."`
 	Reviewer   string `name:"reviewer" help:"Built-in reviewer name. Defaults to codex."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewRunCmd struct {
-	RunID      string        `arg:"" name:"run_id" help:"Run id to review."`
+	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to review."`
 	Reviewer   string        `name:"reviewer" help:"Built-in reviewer name. Defaults to codex."`
 	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the reviewer process."`
+	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewProposeFindingsCmd struct {
-	RunID             string `arg:"" name:"run_id" help:"Run id to review."`
-	ReviewerAttemptID string `arg:"" optional:"" name:"reviewer_attempt_id" help:"Reviewer attempt id. Defaults to latest completed attempt."`
-	JSONOutput        bool   `name:"json" help:"Print machine-readable JSON output."`
+	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] [reviewer_attempt_id]"`
+	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewAcceptProposalCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to review."`
-	ProposalID string `arg:"" name:"proposal_id" help:"Proposal id to accept."`
-	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <proposal_id>"`
+	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewRejectProposalCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to review."`
-	ProposalID string `arg:"" name:"proposal_id" help:"Proposal id to reject."`
-	Reason     string `name:"reason" help:"Reason for rejecting the proposal."`
-	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <proposal_id>"`
+	Reason     string   `name:"reason" help:"Reason for rejecting the proposal."`
+	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type agentsDoctorCmd struct {
@@ -276,17 +271,17 @@ type agentsDoctorCmd struct {
 }
 
 type memoryProposeCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to propose memory for."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to propose memory for."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type memoryShowCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to inspect."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type memoryAcceptCmd struct {
-	RunID      string `arg:"" name:"run_id" help:"Run id to accept memory for."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to accept memory for."`
 	By         string `name:"by" default:"manual" help:"Acceptance name to record."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
@@ -307,17 +302,14 @@ type memoryStaleCmd struct {
 
 type mapRefreshCmd struct {
 	JSONOutput bool `name:"json" help:"Print machine-readable JSON output."`
-	Full       bool `help:"Accepted for now; performs the same full rebuild as the default."`
 }
 
 type statusCmd struct {
 	JSONOutput bool `name:"json" help:"Print machine-readable JSON output."`
 }
 
-type runCmd struct {
-	Task         string `arg:"" name:"task" help:"Task to prepare a contract for."`
-	ContractOnly bool   `name:"contract-only" help:"Create a contract draft without execution."`
-	JSONOutput   bool   `name:"json" help:"Print machine-readable JSON output."`
+type versionCmd struct {
+	JSONOutput bool `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type searchCmd struct {
@@ -443,9 +435,21 @@ func (a App) Run(args []string, stdout, stderr io.Writer) (code int) {
 	}
 	ctx, err := parser.Parse(args)
 	if err != nil {
+		// Do not exit silently: report the parse error and a help pointer on
+		// stderr, keeping stdout clean for scripts. Parser errors exit 2.
+		fmt.Fprintf(stderr, "pactum: %v\n", err)
+		fmt.Fprintln(stderr, "Run 'pactum --help' for usage.")
 		return 2
 	}
 	if err := ctx.Run(&runner{App: a, Stdout: stdout}); err != nil {
+		// Command errors exit 1. With --json, emit a machine-readable error
+		// envelope on stdout (stderr stays empty); otherwise a human line on
+		// stderr.
+		if jsonRequested(args) {
+			if encErr := writeErrorEnvelope(stdout, err); encErr == nil {
+				return 1
+			}
+		}
 		fmt.Fprintf(stderr, "pactum %s: %v\n", ctx.Command(), err)
 		return 1
 	}
@@ -468,27 +472,80 @@ func (c *statusCmd) Run(r *runner) error {
 	return r.App.Status(r.Stdout, c.JSONOutput)
 }
 
-func (c *runCmd) Run(r *runner) error {
-	return r.App.RunContract(r.Stdout, c.Task, c.ContractOnly, c.JSONOutput)
+func (c *versionCmd) Run(r *runner) error {
+	if c.JSONOutput {
+		return writeJSONResponse(r.Stdout, version.Current())
+	}
+	info := version.Current()
+	fmt.Fprintln(r.Stdout, "Pactum version")
+	fmt.Fprintf(r.Stdout, "  version: %s\n", info.Version)
+	fmt.Fprintf(r.Stdout, "  commit: %s\n", info.Commit)
+	fmt.Fprintf(r.Stdout, "  date: %s\n", info.Date)
+	return nil
+}
+
+// ensureInitialized returns errNotInitialized when no workspace exists. Mutating
+// commands without a run id argument use it so they exit 1 (not 0) before init.
+func (a App) ensureInitialized() error {
+	_, workspace, err := a.resolveStatusRoot()
+	if err != nil {
+		return err
+	}
+	if workspace == "" {
+		return errNotInitialized
+	}
+	return nil
 }
 
 func (c *clarifyAskCmd) Run(r *runner) error {
-	return r.App.ClarifyAsk(r.Stdout, c.RunID, c.Question, c.Blocking, c.JSONOutput)
+	explicitRun, rest := splitLeadingRunID(c.Args)
+	if len(rest) != 1 {
+		return errors.New("usage: pactum clarify ask [run_id] <question>")
+	}
+	runID, err := r.App.resolveRunArgMutating(explicitRun, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ClarifyAsk(r.Stdout, runID, rest[0], c.Blocking, c.JSONOutput)
 }
 
 func (c *clarifyAnswerCmd) Run(r *runner) error {
-	return r.App.ClarifyAnswer(r.Stdout, c.RunID, c.QuestionID, c.Answer, c.JSONOutput)
+	explicitRun, rest := splitLeadingRunID(c.Args)
+	if len(rest) != 2 {
+		return errors.New("usage: pactum clarify answer [run_id] <question_id> <answer>")
+	}
+	questionID, answer := rest[0], rest[1]
+	if !strings.HasPrefix(questionID, "q_") {
+		return fmt.Errorf("expected a question id (q_...), got %q", questionID)
+	}
+	runID, err := r.App.resolveRunArgMutating(explicitRun, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ClarifyAnswer(r.Stdout, runID, questionID, answer, c.JSONOutput)
 }
 
 func (c *clarifyStatusCmd) Run(r *runner) error {
-	return r.App.ClarifyStatus(r.Stdout, c.RunID, c.JSONOutput)
+	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
+	if err != nil || !ok {
+		return err
+	}
+	return r.App.ClarifyStatus(r.Stdout, runID, c.JSONOutput)
 }
 
 func (c *contractShowCmd) Run(r *runner) error {
-	return r.App.ContractShow(r.Stdout, c.RunID, c.JSONOutput)
+	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
+	if err != nil || !ok {
+		return err
+	}
+	return r.App.ContractShow(r.Stdout, runID, c.JSONOutput)
 }
 
 func (c *contractReviseCmd) Run(r *runner) error {
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
 	revision := contractRevision{
 		Goal:          c.Goal,
 		AddInScope:    c.AddInScope,
@@ -497,95 +554,219 @@ func (c *contractReviseCmd) Run(r *runner) error {
 		AddValidation: c.AddValidation,
 		AddAssumption: c.AddAssumption,
 	}
-	return r.App.ContractRevise(r.Stdout, c.RunID, revision, c.JSONOutput)
+	return r.App.ContractRevise(r.Stdout, runID, revision, c.JSONOutput)
 }
 
 func (c *contractApproveCmd) Run(r *runner) error {
-	return r.App.ContractApprove(r.Stdout, c.RunID, c.By, c.JSONOutput)
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ContractApprove(r.Stdout, runID, c.By, c.JSONOutput)
 }
 
 func (c *promptBuildCmd) Run(r *runner) error {
-	return r.App.PromptBuild(r.Stdout, c.RunID, c.JSONOutput)
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.PromptBuild(r.Stdout, runID, c.JSONOutput)
 }
 
 func (c *promptShowCmd) Run(r *runner) error {
-	return r.App.PromptShow(r.Stdout, c.RunID, c.JSONOutput)
+	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
+	if err != nil || !ok {
+		return err
+	}
+	return r.App.PromptShow(r.Stdout, runID, c.JSONOutput)
 }
 
 func (c *executeDryRunCmd) Run(r *runner) error {
-	return r.App.ExecuteDryRun(r.Stdout, c.RunID, c.Agent, c.JSONOutput)
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ExecuteDryRun(r.Stdout, runID, c.Agent, c.JSONOutput)
 }
 
 func (c *executeRunCmd) Run(r *runner) error {
-	return r.App.ExecuteRun(r.Stdout, c.RunID, c.Agent, c.Timeout, c.JSONOutput)
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ExecuteRun(r.Stdout, runID, c.Agent, c.Timeout, c.Yes, c.JSONOutput)
 }
 
 func (c *executeStatusCmd) Run(r *runner) error {
-	return r.App.ExecuteStatus(r.Stdout, c.RunID, c.JSONOutput)
+	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
+	if err != nil || !ok {
+		return err
+	}
+	return r.App.ExecuteStatus(r.Stdout, runID, c.JSONOutput)
 }
 
 func (c *executeShowCmd) Run(r *runner) error {
-	return r.App.ExecuteShow(r.Stdout, c.RunID, c.AttemptID, c.Logs, c.JSONOutput)
+	explicitRun, rest := splitLeadingRunID(c.Args)
+	if len(rest) > 1 {
+		return errors.New("usage: pactum execute show [run_id] [attempt_id]")
+	}
+	attemptID := ""
+	if len(rest) == 1 {
+		attemptID = rest[0]
+	}
+	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, explicitRun, false, c.JSONOutput)
+	if err != nil || !ok {
+		return err
+	}
+	return r.App.ExecuteShow(r.Stdout, runID, attemptID, c.Logs, c.JSONOutput)
 }
 
 func (c *gateRunCmd) Run(r *runner) error {
-	return r.App.GateRun(r.Stdout, c.RunID, c.AllowCommands, c.JSONOutput)
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.GateRun(r.Stdout, runID, c.AllowCommands, c.JSONOutput)
 }
 
 func (c *gateShowCmd) Run(r *runner) error {
-	return r.App.GateShow(r.Stdout, c.RunID, c.JSONOutput)
+	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
+	if err != nil || !ok {
+		return err
+	}
+	return r.App.GateShow(r.Stdout, runID, c.JSONOutput)
 }
 
 func (c *reviewPrepareCmd) Run(r *runner) error {
-	return r.App.ReviewPrepare(r.Stdout, c.RunID, c.JSONOutput)
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ReviewPrepare(r.Stdout, runID, c.JSONOutput)
 }
 
 func (c *reviewStatusCmd) Run(r *runner) error {
-	return r.App.ReviewStatus(r.Stdout, c.RunID, c.JSONOutput)
+	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
+	if err != nil || !ok {
+		return err
+	}
+	return r.App.ReviewStatus(r.Stdout, runID, c.JSONOutput)
 }
 
 func (c *reviewShowCmd) Run(r *runner) error {
-	return r.App.ReviewShow(r.Stdout, c.RunID, c.JSONOutput)
+	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
+	if err != nil || !ok {
+		return err
+	}
+	return r.App.ReviewShow(r.Stdout, runID, c.JSONOutput)
 }
 
 func (c *reviewAddFindingCmd) Run(r *runner) error {
+	explicitRun, rest := splitLeadingRunID(c.Args)
+	if len(rest) != 1 {
+		return errors.New("usage: pactum review add-finding [run_id] <message>")
+	}
+	runID, err := r.App.resolveRunArgMutating(explicitRun, false)
+	if err != nil {
+		return err
+	}
 	finding := reviewFindingInput{
-		Message:  c.Message,
+		Message:  rest[0],
 		Severity: c.Severity,
 		Category: c.Category,
 		File:     c.File,
 		Line:     c.Line,
 		Blocking: c.Blocking,
 	}
-	return r.App.ReviewAddFinding(r.Stdout, c.RunID, finding, c.JSONOutput)
+	return r.App.ReviewAddFinding(r.Stdout, runID, finding, c.JSONOutput)
 }
 
 func (c *reviewResolveCmd) Run(r *runner) error {
-	return r.App.ReviewResolve(r.Stdout, c.RunID, c.FindingID, c.Note, c.JSONOutput)
+	explicitRun, rest := splitLeadingRunID(c.Args)
+	if len(rest) != 1 {
+		return errors.New("usage: pactum review resolve [run_id] <finding_id>")
+	}
+	findingID := rest[0]
+	if !strings.HasPrefix(findingID, "f_") {
+		return fmt.Errorf("expected a finding id (f_...), got %q", findingID)
+	}
+	runID, err := r.App.resolveRunArgMutating(explicitRun, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ReviewResolve(r.Stdout, runID, findingID, c.Note, c.JSONOutput)
 }
 
 func (c *reviewApproveCmd) Run(r *runner) error {
-	return r.App.ReviewApprove(r.Stdout, c.RunID, c.By, c.JSONOutput)
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ReviewApprove(r.Stdout, runID, c.By, c.JSONOutput)
 }
 
 func (c *reviewDryRunCmd) Run(r *runner) error {
-	return r.App.ReviewDryRun(r.Stdout, c.RunID, c.Reviewer, c.JSONOutput)
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ReviewDryRun(r.Stdout, runID, c.Reviewer, c.JSONOutput)
 }
 
 func (c *reviewRunCmd) Run(r *runner) error {
-	return r.App.ReviewRun(r.Stdout, c.RunID, c.Reviewer, c.Timeout, c.JSONOutput)
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ReviewRun(r.Stdout, runID, c.Reviewer, c.Timeout, c.Yes, c.JSONOutput)
 }
 
 func (c *reviewProposeFindingsCmd) Run(r *runner) error {
-	return r.App.ReviewProposeFindings(r.Stdout, c.RunID, c.ReviewerAttemptID, c.JSONOutput)
+	explicitRun, rest := splitLeadingRunID(c.Args)
+	if len(rest) > 1 {
+		return errors.New("usage: pactum review propose-findings [run_id] [reviewer_attempt_id]")
+	}
+	attemptID := ""
+	if len(rest) == 1 {
+		attemptID = rest[0]
+	}
+	runID, err := r.App.resolveRunArgMutating(explicitRun, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ReviewProposeFindings(r.Stdout, runID, attemptID, c.JSONOutput)
 }
 
 func (c *reviewAcceptProposalCmd) Run(r *runner) error {
-	return r.App.ReviewAcceptProposal(r.Stdout, c.RunID, c.ProposalID, c.JSONOutput)
+	explicitRun, rest := splitLeadingRunID(c.Args)
+	if len(rest) != 1 {
+		return errors.New("usage: pactum review accept-proposal [run_id] <proposal_id>")
+	}
+	proposalID := rest[0]
+	if !strings.HasPrefix(proposalID, "p_") {
+		return fmt.Errorf("expected a proposal id (p_...), got %q", proposalID)
+	}
+	runID, err := r.App.resolveRunArgMutating(explicitRun, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ReviewAcceptProposal(r.Stdout, runID, proposalID, c.JSONOutput)
 }
 
 func (c *reviewRejectProposalCmd) Run(r *runner) error {
-	return r.App.ReviewRejectProposal(r.Stdout, c.RunID, c.ProposalID, c.Reason, c.JSONOutput)
+	explicitRun, rest := splitLeadingRunID(c.Args)
+	if len(rest) != 1 {
+		return errors.New("usage: pactum review reject-proposal [run_id] <proposal_id>")
+	}
+	proposalID := rest[0]
+	if !strings.HasPrefix(proposalID, "p_") {
+		return fmt.Errorf("expected a proposal id (p_...), got %q", proposalID)
+	}
+	runID, err := r.App.resolveRunArgMutating(explicitRun, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ReviewRejectProposal(r.Stdout, runID, proposalID, c.Reason, c.JSONOutput)
 }
 
 func (c *agentsDoctorCmd) Run(r *runner) error {
@@ -593,15 +774,27 @@ func (c *agentsDoctorCmd) Run(r *runner) error {
 }
 
 func (c *memoryProposeCmd) Run(r *runner) error {
-	return r.App.MemoryPropose(r.Stdout, c.RunID, c.JSONOutput)
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.MemoryPropose(r.Stdout, runID, c.JSONOutput)
 }
 
 func (c *memoryShowCmd) Run(r *runner) error {
-	return r.App.MemoryShow(r.Stdout, c.RunID, c.JSONOutput)
+	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
+	if err != nil || !ok {
+		return err
+	}
+	return r.App.MemoryShow(r.Stdout, runID, c.JSONOutput)
 }
 
 func (c *memoryAcceptCmd) Run(r *runner) error {
-	return r.App.MemoryAccept(r.Stdout, c.RunID, c.By, c.JSONOutput)
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.MemoryAccept(r.Stdout, runID, c.By, c.JSONOutput)
 }
 
 func (c *memorySearchCmd) Run(r *runner) error {
@@ -609,6 +802,9 @@ func (c *memorySearchCmd) Run(r *runner) error {
 }
 
 func (c *memoryRefreshCmd) Run(r *runner) error {
+	if err := r.App.ensureInitialized(); err != nil {
+		return err
+	}
 	return r.App.MemoryRefresh(r.Stdout, c.JSONOutput)
 }
 
@@ -621,13 +817,12 @@ func (c *searchCmd) Run(r *runner) error {
 }
 
 func (c *mapRefreshCmd) Run(r *runner) error {
-	_ = c.Full
 	root, workspace, err := r.App.resolveStatusRoot()
 	if err != nil {
 		return err
 	}
 	if workspace == "" {
-		return errors.New("Pactum is not initialized. Run: pactum init")
+		return errNotInitialized
 	}
 	result, err := r.App.RefreshMap(root)
 	if err != nil {
@@ -661,7 +856,7 @@ func (a App) Init(root string) error {
 	manifest := workspaceManifest{
 		Schema:        workspaceSchema,
 		Tool:          artifacts.ToolName,
-		ToolVersion:   artifacts.ToolVersion,
+		ToolVersion:   version.Version,
 		RepoRoot:      ".",
 		InitializedAt: now,
 		UpdatedAt:     now,
@@ -730,6 +925,16 @@ func writeWorkspaceStatus(stdout io.Writer, report statusResponse) {
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Runs:")
 	fmt.Fprintf(stdout, "  active: %d\n", report.Runs.Active)
+	if report.Runs.LatestRunID != "" {
+		fmt.Fprintf(stdout, "  latest: %s\n", report.Runs.LatestRunID)
+		fmt.Fprintf(stdout, "  latest status: %s\n", report.Runs.LatestStatus)
+	}
+	if report.Runs.CurrentRunID != "" {
+		fmt.Fprintf(stdout, "  current: %s\n", report.Runs.CurrentRunID)
+	}
+	if report.Runs.NextCommand != "" {
+		fmt.Fprintf(stdout, "  next: %s\n", report.Runs.NextCommand)
+	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Memory:")
 	fmt.Fprintf(stdout, "  items: %d\n", report.Memory.Items)

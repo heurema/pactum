@@ -32,6 +32,9 @@ var forbiddenDocPhrases = []string{
 	"agents.adapters",
 	"does not execute agents in this milestone",
 	"when execution becomes available",
+	// M5.3 replaced the top-level `run` command with `task new`.
+	"--contract-only",
+	`pactum run "`,
 }
 
 // requiredDocMentions are current commands the user-facing docs must describe.
@@ -46,6 +49,12 @@ var requiredDocMentions = []string{
 	"make build",
 	"go install ./cmd/pactum",
 	"scripts/smoke.sh",
+	// CLI v0.2 surface (M5.3).
+	"pactum task new",
+	"pactum task list",
+	"pactum task use",
+	"pactum version",
+	"--yes",
 }
 
 // TestRequiredDocsExist fails if any required user-facing doc is missing.

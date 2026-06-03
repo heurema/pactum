@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -87,27 +86,6 @@ type approvalState struct {
 	ApprovedAt     *string `json:"approved_at"`
 	ApprovedBy     *string `json:"approved_by"`
 	ContractSHA256 *string `json:"contract_sha256"`
-}
-
-func (a App) RunContract(stdout io.Writer, task string, contractOnly bool, jsonOutput bool) error {
-	root, _, ok, err := a.requireWorkspace(stdout, false)
-	if err != nil || !ok {
-		return err
-	}
-	if !contractOnly {
-		fmt.Fprintln(stdout, "pactum run prepares a contract draft. Re-run with --contract-only, then use: clarify, contract approve, prompt build, execute.")
-		return nil
-	}
-
-	result, err := a.createContractOnlyRun(root, task)
-	if err != nil {
-		return err
-	}
-	if jsonOutput {
-		return writeJSONResponse(stdout, result)
-	}
-	writeRunCreated(stdout, result)
-	return nil
 }
 
 func (a App) createContractOnlyRun(root string, task string) (contractRunState, error) {
@@ -539,23 +517,6 @@ func writeMarkdownListSection(buffer *bytes.Buffer, heading string, values []str
 	for _, value := range values {
 		fmt.Fprintf(buffer, "- %s\n", value)
 	}
-}
-
-func writeRunCreated(stdout io.Writer, result contractRunState) {
-	fmt.Fprintln(stdout, "Run created")
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Run:")
-	fmt.Fprintf(stdout, "  id: %s\n", result.RunID)
-	fmt.Fprintf(stdout, "  status: %s\n", result.Status)
-	fmt.Fprintf(stdout, "  task: %s\n", result.Task)
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Artifacts:")
-	fmt.Fprintf(stdout, "  task: %s\n", runArtifactRepoRel(result.RunID, result.Artifacts.Task))
-	fmt.Fprintf(stdout, "  context: %s\n", runArtifactRepoRel(result.RunID, result.Artifacts.RepoContext))
-	fmt.Fprintf(stdout, "  contract: %s\n", runArtifactRepoRel(result.RunID, result.Artifacts.ContractMD))
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Next:")
-	fmt.Fprintln(stdout, "  Review the generated contract draft.")
 }
 
 func runArtifactRepoRel(runID string, artifactPath string) string {

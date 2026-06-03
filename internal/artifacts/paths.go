@@ -4,7 +4,6 @@ import "path/filepath"
 
 const (
 	ToolName     = "pactum"
-	ToolVersion  = "0.1.0"
 	WorkspaceRel = ".heurema/pactum"
 )
 

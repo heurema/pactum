@@ -8,9 +8,12 @@ import (
 const (
 	DoctorStatusReady          = "ready"
 	DoctorStatusMissingCommand = "missing_command"
+
+	DoctorReportSchema = "pactum.agents_doctor.v1"
 )
 
 type DoctorReport struct {
+	Schema          string        `json:"schema"`
 	DefaultExecutor string        `json:"default_executor"`
 	DefaultReviewer string        `json:"default_reviewer"`
 	Agents          []AgentDoctor `json:"agents"`
@@ -41,6 +44,7 @@ func DiagnoseAgents(registry Registry, selectedAgent string) (DoctorReport, erro
 	}
 
 	report := DoctorReport{
+		Schema:          DoctorReportSchema,
 		DefaultExecutor: registry.DefaultExecutor(),
 		DefaultReviewer: registry.DefaultReviewer(),
 		Agents:          make([]AgentDoctor, 0, len(descriptors)),
