@@ -1,0 +1,33 @@
+name: CI
+
+# Run the same local checks Pactum ships (Makefile + smoke script). No release
+# publishing, no Docker, and no real Codex/Claude — the smoke script only
+# exercises the safe, deterministic command surface.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Check (test + vet + git diff --check)
+        run: make check
+
+      - name: Build
+        run: make build
+
+      - name: Smoke test
+        run: scripts/smoke.sh

@@ -178,3 +178,13 @@ pactum version
   dry-run vs run, and the direct-subprocess execution model.
 - [docs/memory.md](docs/memory.md) — deterministic project memory: propose,
   accept, search, refresh/stale, and the prompt boundary.
+- [CHANGELOG.md](CHANGELOG.md) — notable changes (everything is currently
+  **Unreleased**; there are no packaged releases yet).
+
+## Continuous integration
+
+Every pull request and push to `main` runs GitHub Actions
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)), which executes the same
+local checks shipped in this repo: `make check` (tests, vet, and
+`git diff --check`), `make build`, and `scripts/smoke.sh`. CI does not require
+`codex`/`claude` to be installed and never runs a real agent.

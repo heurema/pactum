@@ -55,6 +55,8 @@ var requiredDocMentions = []string{
 	"pactum task use",
 	"pactum version",
 	"--yes",
+	// Release-readiness foundation (M5.4).
+	"CHANGELOG.md",
 }
 
 // TestRequiredDocsExist fails if any required user-facing doc is missing.

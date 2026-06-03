@@ -121,6 +121,15 @@ It builds `bin/pactum`, creates a temporary Git repo, and runs `version`,
 `init`, `status`, `task new`, and `agents doctor` — never a real agent — then
 cleans up.
 
+## Continuous integration
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on every pull
+request and push to `main`: `make check`, `make build`, and `scripts/smoke.sh`.
+CI does not need `codex`/`claude` installed and never runs a real agent.
+
+See [CHANGELOG.md](../CHANGELOG.md) for notable changes. Everything is currently
+**Unreleased** — there are no packaged releases yet.
+
 ## What is not included yet
 
 - No packaged releases or prebuilt binaries.
