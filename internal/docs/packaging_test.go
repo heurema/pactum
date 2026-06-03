@@ -74,6 +74,16 @@ func TestChangelogExists(t *testing.T) {
 	}
 }
 
+// TestDogfoodReportExists ensures the second-repo dogfood report is present.
+// It is intentionally not added to the user-facing doc set scanned for stale
+// concepts, since it quotes command output.
+func TestDogfoodReportExists(t *testing.T) {
+	content := readRepoFile(t, "docs/dogfood-second-repo.md")
+	if !strings.Contains(content, "dogfood") {
+		t.Errorf("docs/dogfood-second-repo.md is missing expected dogfood content")
+	}
+}
+
 // TestCIWorkflowRunsLocalChecks ensures the CI workflow runs the same local
 // checks Pactum ships, so green CI matches a green local run.
 func TestCIWorkflowRunsLocalChecks(t *testing.T) {

@@ -180,6 +180,8 @@ pactum version
   accept, search, refresh/stale, and the prompt boundary.
 - [CHANGELOG.md](CHANGELOG.md) — notable changes (everything is currently
   **Unreleased**; there are no packaged releases yet).
+- [docs/dogfood-second-repo.md](docs/dogfood-second-repo.md) — findings from
+  running Pactum's safe surface on a second, non-Go repository.
 
 ## Continuous integration
 
