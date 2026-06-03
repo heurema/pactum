@@ -85,7 +85,9 @@ type reviewFindingInput struct {
 	Blocking bool
 }
 
-// findingCore is the shared body of a review finding and a review proposal.
+// findingCore is the body shared by review findings and review proposals.
+// Evidence is intentionally NOT part of the core: it belongs only to reviewer
+// proposals, so accepting a proposal must not carry it into a review finding.
 type findingCore struct {
 	Message  string `json:"message"`
 	Severity string `json:"severity"`
@@ -93,7 +95,6 @@ type findingCore struct {
 	File     string `json:"file,omitempty"`
 	Line     int    `json:"line,omitempty"`
 	Blocking bool   `json:"blocking"`
-	Evidence string `json:"evidence,omitempty"`
 }
 
 type reviewFindingRecord struct {

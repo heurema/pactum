@@ -30,6 +30,7 @@ type reviewProposalRecord struct {
 	Source            string `json:"source"`
 	ReviewerAttemptID string `json:"reviewer_attempt_id"`
 	findingCore
+	Evidence  string `json:"evidence,omitempty"`
 	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
 }
@@ -465,8 +466,8 @@ func proposalRecordFromReviewerInput(root string, runID string, attemptID string
 			File:     filepath.ToSlash(file),
 			Line:     line,
 			Blocking: blocking,
-			Evidence: sanitizeRepoRootInText(root, strings.TrimSpace(input.Evidence)),
 		},
+		Evidence:  sanitizeRepoRootInText(root, strings.TrimSpace(input.Evidence)),
 		Status:    "pending",
 		CreatedAt: now.Format(time.RFC3339),
 	}, ""
