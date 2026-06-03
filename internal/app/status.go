@@ -166,7 +166,9 @@ func countActiveRuns(paths artifacts.Paths) (int, error) {
 			Status string `json:"status"`
 		}
 		if err := json.Unmarshal(data, &state); err != nil {
-			return 0, err
+			// A run still being created concurrently may have a partially
+			// written run.json; skip it rather than fail the whole status.
+			continue
 		}
 		if !isTerminalRunStatus(state.Status) {
 			active++

@@ -61,3 +61,26 @@ func TestSmokeScriptExists(t *testing.T) {
 		}
 	}
 }
+
+// TestChangelogExists ensures the release-readiness CHANGELOG is present and is
+// still in the unreleased state (no fabricated released version yet).
+func TestChangelogExists(t *testing.T) {
+	content := readRepoFile(t, "CHANGELOG.md")
+	if !strings.Contains(content, "# Changelog") {
+		t.Errorf("CHANGELOG.md is missing the changelog heading")
+	}
+	if !strings.Contains(content, "## Unreleased") {
+		t.Errorf("CHANGELOG.md is missing an Unreleased section")
+	}
+}
+
+// TestCIWorkflowRunsLocalChecks ensures the CI workflow runs the same local
+// checks Pactum ships, so green CI matches a green local run.
+func TestCIWorkflowRunsLocalChecks(t *testing.T) {
+	content := readRepoFile(t, ".github/workflows/ci.yml")
+	for _, step := range []string{"make check", "make build", "scripts/smoke.sh"} {
+		if !strings.Contains(content, step) {
+			t.Errorf(".github/workflows/ci.yml does not run %q", step)
+		}
+	}
+}
