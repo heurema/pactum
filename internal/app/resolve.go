@@ -159,9 +159,12 @@ func activeRunIDs(paths artifacts.Paths) ([]string, error) {
 	}
 	active := make([]string, 0, len(ids))
 	for _, id := range ids {
-		status, err := readPersistedRunStatus(paths, id)
-		if err != nil {
-			return nil, err
+		status, ok := readPersistedRunStatus(paths, id)
+		if !ok {
+			// A run dir reserved by a concurrent `task new` may not have its
+			// run.json yet (or it may be mid-write). Such a run is not counted
+			// as active until it is fully created.
+			continue
 		}
 		if !isTerminalRunStatus(status) {
 			active = append(active, id)
@@ -170,15 +173,18 @@ func activeRunIDs(paths artifacts.Paths) ([]string, error) {
 	return active, nil
 }
 
-func readPersistedRunStatus(paths artifacts.Paths, runID string) (string, error) {
+// readPersistedRunStatus reads a run's persisted status. ok is false when the
+// run.json is missing or unreadable (for example, a run still being created
+// concurrently), so callers can skip it rather than fail.
+func readPersistedRunStatus(paths artifacts.Paths, runID string) (status string, ok bool) {
 	var state struct {
 		Status string `json:"status"`
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	if err := readJSON(runPaths.RunJSON, &state); err != nil {
-		return "", err
+		return "", false
 	}
-	return state.Status, nil
+	return state.Status, true
 }
 
 // deriveRunStatus reports a run's furthest-reached lifecycle stage purely from
