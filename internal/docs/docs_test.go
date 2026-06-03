@@ -7,6 +7,18 @@ import (
 	"testing"
 )
 
+// requiredDocFiles are the user-facing docs that must exist, named explicitly
+// (repo-root relative). The tests below read exactly these files rather than
+// scanning whatever docs/*.md happens to be present, so a missing file is a
+// failure rather than a silently smaller set.
+var requiredDocFiles = []string{
+	"README.md",
+	"docs/flow.md",
+	"docs/workspace.md",
+	"docs/agents.md",
+	"docs/memory.md",
+}
+
 // forbiddenDocPhrases are command flags, config keys, and milestone wordings
 // that no longer describe Pactum. They must never appear in user-facing docs.
 //
@@ -29,6 +41,22 @@ var requiredDocMentions = []string{
 	"pactum review propose-findings",
 	"pactum memory refresh",
 	"pactum agents doctor",
+}
+
+// TestRequiredDocsExist fails if any required user-facing doc is missing.
+func TestRequiredDocsExist(t *testing.T) {
+	root := repoRoot(t)
+	for _, rel := range requiredDocFiles {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Errorf("required doc %s is missing: %v", rel, err)
+			continue
+		}
+		if info.IsDir() {
+			t.Errorf("required doc %s is a directory, not a file", rel)
+		}
+	}
 }
 
 // TestDocsHaveNoStaleCommandConcepts fails if any user-facing doc references a
@@ -64,36 +92,21 @@ type docFile struct {
 	content string
 }
 
-// userFacingDocs returns README.md and every docs/*.md file, read from the
-// repository root.
+// userFacingDocs reads exactly the requiredDocFiles from the repository root.
+// A missing file is fatal, so the stale-concept and required-mention checks
+// always run against the full, expected doc set.
 func userFacingDocs(t *testing.T) []docFile {
 	t.Helper()
 	root := repoRoot(t)
 
-	paths := []string{filepath.Join(root, "README.md")}
-	docsDir := filepath.Join(root, "docs")
-	entries, err := os.ReadDir(docsDir)
-	if err != nil {
-		t.Fatalf("read docs dir: %v", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
-		}
-		paths = append(paths, filepath.Join(docsDir, entry.Name()))
-	}
-
-	docs := make([]docFile, 0, len(paths))
-	for _, path := range paths {
+	docs := make([]docFile, 0, len(requiredDocFiles))
+	for _, rel := range requiredDocFiles {
+		path := filepath.Join(root, filepath.FromSlash(rel))
 		data, err := os.ReadFile(path)
 		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
+			t.Fatalf("read required doc %s: %v", rel, err)
 		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			rel = path
-		}
-		docs = append(docs, docFile{name: filepath.ToSlash(rel), content: string(data)})
+		docs = append(docs, docFile{name: rel, content: string(data)})
 	}
 	return docs
 }

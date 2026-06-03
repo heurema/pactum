@@ -70,16 +70,31 @@ runs/*/review/
 - `cache/`, `tmp/`, `locks/` — scratch and coordination state.
 - `runs/*/execute/` — captured agent stdout/stderr and attempt records, which
   can be large and machine-specific.
-- `runs/*/review/` — reviewer attempts and review working files.
+- `runs/*/review/` — reviewer attempts and the review record. These are useful
+  audit artifacts, but are ignored by default because reviewer attempts and
+  captured reviewer output can be noisy.
 
 **Durable artifacts** are the contract-first record of a run and the accepted
 project memory. These are small, deterministic, and meaningful to a human:
 
 - `manifest.json` and `config.yaml`.
-- Per run: `run.json`, `task.md`, and the `context/`, `clarify/`, `contract/`,
-  `gate/`, and `memory/` directories.
+- The normally commit-friendly record of a run: `run.json`, `task.md`, and the
+  `context/`, `clarify/`, `contract/`, `gate/`, and `memory/` directories —
+  the task, its context, the approved contract, the gate report, and the
+  run-local memory candidate.
 - Project memory: `memory/items.jsonl`, `memory/project-memory.md`, and
   `memory/refreshes.jsonl`.
+
+### Review artifacts are not in the default durable set
+
+The review outcome lives under `runs/*/review/`, and it is a useful audit
+artifact. But it is **not** part of the default durable, commit-friendly set:
+the workspace `.gitignore` ignores `runs/*/review/` because reviewer attempts
+and captured reviewer output can be noisy. A team that wants the review record
+in version control can track it deliberately — by changing the ignore policy or
+by force-adding specific review files — but Pactum does not make review
+artifacts commit-friendly by default. The normally commit-friendly durable run
+artifacts are the task, context, contract, gate, and memory artifacts above.
 
 ## Why not to blindly commit `.heurema/`
 
@@ -99,7 +114,9 @@ You have two reasonable choices:
   treat the workspace as local-only state.
 - **Track the durable record.** Leave the workspace `.gitignore` in place and
   commit the durable artifacts listed above when your team wants traceability —
-  the approved contract, clarifications, gate report, review outcome, and
-  accepted project memory for a run are a useful audit trail. Commit
-  deliberately and review what you are adding; let the workspace `.gitignore`
-  keep the generated areas out.
+  the approved contract, clarifications, gate report, and accepted project
+  memory for a run are a useful audit trail. The review outcome under
+  `runs/*/review/` is ignored by default and is not part of this trail; track it
+  deliberately only if your team chooses to (see above). Commit deliberately and
+  review what you are adding; let the workspace `.gitignore` keep the generated
+  areas out.
