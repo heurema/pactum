@@ -485,7 +485,7 @@ func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, j
 	return nil
 }
 
-func (a App) ReviewRun(stdout io.Writer, runID string, reviewerName string, timeout time.Duration, jsonOutput bool) error {
+func (a App) ReviewRun(stdout io.Writer, runID string, reviewerName string, timeout time.Duration, confirm bool, jsonOutput bool) error {
 	context, ok, err := a.loadReviewContext(stdout, runID)
 	if err != nil || !ok {
 		return err
@@ -493,6 +493,18 @@ func (a App) ReviewRun(stdout io.Writer, runID string, reviewerName string, time
 	prep, err := a.prepareReviewer(context, reviewerName, "run reviewer")
 	if err != nil {
 		return err
+	}
+
+	// Running a built-in reviewer is direct, unsandboxed agent execution in the
+	// repository — the same risk class as `execute run`. Require confirmation.
+	if !confirm {
+		proceed, err := confirmDirectExecution(stdout)
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			return fmt.Errorf("review cancelled")
+		}
 	}
 
 	now := a.nowUTC()

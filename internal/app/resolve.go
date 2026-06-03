@@ -182,30 +182,41 @@ func readPersistedRunStatus(paths artifacts.Paths, runID string) (string, error)
 }
 
 // deriveRunStatus reports a run's furthest-reached lifecycle stage purely from
-// on-disk artifacts. This is the primary status source because persisted
-// run.json status can lag behind later stages and reset operations.
+// on-disk artifacts. It is the primary status source because persisted run.json
+// status can lag behind later stages and reset operations.
+//
+// The lifecycle is walked from the start, stopping at the first boundary that is
+// not satisfied. A downstream artifact only counts when every upstream boundary
+// is still valid, so resetting an earlier stage (for example, `contract revise`
+// clears the approval and prompt manifest) correctly rewinds the reported
+// status even though stale gate/review/memory artifacts may still be on disk.
 func deriveRunStatus(paths artifacts.Paths, runID string) string {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-	switch {
-	case isRegularFile(runPaths.MemoryAcceptanceJSON):
-		return "memory_accepted"
-	case isRegularFile(runPaths.MemoryCandidateJSON):
-		return "memory_proposed"
-	case reviewApproved(runPaths.ReviewJSON):
-		return "review_approved"
-	case isRegularFile(runPaths.ReviewJSON):
-		return "review_prepared"
-	case isRegularFile(runPaths.GateReportJSON):
-		return "gated"
-	case isRegularFile(runPaths.LastResultJSON):
-		return "executed"
-	case isRegularFile(runPaths.PromptManifest):
-		return "prompt_built"
-	case approvalApproved(runPaths.ApprovalJSON):
-		return "contract_approved"
-	default:
+	if !approvalApproved(runPaths.ApprovalJSON) {
 		return "contract_draft"
 	}
+	if !isRegularFile(runPaths.PromptManifest) {
+		return "contract_approved"
+	}
+	if !isRegularFile(runPaths.LastResultJSON) {
+		return "prompt_built"
+	}
+	if !isRegularFile(runPaths.GateReportJSON) {
+		return "executed"
+	}
+	if !isRegularFile(runPaths.ReviewJSON) {
+		return "gated"
+	}
+	if !reviewApproved(runPaths.ReviewJSON) {
+		return "review_prepared"
+	}
+	if !isRegularFile(runPaths.MemoryCandidateJSON) {
+		return "review_approved"
+	}
+	if memoryAccepted(runPaths.MemoryAcceptanceJSON) {
+		return "memory_accepted"
+	}
+	return "memory_proposed"
 }
 
 func approvalApproved(path string) bool {
@@ -221,6 +232,11 @@ func reviewApproved(path string) bool {
 		return false
 	}
 	return state.Status == "approved"
+}
+
+func memoryAccepted(path string) bool {
+	acceptance, exists, err := readMemoryAcceptance(path)
+	return err == nil && exists && acceptance.Status == "accepted"
 }
 
 // nextCommandForStatus maps a derived lifecycle status to the command a user

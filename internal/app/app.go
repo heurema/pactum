@@ -245,6 +245,7 @@ type reviewRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to review."`
 	Reviewer   string        `name:"reviewer" help:"Built-in reviewer name. Defaults to codex."`
 	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the reviewer process."`
+	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -717,7 +718,7 @@ func (c *reviewRunCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	return r.App.ReviewRun(r.Stdout, runID, c.Reviewer, c.Timeout, c.JSONOutput)
+	return r.App.ReviewRun(r.Stdout, runID, c.Reviewer, c.Timeout, c.Yes, c.JSONOutput)
 }
 
 func (c *reviewProposeFindingsCmd) Run(r *runner) error {

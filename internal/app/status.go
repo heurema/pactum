@@ -98,14 +98,26 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 	} else if hasLatest {
 		runs.LatestRunID = latestID
 		runs.LatestStatus = deriveRunStatus(paths, latestID)
-		// The "focus" run for next-step guidance is the current run when valid,
-		// otherwise the latest run.
-		focusID := latestID
-		if currentID, ok := readCurrentRun(paths); ok && runExists(paths, currentID) {
+		currentID, hasCurrent := readCurrentRun(paths)
+		currentValid := hasCurrent && runExists(paths, currentID)
+		if currentValid {
 			runs.CurrentRunID = currentID
-			focusID = currentID
 		}
-		runs.NextCommand = nextCommandForStatus(deriveRunStatus(paths, focusID))
+		active, err := activeRunIDs(paths)
+		if err != nil {
+			return statusResponse{}, err
+		}
+		// The next command must actually be runnable: a bare staged command only
+		// works when an omitted run id resolves to a single run (current, or the
+		// sole active run). Otherwise point the user at selecting a run.
+		switch {
+		case currentValid:
+			runs.NextCommand = nextCommandForStatus(deriveRunStatus(paths, currentID))
+		case len(active) == 1:
+			runs.NextCommand = nextCommandForStatus(deriveRunStatus(paths, active[0]))
+		default:
+			runs.NextCommand = "pactum task use " + latestID
+		}
 	}
 
 	return statusResponse{

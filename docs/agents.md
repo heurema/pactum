@@ -93,7 +93,10 @@ automatically.
   `review/reviewer-dry-run.json`) without launching a reviewer.
 - `pactum review run <run_id> --reviewer codex` launches the reviewer subprocess
   (same direct-subprocess model as execution, with `--timeout`) and captures its
-  attempt under `review/reviewer-attempts/`.
+  attempt under `review/reviewer-attempts/`. Like `execute run`, it is
+  unsandboxed agent execution, so it asks for confirmation on an interactive
+  terminal and **requires `--yes`** for non-interactive/automated use; `review
+  dry-run` never needs `--yes`.
 
 A reviewer can emit optional structured finding proposals as a fenced JSON block.
 `pactum review propose-findings <run_id>` parses the captured reviewer stdout

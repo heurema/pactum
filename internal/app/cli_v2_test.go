@@ -474,6 +474,116 @@ func TestExecuteRunDerivesExecutedStatus(t *testing.T) {
 	}
 }
 
+// --- Derived lifecycle respects upstream resets (Blocker 2) -----------------
+
+func TestDeriveStatusRewindsAfterContractRevise(t *testing.T) {
+	root := t.TempDir()
+	// A run advanced to a built prompt (approval + prompt manifest present).
+	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
+	if got := deriveRunStatus(paths, runID); got != "prompt_built" {
+		t.Fatalf("pre-revise status = %q, want prompt_built", got)
+	}
+
+	// Revising the contract resets approval and removes prompt readiness, so the
+	// derived status must rewind to contract_draft even though downstream
+	// artifacts could exist.
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"contract", "revise", runID, "--goal", "new goal"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("contract revise exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := deriveRunStatus(paths, runID); got != "contract_draft" {
+		t.Fatalf("post-revise status = %q, want contract_draft", got)
+	}
+}
+
+func TestDeriveStatusIgnoresStaleMemoryArtifacts(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	// Plant stale downstream artifacts (as if the run had been completed once):
+	// a gate report, a review doc, a memory candidate, and an accepted memory
+	// acceptance.
+	mustWriteFile(t, runPaths.GateReportJSON, `{"schema":"x","status":"passed"}`)
+	mustWriteFile(t, runPaths.LastResultJSON, `{"schema":"x"}`)
+	mustWriteFile(t, runPaths.ReviewJSON, `{"status":"approved"}`)
+	mustWriteFile(t, runPaths.MemoryCandidateJSON, `{"schema":"x"}`)
+	mustWriteFile(t, runPaths.MemoryAcceptanceJSON, `{"schema":"x","status":"accepted"}`)
+	if got := deriveRunStatus(paths, runID); got != "memory_accepted" {
+		t.Fatalf("with valid chain status = %q, want memory_accepted", got)
+	}
+
+	// Now invalidate the upstream boundary: revise the contract. Even though the
+	// memory acceptance still exists, status must rewind to contract_draft.
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"contract", "revise", runID, "--goal", "changed"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("contract revise exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := deriveRunStatus(paths, runID); got != "contract_draft" {
+		t.Fatalf("post-revise status with stale memory = %q, want contract_draft", got)
+	}
+}
+
+func TestDeriveStatusProposedVsAcceptedMemory(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	_ = app
+	// Valid chain through review approval + a memory candidate but a *pending*
+	// acceptance (what `memory propose` writes) must read as memory_proposed.
+	mustWriteFile(t, runPaths.LastResultJSON, `{"schema":"x"}`)
+	mustWriteFile(t, runPaths.GateReportJSON, `{"status":"passed"}`)
+	mustWriteFile(t, runPaths.ReviewJSON, `{"status":"approved"}`)
+	mustWriteFile(t, runPaths.MemoryCandidateJSON, `{"schema":"x"}`)
+	mustWriteFile(t, runPaths.MemoryAcceptanceJSON, `{"schema":"x","status":"pending"}`)
+	if got := deriveRunStatus(paths, runID); got != "memory_proposed" {
+		t.Fatalf("pending acceptance status = %q, want memory_proposed", got)
+	}
+}
+
+// --- Status next command is executable (Blocker 3) --------------------------
+
+func TestStatusNextCommandIsResolvable(t *testing.T) {
+	root := t.TempDir()
+	app, paths, _ := setupContractRun(t, root)
+	_ = runContractOnlyForTask(t, app, "second task")
+	// Remove the current pointer: now there are two active runs and no current,
+	// so a bare staged command would not resolve.
+	assertNoError(t, os.Remove(currentRunPointerPath(paths)))
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"status", "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("status exited %d, stderr: %s", code, stderr.String())
+	}
+	var status statusResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &status))
+	if !strings.Contains(status.Runs.NextCommand, "task use") {
+		t.Fatalf("ambiguous next command should point at task use, got %q", status.Runs.NextCommand)
+	}
+	// The suggested command must itself be runnable.
+	parts := strings.Fields(status.Runs.NextCommand)
+	code := app.Run(parts[1:], &stdout, &stderr) // drop leading "pactum"
+	if code != 0 {
+		t.Fatalf("suggested next command %q failed: %d", status.Runs.NextCommand, code)
+	}
+}
+
+func TestStatusNextCommandBareWhenSoleActiveRun(t *testing.T) {
+	root := t.TempDir()
+	app, paths, _ := setupContractRun(t, root)
+	assertNoError(t, os.Remove(currentRunPointerPath(paths)))
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"status", "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("status exited %d, stderr: %s", code, stderr.String())
+	}
+	var status statusResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &status))
+	if status.Runs.NextCommand != "pactum contract revise" {
+		t.Fatalf("sole-active next command = %q, want bare 'pactum contract revise'", status.Runs.NextCommand)
+	}
+}
+
 // --- Execute run confirmation (Part I) --------------------------------------
 
 func TestExecuteRunWithoutYesFailsNonInteractive(t *testing.T) {
@@ -491,6 +601,23 @@ func TestExecuteRunWithoutYesFailsNonInteractive(t *testing.T) {
 	}
 	// It must refuse before launching any agent attempt.
 	assertNoFile(t, executionAttemptPaths(runPaths, "attempt_001").ResultJSON)
+}
+
+func TestReviewRunWithoutYesFailsNonInteractive(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("review run without --yes exited %d, want 1, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "without --yes") {
+		t.Fatalf("review run confirmation stderr mismatch:\n%s", stderr.String())
+	}
+	// It must refuse before launching any reviewer attempt.
+	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_001").ResultJSON)
 }
 
 func TestExecuteDryRunDoesNotNeedYes(t *testing.T) {

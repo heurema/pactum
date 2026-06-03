@@ -808,7 +808,7 @@ func TestReviewRunWritesAttemptArtifacts(t *testing.T) {
 	beforeResolutions := mustReadFile(t, runPaths.ReviewResolutionsJSONL)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper", "--yes"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
 	}
@@ -886,7 +886,7 @@ func TestReviewRunNonZeroWritesArtifactsAndReturnsNonZero(t *testing.T) {
 	t.Setenv("PACTUM_REVIEWER_EXIT", "7")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper", "--yes"}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("review run should return non-zero for reviewer failure")
 	}
@@ -916,7 +916,7 @@ func TestReviewRunCreatesIncrementingAttempts(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		var stdout, stderr bytes.Buffer
-		code := app.Run([]string{"review", "run", runID, "--reviewer", "helper"}, &stdout, &stderr)
+		code := app.Run([]string{"review", "run", runID, "--reviewer", "helper", "--yes"}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("review run %d exited %d, stderr: %s", i+1, code, stderr.String())
 		}
@@ -935,8 +935,8 @@ func TestReviewRunStoresCrossReviewerAttempts(t *testing.T) {
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 
-	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper-a")
-	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper-b")
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper-a", "--yes")
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper-b", "--yes")
 
 	for attemptID, wantReviewer := range map[string]string{
 		"reviewer_attempt_001": "helper-a",
@@ -962,7 +962,7 @@ func TestReviewRunAutoBuildsDryRunArtifacts(t *testing.T) {
 	_ = os.Remove(runPaths.ReviewPromptMD)
 	_ = os.Remove(runPaths.ReviewContextMD)
 
-	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper")
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper", "--yes")
 	assertFile(t, runPaths.ReviewDryRunJSON)
 	assertFile(t, runPaths.ReviewPromptMD)
 	assertFile(t, runPaths.ReviewContextMD)
@@ -977,7 +977,7 @@ func TestReviewRunRequestWouldRunMatchesDryRun(t *testing.T) {
 
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
-	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper")
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper", "--yes")
 
 	var request reviewerRequestDocument
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_001").RequestJSON)), &request))
@@ -993,7 +993,7 @@ func TestReviewRunArtifactsArePortable(t *testing.T) {
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 
-	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper")
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper", "--yes")
 	attemptPaths := reviewerAttemptPaths(runPaths, "reviewer_attempt_001")
 	for name, content := range map[string]string{
 		"review/request.json":              mustReadFile(t, attemptPaths.RequestJSON),
@@ -1013,7 +1013,7 @@ func TestReviewRunDoesNotCreateFindingsFromReviewerOutput(t *testing.T) {
 	t.Setenv("PACTUM_REVIEWER_FINDING_TEXT", "1")
 	beforeFindings := mustReadFile(t, runPaths.ReviewFindingsJSONL)
 
-	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper")
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper", "--yes")
 	if got := mustReadFile(t, runPaths.ReviewFindingsJSONL); got != beforeFindings {
 		t.Fatalf("review run should not create findings from stdout")
 	}
@@ -1030,7 +1030,7 @@ func TestReviewRunJSONOutput(t *testing.T) {
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper", "--yes", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review run --json exited %d, stderr: %s", code, stderr.String())
 	}
