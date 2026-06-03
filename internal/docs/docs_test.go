@@ -13,6 +13,7 @@ import (
 // failure rather than a silently smaller set.
 var requiredDocFiles = []string{
 	"README.md",
+	"docs/install.md",
 	"docs/flow.md",
 	"docs/workspace.md",
 	"docs/agents.md",
@@ -41,6 +42,10 @@ var requiredDocMentions = []string{
 	"pactum review propose-findings",
 	"pactum memory refresh",
 	"pactum agents doctor",
+	// Packaging / install surface (M5.2).
+	"make build",
+	"go install ./cmd/pactum",
+	"scripts/smoke.sh",
 }
 
 // TestRequiredDocsExist fails if any required user-facing doc is missing.

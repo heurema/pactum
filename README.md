@@ -66,19 +66,41 @@ The following are intentionally **not** part of the current MVP:
 ## Install
 
 Pactum is a Go module (`github.com/heurema/pactum`, Go 1.26+). There is no
-packaged release yet; build or run it from source:
+packaged release yet; build, run, or install it from source. See
+[docs/install.md](docs/install.md) for the full guide.
 
+**1. Run from source** (no binary):
+
+```sh
+go run ./cmd/pactum --help
 ```
-# Run directly
-go run ./cmd/pactum <command> [args]
 
-# Or build a binary
-go build -o pactum ./cmd/pactum
-./pactum <command> [args]
+**2. Build a local binary** with the Makefile:
+
+```sh
+make build
+./bin/pactum --help
+```
+
+**3. Install into your Go bin:**
+
+```sh
+go install ./cmd/pactum
+pactum --help
+```
+
+This installs `pactum` into `go env GOBIN` (or `$(go env GOPATH)/bin`); make
+sure that directory is on your `PATH`. Once releases are tagged, you will also
+be able to `go install github.com/heurema/pactum/cmd/pactum@latest`.
+
+**Smoke test** the safe command surface in a throwaway repo:
+
+```sh
+scripts/smoke.sh
 ```
 
 The examples below use `pactum <command>`; substitute `go run ./cmd/pactum
-<command>` if you have not built a binary.
+<command>` if you have not built or installed a binary.
 
 ## Quick start
 
@@ -128,6 +150,8 @@ pactum memory accept <run_id> --by manual
 
 ## Documentation
 
+- [docs/install.md](docs/install.md) — prerequisites, building, installing, and
+  smoke-testing Pactum from source.
 - [docs/flow.md](docs/flow.md) — the workflow stage by stage, with the artifacts
   each stage produces and whether it mutates state.
 - [docs/workspace.md](docs/workspace.md) — the `.heurema/pactum/` layout, which

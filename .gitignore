@@ -1,0 +1,5 @@
+# Pactum workspace — generated artifacts, never committed.
+/.heurema/
+
+# Local build output (make build / go build -o bin/pactum).
+/bin/
