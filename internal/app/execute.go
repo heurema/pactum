@@ -77,7 +77,7 @@ func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, timeou
 		AttemptID:      attemptID,
 		CreatedAt:      now.Format(time.RFC3339),
 		ContractSHA256: prep.ContractSHA256,
-		Agent: executionRequestAgent{
+		Agent: agents.AgentDescriptor{
 			Name:    prep.Agent.Name,
 			Command: prep.Agent.Command,
 			Args:    append([]string{}, prep.Agent.Args...),
@@ -130,7 +130,7 @@ func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, timeou
 		if result.TimedOut {
 			return fmt.Errorf("agent process timed out after %s", timeout)
 		}
-		return executionProcessError{ExitCode: result.ExitCode}
+		return processExitError{Kind: "agent", ExitCode: result.ExitCode}
 	}
 	return nil
 }
@@ -182,14 +182,11 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 	if manifest.Status != "ready" {
 		return executionPreparation{}, fmt.Errorf("cannot prepare execution: executor prompt has not been built")
 	}
-	if contract.Status != "approved" || approval.Status != "approved" || approval.ContractSHA256 == nil {
-		return executionPreparation{}, fmt.Errorf("cannot prepare execution: contract is not approved")
-	}
-	hash, err := fileSHA256(runPaths.ContractJSON)
+	hash, err := verifyApprovedContract(runPaths, contract, approval, "prepare execution")
 	if err != nil {
 		return executionPreparation{}, err
 	}
-	if hash != *approval.ContractSHA256 || manifest.ContractSHA256 != hash {
+	if manifest.ContractSHA256 != hash {
 		return executionPreparation{}, fmt.Errorf("cannot prepare execution: approved contract hash does not match current contract")
 	}
 
@@ -304,45 +301,16 @@ type executionRequestDocument struct {
 	AttemptID      string                 `json:"attempt_id"`
 	CreatedAt      string                 `json:"created_at"`
 	ContractSHA256 string                 `json:"contract_sha256,omitempty"`
-	Agent          executionRequestAgent  `json:"agent"`
+	Agent          agents.AgentDescriptor `json:"agent"`
 	Artifacts      agents.DryRunArtifacts `json:"artifacts"`
 	WouldRun       agents.DryRunCommand   `json:"would_run"`
 }
 
-type executionRequestAgent struct {
-	Name    string   `json:"name"`
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
-	Input   string   `json:"input"`
-}
-
 type executionResultDocument struct {
-	Schema         string `json:"schema"`
-	RunID          string `json:"run_id"`
-	AttemptID      string `json:"attempt_id"`
-	StartedAt      string `json:"started_at"`
-	FinishedAt     string `json:"finished_at"`
-	DurationMillis int64  `json:"duration_ms"`
-	ExitCode       int    `json:"exit_code"`
-	TimedOut       bool   `json:"timed_out"`
-	Stdout         string `json:"stdout"`
-	Stderr         string `json:"stderr"`
-}
-
-type executionAttemptPathSet struct {
-	Dir         string
-	RequestJSON string
-	StdoutLog   string
-	StderrLog   string
-	ResultJSON  string
-}
-
-type executionProcessError struct {
-	ExitCode int
-}
-
-func (e executionProcessError) Error() string {
-	return fmt.Sprintf("agent process exited with code %d", e.ExitCode)
+	Schema    string `json:"schema"`
+	RunID     string `json:"run_id"`
+	AttemptID string `json:"attempt_id"`
+	processResult
 }
 
 func ensureDryRunPlan(prep executionPreparation, createdAt string) (agents.DryRunPlan, error) {
@@ -412,15 +380,8 @@ func nextAttemptID(attemptsDir string) (string, error) {
 	return fmt.Sprintf("attempt_%03d", maxAttempt+1), nil
 }
 
-func executionAttemptPaths(runPaths contractRunPathSet, attemptID string) executionAttemptPathSet {
-	dir := filepath.Join(runPaths.AttemptsDir, attemptID)
-	return executionAttemptPathSet{
-		Dir:         dir,
-		RequestJSON: filepath.Join(dir, "request.json"),
-		StdoutLog:   filepath.Join(dir, "stdout.log"),
-		StderrLog:   filepath.Join(dir, "stderr.log"),
-		ResultJSON:  filepath.Join(dir, "result.json"),
-	}
+func executionAttemptPaths(runPaths contractRunPathSet, attemptID string) attemptPathSet {
+	return newAttemptPaths(filepath.Join(runPaths.AttemptsDir, attemptID))
 }
 
 func executionPromptRepoPath(runID string) string {
@@ -429,16 +390,10 @@ func executionPromptRepoPath(runID string) string {
 
 func executionResultFromRunResult(runID string, attemptID string, result agents.RunResult) executionResultDocument {
 	return executionResultDocument{
-		Schema:         executionResultSchema,
-		RunID:          runID,
-		AttemptID:      attemptID,
-		StartedAt:      result.StartedAt,
-		FinishedAt:     result.FinishedAt,
-		DurationMillis: result.DurationMillis,
-		ExitCode:       result.ExitCode,
-		TimedOut:       result.TimedOut,
-		Stdout:         result.StdoutPath,
-		Stderr:         result.StderrPath,
+		Schema:        executionResultSchema,
+		RunID:         runID,
+		AttemptID:     attemptID,
+		processResult: processResultFromRunResult(result),
 	}
 }
 

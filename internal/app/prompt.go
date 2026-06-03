@@ -103,15 +103,9 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 	if status.BlockingOpen > 0 {
 		return fmt.Errorf("cannot build executor prompt: blocking clarification questions remain")
 	}
-	if context.Approval.Status != "approved" || context.Approval.ContractSHA256 == nil {
-		return fmt.Errorf("cannot build executor prompt: contract is not approved")
-	}
-	hash, err := fileSHA256(context.RunPaths.ContractJSON)
+	hash, err := verifyApprovedContract(context.RunPaths, context.Contract, context.Approval, "build executor prompt")
 	if err != nil {
 		return err
-	}
-	if hash != *context.Approval.ContractSHA256 {
-		return fmt.Errorf("cannot build executor prompt: approved contract hash does not match current contract")
 	}
 
 	report, err := a.workspaceStatus(context.Root)
@@ -212,7 +206,7 @@ func (a App) PromptShow(stdout io.Writer, runID string, jsonOutput bool) error {
 	return nil
 }
 
-func buildPromptManifest(context contractContext, contractSHA256 string, mapRunID string, builtAt time.Time, memory promptManifestMemory) promptManifest {
+func buildPromptManifest(context runContext, contractSHA256 string, mapRunID string, builtAt time.Time, memory promptManifestMemory) promptManifest {
 	approvedBy := ""
 	if context.Approval.ApprovedBy != nil {
 		approvedBy = *context.Approval.ApprovedBy
@@ -331,9 +325,9 @@ func renderExecutorContext(state contractRunState, mapRunID string, contractSHA2
 	fmt.Fprintf(&buffer, "- Contract hash: %s\n", contractSHA256)
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Project map")
-	fmt.Fprintf(&buffer, "- Repo map: %s\n", filepathToSlash(artifacts.WorkspaceRel+"/map/repo-map.md"))
-	fmt.Fprintf(&buffer, "- LLM map pointer: %s\n", filepathToSlash(artifacts.WorkspaceRel+"/map/llms.txt"))
-	fmt.Fprintf(&buffer, "- Search index: %s\n", filepathToSlash(artifacts.WorkspaceRel+"/map/search.sqlite"))
+	fmt.Fprintf(&buffer, "- Repo map: %s\n", artifacts.WorkspaceRel+"/map/repo-map.md")
+	fmt.Fprintf(&buffer, "- LLM map pointer: %s\n", artifacts.WorkspaceRel+"/map/llms.txt")
+	fmt.Fprintf(&buffer, "- Search index: %s\n", artifacts.WorkspaceRel+"/map/search.sqlite")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Retrieval guidance")
 	fmt.Fprintln(&buffer, "- Use `pactum search \"<term>\"` before adding new code.")
@@ -519,8 +513,4 @@ func writePromptShow(stdout io.Writer, response promptShowResponse) {
 	if !strings.HasSuffix(response.Prompt, "\n") {
 		fmt.Fprintln(stdout)
 	}
-}
-
-func filepathToSlash(path string) string {
-	return strings.ReplaceAll(path, "\\", "/")
 }

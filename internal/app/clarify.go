@@ -52,15 +52,7 @@ type clarificationDecisionRecord struct {
 }
 
 type contractClarifySet struct {
-	Questions []contractClarifyQuestion `json:"questions"`
-}
-
-type contractClarifyQuestion struct {
-	ID       string `json:"id"`
-	Question string `json:"question"`
-	Blocking bool   `json:"blocking"`
-	Status   string `json:"status"`
-	Answer   string `json:"answer,omitempty"`
+	Questions []clarifyQuestionStatus `json:"questions"`
 }
 
 type clarifyQuestionStatus struct {
@@ -222,7 +214,6 @@ func (a App) ClarifyStatus(stdout io.Writer, runID string, jsonOutput bool) erro
 type clarifyContext struct {
 	Root     string
 	Paths    artifacts.Paths
-	RunDir   string
 	RunPaths contractRunPathSet
 	State    contractRunState
 }
@@ -249,7 +240,7 @@ func (a App) loadClarifyContext(stdout io.Writer, runID string, jsonOutput bool)
 	if err != nil {
 		return clarifyContext{}, false, err
 	}
-	return clarifyContext{Root: root, Paths: paths, RunDir: runDir, RunPaths: runPaths, State: state}, true, nil
+	return clarifyContext{Root: root, Paths: paths, RunPaths: runPaths, State: state}, true, nil
 }
 
 func (a App) refreshClarificationArtifacts(context clarifyContext, updatedAt time.Time) (clarifyStatusResponse, error) {
@@ -408,20 +399,6 @@ func latestAnswersByQuestion(answers []clarificationAnswerRecord) map[string]cla
 		latest[answer.QuestionID] = answer
 	}
 	return latest
-}
-
-func contractClarificationsFromStatus(questions []clarifyQuestionStatus) []contractClarifyQuestion {
-	result := make([]contractClarifyQuestion, 0, len(questions))
-	for _, question := range questions {
-		result = append(result, contractClarifyQuestion{
-			ID:       question.ID,
-			Question: question.Question,
-			Blocking: question.Blocking,
-			Status:   question.Status,
-			Answer:   question.Answer,
-		})
-	}
-	return result
 }
 
 func openClarificationQuestionTexts(questions []clarifyQuestionStatus) []string {

@@ -19,6 +19,32 @@ type Result struct {
 	Warnings []string
 }
 
+// importLikeKinds are item kinds that carry import/module/namespace wiring
+// rather than a definition worth surfacing in the code map.
+var importLikeKinds = map[string]bool{
+	"go_package":   true,
+	"go_import":    true,
+	"py_module":    true,
+	"py_import":    true,
+	"js_import":    true,
+	"ts_import":    true,
+	"cs_using":     true,
+	"cs_namespace": true,
+}
+
+// entryPointKinds mark program entry points worth surfacing first.
+var entryPointKinds = map[string]bool{
+	"go_main": true,
+	"py_main": true,
+}
+
+// IsImportLike reports whether the item is an import/module/namespace marker
+// rather than a definition to surface in the code map.
+func (i Item) IsImportLike() bool { return importLikeKinds[i.Kind] }
+
+// IsEntryPoint reports whether the item marks a program entry point.
+func (i Item) IsEntryPoint() bool { return entryPointKinds[i.Kind] }
+
 const (
 	ModeAuto     = "auto"
 	ModeOff      = "off"

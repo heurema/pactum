@@ -60,7 +60,7 @@ type executeReportContext struct {
 
 type executionAttemptSummary struct {
 	ID     string
-	Paths  executionAttemptPathSet
+	Paths  attemptPathSet
 	Result executionResultDocument
 }
 

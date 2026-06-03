@@ -1295,6 +1295,44 @@ func TestReviewAcceptProposalCreatesFinding(t *testing.T) {
 	}
 }
 
+func TestReviewAcceptProposalDoesNotCopyEvidenceToFinding(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	// appendReviewProposalForTest records the proposal with Evidence "fixture
+	// evidence". The message deliberately omits the word "evidence" so the raw
+	// findings.jsonl check below only trips on a real evidence field leak.
+	appendReviewProposalForTest(t, runPaths, runID, "p_001", "blocking issue", true)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "accept-proposal", runID, "p_001", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review accept-proposal exited %d, stderr: %s", code, stderr.String())
+	}
+
+	// Evidence belongs to proposals, not accepted findings: the finding on disk
+	// must not carry it.
+	if got := mustReadFile(t, runPaths.ReviewFindingsJSONL); strings.Contains(got, `"evidence"`) {
+		t.Fatalf("findings.jsonl must not contain an evidence field:\n%s", got)
+	}
+	if findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL); len(findings) != 1 {
+		t.Fatalf("expected exactly one accepted finding, got %#v", findings)
+	}
+
+	// The accept-proposal JSON response carries both the proposal (which keeps
+	// its evidence) and the new finding (which must not).
+	var response struct {
+		Proposal map[string]any `json:"proposal"`
+		Finding  map[string]any `json:"finding"`
+	}
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if _, ok := response.Finding["evidence"]; ok {
+		t.Fatalf("accepted finding must not include evidence: %#v", response.Finding)
+	}
+	if got, _ := response.Proposal["evidence"].(string); got != "fixture evidence" {
+		t.Fatalf("proposal should retain its evidence, got %q in %#v", got, response.Proposal)
+	}
+}
+
 func TestReviewRejectProposalRecordsDecisionOnly(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupPreparedReview(t, root, "passed")
@@ -1553,17 +1591,19 @@ func writeReviewerAttemptForTest(t *testing.T, runPaths contractRunPathSet, runI
 		return
 	}
 	result := reviewerResultDocument{
-		Schema:         reviewerResultSchema,
-		RunID:          runID,
-		AttemptID:      attemptID,
-		Reviewer:       "fixture",
-		StartedAt:      "2026-06-01T22:00:00Z",
-		FinishedAt:     "2026-06-01T22:00:01Z",
-		DurationMillis: 1000,
-		ExitCode:       0,
-		TimedOut:       false,
-		Stdout:         filepath.ToSlash(filepath.Join(reviewerAttemptsArtifact, attemptID, "stdout.log")),
-		Stderr:         filepath.ToSlash(filepath.Join(reviewerAttemptsArtifact, attemptID, "stderr.log")),
+		Schema:    reviewerResultSchema,
+		RunID:     runID,
+		AttemptID: attemptID,
+		Reviewer:  "fixture",
+		processResult: processResult{
+			StartedAt:      "2026-06-01T22:00:00Z",
+			FinishedAt:     "2026-06-01T22:00:01Z",
+			DurationMillis: 1000,
+			ExitCode:       0,
+			TimedOut:       false,
+			Stdout:         filepath.ToSlash(filepath.Join(reviewerAttemptsArtifact, attemptID, "stdout.log")),
+			Stderr:         filepath.ToSlash(filepath.Join(reviewerAttemptsArtifact, attemptID, "stderr.log")),
+		},
 	}
 	assertNoError(t, writeJSON(attemptPaths.ResultJSON, result))
 }
@@ -1588,15 +1628,17 @@ func appendReviewProposalForTest(t *testing.T, runPaths contractRunPathSet, runI
 		RunID:             runID,
 		Source:            "reviewer_attempt",
 		ReviewerAttemptID: "reviewer_attempt_001",
-		Message:           message,
-		Severity:          "medium",
-		Category:          "quality",
-		File:              "internal/app/review.go",
-		Line:              12,
-		Blocking:          blocking,
-		Evidence:          "fixture evidence",
-		Status:            "pending",
-		CreatedAt:         "2026-06-01T22:00:00Z",
+		findingCore: findingCore{
+			Message:  message,
+			Severity: "medium",
+			Category: "quality",
+			File:     "internal/app/review.go",
+			Line:     12,
+			Blocking: blocking,
+		},
+		Evidence:  "fixture evidence",
+		Status:    "pending",
+		CreatedAt: "2026-06-01T22:00:00Z",
 	}
 	assertNoError(t, appendJSONLine(runPaths.ReviewProposalsJSONL, record))
 }

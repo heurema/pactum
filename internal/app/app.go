@@ -21,6 +21,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	workspaceSchema = "pactum.workspace.v1"
+	configSchema    = "pactum.config.v1"
+)
+
 type App struct {
 	WorkingDir    string
 	Now           func() time.Time
@@ -654,7 +659,7 @@ func (a App) Init(root string) error {
 		return err
 	}
 	manifest := workspaceManifest{
-		Schema:        "pactum.workspace.v1",
+		Schema:        workspaceSchema,
 		Tool:          artifacts.ToolName,
 		ToolVersion:   artifacts.ToolVersion,
 		RepoRoot:      ".",
@@ -892,7 +897,7 @@ func writeDefaultConfigIfMissing(path string) error {
 
 func defaultConfigFile() configFile {
 	return configFile{
-		Schema:         "pactum.config.v1",
+		Schema:         configSchema,
 		DefaultProfile: "balanced",
 		ProjectMap: projectMapConfig{
 			Refresh:      "auto",

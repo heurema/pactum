@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -28,15 +29,10 @@ type reviewProposalRecord struct {
 	RunID             string `json:"run_id"`
 	Source            string `json:"source"`
 	ReviewerAttemptID string `json:"reviewer_attempt_id"`
-	Message           string `json:"message"`
-	Severity          string `json:"severity"`
-	Category          string `json:"category"`
-	File              string `json:"file,omitempty"`
-	Line              int    `json:"line,omitempty"`
-	Blocking          bool   `json:"blocking"`
-	Evidence          string `json:"evidence,omitempty"`
-	Status            string `json:"status"`
-	CreatedAt         string `json:"created_at"`
+	findingCore
+	Evidence  string `json:"evidence,omitempty"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
 }
 
 type reviewProposalDecisionRecord struct {
@@ -52,21 +48,8 @@ type reviewProposalDecisionRecord struct {
 }
 
 type reviewProposalView struct {
-	Schema            string                        `json:"schema"`
-	ID                string                        `json:"id"`
-	RunID             string                        `json:"run_id"`
-	Source            string                        `json:"source"`
-	ReviewerAttemptID string                        `json:"reviewer_attempt_id"`
-	Message           string                        `json:"message"`
-	Severity          string                        `json:"severity"`
-	Category          string                        `json:"category"`
-	File              string                        `json:"file,omitempty"`
-	Line              int                           `json:"line,omitempty"`
-	Blocking          bool                          `json:"blocking"`
-	Evidence          string                        `json:"evidence,omitempty"`
-	Status            string                        `json:"status"`
-	CreatedAt         string                        `json:"created_at"`
-	LatestDecision    *reviewProposalDecisionRecord `json:"latest_decision,omitempty"`
+	reviewProposalRecord
+	LatestDecision *reviewProposalDecisionRecord `json:"latest_decision,omitempty"`
 }
 
 type reviewProposalSummary struct {
@@ -221,19 +204,13 @@ func (a App) ReviewAcceptProposal(stdout io.Writer, runID string, proposalID str
 
 	now := a.nowUTC()
 	finding := reviewFindingRecord{
-		Schema:    reviewFindingSchema,
-		ID:        nextReviewID("f", len(findings)+1),
-		RunID:     runID,
-		Message:   proposal.Message,
-		Severity:  proposal.Severity,
-		Category:  proposal.Category,
-		File:      proposal.File,
-		Line:      proposal.Line,
-		Blocking:  proposal.Blocking,
-		Evidence:  proposal.Evidence,
-		Status:    "open",
-		CreatedAt: now.Format(time.RFC3339),
-		Source:    "reviewer_proposal",
+		Schema:      reviewFindingSchema,
+		ID:          nextReviewID("f", len(findings)+1),
+		RunID:       runID,
+		findingCore: proposal.findingCore,
+		Status:      "open",
+		CreatedAt:   now.Format(time.RFC3339),
+		Source:      "reviewer_proposal",
 	}
 	decision := reviewProposalDecisionRecord{
 		Schema:     reviewProposalDecisionSchema,
@@ -350,15 +327,15 @@ func readReviewProposalRecords(runPaths contractRunPathSet) ([]reviewProposalRec
 	return proposals, decisions, nil
 }
 
-func resolveReviewerAttemptForProposals(runPaths contractRunPathSet, reviewerAttemptID string) (string, reviewerAttemptPathSet, error) {
+func resolveReviewerAttemptForProposals(runPaths contractRunPathSet, reviewerAttemptID string) (string, attemptPathSet, error) {
 	if strings.TrimSpace(reviewerAttemptID) != "" {
 		attemptID := strings.TrimSpace(reviewerAttemptID)
 		paths := reviewerAttemptPaths(runPaths, attemptID)
 		if !isDir(paths.Dir) {
-			return "", reviewerAttemptPathSet{}, fmt.Errorf("reviewer attempt not found: %s", attemptID)
+			return "", attemptPathSet{}, fmt.Errorf("reviewer attempt not found: %s", attemptID)
 		}
 		if !isRegularFile(paths.ResultJSON) {
-			return "", reviewerAttemptPathSet{}, fmt.Errorf("reviewer attempt is not completed: %s", attemptID)
+			return "", attemptPathSet{}, fmt.Errorf("reviewer attempt is not completed: %s", attemptID)
 		}
 		return attemptID, paths, nil
 	}
@@ -366,9 +343,9 @@ func resolveReviewerAttemptForProposals(runPaths contractRunPathSet, reviewerAtt
 	entries, err := os.ReadDir(runPaths.ReviewAttemptsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", reviewerAttemptPathSet{}, fmt.Errorf("no completed reviewer attempts found")
+			return "", attemptPathSet{}, fmt.Errorf("no completed reviewer attempts found")
 		}
-		return "", reviewerAttemptPathSet{}, err
+		return "", attemptPathSet{}, err
 	}
 	attemptIDs := make([]string, 0, len(entries))
 	for _, entry := range entries {
@@ -386,7 +363,7 @@ func resolveReviewerAttemptForProposals(runPaths contractRunPathSet, reviewerAtt
 		}
 	}
 	if len(attemptIDs) == 0 {
-		return "", reviewerAttemptPathSet{}, fmt.Errorf("no completed reviewer attempts found")
+		return "", attemptPathSet{}, fmt.Errorf("no completed reviewer attempts found")
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(attemptIDs)))
 	attemptID := attemptIDs[0]
@@ -482,34 +459,34 @@ func proposalRecordFromReviewerInput(root string, runID string, attemptID string
 		RunID:             runID,
 		Source:            "reviewer_attempt",
 		ReviewerAttemptID: attemptID,
-		Message:           sanitizeRepoRootInText(root, message),
-		Severity:          severity,
-		Category:          category,
-		File:              filepath.ToSlash(file),
-		Line:              line,
-		Blocking:          blocking,
-		Evidence:          sanitizeRepoRootInText(root, strings.TrimSpace(input.Evidence)),
-		Status:            "pending",
-		CreatedAt:         now.Format(time.RFC3339),
+		findingCore: findingCore{
+			Message:  sanitizeRepoRootInText(root, message),
+			Severity: severity,
+			Category: category,
+			File:     filepath.ToSlash(file),
+			Line:     line,
+			Blocking: blocking,
+		},
+		Evidence:  sanitizeRepoRootInText(root, strings.TrimSpace(input.Evidence)),
+		Status:    "pending",
+		CreatedAt: now.Format(time.RFC3339),
 	}, ""
 }
 
+// reviewSeverities and reviewCategories are the canonical enum value sets for
+// review findings, shared by the proposal validators and the reviewer prompt.
+// (The CLI kong `enum:` tags in app.go must stay literal struct tags.)
+var (
+	reviewSeverities = []string{"low", "medium", "high", "critical"}
+	reviewCategories = []string{"correctness", "scope", "quality", "validation", "process", "other"}
+)
+
 func validReviewSeverity(value string) bool {
-	switch value {
-	case "low", "medium", "high", "critical":
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(reviewSeverities, value)
 }
 
 func validReviewCategory(value string) bool {
-	switch value {
-	case "correctness", "scope", "quality", "validation", "process", "other":
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(reviewCategories, value)
 }
 
 func isRepoRelativeReviewFile(file string) bool {
@@ -550,25 +527,9 @@ func buildReviewProposalViews(proposals []reviewProposalRecord, decisions []revi
 	latest := latestReviewProposalDecisions(decisions)
 	views := make([]reviewProposalView, 0, len(proposals))
 	for _, proposal := range proposals {
-		status := proposal.Status
-		if status == "" {
-			status = "pending"
-		}
-		view := reviewProposalView{
-			Schema:            proposal.Schema,
-			ID:                proposal.ID,
-			RunID:             proposal.RunID,
-			Source:            proposal.Source,
-			ReviewerAttemptID: proposal.ReviewerAttemptID,
-			Message:           proposal.Message,
-			Severity:          proposal.Severity,
-			Category:          proposal.Category,
-			File:              proposal.File,
-			Line:              proposal.Line,
-			Blocking:          proposal.Blocking,
-			Evidence:          proposal.Evidence,
-			Status:            status,
-			CreatedAt:         proposal.CreatedAt,
+		view := reviewProposalView{reviewProposalRecord: proposal}
+		if view.Status == "" {
+			view.Status = "pending"
 		}
 		if decision, ok := latest[proposal.ID]; ok {
 			view.Status = decision.Decision

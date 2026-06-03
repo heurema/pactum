@@ -175,8 +175,7 @@ func codeSurfaceLines(items []codeindex.Item, limit int) []string {
 	}
 
 	for _, item := range items {
-		switch item.Kind {
-		case "go_main", "py_main":
+		if item.IsEntryPoint() {
 			if add(fmt.Sprintf("`%s`: `%s` `%s`", item.Path, item.Kind, item.Name)) {
 				return lines
 			}
@@ -184,8 +183,7 @@ func codeSurfaceLines(items []codeindex.Item, limit int) []string {
 	}
 
 	for _, item := range items {
-		switch item.Kind {
-		case "go_import", "py_import", "js_import", "ts_import", "cs_using", "cs_namespace", "go_package", "py_module":
+		if item.IsImportLike() {
 			continue
 		}
 		label := item.Name

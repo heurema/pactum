@@ -34,7 +34,6 @@ const (
 type reviewContext struct {
 	Root     string
 	Paths    artifacts.Paths
-	RunDir   string
 	RunPaths contractRunPathSet
 	State    contractRunState
 }
@@ -86,17 +85,23 @@ type reviewFindingInput struct {
 	Blocking bool
 }
 
+// findingCore is the body shared by review findings and review proposals.
+// Evidence is intentionally NOT part of the core: it belongs only to reviewer
+// proposals, so accepting a proposal must not carry it into a review finding.
+type findingCore struct {
+	Message  string `json:"message"`
+	Severity string `json:"severity"`
+	Category string `json:"category"`
+	File     string `json:"file,omitempty"`
+	Line     int    `json:"line,omitempty"`
+	Blocking bool   `json:"blocking"`
+}
+
 type reviewFindingRecord struct {
-	Schema    string `json:"schema"`
-	ID        string `json:"id"`
-	RunID     string `json:"run_id"`
-	Message   string `json:"message"`
-	Severity  string `json:"severity"`
-	Category  string `json:"category"`
-	File      string `json:"file,omitempty"`
-	Line      int    `json:"line,omitempty"`
-	Blocking  bool   `json:"blocking"`
-	Evidence  string `json:"evidence,omitempty"`
+	Schema string `json:"schema"`
+	ID     string `json:"id"`
+	RunID  string `json:"run_id"`
+	findingCore
 	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
 	Source    string `json:"source"`
@@ -113,19 +118,7 @@ type reviewResolutionRecord struct {
 }
 
 type reviewFindingView struct {
-	Schema           string                  `json:"schema"`
-	ID               string                  `json:"id"`
-	RunID            string                  `json:"run_id"`
-	Message          string                  `json:"message"`
-	Severity         string                  `json:"severity"`
-	Category         string                  `json:"category"`
-	File             string                  `json:"file,omitempty"`
-	Line             int                     `json:"line,omitempty"`
-	Blocking         bool                    `json:"blocking"`
-	Evidence         string                  `json:"evidence,omitempty"`
-	Status           string                  `json:"status"`
-	CreatedAt        string                  `json:"created_at"`
-	Source           string                  `json:"source"`
+	reviewFindingRecord
 	LatestResolution *reviewResolutionRecord `json:"latest_resolution,omitempty"`
 }
 
@@ -164,17 +157,10 @@ type reviewerDryRunDocument struct {
 	Schema    string                  `json:"schema"`
 	RunID     string                  `json:"run_id"`
 	CreatedAt string                  `json:"created_at"`
-	Reviewer  reviewerDryRunAgent     `json:"reviewer"`
+	Reviewer  agents.AgentDescriptor  `json:"reviewer"`
 	Checks    reviewerDryRunChecks    `json:"checks"`
 	Artifacts reviewerDryRunArtifacts `json:"artifacts"`
 	WouldRun  agents.DryRunCommand    `json:"would_run"`
-}
-
-type reviewerDryRunAgent struct {
-	Name    string   `json:"name"`
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
-	Input   string   `json:"input"`
 }
 
 type reviewerDryRunChecks struct {
@@ -199,39 +185,17 @@ type reviewerRequestDocument struct {
 	RunID     string                  `json:"run_id"`
 	AttemptID string                  `json:"attempt_id"`
 	CreatedAt string                  `json:"created_at"`
-	Reviewer  reviewerDryRunAgent     `json:"reviewer"`
+	Reviewer  agents.AgentDescriptor  `json:"reviewer"`
 	Artifacts reviewerDryRunArtifacts `json:"artifacts"`
 	WouldRun  agents.DryRunCommand    `json:"would_run"`
 }
 
 type reviewerResultDocument struct {
-	Schema         string `json:"schema"`
-	RunID          string `json:"run_id"`
-	AttemptID      string `json:"attempt_id"`
-	Reviewer       string `json:"reviewer"`
-	StartedAt      string `json:"started_at"`
-	FinishedAt     string `json:"finished_at"`
-	DurationMillis int64  `json:"duration_ms"`
-	ExitCode       int    `json:"exit_code"`
-	TimedOut       bool   `json:"timed_out"`
-	Stdout         string `json:"stdout"`
-	Stderr         string `json:"stderr"`
-}
-
-type reviewerAttemptPathSet struct {
-	Dir         string
-	RequestJSON string
-	StdoutLog   string
-	StderrLog   string
-	ResultJSON  string
-}
-
-type reviewerProcessError struct {
-	ExitCode int
-}
-
-func (e reviewerProcessError) Error() string {
-	return fmt.Sprintf("reviewer process exited with code %d", e.ExitCode)
+	Schema    string `json:"schema"`
+	RunID     string `json:"run_id"`
+	AttemptID string `json:"attempt_id"`
+	Reviewer  string `json:"reviewer"`
+	processResult
 }
 
 func (a App) ReviewPrepare(stdout io.Writer, runID string, jsonOutput bool) error {
@@ -340,15 +304,17 @@ func (a App) ReviewAddFinding(stdout io.Writer, runID string, input reviewFindin
 	}
 	now := a.nowUTC()
 	finding := reviewFindingRecord{
-		Schema:    reviewFindingSchema,
-		ID:        nextReviewID("f", len(findings)+1),
-		RunID:     runID,
-		Message:   input.Message,
-		Severity:  input.Severity,
-		Category:  input.Category,
-		File:      filepath.ToSlash(input.File),
-		Line:      input.Line,
-		Blocking:  input.Blocking,
+		Schema: reviewFindingSchema,
+		ID:     nextReviewID("f", len(findings)+1),
+		RunID:  runID,
+		findingCore: findingCore{
+			Message:  input.Message,
+			Severity: input.Severity,
+			Category: input.Category,
+			File:     filepath.ToSlash(input.File),
+			Line:     input.Line,
+			Blocking: input.Blocking,
+		},
 		Status:    "open",
 		CreatedAt: now.Format(time.RFC3339),
 		Source:    "manual",
@@ -494,7 +460,7 @@ func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, j
 	if err != nil || !ok {
 		return err
 	}
-	prep, err := a.prepareReviewerDryRun(context, reviewerName)
+	prep, err := a.prepareReviewer(context, reviewerName, "prepare reviewer dry-run")
 	if err != nil {
 		return err
 	}
@@ -524,7 +490,7 @@ func (a App) ReviewRun(stdout io.Writer, runID string, reviewerName string, time
 	if err != nil || !ok {
 		return err
 	}
-	prep, err := a.prepareReviewerRun(context, reviewerName)
+	prep, err := a.prepareReviewer(context, reviewerName, "run reviewer")
 	if err != nil {
 		return err
 	}
@@ -549,7 +515,7 @@ func (a App) ReviewRun(stdout io.Writer, runID string, reviewerName string, time
 		RunID:     runID,
 		AttemptID: attemptID,
 		CreatedAt: now.Format(time.RFC3339),
-		Reviewer: reviewerDryRunAgent{
+		Reviewer: agents.AgentDescriptor{
 			Name:    prep.Reviewer.Name,
 			Command: prep.Reviewer.Command,
 			Args:    append([]string{}, prep.Reviewer.Args...),
@@ -599,7 +565,7 @@ func (a App) ReviewRun(stdout io.Writer, runID string, reviewerName string, time
 		if result.TimedOut {
 			return fmt.Errorf("reviewer process timed out after %s", timeout)
 		}
-		return reviewerProcessError{ExitCode: result.ExitCode}
+		return processExitError{Kind: "reviewer", ExitCode: result.ExitCode}
 	}
 	return nil
 }
@@ -659,19 +625,20 @@ func (a App) loadReviewContext(stdout io.Writer, runID string) (reviewContext, b
 	return reviewContext{
 		Root:     root,
 		Paths:    paths,
-		RunDir:   runDir,
 		RunPaths: runPaths,
 		State:    state,
 	}, true, nil
 }
 
-func (a App) prepareReviewerDryRun(context reviewContext, reviewerName string) (reviewerDryRunPreparation, error) {
+// prepareReviewer loads the reviewer inputs for a prepared, approved run.
+// action names the operation for error messages, e.g. "run reviewer".
+func (a App) prepareReviewer(context reviewContext, reviewerName string, action string) (reviewerDryRunPreparation, error) {
 	review, err := requireReviewPrepared(context.RunPaths, context.State.RunID)
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
 	if !isRegularFile(context.RunPaths.GateReportJSON) {
-		return reviewerDryRunPreparation{}, fmt.Errorf("cannot prepare reviewer dry-run: gate report not found")
+		return reviewerDryRunPreparation{}, fmt.Errorf("cannot %s: gate report not found", action)
 	}
 	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
 	if err != nil {
@@ -685,75 +652,8 @@ func (a App) prepareReviewerDryRun(context reviewContext, reviewerName string) (
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
-	if contract.Status != "approved" || approval.Status != "approved" || approval.ContractSHA256 == nil {
-		return reviewerDryRunPreparation{}, fmt.Errorf("cannot prepare reviewer dry-run: contract is not approved")
-	}
-	hash, err := fileSHA256(context.RunPaths.ContractJSON)
-	if err != nil {
+	if _, err := verifyApprovedContract(context.RunPaths, contract, approval, action); err != nil {
 		return reviewerDryRunPreparation{}, err
-	}
-	if hash != *approval.ContractSHA256 {
-		return reviewerDryRunPreparation{}, fmt.Errorf("cannot prepare reviewer dry-run: contract is not approved")
-	}
-	findings, resolutions, err := readReviewRecords(context.RunPaths)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	proposals, proposalDecisions, err := readReviewProposalRecords(context.RunPaths)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	reviewer, err := a.agentRegistry().ResolveReviewer(reviewerName)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	if reviewer.Input != agents.InputPromptFile {
-		return reviewerDryRunPreparation{}, fmt.Errorf("unsupported agent input mode: %s", reviewer.Input)
-	}
-
-	review = refreshReviewDocument(review, context.State.RunID, gateReport.Status, findings, resolutions, "")
-	return reviewerDryRunPreparation{
-		Context:           context,
-		Contract:          contract,
-		GateReport:        gateReport,
-		Review:            review,
-		Findings:          findings,
-		Resolutions:       resolutions,
-		Proposals:         proposals,
-		ProposalDecisions: proposalDecisions,
-		Reviewer:          reviewer,
-	}, nil
-}
-
-func (a App) prepareReviewerRun(context reviewContext, reviewerName string) (reviewerDryRunPreparation, error) {
-	review, err := requireReviewPrepared(context.RunPaths, context.State.RunID)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	if !isRegularFile(context.RunPaths.GateReportJSON) {
-		return reviewerDryRunPreparation{}, fmt.Errorf("cannot run reviewer: gate report not found")
-	}
-	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	contract, err := readDraftContract(context.RunPaths.ContractJSON)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	approval, err := readApprovalState(context.RunPaths.ApprovalJSON)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	if contract.Status != "approved" || approval.Status != "approved" || approval.ContractSHA256 == nil {
-		return reviewerDryRunPreparation{}, fmt.Errorf("cannot run reviewer: contract is not approved")
-	}
-	hash, err := fileSHA256(context.RunPaths.ContractJSON)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
-	if hash != *approval.ContractSHA256 {
-		return reviewerDryRunPreparation{}, fmt.Errorf("cannot run reviewer: contract is not approved")
 	}
 	findings, resolutions, err := readReviewRecords(context.RunPaths)
 	if err != nil {
@@ -961,21 +861,8 @@ func buildReviewStateWithProposals(review reviewDocument, findings []reviewFindi
 	latest := latestReviewResolutions(resolutions)
 	views := make([]reviewFindingView, 0, len(findings))
 	for _, finding := range findings {
-		view := reviewFindingView{
-			Schema:    finding.Schema,
-			ID:        finding.ID,
-			RunID:     finding.RunID,
-			Message:   finding.Message,
-			Severity:  finding.Severity,
-			Category:  finding.Category,
-			File:      finding.File,
-			Line:      finding.Line,
-			Blocking:  finding.Blocking,
-			Evidence:  finding.Evidence,
-			Status:    "open",
-			CreatedAt: finding.CreatedAt,
-			Source:    finding.Source,
-		}
+		view := reviewFindingView{reviewFindingRecord: finding}
+		view.Status = "open"
 		if resolution, ok := latest[finding.ID]; ok {
 			view.Status = "resolved"
 			resolutionCopy := resolution
@@ -1032,7 +919,7 @@ func buildReviewerDryRunDocument(runID string, createdAt string, reviewer agents
 		Schema:    reviewerDryRunSchema,
 		RunID:     runID,
 		CreatedAt: createdAt,
-		Reviewer: reviewerDryRunAgent{
+		Reviewer: agents.AgentDescriptor{
 			Name:    reviewer.Name,
 			Command: reviewer.Command,
 			Args:    agentArgs,
@@ -1086,30 +973,17 @@ func nextReviewerAttemptID(attemptsDir string) (string, error) {
 	return fmt.Sprintf("reviewer_attempt_%03d", maxAttempt+1), nil
 }
 
-func reviewerAttemptPaths(runPaths contractRunPathSet, attemptID string) reviewerAttemptPathSet {
-	dir := filepath.Join(runPaths.ReviewAttemptsDir, attemptID)
-	return reviewerAttemptPathSet{
-		Dir:         dir,
-		RequestJSON: filepath.Join(dir, "request.json"),
-		StdoutLog:   filepath.Join(dir, "stdout.log"),
-		StderrLog:   filepath.Join(dir, "stderr.log"),
-		ResultJSON:  filepath.Join(dir, "result.json"),
-	}
+func reviewerAttemptPaths(runPaths contractRunPathSet, attemptID string) attemptPathSet {
+	return newAttemptPaths(filepath.Join(runPaths.ReviewAttemptsDir, attemptID))
 }
 
 func reviewerResultFromRunResult(runID string, attemptID string, reviewer string, result agents.RunResult) reviewerResultDocument {
 	return reviewerResultDocument{
-		Schema:         reviewerResultSchema,
-		RunID:          runID,
-		AttemptID:      attemptID,
-		Reviewer:       reviewer,
-		StartedAt:      result.StartedAt,
-		FinishedAt:     result.FinishedAt,
-		DurationMillis: result.DurationMillis,
-		ExitCode:       result.ExitCode,
-		TimedOut:       result.TimedOut,
-		Stdout:         result.StdoutPath,
-		Stderr:         result.StderrPath,
+		Schema:        reviewerResultSchema,
+		RunID:         runID,
+		AttemptID:     attemptID,
+		Reviewer:      reviewer,
+		processResult: processResultFromRunResult(result),
 	}
 }
 
@@ -1294,7 +1168,7 @@ func renderReviewerPrompt(runID string) string {
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "```json")
 	fmt.Fprintln(&b, "{")
-	fmt.Fprintln(&b, `  "schema": "pactum.reviewer_findings.v1",`)
+	fmt.Fprintf(&b, "  \"schema\": %q,\n", reviewerFindingsSchema)
 	fmt.Fprintln(&b, `  "findings": [`)
 	fmt.Fprintln(&b, "    {")
 	fmt.Fprintln(&b, `      "message": "Explain the issue clearly.",`)
@@ -1312,8 +1186,8 @@ func renderReviewerPrompt(runID string) string {
 	fmt.Fprintln(&b, "Rules:")
 	fmt.Fprintln(&b, "- Use repo-relative file paths only.")
 	fmt.Fprintln(&b, "- Do not include absolute paths.")
-	fmt.Fprintln(&b, "- Use severity: low, medium, high, critical.")
-	fmt.Fprintln(&b, "- Use category: correctness, scope, quality, validation, process, other.")
+	fmt.Fprintf(&b, "- Use severity: %s.\n", strings.Join(reviewSeverities, ", "))
+	fmt.Fprintf(&b, "- Use category: %s.\n", strings.Join(reviewCategories, ", "))
 	fmt.Fprintln(&b, "- If uncertain, set blocking=true and explain uncertainty in evidence.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "Important: Pactum does not trust this output automatically. A human must accept proposals.")

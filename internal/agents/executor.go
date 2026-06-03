@@ -10,19 +10,13 @@ type promptExecutor interface {
 	env(environ []string) []string
 }
 
-type codexExecutor struct {
-	Command string
-	Args    []string
-}
-
-type claudeExecutor struct {
-	Command string
-	Args    []string
-}
-
-type descriptorExecutor struct {
-	Command string
-	Args    []string
+// promptFileExecutor runs an agent that reads its prompt from stdin. The only
+// behavioral difference between the built-in agents and an arbitrary descriptor
+// is which environment variables get stripped, captured by stripEnv.
+type promptFileExecutor struct {
+	Command  string
+	Args     []string
+	StripEnv map[string]bool
 }
 
 func BuildCommand(agent AgentDescriptor, stdin string) (DryRunCommand, error) {
@@ -41,17 +35,15 @@ func newPromptExecutor(agent AgentDescriptor) (promptExecutor, error) {
 		return nil, fmt.Errorf("unsupported agent input mode: %s", agent.Input)
 	}
 
+	executor := promptFileExecutor{Command: agent.Command, Args: cloneArgs(agent.Args)}
 	switch agent.Name {
-	case BuiltinCodex:
-		return codexExecutor{Command: agent.Command, Args: cloneArgs(agent.Args)}, nil
-	case BuiltinClaude:
-		return claudeExecutor{Command: agent.Command, Args: cloneArgs(agent.Args)}, nil
-	default:
-		return descriptorExecutor{Command: agent.Command, Args: cloneArgs(agent.Args)}, nil
+	case BuiltinCodex, BuiltinClaude:
+		executor.StripEnv = map[string]bool{"CLAUDECODE": true}
 	}
+	return executor, nil
 }
 
-func (e codexExecutor) command(stdin string) DryRunCommand {
+func (e promptFileExecutor) command(stdin string) DryRunCommand {
 	return DryRunCommand{
 		Command: e.Command,
 		Args:    cloneArgs(e.Args),
@@ -59,36 +51,8 @@ func (e codexExecutor) command(stdin string) DryRunCommand {
 	}
 }
 
-func (e codexExecutor) env(environ []string) []string {
-	return filteredEnv(environ, map[string]bool{
-		"CLAUDECODE": true,
-	})
-}
-
-func (e claudeExecutor) command(stdin string) DryRunCommand {
-	return DryRunCommand{
-		Command: e.Command,
-		Args:    cloneArgs(e.Args),
-		Stdin:   stdin,
-	}
-}
-
-func (e claudeExecutor) env(environ []string) []string {
-	return filteredEnv(environ, map[string]bool{
-		"CLAUDECODE": true,
-	})
-}
-
-func (e descriptorExecutor) command(stdin string) DryRunCommand {
-	return DryRunCommand{
-		Command: e.Command,
-		Args:    cloneArgs(e.Args),
-		Stdin:   stdin,
-	}
-}
-
-func (e descriptorExecutor) env(environ []string) []string {
-	return append([]string{}, environ...)
+func (e promptFileExecutor) env(environ []string) []string {
+	return filteredEnv(environ, e.StripEnv)
 }
 
 func filteredEnv(environ []string, strip map[string]bool) []string {

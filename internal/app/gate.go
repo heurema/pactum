@@ -72,26 +72,10 @@ type gateSummary struct {
 }
 
 type validationCommandResultDocument struct {
-	Schema         string `json:"schema"`
-	ID             string `json:"id"`
-	Command        string `json:"command"`
-	StartedAt      string `json:"started_at"`
-	FinishedAt     string `json:"finished_at"`
-	DurationMillis int64  `json:"duration_ms"`
-	ExitCode       int    `json:"exit_code"`
-	TimedOut       bool   `json:"timed_out"`
-	Stdout         string `json:"stdout"`
-	Stderr         string `json:"stderr"`
-}
-
-type gateContext struct {
-	Root     string
-	Paths    artifacts.Paths
-	RunDir   string
-	RunPaths contractRunPathSet
-	State    contractRunState
-	Contract draftContract
-	Approval approvalState
+	Schema  string `json:"schema"`
+	ID      string `json:"id"`
+	Command string `json:"command"`
+	processResult
 }
 
 type gateProcessError struct {
@@ -225,41 +209,40 @@ func (a App) GateShow(stdout io.Writer, runID string, jsonOutput bool) error {
 	return nil
 }
 
-func (a App) loadGateContext(stdout io.Writer, runID string) (gateContext, bool, error) {
+func (a App) loadGateContext(stdout io.Writer, runID string) (runContext, bool, error) {
 	root, paths, ok, err := a.requireWorkspace(stdout, false)
 	if err != nil || !ok {
-		return gateContext{}, false, err
+		return runContext{}, false, err
 	}
 
 	runDir := filepath.Join(paths.RunsDir, runID)
 	info, err := os.Stat(runDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return gateContext{}, false, fmt.Errorf("run not found: %s", runID)
+			return runContext{}, false, fmt.Errorf("run not found: %s", runID)
 		}
-		return gateContext{}, false, err
+		return runContext{}, false, err
 	}
 	if !info.IsDir() {
-		return gateContext{}, false, fmt.Errorf("run not found: %s", runID)
+		return runContext{}, false, fmt.Errorf("run not found: %s", runID)
 	}
 
 	runPaths := contractRunPaths(runDir)
 	state, err := readContractRunState(runPaths.RunJSON)
 	if err != nil {
-		return gateContext{}, false, err
+		return runContext{}, false, err
 	}
 	contract, err := readDraftContract(runPaths.ContractJSON)
 	if err != nil {
-		return gateContext{}, false, err
+		return runContext{}, false, err
 	}
 	approval, err := readApprovalState(runPaths.ApprovalJSON)
 	if err != nil {
-		return gateContext{}, false, err
+		return runContext{}, false, err
 	}
-	return gateContext{
+	return runContext{
 		Root:     root,
 		Paths:    paths,
-		RunDir:   runDir,
 		RunPaths: runPaths,
 		State:    state,
 		Contract: contract,
@@ -267,21 +250,12 @@ func (a App) loadGateContext(stdout io.Writer, runID string) (gateContext, bool,
 	}, true, nil
 }
 
-func ensureGateContractApproved(context gateContext) error {
-	if context.Contract.Status != "approved" || context.Approval.Status != "approved" || context.Approval.ContractSHA256 == nil {
-		return fmt.Errorf("cannot run gate: contract is not approved")
-	}
-	hash, err := fileSHA256(context.RunPaths.ContractJSON)
-	if err != nil {
-		return err
-	}
-	if hash != *context.Approval.ContractSHA256 {
-		return fmt.Errorf("cannot run gate: approved contract hash does not match current contract")
-	}
-	return nil
+func ensureGateContractApproved(context runContext) error {
+	_, err := verifyApprovedContract(context.RunPaths, context.Contract, context.Approval, "run gate")
+	return err
 }
 
-func ensureGatePromptReady(context gateContext) (promptManifest, error) {
+func ensureGatePromptReady(context runContext) (promptManifest, error) {
 	if !isRegularFile(context.RunPaths.PromptManifest) {
 		return promptManifest{}, fmt.Errorf("cannot run gate: executor prompt has not been built")
 	}
@@ -298,7 +272,7 @@ func ensureGatePromptReady(context gateContext) (promptManifest, error) {
 	return manifest, nil
 }
 
-func latestCompletedGateExecution(context gateContext, contractSHA256 string) (executionAttemptSummary, string, bool, error) {
+func latestCompletedGateExecution(context runContext, contractSHA256 string) (executionAttemptSummary, string, bool, error) {
 	attemptIDs, err := listExecutionAttemptIDs(context.RunPaths.AttemptsDir)
 	if err != nil {
 		return executionAttemptSummary{}, "", false, err
@@ -524,16 +498,18 @@ func (a App) runGateValidationCommand(root string, runPaths contractRunPathSet, 
 	}
 
 	result := validationCommandResultDocument{
-		Schema:         validationCommandResultSchema,
-		ID:             id,
-		Command:        commandText,
-		StartedAt:      started.Format(time.RFC3339Nano),
-		FinishedAt:     finished.Format(time.RFC3339Nano),
-		DurationMillis: finished.Sub(started).Milliseconds(),
-		ExitCode:       exitCode,
-		TimedOut:       timedOut,
-		Stdout:         stdoutArtifact,
-		Stderr:         stderrArtifact,
+		Schema:  validationCommandResultSchema,
+		ID:      id,
+		Command: commandText,
+		processResult: processResult{
+			StartedAt:      started.Format(time.RFC3339Nano),
+			FinishedAt:     finished.Format(time.RFC3339Nano),
+			DurationMillis: finished.Sub(started).Milliseconds(),
+			ExitCode:       exitCode,
+			TimedOut:       timedOut,
+			Stdout:         stdoutArtifact,
+			Stderr:         stderrArtifact,
+		},
 	}
 	if err := writeJSON(resultPath, result); err != nil {
 		return gateValidationCommandReport{}, err
