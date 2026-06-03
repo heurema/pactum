@@ -18,11 +18,11 @@ func TestGateRunBeforeInitPrintsGuidance(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := testApp(root).Run([]string{"gate", "run", "run_x"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("gate run before init exited %d, stderr: %s", code, stderr.String())
+	if code != 1 {
+		t.Fatalf("gate run before init exited %d, want 1, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
-		t.Fatalf("gate run before init output mismatch:\n%s", got)
+	if got := stderr.String(); !strings.Contains(got, "not initialized") {
+		t.Fatalf("gate run before init stderr mismatch:\n%s", got)
 	}
 }
 
@@ -69,11 +69,11 @@ func TestGateRunRefusesWithoutAllowCommands(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("gate run without allow exited %d, stderr: %s", code, stderr.String())
+	if code != 1 {
+		t.Fatalf("gate run without allow exited %d, want 1, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); got != "Refusing to run validation commands without --allow-commands.\n" {
-		t.Fatalf("refusal output mismatch:\n%s", got)
+	if got := stderr.String(); !strings.Contains(got, "refusing to run validation commands without --allow-commands") {
+		t.Fatalf("refusal stderr mismatch:\n%s", got)
 	}
 	assertNoFile(t, runPaths.GateReportJSON)
 }
@@ -427,7 +427,7 @@ func setupGatePreparedRun(t *testing.T, root string, validationCommands []string
 		t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
 		stdout.Reset()
 		stderr.Reset()
-		code := app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
+		code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
 		}

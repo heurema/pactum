@@ -255,7 +255,7 @@ func (a App) ReviewPrepare(stdout io.Writer, runID string, jsonOutput bool) erro
 }
 
 func (a App) ReviewStatus(stdout io.Writer, runID string, jsonOutput bool) error {
-	state, ok, err := a.loadPreparedReviewState(stdout, runID)
+	state, ok, err := a.loadPreparedReviewState(stdout, runID, jsonOutput)
 	if err != nil || !ok {
 		return err
 	}
@@ -267,7 +267,7 @@ func (a App) ReviewStatus(stdout io.Writer, runID string, jsonOutput bool) error
 }
 
 func (a App) ReviewShow(stdout io.Writer, runID string, jsonOutput bool) error {
-	state, ok, err := a.loadPreparedReviewState(stdout, runID)
+	state, ok, err := a.loadPreparedReviewState(stdout, runID, jsonOutput)
 	if err != nil || !ok {
 		return err
 	}
@@ -570,14 +570,14 @@ func (a App) ReviewRun(stdout io.Writer, runID string, reviewerName string, time
 	return nil
 }
 
-func (a App) loadPreparedReviewState(stdout io.Writer, runID string) (reviewStateResponse, bool, error) {
+func (a App) loadPreparedReviewState(stdout io.Writer, runID string, jsonOutput bool) (reviewStateResponse, bool, error) {
 	context, ok, err := a.loadReviewContext(stdout, runID)
 	if err != nil || !ok {
 		return reviewStateResponse{}, false, err
 	}
 	if !isRegularFile(context.RunPaths.GateReportJSON) || !isRegularFile(context.RunPaths.ReviewJSON) {
-		writeReviewNotPrepared(stdout, runID)
-		return reviewStateResponse{}, false, nil
+		suggested := fmt.Sprintf("pactum review prepare %s", runID)
+		return reviewStateResponse{}, false, writeNotReady(stdout, jsonOutput, runID, "Review has not been prepared. Run: "+suggested, suggested)
 	}
 	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
 	if err != nil {
@@ -1221,10 +1221,6 @@ func valueOrNone(value string) string {
 		return "none"
 	}
 	return value
-}
-
-func writeReviewNotPrepared(stdout io.Writer, runID string) {
-	fmt.Fprintf(stdout, "Review has not been prepared. Run: pactum review prepare %s\n", runID)
 }
 
 func writeReviewPrepared(stdout io.Writer, state reviewStateResponse) {

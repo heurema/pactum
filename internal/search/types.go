@@ -54,7 +54,11 @@ type QueryOptions struct {
 	Kind  string
 }
 
+// ResponseSchema identifies the machine-readable search response shape.
+const ResponseSchema = "pactum.search.v1"
+
 type Response struct {
+	Schema  string   `json:"schema"`
 	Query   string   `json:"query"`
 	Results []Result `json:"results"`
 }

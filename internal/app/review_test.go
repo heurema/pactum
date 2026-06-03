@@ -20,11 +20,11 @@ func TestReviewPrepareBeforeInitPrintsGuidance(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := testApp(root).Run([]string{"review", "prepare", "run_x"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("review prepare before init exited %d, stderr: %s", code, stderr.String())
+	if code != 1 {
+		t.Fatalf("review prepare before init exited %d, want 1, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
-		t.Fatalf("review prepare before init output mismatch:\n%s", got)
+	if got := stderr.String(); !strings.Contains(got, "not initialized") {
+		t.Fatalf("review prepare before init stderr mismatch:\n%s", got)
 	}
 }
 
@@ -386,11 +386,11 @@ func TestReviewDryRunBeforeInitPrintsGuidance(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := testApp(root).Run([]string{"review", "dry-run", "run_x"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("review dry-run before init exited %d, stderr: %s", code, stderr.String())
+	if code != 1 {
+		t.Fatalf("review dry-run before init exited %d, want 1, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
-		t.Fatalf("review dry-run before init output mismatch:\n%s", got)
+	if got := stderr.String(); !strings.Contains(got, "not initialized") {
+		t.Fatalf("review dry-run before init stderr mismatch:\n%s", got)
 	}
 }
 
@@ -684,11 +684,11 @@ func TestReviewRunBeforeInitPrintsGuidance(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := testApp(root).Run([]string{"review", "run", "run_x"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("review run before init exited %d, stderr: %s", code, stderr.String())
+	if code != 1 {
+		t.Fatalf("review run before init exited %d, want 1, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
-		t.Fatalf("review run before init output mismatch:\n%s", got)
+	if got := stderr.String(); !strings.Contains(got, "not initialized") {
+		t.Fatalf("review run before init stderr mismatch:\n%s", got)
 	}
 }
 
@@ -1070,11 +1070,11 @@ func TestReviewProposeFindingsBeforeInitPrintsGuidance(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := testApp(root).Run([]string{"review", "propose-findings", "run_x"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("review propose-findings before init exited %d, stderr: %s", code, stderr.String())
+	if code != 1 {
+		t.Fatalf("review propose-findings before init exited %d, want 1, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
-		t.Fatalf("review propose-findings before init output mismatch:\n%s", got)
+	if got := stderr.String(); !strings.Contains(got, "not initialized") {
+		t.Fatalf("review propose-findings before init stderr mismatch:\n%s", got)
 	}
 }
 

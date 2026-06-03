@@ -14,7 +14,10 @@ import (
 	"github.com/heurema/pactum/internal/projectmap"
 )
 
+const statusSchema = "pactum.status.v1"
+
 type statusResponse struct {
+	Schema      string           `json:"schema"`
 	Initialized bool             `json:"initialized"`
 	RepoRoot    string           `json:"repo_root,omitempty"`
 	Workspace   string           `json:"workspace,omitempty"`
@@ -35,7 +38,11 @@ type projectMapStatus struct {
 }
 
 type runsStatus struct {
-	Active int `json:"active"`
+	Active       int    `json:"active"`
+	LatestRunID  string `json:"latest_run_id,omitempty"`
+	LatestStatus string `json:"latest_status,omitempty"`
+	CurrentRunID string `json:"current_run_id,omitempty"`
+	NextCommand  string `json:"next_command,omitempty"`
 }
 
 type memoryStatus struct {
@@ -85,12 +92,29 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 		return statusResponse{}, err
 	}
 
+	runs := runsStatus{Active: activeRuns}
+	if latestID, hasLatest, err := latestRunID(paths); err != nil {
+		return statusResponse{}, err
+	} else if hasLatest {
+		runs.LatestRunID = latestID
+		runs.LatestStatus = deriveRunStatus(paths, latestID)
+		// The "focus" run for next-step guidance is the current run when valid,
+		// otherwise the latest run.
+		focusID := latestID
+		if currentID, ok := readCurrentRun(paths); ok && runExists(paths, currentID) {
+			runs.CurrentRunID = currentID
+			focusID = currentID
+		}
+		runs.NextCommand = nextCommandForStatus(deriveRunStatus(paths, focusID))
+	}
+
 	return statusResponse{
+		Schema:      statusSchema,
 		Initialized: true,
 		RepoRoot:    root,
 		Workspace:   paths.Workspace,
 		ProjectMap:  mapStatus,
-		Runs:        runsStatus{Active: activeRuns},
+		Runs:        runs,
 		Memory:      memoryStatus{Items: memoryItems, Stale: 0},
 		Usage:       usageStatus{TotalTokens: 0, EstimatedCostUSD: 0},
 	}, nil

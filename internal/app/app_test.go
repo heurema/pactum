@@ -509,35 +509,12 @@ func TestRunBeforeInitPrintsGuidance(t *testing.T) {
 	root := t.TempDir()
 
 	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"run", "add sqlite cache", "--contract-only"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("run before init exited %d, stderr: %s", code, stderr.String())
+	code := testApp(root).Run([]string{"task", "new", "add sqlite cache"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("task new before init exited %d, want 1, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
-		t.Fatalf("run before init output mismatch:\n%s", got)
-	}
-}
-
-func TestRunWithoutContractOnlyPrintsGuidance(t *testing.T) {
-	root := t.TempDir()
-
-	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = testApp(root).Run([]string{"run", "add sqlite cache"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("run without --contract-only exited %d, stderr: %s", code, stderr.String())
-	}
-	if got := stdout.String(); !strings.Contains(got, "pactum run prepares a contract draft. Re-run with --contract-only, then use: clarify, contract approve, prompt build, execute.") {
-		t.Fatalf("run without --contract-only output mismatch:\n%s", got)
-	}
-	if got := stdout.String(); strings.Contains(got, "not implemented yet") {
-		t.Fatalf("run without --contract-only output contains stale wording:\n%s", got)
+	if got := stderr.String(); !strings.Contains(got, "not initialized") {
+		t.Fatalf("task new before init stderr mismatch:\n%s", got)
 	}
 }
 
@@ -555,7 +532,7 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"run", task, "--contract-only"}, &stdout, &stderr)
+	code = app.Run([]string{"task", "new", task}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("run --contract-only exited %d, stderr: %s", code, stderr.String())
 	}
@@ -565,13 +542,11 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 		"id: run_20260531_184012",
 		"status: contract_draft",
 		"task: add sqlite cache",
-		"task: .heurema/pactum/runs/run_20260531_184012/task.md",
-		"context: .heurema/pactum/runs/run_20260531_184012/context/repo-context.md",
-		"contract: .heurema/pactum/runs/run_20260531_184012/contract/contract.md",
-		"Review the generated contract draft.",
+		"current: yes",
+		"pactum contract approve",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("run output missing %q:\n%s", want, got)
+			t.Fatalf("task new output missing %q:\n%s", want, got)
 		}
 	}
 
@@ -715,7 +690,7 @@ func TestRunContractOnlyArtifactsUseRepoRelativePaths(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"run", "task", "--contract-only"}, &stdout, &stderr)
+	code = app.Run([]string{"task", "new", "task"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("run --contract-only exited %d, stderr: %s", code, stderr.String())
 	}
@@ -806,7 +781,7 @@ func TestRunContractOnlySearchResultsWarnWhenIndexMissing(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"run", task, "--contract-only"}, &stdout, &stderr)
+	code = app.Run([]string{"task", "new", task}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("run --contract-only exited %d, stderr: %s", code, stderr.String())
 	}
@@ -834,7 +809,7 @@ func TestRunContractOnlyJSONOutput(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"run", "add sqlite cache", "--contract-only", "--json"}, &stdout, &stderr)
+	code = app.Run([]string{"task", "new", "add sqlite cache", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("run --contract-only --json exited %d, stderr: %s", code, stderr.String())
 	}
@@ -863,13 +838,13 @@ func TestRunIDsAreCollisionSafeWithFixedTimestamp(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"run", "first task", "--contract-only"}, &stdout, &stderr)
+	code = app.Run([]string{"task", "new", "first task"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("first run exited %d, stderr: %s", code, stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"run", "second task", "--contract-only"}, &stdout, &stderr)
+	code = app.Run([]string{"task", "new", "second task"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("second run exited %d, stderr: %s", code, stderr.String())
 	}
@@ -904,7 +879,7 @@ func TestRunContractOnlyConcurrentRunsUseDistinctDirectories(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			var stdout, stderr bytes.Buffer
-			code := app.Run([]string{"run", fmt.Sprintf("task %d", i), "--contract-only"}, &stdout, &stderr)
+			code := app.Run([]string{"task", "new", fmt.Sprintf("task %d", i)}, &stdout, &stderr)
 			if code != 0 {
 				errs <- fmt.Sprintf("run %d exited %d, stderr: %s", i, code, stderr.String())
 			}
@@ -952,7 +927,7 @@ func TestStatusActiveRunsCountIncreasesAfterContractOnlyRun(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"run", "add sqlite cache", "--contract-only"}, &stdout, &stderr)
+	code = app.Run([]string{"task", "new", "add sqlite cache"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("run --contract-only exited %d, stderr: %s", code, stderr.String())
 	}
@@ -979,7 +954,7 @@ func TestStatusJSONIncludesActiveRunCount(t *testing.T) {
 	}
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"run", "add sqlite cache", "--contract-only"}, &stdout, &stderr)
+	code = app.Run([]string{"task", "new", "add sqlite cache"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("run --contract-only exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1000,10 +975,9 @@ func TestStatusJSONIncludesActiveRunCount(t *testing.T) {
 func TestContractBeforeInitPrintsGuidance(t *testing.T) {
 	root := t.TempDir()
 
+	// Read-only commands stay exit 0 with a stdout notice.
 	for _, args := range [][]string{
 		{"contract", "show", "run_x"},
-		{"contract", "revise", "run_x", "--goal", "new goal"},
-		{"contract", "approve", "run_x"},
 	} {
 		var stdout, stderr bytes.Buffer
 		code := testApp(root).Run(args, &stdout, &stderr)
@@ -1012,6 +986,21 @@ func TestContractBeforeInitPrintsGuidance(t *testing.T) {
 		}
 		if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
 			t.Fatalf("%v output mismatch:\n%s", args, got)
+		}
+	}
+
+	// Mutating commands exit 1 with a stderr error.
+	for _, args := range [][]string{
+		{"contract", "revise", "run_x", "--goal", "new goal"},
+		{"contract", "approve", "run_x"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := testApp(root).Run(args, &stdout, &stderr)
+		if code != 1 {
+			t.Fatalf("%v exited %d, want 1, stderr: %s", args, code, stderr.String())
+		}
+		if got := stderr.String(); !strings.Contains(got, "not initialized") {
+			t.Fatalf("%v stderr mismatch:\n%s", args, got)
 		}
 	}
 }
@@ -1479,26 +1468,40 @@ func TestClarifyBeforeInitPrintsGuidance(t *testing.T) {
 func TestClarifyBeforeInitJSONOutput(t *testing.T) {
 	root := t.TempDir()
 
+	// Read-only --json before init: exit 0 with the structured not-initialized
+	// status document (no plain text).
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"clarify", "status", "run_x", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify status --json before init exited %d, stderr: %s", code, stderr.String())
+	}
+	var response struct {
+		Initialized bool   `json:"initialized"`
+		Message     string `json:"message"`
+	}
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.Initialized || response.Message != "Pactum is not initialized. Run: pactum init" {
+		t.Fatalf("unexpected json response: %#v\n%s", response, stdout.String())
+	}
+
+	// Mutating --json before init: exit 1 with a JSON error envelope on stdout
+	// (stderr empty), never plain text.
 	for _, args := range [][]string{
 		{"clarify", "ask", "run_x", "Question?", "--json"},
 		{"clarify", "answer", "run_x", "q_001", "Answer.", "--json"},
-		{"clarify", "status", "run_x", "--json"},
 	} {
 		var stdout, stderr bytes.Buffer
 		code := testApp(root).Run(args, &stdout, &stderr)
-		if code != 0 {
-			t.Fatalf("%v exited %d, stderr: %s", args, code, stderr.String())
+		if code != 1 {
+			t.Fatalf("%v exited %d, want 1, stderr: %s", args, code, stderr.String())
 		}
-		var response struct {
-			Initialized bool   `json:"initialized"`
-			Message     string `json:"message"`
+		if stderr.Len() != 0 {
+			t.Fatalf("%v wrote to stderr in --json mode:\n%s", args, stderr.String())
 		}
-		assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
-		if response.Initialized || response.Message != "Pactum is not initialized. Run: pactum init" {
-			t.Fatalf("%v unexpected json response: %#v\n%s", args, response, stdout.String())
-		}
-		if strings.Contains(stdout.String(), "Pactum is not initialized. Run: pactum init\n") && !strings.Contains(stdout.String(), `"message"`) {
-			t.Fatalf("%v should not emit plain text guidance for --json:\n%s", args, stdout.String())
+		var envelope errorEnvelope
+		assertNoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+		if envelope.Schema != errorSchema || envelope.Error.Code != "not_initialized" {
+			t.Fatalf("%v unexpected error envelope: %#v\n%s", args, envelope, stdout.String())
 		}
 	}
 }
@@ -1973,7 +1976,7 @@ func TestMapRefreshCommandRebuildsMapOnly(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"map", "refresh", "--full"}, &stdout, &stderr)
+	code = app.Run([]string{"map", "refresh"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
 	}
@@ -2031,10 +2034,10 @@ func TestMapRefreshRequiresInitializedWorkspace(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := testApp(root).Run([]string{"map", "refresh"}, &stdout, &stderr)
-	if code == 0 {
-		t.Fatalf("map refresh before init should fail")
+	if code != 1 {
+		t.Fatalf("map refresh before init exited %d, want 1", code)
 	}
-	if got := stderr.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
+	if got := stderr.String(); !strings.Contains(got, "not initialized") {
 		t.Fatalf("map refresh before init stderr mismatch:\n%s", got)
 	}
 }
@@ -2360,7 +2363,7 @@ func setupContractRun(t *testing.T, root string) (App, artifacts.Paths, string) 
 	}
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"run", "add sqlite cache", "--contract-only"}, &stdout, &stderr)
+	code = app.Run([]string{"task", "new", "add sqlite cache"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("run --contract-only exited %d, stderr: %s", code, stderr.String())
 	}

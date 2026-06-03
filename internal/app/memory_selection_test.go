@@ -329,7 +329,7 @@ func setupInitializedMemoryWorkspace(t *testing.T, root string) (App, artifacts.
 func runContractOnlyForTask(t *testing.T, app App, task string) string {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"run", task, "--contract-only", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"task", "new", task, "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("run --contract-only exited %d, stderr: %s", code, stderr.String())
 	}
