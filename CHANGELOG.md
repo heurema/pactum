@@ -52,7 +52,10 @@ yet — everything lives under **Unreleased**.
   natural-language tasks — the run now extracts targeted queries (paths, code
   identifiers, domain terms) and combines their results, and refreshes this
   context from the approved contract at `prompt build`. The executor context
-  shows the query source, targeted queries, and top results.
+  shows the query source, targeted queries, and top results. Combined results
+  are merged round-robin across the targeted queries (so each query is
+  represented rather than the most specific one draining every slot) and
+  import-like hits are de-prioritized below definitions/files/wiki.
 - Replaced the old top-level `run` command with `task new`.
 - `execute run` and `review run` require confirmation or `--yes`.
 - Made the project map wiki-first in place: `repo-map.md` and `llms.txt` now
