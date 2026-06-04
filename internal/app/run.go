@@ -417,9 +417,11 @@ func runContextSearch(dbPath string, queries []string, limit int) ([]runSearchRe
 	if limit <= 0 {
 		limit = runContextSearchLimit
 	}
-	combined := []runSearchResultItem{}
-	seen := map[string]bool{}
-	for _, query := range queries {
+
+	// Run each targeted query and keep its ranked hits.
+	perQuery := make([][]searchpkg.Result, len(queries))
+	longest := 0
+	for i, query := range queries {
 		response, err := searchpkg.Query(dbPath, searchpkg.QueryOptions{
 			Query: query,
 			Limit: limit,
@@ -428,18 +430,51 @@ func runContextSearch(dbPath string, queries []string, limit int) ([]runSearchRe
 		if err != nil {
 			return nil, err
 		}
-		for _, hit := range response.Results {
+		perQuery[i] = response.Results
+		if len(response.Results) > longest {
+			longest = len(response.Results)
+		}
+	}
+
+	// Round-robin across queries (position-major, query-minor) so every targeted
+	// query gets representation before the cap fills, rather than the most
+	// specific query draining every slot. Dedupe globally.
+	seen := map[string]bool{}
+	ordered := []runSearchResultItem{}
+	for pos := 0; pos < longest; pos++ {
+		for i, results := range perQuery {
+			if pos >= len(results) {
+				continue
+			}
+			hit := results[pos]
 			key := hit.Kind + "\x00" + hit.Path + "\x00" + hit.Title + "\x00" + hit.CodeKind
 			if seen[key] {
 				continue
 			}
 			seen[key] = true
-			hit.Rank = len(combined) + 1
-			combined = append(combined, runSearchResultItem{Result: hit, SourceQuery: query})
-			if len(combined) >= limit {
-				return combined, nil
-			}
+			ordered = append(ordered, runSearchResultItem{Result: hit, SourceQuery: queries[i]})
 		}
+	}
+
+	// De-prioritize import-like hits: keep definitions/files/wiki first and
+	// imports last, preserving round-robin order within each group. Imports are
+	// rarely the place to start editing, so they should not crowd the top of the
+	// run context.
+	combined := make([]runSearchResultItem, 0, len(ordered))
+	var imports []runSearchResultItem
+	for _, item := range ordered {
+		if item.Kind == searchpkg.KindImport {
+			imports = append(imports, item)
+			continue
+		}
+		combined = append(combined, item)
+	}
+	combined = append(combined, imports...)
+	if len(combined) > limit {
+		combined = combined[:limit]
+	}
+	for i := range combined {
+		combined[i].Rank = i + 1
 	}
 	return combined, nil
 }

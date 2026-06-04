@@ -115,6 +115,53 @@ func TestRunContextSearchFromTask(t *testing.T) {
 	}
 }
 
+func TestRunContextSearchDeprioritizesImports(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "package.json"), "{\n  \"name\": \"web\"\n}\n")
+	mustWriteFile(t, filepath.Join(root, "apps", "admin", "src", "lib", "format.ts"), `export function formatCurrency(value: number): string {
+  return value.toFixed(2)
+}
+`)
+	// A sibling whose path matches the path query and that imports format,
+	// producing import-kind hits that previously crowded the top.
+	mustWriteFile(t, filepath.Join(root, "apps", "admin", "src", "lib", "format-helpers.ts"), `import { formatCurrency } from "./format"
+
+export const reexport = formatCurrency
+`)
+	app := testApp(root)
+	wikiRunOK(t, app, "init")
+	srPath := filepath.Join(artifacts.New(root).RunsDir, "run_20260531_184012", "context", "search-results.json")
+	wikiRunOK(t, app, "task", "new", "update apps/admin/src/lib/format.ts and formatCurrency")
+
+	results := readRunSearchResultsFile(t, srPath)
+	if len(results.Results) == 0 {
+		t.Fatal("expected run-context results")
+	}
+
+	// The definition is represented (round-robin gives each query a slot).
+	foundDef := false
+	for _, r := range results.Results {
+		if r.CodeKind == "ts_func" && r.Title == "formatCurrency" {
+			foundDef = true
+		}
+	}
+	if !foundDef {
+		t.Fatalf("formatCurrency definition should be represented: %#v", results.Results)
+	}
+
+	// Imports are de-prioritized: no non-import result follows an import.
+	importSeen := false
+	for _, r := range results.Results {
+		if r.Kind == "import" {
+			importSeen = true
+			continue
+		}
+		if importSeen {
+			t.Fatalf("a non-import result (%s %s) followed an import; imports must rank last: %#v", r.Kind, r.Path, results.Results)
+		}
+	}
+}
+
 func TestRunContextSearchRefreshedFromContract(t *testing.T) {
 	root, paths := initFormatFixture(t)
 	runDir := filepath.Join(paths.RunsDir, "run_20260531_184012")
