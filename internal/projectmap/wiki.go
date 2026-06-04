@@ -38,16 +38,18 @@ type scriptEntry struct {
 }
 
 type packageManifest struct {
-	Main    string
-	Bin     []string
-	Scripts []scriptEntry
-	Deps    []string
+	Main       string
+	Bin        []string
+	Scripts    []scriptEntry
+	Deps       []string
+	Workspaces []string
 }
 
 type entrypointFact struct {
 	Path     string
 	Reasons  []string
 	Declared bool
+	Library  bool
 }
 
 type configFact struct {
@@ -90,6 +92,10 @@ type wikiFacts struct {
 	mavenPoms      []string
 	gradleBuilds   []string
 	gradleWrappers []string
+
+	hasWorkspace     bool
+	cargoWorkspace   bool
+	workspaceMarkers []string
 
 	pkg         *packageManifest
 	makeTargets []string
@@ -202,6 +208,31 @@ func gatherWikiFacts(root string, generatedAt time.Time, scan ScanResult) wikiFa
 		facts.makeTargets = readMakeTargets(filepath.Join(root, "Makefile"))
 	}
 
+	// Shallow workspace/monorepo detection: manifest field extraction or simple
+	// file presence only — no package graph.
+	if facts.hasCargo {
+		if data, err := os.ReadFile(filepath.Join(root, "Cargo.toml")); err == nil {
+			facts.cargoWorkspace = strings.Contains(string(data), "[workspace]")
+		}
+	}
+	if facts.pkg != nil && len(facts.pkg.Workspaces) > 0 {
+		facts.workspaceMarkers = append(facts.workspaceMarkers, "package.json workspaces ("+strings.Join(facts.pkg.Workspaces, ", ")+")")
+	}
+	for _, marker := range []struct{ file, label string }{
+		{"pnpm-workspace.yaml", "pnpm-workspace.yaml"},
+		{"turbo.json", "turbo.json"},
+		{"nx.json", "nx.json"},
+		{"lerna.json", "lerna.json"},
+	} {
+		if has(marker.file) {
+			facts.workspaceMarkers = append(facts.workspaceMarkers, marker.label)
+		}
+	}
+	if facts.cargoWorkspace {
+		facts.workspaceMarkers = append(facts.workspaceMarkers, "Cargo.toml [workspace]")
+	}
+	facts.hasWorkspace = len(facts.workspaceMarkers) > 0
+
 	facts.ciWorkflows = ciWorkflowFiles(scan.Files)
 	for _, workflow := range facts.ciWorkflows {
 		facts.ciCommands = append(facts.ciCommands, readRunCommands(filepath.Join(root, filepath.FromSlash(workflow)))...)
@@ -244,6 +275,11 @@ func detectEcosystems(facts wikiFacts, has func(string) bool) []roleEvidence {
 		evidence := []string{"package.json present"}
 		if len(facts.pkg.Scripts) > 0 {
 			evidence = append(evidence, fmt.Sprintf("%d package.json script(s)", len(facts.pkg.Scripts)))
+		}
+		for _, marker := range facts.workspaceMarkers {
+			if marker != "Cargo.toml [workspace]" {
+				evidence = append(evidence, "monorepo workspace: "+marker)
+			}
 		}
 		detected = append(detected, roleEvidence{Role: "Node.js / JavaScript", Evidence: evidence})
 	}
@@ -311,7 +347,11 @@ func detectEcosystems(facts wikiFacts, has func(string) bool) []roleEvidence {
 	}
 
 	if facts.hasCargo {
-		detected = append(detected, roleEvidence{Role: "Rust", Evidence: []string{"Cargo.toml present"}})
+		evidence := []string{"Cargo.toml present"}
+		if facts.cargoWorkspace {
+			evidence = append(evidence, "Cargo.toml [workspace]")
+		}
+		detected = append(detected, roleEvidence{Role: "Rust", Evidence: evidence})
 	}
 
 	return detected
@@ -414,7 +454,7 @@ func (facts wikiFacts) hasFrontendStructure() bool {
 
 func detectEntrypoints(facts wikiFacts) []entrypointFact {
 	byPath := map[string]*entrypointFact{}
-	add := func(path, reason string, declared bool) {
+	add := func(path, reason string, declared, library bool) {
 		fact, ok := byPath[path]
 		if !ok {
 			fact = &entrypointFact{Path: path}
@@ -422,6 +462,9 @@ func detectEntrypoints(facts wikiFacts) []entrypointFact {
 		}
 		if declared {
 			fact.Declared = true
+		}
+		if library {
+			fact.Library = true
 		}
 		if reason != "" && !containsString(fact.Reasons, reason) {
 			fact.Reasons = append(fact.Reasons, reason)
@@ -433,40 +476,47 @@ func detectEntrypoints(facts wikiFacts) []entrypointFact {
 		base := pathBase(path)
 		switch {
 		case base == "main.go" && (path == "main.go" || isCmdMainGo(path)):
-			add(path, "conventional Go entrypoint (main.go)", false)
+			add(path, "conventional Go entrypoint (main.go)", false, false)
 		case path == "src/main.ts" || path == "src/main.js" || path == "src/main.tsx" || path == "src/main.mjs":
-			add(path, "conventional frontend entrypoint (src/main.*)", false)
+			add(path, "conventional frontend entrypoint (src/main.*)", false, false)
 		case path == "src/index.ts" || path == "src/index.js" || path == "src/index.tsx":
-			add(path, "conventional source entrypoint (src/index.*)", false)
+			add(path, "conventional source entrypoint (src/index.*)", false, false)
 		case path == "src/server/index.ts" || path == "src/server/index.js":
-			add(path, "conventional server entrypoint (src/server/index.*)", false)
+			add(path, "conventional server entrypoint (src/server/index.*)", false, false)
 		case path == "index.js" || path == "index.ts" || path == "index.mjs":
-			add(path, "conventional package entrypoint (index.*)", false)
+			add(path, "conventional package entrypoint (index.*)", false, false)
 		case isViteConfig(base):
-			add(path, "Vite config / build-related candidate", false)
+			add(path, "Vite config / build-related candidate", false, false)
 		case base == "Program.cs":
-			add(path, "conventional .NET entrypoint (Program.cs)", false)
+			add(path, "conventional .NET entrypoint (Program.cs)", false, false)
 		case facts.hasCargo && (path == "src/main.rs" || path == "main.rs"):
-			add(path, "conventional Rust binary entrypoint", false)
-			add(path, "Cargo.toml present", false)
+			add(path, "conventional Rust binary entrypoint", false, false)
+			add(path, "Cargo.toml present", false, false)
 		case facts.hasCargo && strings.HasPrefix(path, "src/bin/") && strings.HasSuffix(path, ".rs"):
-			add(path, "conventional Rust binary entrypoint (src/bin/*.rs)", false)
-			add(path, "Cargo.toml present", false)
+			add(path, "conventional Rust binary entrypoint (src/bin/*.rs)", false, false)
+			add(path, "Cargo.toml present", false, false)
+		default:
+			if reason, library, ok := monorepoEntrypoint(path, facts); ok {
+				add(path, reason, false, library)
+				if len(facts.workspaceMarkers) > 0 {
+					add(path, "workspace evidence: "+strings.Join(facts.workspaceMarkers, ", "), false, library)
+				}
+			}
 		}
 	}
 
 	if facts.pkg != nil {
 		if facts.pkg.Main != "" {
-			add(normalizeManifestPath(facts.pkg.Main), `declared as "main" in package.json`, true)
+			add(normalizeManifestPath(facts.pkg.Main), `declared as "main" in package.json`, true, false)
 		}
 		for _, bin := range facts.pkg.Bin {
-			add(normalizeManifestPath(bin), "declared as a bin entry in package.json", true)
+			add(normalizeManifestPath(bin), "declared as a bin entry in package.json", true, false)
 		}
 	}
 
 	for _, item := range facts.scan.CodeItems {
 		if item.IsEntryPoint() {
-			add(item.Path, fmt.Sprintf("Tree-sitter entry hint (%s) — best-effort", item.Kind), false)
+			add(item.Path, fmt.Sprintf("Tree-sitter entry hint (%s) — best-effort", item.Kind), false, false)
 		}
 	}
 
@@ -477,6 +527,63 @@ func detectEntrypoints(facts wikiFacts) []entrypointFact {
 	}
 	sort.Slice(facts2, func(i, j int) bool { return facts2[i].Path < facts2[j].Path })
 	return facts2
+}
+
+// monorepoEntrypoint classifies a nested workspace path as a conventional
+// monorepo entrypoint. Only top-level workspace areas (apps/services/packages/
+// libs/crates) qualify, so docs/ or testdata/ copies are not mis-detected. It
+// returns the evidence reason, whether the path is a package/library root
+// (rather than an executable entrypoint), and whether it matched.
+func monorepoEntrypoint(path string, facts wikiFacts) (reason string, library bool, ok bool) {
+	parts := strings.Split(path, "/")
+	if len(parts) < 3 {
+		return "", false, false
+	}
+	top := parts[0]
+	base := parts[len(parts)-1]
+	inner := strings.Join(parts[2:], "/") // path under <top>/<name>/
+
+	underSrc := inner == "src/"+base
+	atRoot := inner == base
+
+	jsMain := matchesAny(base, "main.ts", "main.tsx", "main.js", "main.jsx", "main.mjs")
+	jsIndex := matchesAny(base, "index.ts", "index.tsx", "index.js", "index.jsx", "index.mjs")
+
+	switch top {
+	case "apps", "services":
+		switch {
+		case underSrc && jsMain:
+			return "conventional monorepo app entrypoint (" + top + "/*/src/main.*)", false, true
+		case underSrc && jsIndex:
+			return "conventional monorepo app entrypoint (" + top + "/*/src/index.*)", false, true
+		case underSrc && base == "main.rs":
+			return "conventional Rust binary entrypoint (" + top + "/*/src/main.rs)", false, true
+		}
+	case "packages", "libs":
+		switch {
+		case underSrc && jsIndex:
+			return "conventional package/library root (" + top + "/*/src/index.*)", true, true
+		case atRoot && jsIndex:
+			return "conventional package/library root (" + top + "/*/index.*)", true, true
+		}
+	case "crates":
+		switch {
+		case underSrc && base == "main.rs":
+			return "conventional Rust binary entrypoint (crates/*/src/main.rs)", false, true
+		case underSrc && base == "lib.rs" && (facts.hasCargo || facts.cargoWorkspace):
+			return "conventional Rust library root (crates/*/src/lib.rs)", true, true
+		}
+	}
+	return "", false, false
+}
+
+func matchesAny(value string, candidates ...string) bool {
+	for _, candidate := range candidates {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 // --- config detection ----------------------------------------------------
@@ -960,6 +1067,9 @@ func (facts wikiFacts) packageBoundaries() []string {
 	if facts.hasCargo {
 		lines = append(lines, "Rust crate (`Cargo.toml`)")
 	}
+	for _, marker := range facts.workspaceMarkers {
+		lines = append(lines, "Workspace: "+marker)
+	}
 	return lines
 }
 
@@ -1060,16 +1170,25 @@ func renderEntrypoints(facts wikiFacts) []byte {
 		return b.Bytes()
 	}
 	for _, ep := range facts.entrypoints {
-		label := "candidate entrypoint"
-		if ep.Declared {
-			label = "declared entrypoint"
-		}
-		fmt.Fprintf(&b, "- `%s` (%s)\n", ep.Path, label)
+		fmt.Fprintf(&b, "- `%s` (%s)\n", ep.Path, entrypointLabel(ep))
 		for _, reason := range ep.Reasons {
 			fmt.Fprintf(&b, "  - evidence: %s\n", reason)
 		}
 	}
 	return b.Bytes()
+}
+
+// entrypointLabel describes how an entrypoint candidate should be presented:
+// a declared manifest entry, a package/library root, or a plain candidate.
+func entrypointLabel(ep entrypointFact) string {
+	switch {
+	case ep.Library:
+		return "candidate package/library root"
+	case ep.Declared:
+		return "declared entrypoint"
+	default:
+		return "candidate entrypoint"
+	}
 }
 
 func renderConfig(facts wikiFacts) []byte {
@@ -1175,11 +1294,7 @@ func renderArea(facts wikiFacts, area areaFacts) []byte {
 		fmt.Fprintln(&b, "- None detected in this area.")
 	} else {
 		for _, ep := range area.Entrypoints {
-			label := "candidate"
-			if ep.Declared {
-				label = "declared"
-			}
-			fmt.Fprintf(&b, "- `%s` (%s)\n", ep.Path, label)
+			fmt.Fprintf(&b, "- `%s` (%s)\n", ep.Path, entrypointLabel(ep))
 		}
 	}
 	fmt.Fprintln(&b)
@@ -1286,12 +1401,27 @@ func readPackageManifest(path string) *packageManifest {
 		Scripts         map[string]string `json:"scripts"`
 		Dependencies    map[string]string `json:"dependencies"`
 		DevDependencies map[string]string `json:"devDependencies"`
+		Workspaces      json.RawMessage   `json:"workspaces"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return &packageManifest{}
 	}
 
 	manifest := &packageManifest{Main: strings.TrimSpace(raw.Main)}
+
+	if len(raw.Workspaces) > 0 {
+		var globs []string
+		if err := json.Unmarshal(raw.Workspaces, &globs); err == nil {
+			manifest.Workspaces = globs
+		} else {
+			var object struct {
+				Packages []string `json:"packages"`
+			}
+			if err := json.Unmarshal(raw.Workspaces, &object); err == nil {
+				manifest.Workspaces = object.Packages
+			}
+		}
+	}
 	for name, command := range raw.Scripts {
 		manifest.Scripts = append(manifest.Scripts, scriptEntry{Name: name, Command: command})
 	}
