@@ -59,6 +59,73 @@ func TestFTSQueryQuotesTokens(t *testing.T) {
 	}
 }
 
+func TestRebuildIndexesWikiPagesAndSeparatesImports(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "search.sqlite")
+	err := Rebuild(dbPath, IndexInput{
+		GeneratedAt: time.Date(2026, 6, 4, 9, 0, 0, 0, time.UTC),
+		RepoMapBody: []byte("# Map\n"),
+		LLMSBody:    []byte("router\n"),
+		WikiPages: []projectmap.WikiPage{{
+			RelPath: "config.md",
+			Title:   "Configuration",
+			Content: []byte("# Configuration\n\n- `vite.config.ts` — Vite build configuration\n"),
+		}},
+		CodeItems: []codeindex.Item{
+			{Path: "cmd/app/main.go", Kind: "go_import", Language: "go", Name: "example.com/main/client", ImportPath: "example.com/main/client", StartLine: 3},
+			{Path: "cmd/app/main.go", Kind: "go_main", Language: "go", Name: "main", StartLine: 5},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Rebuild failed: %v", err)
+	}
+
+	wiki, err := Query(dbPath, QueryOptions{Query: "vite", Kind: KindWiki})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wiki.Results) != 1 || wiki.Results[0].Kind != KindWiki || wiki.Results[0].Path != "map/wiki/config.md" {
+		t.Fatalf("wiki query = %#v, want one map/wiki/config.md hit", wiki.Results)
+	}
+
+	codeItem, err := Query(dbPath, QueryOptions{Query: "main", Kind: KindCodeItem})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(codeItem.Results) == 0 {
+		t.Fatal("code_item query for main returned nothing")
+	}
+	for _, result := range codeItem.Results {
+		if result.CodeKind == "go_import" {
+			t.Fatalf("code_item query returned import-like entry: %#v", result)
+		}
+	}
+
+	imports, err := Query(dbPath, QueryOptions{Query: "main", Kind: KindImport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imports.Results) == 0 {
+		t.Fatal("import query for main returned nothing")
+	}
+	for _, result := range imports.Results {
+		if result.Kind != KindImport {
+			t.Fatalf("import query returned non-import: %#v", result)
+		}
+	}
+}
+
+func TestNormalizeKindAcceptsWikiAndImport(t *testing.T) {
+	for _, kind := range []string{"wiki", "import"} {
+		got, err := NormalizeKind(kind)
+		if err != nil {
+			t.Fatalf("NormalizeKind(%q) error: %v", kind, err)
+		}
+		if got != kind {
+			t.Fatalf("NormalizeKind(%q) = %q", kind, got)
+		}
+	}
+}
+
 func buildSearchTestIndex(t *testing.T) string {
 	t.Helper()
 

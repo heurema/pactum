@@ -17,16 +17,20 @@ const (
 	KindAny      = "any"
 	KindRepoMap  = "repo_map"
 	KindLLMS     = "llms"
+	KindWiki     = "wiki"
 	KindFile     = "file"
 	KindCodeItem = "code_item"
+	KindImport   = "import"
 )
 
 var supportedKinds = map[string]struct{}{
 	KindAny:      {},
 	KindRepoMap:  {},
 	KindLLMS:     {},
+	KindWiki:     {},
 	KindFile:     {},
 	KindCodeItem: {},
+	KindImport:   {},
 }
 
 type Document struct {
@@ -44,6 +48,7 @@ type IndexInput struct {
 	GeneratedAt time.Time
 	RepoMapBody []byte
 	LLMSBody    []byte
+	WikiPages   []projectmap.WikiPage
 	Files       []projectmap.FileRecord
 	CodeItems   []codeindex.Item
 }
@@ -107,6 +112,21 @@ func Documents(input IndexInput) []Document {
 		},
 	}
 
+	wikiPages := append([]projectmap.WikiPage(nil), input.WikiPages...)
+	sort.Slice(wikiPages, func(i, j int) bool {
+		return wikiPages[i].RelPath < wikiPages[j].RelPath
+	})
+	for _, page := range wikiPages {
+		documents = append(documents, Document{
+			ID:        "wiki:" + page.RelPath,
+			Kind:      KindWiki,
+			Path:      "map/wiki/" + page.RelPath,
+			Title:     page.Title,
+			Body:      string(page.Content),
+			CreatedAt: createdAt,
+		})
+	}
+
 	files := append([]projectmap.FileRecord(nil), input.Files...)
 	sort.Slice(files, func(i, j int) bool {
 		return files[i].Path < files[j].Path
@@ -143,9 +163,16 @@ func Documents(input IndexInput) []Document {
 			"signature: "+item.Signature,
 			"path: "+item.Path,
 		), "\n")
+		// Import/module/namespace markers are indexed under kind=import so they
+		// stay searchable for debugging without polluting code_item results.
+		// Definitions remain kind=code_item.
+		kind := KindCodeItem
+		if item.IsImportLike() {
+			kind = KindImport
+		}
 		documents = append(documents, Document{
-			ID:        fmt.Sprintf("code_item:%s:%s:%s:%d", item.Path, item.Kind, item.Name, item.StartLine),
-			Kind:      KindCodeItem,
+			ID:        fmt.Sprintf("%s:%s:%s:%s:%d", kind, item.Path, item.Kind, item.Name, item.StartLine),
+			Kind:      kind,
 			Path:      item.Path,
 			Title:     item.Name,
 			Body:      body,

@@ -49,7 +49,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 	if _, err := readWorkspaceManifest(paths.Manifest); err != nil {
 		return MapRefreshResult{}, err
 	}
-	if err := ensureDirs([]string{paths.MapDir, paths.AreasDir, paths.MapRunsDir, paths.LedgerDir}); err != nil {
+	if err := ensureDirs([]string{paths.MapDir, paths.AreasDir, paths.WikiDir, paths.WikiAreasDir, paths.MapRunsDir, paths.LedgerDir}); err != nil {
 		return MapRefreshResult{}, err
 	}
 
@@ -87,7 +87,12 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 		return MapRefreshResult{}, err
 	}
 
-	repoMap := projectmap.RenderRepoMap(".", startedAt, scan)
+	wiki := projectmap.RenderWiki(root, startedAt, scan)
+	if err := writeWikiPages(paths, wiki); err != nil {
+		return MapRefreshResult{}, err
+	}
+
+	repoMap := projectmap.RenderRepoMap(".", startedAt, scan, wiki)
 	llms := projectmap.RenderLLMS()
 	if err := os.WriteFile(paths.RepoMap, repoMap, 0o644); err != nil {
 		return MapRefreshResult{}, err
@@ -107,6 +112,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 		GeneratedAt: searchStartedAt,
 		RepoMapBody: repoMap,
 		LLMSBody:    llms,
+		WikiPages:   wiki,
 		Files:       scan.Files,
 		CodeItems:   scan.CodeItems,
 	}); err != nil {
@@ -135,14 +141,21 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 		},
 		Warnings: scan.Warnings,
 		Artifacts: map[string]string{
-			"repo_map":     "map/repo-map.md",
-			"llms":         "map/llms.txt",
-			"files":        "map/files.jsonl",
-			"code_items":   "map/code-items.jsonl",
-			"hashes":       "map/hashes.jsonl",
-			"search":       "map/search.sqlite",
-			"areas_index":  "map/areas/_index.md",
-			"map_manifest": "map/manifest.json",
+			"repo_map":         "map/repo-map.md",
+			"llms":             "map/llms.txt",
+			"files":            "map/files.jsonl",
+			"code_items":       "map/code-items.jsonl",
+			"hashes":           "map/hashes.jsonl",
+			"search":           "map/search.sqlite",
+			"areas_index":      "map/areas/_index.md",
+			"map_manifest":     "map/manifest.json",
+			"wiki_overview":    "map/wiki/overview.md",
+			"wiki_structure":   "map/wiki/structure.md",
+			"wiki_commands":    "map/wiki/commands.md",
+			"wiki_entrypoints": "map/wiki/entrypoints.md",
+			"wiki_config":      "map/wiki/config.md",
+			"wiki_tests":       "map/wiki/tests.md",
+			"wiki_areas":       "map/wiki/areas/",
 		},
 	}
 	if err := writeJSON(paths.MapManifest, mapManifest); err != nil {
@@ -174,6 +187,29 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 	}
 
 	return result, nil
+}
+
+// writeWikiPages regenerates the map wiki directory from scratch and writes
+// every page. The wiki directory is removed first so stale area pages (from
+// renamed or removed top-level directories) never linger; the wiki is a
+// rebuildable artifact, so this is safe.
+func writeWikiPages(paths artifacts.Paths, pages []projectmap.WikiPage) error {
+	if err := os.RemoveAll(paths.WikiDir); err != nil {
+		return err
+	}
+	if err := ensureDirs([]string{paths.WikiDir, paths.WikiAreasDir}); err != nil {
+		return err
+	}
+	for _, page := range pages {
+		dest := filepath.Join(paths.WikiDir, filepath.FromSlash(page.RelPath))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dest, page.Content, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func nextMapRunID(startedAt time.Time, runsDir string) (string, error) {

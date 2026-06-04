@@ -275,6 +275,10 @@ func inferLanguage(path string) string {
 		return "TSX"
 	case ".jsx":
 		return "JSX"
+	case ".vue":
+		return "Vue"
+	case ".svelte":
+		return "Svelte"
 	case ".py":
 		return "Python"
 	case ".rs":
@@ -319,7 +323,7 @@ func inferLanguage(path string) string {
 
 func isSourceExt(ext string) bool {
 	switch ext {
-	case ".go", ".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".rs", ".java", ".c", ".h", ".cpp", ".cc", ".cxx", ".cs", ".sh", ".bash", ".zsh", ".html", ".htm", ".css", ".scss", ".sql":
+	case ".go", ".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".rs", ".java", ".c", ".h", ".cpp", ".cc", ".cxx", ".cs", ".sh", ".bash", ".zsh", ".html", ".htm", ".css", ".scss", ".sql":
 		return true
 	default:
 		return false

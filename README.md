@@ -17,9 +17,14 @@ agent — not a security boundary.
 ## What Pactum does
 
 - Creates a workspace at `.heurema/pactum/` inside your repository.
-- Builds a **deterministic project map and search index** (file inventory,
-  tree-sitter code items, repo map, and a SQLite full-text search index). No
-  embeddings or vector search are involved — search is lexical and reproducible.
+- Builds a **deterministic, wiki-first project map and search index** (a
+  generated map wiki, file inventory, repo map, and a SQLite full-text search
+  index). The map wiki is generated from deterministic facts (file inventory and
+  manifests); tree-sitter code items are kept only as best-effort symbol hints
+  and are incomplete by design — source files remain the source of truth.
+  Unsupported languages and framework files may have no code items but still
+  appear in the wiki and file inventory. No embeddings or vector search are
+  involved — search is lexical and reproducible.
 - Creates **contract-first runs**: each task becomes a run with a draft contract
   (goal, in/out of scope, acceptance criteria, validation commands, assumptions).
 - Supports the full staged workflow:

@@ -11,7 +11,7 @@ report, the review, and the accepted memory are all files you can read.
 
 | Stage | Command | Main artifacts | Mutates state? |
 | --- | --- | --- | --- |
-| Init / map | `pactum init`, `pactum map refresh` | `manifest.json`, `config.yaml`, `map/` (`repo-map.md`, `llms.txt`, `files.jsonl`, `code-items.jsonl`, `hashes.jsonl`, `search.sqlite`) | Yes |
+| Init / map | `pactum init`, `pactum map refresh` | `manifest.json`, `config.yaml`, `map/` (`wiki/` pages, `repo-map.md`, `llms.txt`, `files.jsonl`, `code-items.jsonl`, `hashes.jsonl`, `search.sqlite`) | Yes |
 | Status / search | `pactum status`, `pactum search "<query>"` | — (reads map + workspace) | No |
 | Task | `pactum task new "<task>"`, `pactum task list`, `pactum task show`, `pactum task use`, `pactum task current` | `runs/<id>/run.json`, `task.md`, `context/repo-context.md`, `context/search-results.json`, `context/memory-context.md`, `contract/contract.json`, `contract/contract.md`, `contract/approval.json`, `cache/current-run` | `new`/`use`: Yes; `list`/`show`/`current`: No |
 | Clarify | `pactum clarify ask`, `pactum clarify answer`, `pactum clarify status` | `clarify/questions.jsonl`, `clarify/answers.jsonl`, `clarify/decisions.jsonl` | `ask`/`answer`: Yes; `status`: No |
@@ -34,14 +34,28 @@ the workspace ledger (`ledger/events.jsonl`). Read-only commands (`status`,
 
 `pactum init` creates the `.heurema/pactum/` workspace, writes the default
 `config.yaml`, and builds the project map: a deterministic scan of the
-repository that produces a file inventory, tree-sitter code items, a human-
-readable `repo-map.md`, an `llms.txt` pointer, and a SQLite full-text search
-index. `.git`, `.heurema`, and common vendor/build directories are skipped.
+repository. The map is **wiki-first**. It produces a generated map wiki under
+`map/wiki/` (`overview.md`, `structure.md`, `commands.md`, `entrypoints.md`,
+`config.md`, `tests.md`, and one `areas/<area>.md` page per top-level
+directory), a file inventory, a human-readable `repo-map.md`, an `llms.txt`
+router, and a SQLite full-text search index. The wiki is generated from
+deterministic facts (file inventory and manifests) and uses conservative,
+evidence-backed language (candidate entrypoint, detected config, likely role).
+Tree-sitter `code-items.jsonl` is kept only as best-effort symbol hints — it is
+incomplete by design, unsupported languages/framework files may have no code
+items, and source files remain the source of truth. `.git`, `.heurema`, and
+common vendor/build directories are skipped.
 
-`pactum map refresh` rebuilds those artifacts. `pactum status` reports whether
-the map is fresh or stale (for example, when tracked files changed since the
-last scan) and points you at `pactum map refresh` when a refresh is needed.
-`pactum search "<query>"` queries the lexical index.
+`pactum map refresh` rebuilds those artifacts, including the wiki. `pactum
+status` reports whether the map is fresh or stale (for example, when tracked
+files changed since the last scan) and points you at `pactum map refresh` when a
+refresh is needed.
+
+`pactum search "<query>"` queries the lexical index. The index covers the repo
+map, the `llms.txt` router, the map wiki pages, files, code items, and imports.
+Filter with `--kind` (`repo_map`, `llms`, `wiki`, `file`, `code_item`,
+`import`); `--kind code_item` excludes import-like entries, which are searchable
+under `--kind import`.
 
 ### Task
 
