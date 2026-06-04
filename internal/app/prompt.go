@@ -132,8 +132,11 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 		return err
 	}
 	manifest := buildPromptManifest(context, hash, report.ProjectMap.RunID, now, memory)
-	searchResults, err := readRunSearchResults(context.RunPaths.SearchResults)
-	if err != nil {
+	// Refresh the run's search context from the approved contract: clarification
+	// and revision usually make the work more precise than the initial task
+	// sentence, so re-derive targeted queries from goal/scope/acceptance/validation.
+	searchResults := buildRunSearchResults(context.Paths, report.ProjectMap, "contract", memoryQueryFromContract(context.Contract))
+	if err := os.WriteFile(context.RunPaths.SearchResults, mustMarshalJSON(searchResults), 0o644); err != nil {
 		return err
 	}
 	decisions, err := readClarificationDecisions(context.RunPaths.DecisionsJSONL)
@@ -285,12 +288,6 @@ func readPromptManifest(path string) (promptManifest, error) {
 	return manifest, readJSON(path, &manifest)
 }
 
-func readRunSearchResults(path string) (runSearchResults, error) {
-	var results runSearchResults
-	err := readJSON(path, &results)
-	return results, err
-}
-
 func ensurePromptArtifactRefs(runPaths contractRunPathSet, state contractRunState) error {
 	updated := false
 	if state.Artifacts.ExecutorContext == "" {
@@ -346,25 +343,25 @@ func renderExecutorContext(state contractRunState, mapRunID string, contractSHA2
 	fmt.Fprintln(&buffer, "- Stale memory must be verified before use.")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Relevant search results")
+	if searchResults.QuerySource != "" {
+		fmt.Fprintf(&buffer, "Query source: %s\n", searchResults.QuerySource)
+	}
+	if len(searchResults.Queries) > 0 {
+		fmt.Fprintln(&buffer, "Targeted queries:")
+		for _, query := range searchResults.Queries {
+			fmt.Fprintf(&buffer, "- %s\n", query)
+		}
+	}
 	if len(searchResults.Results) == 0 {
-		fmt.Fprintln(&buffer, "- None")
+		fmt.Fprintln(&buffer, "No relevant results. Run `pactum search \"<term>\"` with narrower terms.")
 	} else {
-		for _, result := range searchResults.Results {
-			titleLabel := "title"
-			if result.Kind == "code_item" {
-				titleLabel = "name"
+		fmt.Fprintln(&buffer, "Results:")
+		for i, result := range searchResults.Results {
+			line := fmt.Sprintf("%d. %s %s", i+1, result.Kind, result.Path)
+			if result.Kind == "code_item" && result.Title != "" {
+				line += " (" + result.Title + ")"
 			}
-			fmt.Fprintf(&buffer, "- kind: %s\n", result.Kind)
-			fmt.Fprintf(&buffer, "  path: %s\n", result.Path)
-			if result.Title != "" {
-				fmt.Fprintf(&buffer, "  %s: %s\n", titleLabel, result.Title)
-			}
-			if result.Language != "" {
-				fmt.Fprintf(&buffer, "  language: %s\n", result.Language)
-			}
-			if result.CodeKind != "" {
-				fmt.Fprintf(&buffer, "  code kind: %s\n", result.CodeKind)
-			}
+			fmt.Fprintln(&buffer, line)
 		}
 	}
 	fmt.Fprintln(&buffer)

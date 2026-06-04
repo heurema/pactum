@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -48,9 +49,18 @@ type contractRunArtifacts struct {
 }
 
 type runSearchResults struct {
-	Query    string             `json:"query"`
-	Results  []searchpkg.Result `json:"results"`
-	Warnings []string           `json:"warnings,omitempty"`
+	Query       string                `json:"query"`
+	Queries     []string              `json:"queries,omitempty"`
+	QuerySource string                `json:"query_source,omitempty"`
+	Results     []runSearchResultItem `json:"results"`
+	Warnings    []string              `json:"warnings,omitempty"`
+}
+
+// runSearchResultItem is a single combined run-context search hit. It embeds the
+// search result and records which targeted query surfaced it.
+type runSearchResultItem struct {
+	searchpkg.Result
+	SourceQuery string `json:"source_query,omitempty"`
 }
 
 type draftContract struct {
@@ -136,7 +146,7 @@ func (a App) createContractOnlyRun(root string, task string) (contractRunState, 
 		},
 	}
 
-	searchResults := buildRunSearchResults(paths, report.ProjectMap, task)
+	searchResults := buildRunSearchResults(paths, report.ProjectMap, "task", task)
 	contract := draftContractFor(runID, task)
 	memorySelection, err := buildAcceptedMemorySelection(paths, runID, task, "task", defaultMemorySelectionLimit, createdAt.Format(time.RFC3339))
 	if err != nil {
@@ -359,8 +369,21 @@ func sanitizeRepoMapForRunContext(root string, repoMap []byte) []byte {
 	return sanitized
 }
 
-func buildRunSearchResults(paths artifacts.Paths, mapStatus projectMapStatus, task string) runSearchResults {
-	result := runSearchResults{Query: task, Results: []searchpkg.Result{}}
+const runContextSearchLimit = 10
+
+// buildRunSearchResults assembles the run's first-pass search context. Instead
+// of running the whole task/contract text as one FTS query — which ANDs every
+// token and matches nothing for a natural-language sentence — it extracts a
+// handful of targeted queries (paths, code identifiers, domain terms) and
+// combines their results. querySource is "task" or "contract".
+func buildRunSearchResults(paths artifacts.Paths, mapStatus projectMapStatus, querySource string, text string) runSearchResults {
+	queries := extractRunContextQueries(text)
+	result := runSearchResults{
+		Query:       text,
+		Queries:     queries,
+		QuerySource: querySource,
+		Results:     []runSearchResultItem{},
+	}
 	if mapStatus.Status == "stale" {
 		result.Warnings = append(result.Warnings, "Search index is stale. Run: pactum map refresh.")
 		return result
@@ -369,11 +392,10 @@ func buildRunSearchResults(paths artifacts.Paths, mapStatus projectMapStatus, ta
 		result.Warnings = append(result.Warnings, "Search index is missing. Run: pactum map refresh.")
 		return result
 	}
-	response, err := searchpkg.Query(paths.SearchSQLite, searchpkg.QueryOptions{
-		Query: task,
-		Limit: 10,
-		Kind:  searchpkg.KindAny,
-	})
+	if len(queries) == 0 {
+		return result
+	}
+	combined, err := runContextSearch(paths.SearchSQLite, queries, runContextSearchLimit)
 	if err != nil {
 		if searchpkg.IsMissingIndex(err) {
 			result.Warnings = append(result.Warnings, "Search index is missing. Run: pactum map refresh.")
@@ -382,11 +404,185 @@ func buildRunSearchResults(paths artifacts.Paths, mapStatus projectMapStatus, ta
 		result.Warnings = append(result.Warnings, "Search failed: "+err.Error())
 		return result
 	}
-	result.Results = response.Results
-	if result.Results == nil {
-		result.Results = []searchpkg.Result{}
-	}
+	result.Results = combined
 	return result
+}
+
+// runContextSearch runs each targeted query through the local index and merges
+// the hits, deduping by (kind, path, title, code_kind). Earlier queries are
+// more important: results are kept in query order, then result order within a
+// query, capped at limit. This is deterministic first-pass retrieval, not
+// semantic ranking.
+func runContextSearch(dbPath string, queries []string, limit int) ([]runSearchResultItem, error) {
+	if limit <= 0 {
+		limit = runContextSearchLimit
+	}
+	combined := []runSearchResultItem{}
+	seen := map[string]bool{}
+	for _, query := range queries {
+		response, err := searchpkg.Query(dbPath, searchpkg.QueryOptions{
+			Query: query,
+			Limit: limit,
+			Kind:  searchpkg.KindAny,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, hit := range response.Results {
+			key := hit.Kind + "\x00" + hit.Path + "\x00" + hit.Title + "\x00" + hit.CodeKind
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			hit.Rank = len(combined) + 1
+			combined = append(combined, runSearchResultItem{Result: hit, SourceQuery: query})
+			if len(combined) >= limit {
+				return combined, nil
+			}
+		}
+	}
+	return combined, nil
+}
+
+// runContextStopwords are generic task verbs and filler words that should not
+// become standalone search queries. Domain words (format, percent, currency,
+// prompt, manifest, …) are intentionally not listed.
+var runContextStopwords = map[string]bool{
+	"add": true, "update": true, "create": true, "remove": true, "implement": true,
+	"change": true, "fix": true, "helper": true, "function": true, "file": true,
+	"use": true, "using": true, "follow": true, "following": true, "should": true,
+	"would": true, "could": true, "with": true, "from": true, "into": true,
+	"this": true, "that": true, "test": true, "tests": true, "the": true, "and": true,
+	"for": true, "new": true,
+}
+
+var (
+	runContextWordSplitRe = regexp.MustCompile(`[^A-Za-z0-9_./-]+`)
+	runContextCamelRe     = regexp.MustCompile(`[A-Z]+[a-z0-9]*|[a-z0-9]+`)
+)
+
+// extractRunContextQueries derives an ordered, deduped set of targeted search
+// queries from natural-language task/contract text. Order: path-like strings,
+// then code identifiers, then split identifier / domain terms, then remaining
+// plain words. Capped at 8.
+func extractRunContextQueries(text string) []string {
+	const maxQueries = 8
+
+	var paths, idents, parts, words []string
+	pathSeen, identSeen, partSeen, wordSeen := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
+	pathComponents := map[string]bool{}
+
+	for _, token := range strings.Fields(text) {
+		token = strings.Trim(token, ".,;:!?()[]{}\"'`")
+		if token == "" || !looksLikePath(token) {
+			continue
+		}
+		key := strings.ToLower(token)
+		if !pathSeen[key] {
+			pathSeen[key] = true
+			paths = append(paths, token)
+		}
+		for _, component := range regexp.MustCompile(`[/.]`).Split(token, -1) {
+			if component != "" {
+				pathComponents[strings.ToLower(component)] = true
+			}
+		}
+	}
+
+	for _, token := range runContextWordSplitRe.Split(text, -1) {
+		token = strings.Trim(token, "-_./")
+		if token == "" {
+			continue
+		}
+		lower := strings.ToLower(token)
+		switch {
+		case isCodeIdentifier(token):
+			if !identSeen[lower] {
+				identSeen[lower] = true
+				idents = append(idents, token)
+			}
+			for _, part := range splitIdentifier(token) {
+				pl := strings.ToLower(part)
+				if len(pl) >= 3 && !runContextStopwords[pl] && !partSeen[pl] {
+					partSeen[pl] = true
+					parts = append(parts, strings.ToLower(part))
+				}
+			}
+		default:
+			if len(lower) >= 4 && !runContextStopwords[lower] && !pathComponents[lower] && !wordSeen[lower] {
+				wordSeen[lower] = true
+				words = append(words, lower)
+			}
+		}
+	}
+
+	out := []string{}
+	globalSeen := map[string]bool{}
+	for _, group := range [][]string{paths, idents, parts, words} {
+		for _, query := range group {
+			key := strings.ToLower(query)
+			if globalSeen[key] {
+				continue
+			}
+			globalSeen[key] = true
+			out = append(out, query)
+			if len(out) >= maxQueries {
+				return out
+			}
+		}
+	}
+	return out
+}
+
+// looksLikePath reports whether a token looks like a file path or filename: it
+// contains a slash, or ends in a short alphabetic extension (so "format.ts" and
+// "apps/x/format.test.ts" qualify, but "v1.0" and "3.14" do not).
+func looksLikePath(token string) bool {
+	if strings.Contains(token, "/") {
+		return true
+	}
+	dot := strings.LastIndex(token, ".")
+	if dot <= 0 || dot == len(token)-1 {
+		return false
+	}
+	ext := token[dot+1:]
+	if len(ext) < 1 || len(ext) > 5 {
+		return false
+	}
+	for _, r := range ext {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')) {
+			return false
+		}
+	}
+	return true
+}
+
+// isCodeIdentifier reports whether a token looks like a code identifier:
+// camelCase/PascalCase, snake_case, or kebab-case.
+func isCodeIdentifier(token string) bool {
+	if !strings.ContainsAny(token, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+		return false
+	}
+	if strings.ContainsAny(token, "_-") {
+		return true
+	}
+	for i := 1; i < len(token); i++ {
+		if token[i] >= 'A' && token[i] <= 'Z' && token[i-1] >= 'a' && token[i-1] <= 'z' {
+			return true
+		}
+	}
+	return false
+}
+
+// splitIdentifier breaks a code identifier into its word parts across case
+// boundaries and `_`/`-` separators.
+func splitIdentifier(identifier string) []string {
+	normalized := strings.NewReplacer("_", " ", "-", " ").Replace(identifier)
+	var parts []string
+	for _, chunk := range strings.Fields(normalized) {
+		parts = append(parts, runContextCamelRe.FindAllString(chunk, -1)...)
+	}
+	return parts
 }
 
 func draftContractFor(runID string, task string) draftContract {
