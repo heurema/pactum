@@ -55,7 +55,11 @@ refresh is needed.
 map, the `llms.txt` router, the map wiki pages, files, code items, and imports.
 Filter with `--kind` (`repo_map`, `llms`, `wiki`, `file`, `code_item`,
 `import`); `--kind code_item` excludes import-like entries, which are searchable
-under `--kind import`.
+under `--kind import`. Ranking is FTS5 bm25 with a small, deterministic polish:
+in unfiltered (`any`) searches import-like entries get a penalty and the
+entrypoints/commands/config wiki pages get a modest boost, and an exact
+title/path-basename match gets a small boost. It is a light reordering of
+near-equal matches, not a relevance model.
 
 ### Task
 

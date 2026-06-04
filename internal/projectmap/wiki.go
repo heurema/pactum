@@ -78,6 +78,19 @@ type wikiFacts struct {
 	hasSetupPy      bool
 	hasCargo        bool
 
+	hasDotNet       bool
+	dotnetProjects  []string
+	dotnetSolutions []string
+	hasGlobalJSON   bool
+	hasNuGetConfig  bool
+
+	hasPomXML      bool
+	hasGradle      bool
+	hasGradlew     bool
+	mavenPoms      []string
+	gradleBuilds   []string
+	gradleWrappers []string
+
 	pkg         *packageManifest
 	makeTargets []string
 	ciWorkflows []string
@@ -101,11 +114,13 @@ type wikiTestFacts struct {
 }
 
 type wikiCommandFacts struct {
-	MakeTargets []string
-	Scripts     []scriptEntry
-	GoCommands  []string
-	PyCommands  []string
-	CICommands  []string
+	MakeTargets    []string
+	Scripts        []scriptEntry
+	GoCommands     []string
+	PyCommands     []string
+	DotNetCommands []string
+	JVMCommands    []string
+	CICommands     []string
 }
 
 // RenderWiki gathers deterministic facts from the repository and renders the
@@ -148,6 +163,34 @@ func gatherWikiFacts(root string, generatedAt time.Time, scan ScanResult) wikiFa
 	facts.hasRequirements = has("requirements.txt") || has("requirements-dev.txt")
 	facts.hasSetupPy = has("setup.py") || has("setup.cfg")
 	facts.hasCargo = has("Cargo.toml")
+
+	// .NET project layout is identified by file extension (.csproj/.fsproj/
+	// .vbproj/.sln) rather than a single fixed manifest name, so it is gathered
+	// from the file inventory. scan.Files is already sorted by path, so the
+	// collected slices stay deterministic.
+	for _, file := range scan.Files {
+		base := pathBase(file.Path)
+		switch {
+		case strings.HasSuffix(base, ".csproj"), strings.HasSuffix(base, ".fsproj"), strings.HasSuffix(base, ".vbproj"):
+			facts.dotnetProjects = append(facts.dotnetProjects, file.Path)
+		case strings.HasSuffix(base, ".sln"):
+			facts.dotnetSolutions = append(facts.dotnetSolutions, file.Path)
+		case base == "global.json":
+			facts.hasGlobalJSON = true
+		case strings.EqualFold(base, "nuget.config"):
+			facts.hasNuGetConfig = true
+		case base == "pom.xml":
+			facts.mavenPoms = append(facts.mavenPoms, file.Path)
+		case base == "build.gradle", base == "build.gradle.kts":
+			facts.gradleBuilds = append(facts.gradleBuilds, file.Path)
+		case base == "gradlew", base == "gradlew.bat":
+			facts.gradleWrappers = append(facts.gradleWrappers, file.Path)
+		}
+	}
+	facts.hasDotNet = len(facts.dotnetProjects) > 0 || len(facts.dotnetSolutions) > 0
+	facts.hasPomXML = len(facts.mavenPoms) > 0
+	facts.hasGradle = len(facts.gradleBuilds) > 0
+	facts.hasGradlew = len(facts.gradleWrappers) > 0
 
 	if facts.hasGoMod {
 		facts.goModule = readGoModule(filepath.Join(root, "go.mod"))
@@ -228,6 +271,45 @@ func detectEcosystems(facts wikiFacts, has func(string) bool) []roleEvidence {
 		}
 	}
 
+	if facts.hasDotNet {
+		var evidence []string
+		if len(facts.dotnetSolutions) > 0 {
+			evidence = append(evidence, "solution file present ("+facts.dotnetSolutions[0]+")")
+		}
+		if len(facts.dotnetProjects) > 0 {
+			evidence = append(evidence, fmt.Sprintf("%d .NET project file(s), e.g. %s", len(facts.dotnetProjects), facts.dotnetProjects[0]))
+		}
+		if facts.hasGlobalJSON {
+			evidence = append(evidence, "global.json present")
+		}
+		if facts.hasNuGetConfig {
+			evidence = append(evidence, "nuget.config present")
+		}
+		if n := facts.scan.Languages["C#"]; n > 0 {
+			evidence = append(evidence, fmt.Sprintf("%d C# file(s) detected", n))
+		}
+		detected = append(detected, roleEvidence{Role: "C# / .NET", Evidence: evidence})
+	}
+
+	if facts.hasPomXML {
+		evidence := []string{"pom.xml present (" + facts.mavenPoms[0] + ")"}
+		if n := facts.scan.Languages["Java"]; n > 0 {
+			evidence = append(evidence, fmt.Sprintf("%d Java file(s) detected", n))
+		}
+		detected = append(detected, roleEvidence{Role: "Java (Maven)", Evidence: evidence})
+	}
+
+	if facts.hasGradle {
+		evidence := []string{"Gradle build file present (" + facts.gradleBuilds[0] + ")"}
+		if facts.hasGradlew {
+			evidence = append(evidence, "Gradle wrapper present ("+facts.gradleWrappers[0]+")")
+		}
+		if n := facts.scan.Languages["Java"]; n > 0 {
+			evidence = append(evidence, fmt.Sprintf("%d Java file(s) detected", n))
+		}
+		detected = append(detected, roleEvidence{Role: "JVM (Gradle)", Evidence: evidence})
+	}
+
 	if facts.hasCargo {
 		detected = append(detected, roleEvidence{Role: "Rust", Evidence: []string{"Cargo.toml present"}})
 	}
@@ -235,33 +317,97 @@ func detectEcosystems(facts wikiFacts, has func(string) bool) []roleEvidence {
 	return detected
 }
 
+// detectFrontend assigns a "frontend" role only when there is app-level
+// evidence, not merely build tooling. Vite appearing as a devDependency or a
+// stray .tsx test fixture is not enough: a library that uses Vite/Vitest for
+// its own tests should not be called a frontend app. The signals that qualify
+// are framework component files (.vue/.svelte), a conventional app entrypoint
+// (src/main.*, src/App.*, index.html), a Vite config paired with such an
+// entrypoint, or a framework dependency paired with app-like source structure.
 func detectFrontend(facts wikiFacts, has func(string) bool) *roleEvidence {
-	var evidence []string
+	hasVue := facts.scan.Languages["Vue"] > 0
+	hasSvelte := facts.scan.Languages["Svelte"] > 0
+
+	viteConfig := ""
+	for _, candidate := range []string{"vite.config.ts", "vite.config.js", "vite.config.mjs", "vite.config.cjs"} {
+		if has(candidate) {
+			viteConfig = candidate
+			break
+		}
+	}
+
+	var frameworkDeps []string
 	if facts.pkg != nil {
-		for _, dep := range []string{"vite", "vue", "react", "svelte", "@vue/cli-service", "next"} {
+		for _, dep := range []string{"vue", "react", "svelte", "next", "nuxt", "@vue/cli-service"} {
 			if containsString(facts.pkg.Deps, dep) {
-				evidence = append(evidence, "package.json depends on "+dep)
+				frameworkDeps = append(frameworkDeps, dep)
 			}
 		}
 	}
-	for _, candidate := range []string{"vite.config.ts", "vite.config.js", "vite.config.mjs", "vite.config.cjs"} {
-		if has(candidate) {
-			evidence = append(evidence, candidate+" exists")
-		}
-	}
-	if facts.scan.Languages["Vue"] > 0 {
-		evidence = append(evidence, ".vue files are present")
-	}
-	if facts.scan.Languages["Svelte"] > 0 {
-		evidence = append(evidence, ".svelte files are present")
-	}
-	if facts.scan.Languages["TSX"] > 0 || facts.scan.Languages["JSX"] > 0 {
-		evidence = append(evidence, ".tsx/.jsx files are present")
-	}
-	if len(evidence) == 0 {
+
+	appEntry := frontendAppEntry(has)
+	appLike := appEntry != "" || facts.hasFrontendStructure() || hasVue || hasSvelte
+
+	isFrontend := hasVue || hasSvelte ||
+		(appEntry != "" && facts.pkg != nil) ||
+		(viteConfig != "" && appEntry != "") ||
+		(len(frameworkDeps) > 0 && appLike)
+	if !isFrontend {
 		return nil
 	}
+
+	var evidence []string
+	for _, dep := range frameworkDeps {
+		evidence = append(evidence, "package.json depends on "+dep)
+	}
+	if facts.pkg != nil && containsString(facts.pkg.Deps, "vite") {
+		evidence = append(evidence, "package.json depends on vite")
+	}
+	if viteConfig != "" {
+		evidence = append(evidence, viteConfig+" exists")
+	}
+	if hasVue {
+		evidence = append(evidence, ".vue files are present")
+	}
+	if hasSvelte {
+		evidence = append(evidence, ".svelte files are present")
+	}
+	if appEntry != "" {
+		evidence = append(evidence, "app entrypoint "+appEntry+" present")
+	}
+	if facts.hasFrontendStructure() {
+		evidence = append(evidence, "component/view source structure present")
+	}
 	return &roleEvidence{Role: "frontend", Evidence: dedupeStrings(evidence)}
+}
+
+// frontendAppEntry returns the first conventional frontend application
+// entrypoint found in the inventory, or "" if none.
+func frontendAppEntry(has func(string) bool) string {
+	for _, candidate := range []string{
+		"src/main.ts", "src/main.tsx", "src/main.js", "src/main.jsx", "src/main.mjs",
+		"src/App.vue", "src/App.tsx", "src/App.jsx", "src/App.svelte",
+		"src/index.tsx", "src/index.jsx",
+		"index.html", "src/index.html", "public/index.html",
+	} {
+		if has(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// hasFrontendStructure reports whether the repository contains conventional
+// frontend component/view directories under src/.
+func (facts wikiFacts) hasFrontendStructure() bool {
+	for _, file := range facts.scan.Files {
+		for _, prefix := range []string{"src/components/", "src/pages/", "src/views/", "src/layouts/"} {
+			if strings.HasPrefix(file.Path, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // --- entrypoint detection ------------------------------------------------
@@ -298,6 +444,14 @@ func detectEntrypoints(facts wikiFacts) []entrypointFact {
 			add(path, "conventional package entrypoint (index.*)", false)
 		case isViteConfig(base):
 			add(path, "Vite config / build-related candidate", false)
+		case base == "Program.cs":
+			add(path, "conventional .NET entrypoint (Program.cs)", false)
+		case facts.hasCargo && (path == "src/main.rs" || path == "main.rs"):
+			add(path, "conventional Rust binary entrypoint", false)
+			add(path, "Cargo.toml present", false)
+		case facts.hasCargo && strings.HasPrefix(path, "src/bin/") && strings.HasSuffix(path, ".rs"):
+			add(path, "conventional Rust binary entrypoint (src/bin/*.rs)", false)
+			add(path, "Cargo.toml present", false)
 		}
 	}
 
@@ -343,6 +497,24 @@ func detectConfigs(files []FileRecord) []configFact {
 			add(path, "Go module definition")
 		case base == "go.sum":
 			add(path, "Go module checksums")
+		case strings.HasSuffix(base, ".csproj"), strings.HasSuffix(base, ".fsproj"), strings.HasSuffix(base, ".vbproj"):
+			add(path, ".NET project file")
+		case strings.HasSuffix(base, ".sln"):
+			add(path, ".NET solution file")
+		case base == "global.json":
+			add(path, ".NET SDK version pin")
+		case strings.EqualFold(base, "nuget.config"):
+			add(path, "NuGet configuration")
+		case base == "Directory.Build.props" || base == "Directory.Build.targets":
+			add(path, "MSBuild shared build configuration")
+		case base == "pom.xml":
+			add(path, "Maven build configuration")
+		case base == "build.gradle" || base == "build.gradle.kts":
+			add(path, "Gradle build configuration")
+		case base == "settings.gradle" || base == "settings.gradle.kts":
+			add(path, "Gradle settings")
+		case base == "gradlew" || base == "gradlew.bat":
+			add(path, "Gradle wrapper script")
 		case base == "tsconfig.json" || (strings.HasPrefix(base, "tsconfig.") && strings.HasSuffix(base, ".json")):
 			add(path, "TypeScript compiler configuration")
 		case isViteConfig(base):
@@ -422,6 +594,19 @@ func (facts wikiFacts) validationCandidates() []string {
 	if facts.hasPytest() {
 		candidates = append(candidates, "pytest")
 	}
+	if facts.hasDotNet {
+		candidates = append(candidates, "dotnet test")
+	}
+	if facts.hasPomXML {
+		candidates = append(candidates, "mvn test")
+	}
+	if facts.hasGradle {
+		if facts.hasGradlew {
+			candidates = append(candidates, "./gradlew test")
+		} else {
+			candidates = append(candidates, "gradle test")
+		}
+	}
 	return dedupeStrings(candidates)
 }
 
@@ -456,8 +641,29 @@ func detectCommands(facts wikiFacts) wikiCommandFacts {
 		c.PyCommands = append(c.PyCommands, "python -m build")
 	}
 	c.PyCommands = dedupeStrings(c.PyCommands)
+	if facts.hasDotNet {
+		c.DotNetCommands = []string{"dotnet build", "dotnet test"}
+	}
+	c.JVMCommands = facts.jvmCommands()
 	c.CICommands = facts.ciCommands
 	return c
+}
+
+// jvmCommands returns evidence-backed Maven/Gradle command hints. Gradle hints
+// prefer the wrapper (`./gradlew`) when a gradlew script is present.
+func (facts wikiFacts) jvmCommands() []string {
+	var commands []string
+	if facts.hasPomXML {
+		commands = append(commands, "mvn test", "mvn package")
+	}
+	if facts.hasGradle {
+		if facts.hasGradlew {
+			commands = append(commands, "./gradlew test", "./gradlew build")
+		} else {
+			commands = append(commands, "gradle test", "gradle build")
+		}
+	}
+	return dedupeStrings(commands)
 }
 
 // --- area construction ---------------------------------------------------
@@ -584,10 +790,21 @@ func inferAreaRole(name string, files []FileRecord, languages []languageItem) ro
 	case "config", "configs", "deploy", "deployment", "infra":
 		return role("configuration / deployment", "directory name '"+name+"' conventionally holds configuration")
 	default:
-		if dominant != "" {
-			return role("likely "+dominant+" code", fmt.Sprintf("%d file(s); dominant language is %s", len(files), dominant))
+		if dominant == "" {
+			return role("mixed / unclassified files", fmt.Sprintf("%d file(s) with no dominant language", len(files)))
 		}
-		return role("mixed / unclassified files", fmt.Sprintf("%d file(s) with no dominant language", len(files)))
+		// Role strings are plain nouns; the "Likely role:" label already carries
+		// the hedge, so avoid an awkward "likely <X> code" doubling.
+		switch dominant {
+		case "JSON", "YAML", "TOML":
+			return role("configuration", fmt.Sprintf("%d file(s); dominant content is %s", len(files), dominant))
+		case "Markdown", "Text":
+			return role("documentation", fmt.Sprintf("%d file(s); dominant content is %s", len(files), dominant))
+		case "Shell", "Bash", "Zsh":
+			return role("scripts / tooling", fmt.Sprintf("%d file(s); dominant content is %s", len(files), dominant))
+		default:
+			return role(dominant+" source area", fmt.Sprintf("%d file(s); dominant language is %s", len(files), dominant))
+		}
 	}
 }
 
@@ -726,6 +943,20 @@ func (facts wikiFacts) packageBoundaries() []string {
 	if facts.hasPyProject {
 		lines = append(lines, "Python project (`pyproject.toml`)")
 	}
+	if facts.hasDotNet {
+		if len(facts.dotnetSolutions) > 0 {
+			lines = append(lines, ".NET solution (`"+facts.dotnetSolutions[0]+"`)")
+		}
+		for _, project := range facts.dotnetProjects {
+			lines = append(lines, ".NET project (`"+project+"`)")
+		}
+	}
+	if facts.hasPomXML {
+		lines = append(lines, "Maven project (`"+facts.mavenPoms[0]+"`)")
+	}
+	if facts.hasGradle {
+		lines = append(lines, "Gradle project (`"+facts.gradleBuilds[0]+"`)")
+	}
 	if facts.hasCargo {
 		lines = append(lines, "Rust crate (`Cargo.toml`)")
 	}
@@ -780,6 +1011,28 @@ func renderCommands(facts wikiFacts) []byte {
 		fmt.Fprintln(&b, "- No Python project/config detected.")
 	} else {
 		for _, cmd := range c.PyCommands {
+			fmt.Fprintf(&b, "- `%s`\n", cmd)
+		}
+	}
+	fmt.Fprintln(&b)
+
+	fmt.Fprintln(&b, "## .NET commands")
+	fmt.Fprintln(&b)
+	if len(c.DotNetCommands) == 0 {
+		fmt.Fprintln(&b, "- No .NET project/solution detected.")
+	} else {
+		for _, cmd := range c.DotNetCommands {
+			fmt.Fprintf(&b, "- `%s`\n", cmd)
+		}
+	}
+	fmt.Fprintln(&b)
+
+	fmt.Fprintln(&b, "## JVM commands")
+	fmt.Fprintln(&b)
+	if len(c.JVMCommands) == 0 {
+		fmt.Fprintln(&b, "- No Maven/Gradle build files detected.")
+	} else {
+		for _, cmd := range c.JVMCommands {
 			fmt.Fprintf(&b, "- `%s`\n", cmd)
 		}
 	}

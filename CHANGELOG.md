@@ -14,6 +14,22 @@ yet — everything lives under **Unreleased**.
   inventory and manifests with conservative, evidence-backed language.
 - Search now indexes the map wiki (`--kind wiki`) and import-like entries
   (`--kind import`); `--kind code_item` no longer returns import-like entries.
+- Deterministic search ranking polish: import-like entries are penalized and
+  the entrypoints/commands/config wiki pages are boosted in unfiltered
+  searches, with a small exact title/path-match boost.
+- Map quality fixture coverage (Go CLI, TS/Vue/Vite, Python, .NET, Java/Maven,
+  Gradle, Rust, config-heavy) and wiki overclaiming checks.
+- .NET project detection in the map wiki: `.csproj`/`.fsproj`/`.vbproj`/`.sln`/
+  `global.json`/`nuget.config` are recognized as a "C# / .NET" ecosystem and
+  surfaced in config, with `dotnet build`/`dotnet test` command hints and
+  `Program.cs` as a candidate entrypoint.
+- Java/Maven and JVM/Gradle detection: `pom.xml`/`build.gradle(.kts)`/`gradlew`
+  are recognized as ecosystems and config, with `mvn test`/`mvn package` and
+  `gradle`/`./gradlew` command hints (wrapper preferred when present).
+- Rust entrypoint conventions: `src/main.rs`/`main.rs`/`src/bin/*.rs` are listed
+  as candidate Rust binary entrypoints when a `Cargo.toml` is present.
+- `pactum prompt build` now prints a `Next:` hint pointing at `pactum execute
+  dry-run`.
 - Built-in `codex` and `claude` agent execution boundaries.
 - Gate, review, reviewer proposal, and memory workflows.
 - Local build/install/smoke story (`Makefile`, `scripts/smoke.sh`).
@@ -25,6 +41,12 @@ yet — everything lives under **Unreleased**.
 - Made the project map wiki-first in place: `repo-map.md` and `llms.txt` now
   route to the wiki before the code surface, and code items are framed as
   best-effort symbol hints (incomplete by design) rather than semantic truth.
+- Friendlier map-wiki area roles for non-code directories (configuration,
+  documentation, scripts/tooling, source area) instead of "likely JSON code".
+- Tighter frontend detection: a repo is only labeled "frontend" with app-level
+  evidence (`.vue`/`.svelte`, an app entrypoint, Vite config plus an entrypoint,
+  or a framework dependency plus app-like structure) — Vite as a devDependency
+  alone no longer qualifies.
 
 ### Not yet included
 - Release publishing automation.
