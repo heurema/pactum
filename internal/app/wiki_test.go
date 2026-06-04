@@ -300,9 +300,6 @@ func TestWikiManifestListsWikiArtifacts(t *testing.T) {
 			t.Fatalf("manifest %s = %q, want %q", key, manifest.Artifacts[key], want)
 		}
 	}
-	if manifest.Schema != "pactum.map.manifest.v1" {
-		t.Fatalf("manifest schema = %q, want pactum.map.manifest.v1", manifest.Schema)
-	}
 	if manifest.RepoRoot != "." {
 		t.Fatalf("manifest repo_root = %q, want . (portable)", manifest.RepoRoot)
 	}

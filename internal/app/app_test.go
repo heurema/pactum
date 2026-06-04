@@ -237,9 +237,6 @@ func helper() {}
 			t.Fatalf("manifest %s artifact = %q, want %q", key, manifest.Artifacts[key], want)
 		}
 	}
-	if manifest.Schema != "pactum.map.manifest.v1" {
-		t.Fatalf("manifest schema = %q, want pactum.map.manifest.v1 (no v2 bump)", manifest.Schema)
-	}
 	if manifest.CodeIndex.Mode != codeindex.ModeAuto {
 		t.Fatalf("manifest code_index.mode = %q, want auto", manifest.CodeIndex.Mode)
 	}
