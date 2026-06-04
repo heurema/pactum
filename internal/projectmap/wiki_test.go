@@ -93,6 +93,76 @@ func TestRenderWikiUsesConservativeLanguage(t *testing.T) {
 	}
 }
 
+func TestRenderWikiUsesFriendlyRolesForNonCodeDirs(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "docs", "guide.md"), "# Guide\n")
+	writeTestFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"), "name: CI\non: [push]\n")
+	writeTestFile(t, filepath.Join(root, "config", "app.json"), "{}\n")
+	// Non-conventionally-named dirs that previously rendered as "likely JSON
+	// code" / "likely Markdown code".
+	writeTestFile(t, filepath.Join(root, "schemas", "user.json"), "{\"type\":\"object\"}\n")
+	writeTestFile(t, filepath.Join(root, "site", "index.md"), "# Site\n")
+
+	pages := renderWikiForTest(t, root)
+	var combined strings.Builder
+	for _, content := range pages {
+		combined.WriteString(content)
+		combined.WriteString("\n")
+	}
+	all := combined.String()
+
+	for _, forbidden := range []string{"likely JSON code", "likely Markdown code", "likely YAML code", "likely Text code", "Likely role: likely"} {
+		if strings.Contains(all, forbidden) {
+			t.Fatalf("generated wiki should not use awkward %q wording:\n%s", forbidden, all)
+		}
+	}
+	for _, want := range []string{"Likely role: configuration", "Likely role: documentation"} {
+		if !strings.Contains(all, want) {
+			t.Fatalf("generated wiki should use friendly role %q:\n%s", want, all)
+		}
+	}
+}
+
+func TestRenderWikiTighterFrontendDetection(t *testing.T) {
+	root := t.TempDir()
+	// Vite only as a devDependency; .tsx only under tests/fixtures; no
+	// src/main.*, no .vue/.svelte, no app-like structure.
+	writeTestFile(t, filepath.Join(root, "package.json"), `{
+  "name": "lib",
+  "devDependencies": { "vite": "^5.0.0", "vitest": "^1.0.0" }
+}
+`)
+	writeTestFile(t, filepath.Join(root, "src", "index.ts"), "export const x = 1\n")
+	writeTestFile(t, filepath.Join(root, "tests", "fixtures", "Sample.tsx"), "export const C = () => null\n")
+
+	pages := renderWikiForTest(t, root)
+	overview := pages["overview.md"]
+	if strings.Contains(overview, "Likely role: frontend") {
+		t.Fatalf("a library using Vite as tooling should not be labeled frontend:\n%s", overview)
+	}
+	if !strings.Contains(overview, "Node.js / JavaScript") {
+		t.Fatalf("overview should still detect the Node.js ecosystem:\n%s", overview)
+	}
+}
+
+func TestRenderWikiFrontendStillDetectedForRealApp(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "package.json"), `{
+  "name": "app",
+  "devDependencies": { "vite": "^5.0.0" },
+  "dependencies": { "vue": "^3.4.0" }
+}
+`)
+	writeTestFile(t, filepath.Join(root, "vite.config.ts"), "export default {}\n")
+	writeTestFile(t, filepath.Join(root, "src", "main.ts"), "import { createApp } from 'vue'\n")
+	writeTestFile(t, filepath.Join(root, "src", "App.vue"), "<template><div/></template>\n")
+
+	pages := renderWikiForTest(t, root)
+	if !strings.Contains(pages["overview.md"], "Likely role: frontend") {
+		t.Fatalf("a real Vue/Vite app should still be labeled frontend:\n%s", pages["overview.md"])
+	}
+}
+
 func TestRenderWikiNeverEmbedsRoot(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.22\n")

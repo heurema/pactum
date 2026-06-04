@@ -47,6 +47,40 @@ func initDotNetFixture(t *testing.T) (string, artifacts.Paths) {
 	return root, artifacts.New(root)
 }
 
+func initMavenFixture(t *testing.T) (string, artifacts.Paths) {
+	t.Helper()
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "pom.xml"), "<project>\n  <modelVersion>4.0.0</modelVersion>\n  <groupId>com.example</groupId>\n  <artifactId>demo</artifactId>\n  <version>1.0.0</version>\n</project>\n")
+	mustWriteFile(t, filepath.Join(root, "src", "main", "java", "App.java"), "package com.example;\n\npublic class App {\n    public static void main(String[] args) {}\n}\n")
+	mustWriteFile(t, filepath.Join(root, "src", "test", "java", "AppTest.java"), "package com.example;\n\npublic class AppTest {}\n")
+	app := testApp(root)
+	wikiRunOK(t, app, "init")
+	return root, artifacts.New(root)
+}
+
+func initGradleFixture(t *testing.T) (string, artifacts.Paths) {
+	t.Helper()
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "build.gradle"), "plugins { id 'java' }\n")
+	mustWriteFile(t, filepath.Join(root, "settings.gradle"), "rootProject.name = 'demo'\n")
+	mustWriteFile(t, filepath.Join(root, "gradlew"), "#!/bin/sh\nexec gradle \"$@\"\n")
+	mustWriteFile(t, filepath.Join(root, "src", "main", "java", "App.java"), "package com.example;\n\npublic class App {}\n")
+	app := testApp(root)
+	wikiRunOK(t, app, "init")
+	return root, artifacts.New(root)
+}
+
+func initRustFixture(t *testing.T) (string, artifacts.Paths) {
+	t.Helper()
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")
+	mustWriteFile(t, filepath.Join(root, "src", "main.rs"), "fn main() {\n    println!(\"hi\");\n}\n")
+	mustWriteFile(t, filepath.Join(root, "src", "lib.rs"), "pub fn run() {}\n")
+	app := testApp(root)
+	wikiRunOK(t, app, "init")
+	return root, artifacts.New(root)
+}
+
 func initConfigHeavyFixture(t *testing.T) (string, artifacts.Paths) {
 	t.Helper()
 	root := t.TempDir()
@@ -202,6 +236,81 @@ func TestMapQualityDotNetRepo(t *testing.T) {
 	found := wikiSearch(t, app, "Greeter", "--kind", "code_item").Results
 	if !hasCodeKind(found, "cs_class") {
 		t.Fatalf("search \"Greeter\" --kind code_item should find the cs_class: %#v", found)
+	}
+}
+
+func TestMapQualityMavenRepo(t *testing.T) {
+	_, paths := initMavenFixture(t)
+
+	overview := mustReadFile(t, paths.WikiOverview)
+	if !strings.Contains(overview, "Likely role: Java (Maven)") || !strings.Contains(overview, "pom.xml present") {
+		t.Fatalf("overview.md should detect Java/Maven with evidence:\n%s", overview)
+	}
+
+	config := mustReadFile(t, paths.WikiConfig)
+	if !strings.Contains(config, "pom.xml") {
+		t.Fatalf("config.md should list pom.xml:\n%s", config)
+	}
+
+	commands := mustReadFile(t, paths.WikiCommands)
+	for _, want := range []string{"mvn test", "mvn package"} {
+		if !strings.Contains(commands, want) {
+			t.Fatalf("commands.md missing Maven command %q:\n%s", want, commands)
+		}
+	}
+
+	tests := mustReadFile(t, paths.WikiTests)
+	if !strings.Contains(tests, "src/test/java/AppTest.java") {
+		t.Fatalf("tests.md should recognize src/test/java:\n%s", tests)
+	}
+
+	// Java symbols are not parsed.
+	if items := readCodeItems(t, paths.CodeItemsJSONL); len(items) != 0 {
+		t.Fatalf("Java repo should have zero code items, got %#v", items)
+	}
+}
+
+func TestMapQualityGradleRepo(t *testing.T) {
+	_, paths := initGradleFixture(t)
+
+	overview := mustReadFile(t, paths.WikiOverview)
+	if !strings.Contains(overview, "Likely role: JVM (Gradle)") {
+		t.Fatalf("overview.md should detect a Gradle/JVM ecosystem:\n%s", overview)
+	}
+
+	config := mustReadFile(t, paths.WikiConfig)
+	if !strings.Contains(config, "build.gradle") {
+		t.Fatalf("config.md should list build.gradle:\n%s", config)
+	}
+
+	commands := mustReadFile(t, paths.WikiCommands)
+	// gradlew is present, so wrapper commands are preferred.
+	for _, want := range []string{"./gradlew test", "./gradlew build"} {
+		if !strings.Contains(commands, want) {
+			t.Fatalf("commands.md missing Gradle wrapper command %q:\n%s", want, commands)
+		}
+	}
+}
+
+func TestMapQualityRustRepo(t *testing.T) {
+	_, paths := initRustFixture(t)
+
+	overview := mustReadFile(t, paths.WikiOverview)
+	if !strings.Contains(overview, "Likely role: Rust") {
+		t.Fatalf("overview.md should detect Rust:\n%s", overview)
+	}
+
+	entrypoints := mustReadFile(t, paths.WikiEntrypoints)
+	if !strings.Contains(entrypoints, "src/main.rs") {
+		t.Fatalf("entrypoints.md should list src/main.rs:\n%s", entrypoints)
+	}
+	if !strings.Contains(entrypoints, "Rust binary entrypoint") || !strings.Contains(entrypoints, "Cargo.toml present") {
+		t.Fatalf("entrypoints.md should cite Cargo.toml and the Rust binary convention:\n%s", entrypoints)
+	}
+
+	// Rust symbols are not parsed.
+	if items := readCodeItems(t, paths.CodeItemsJSONL); len(items) != 0 {
+		t.Fatalf("Rust repo should have zero code items, got %#v", items)
 	}
 }
 
