@@ -385,6 +385,37 @@ func TestMapQualityCommonJSExpress(t *testing.T) {
 	}
 }
 
+func TestMapQualityMonorepoEntrypointsSearchable(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "package.json"), "{\n  \"name\": \"monorepo\",\n  \"workspaces\": [\"apps/*\", \"packages/*\"]\n}\n")
+	mustWriteFile(t, filepath.Join(root, "apps", "admin", "src", "main.ts"), "export const admin = 1\n")
+	mustWriteFile(t, filepath.Join(root, "packages", "ui", "src", "index.ts"), "export const ui = 1\n")
+	app := testApp(root)
+	wikiRunOK(t, app, "init")
+	paths := artifacts.New(root)
+
+	entrypoints := mustReadFile(t, paths.WikiEntrypoints)
+	if !strings.Contains(entrypoints, "apps/admin/src/main.ts") {
+		t.Fatalf("entrypoints.md should include the monorepo app entrypoint:\n%s", entrypoints)
+	}
+
+	// Wiki pages are indexed: monorepo entrypoints are reachable via search.
+	admin := wikiSearch(t, app, "admin", "--kind", "wiki").Results
+	if len(admin) == 0 {
+		t.Fatal("search \"admin\" --kind wiki returned nothing")
+	}
+	main := wikiSearch(t, app, "main", "--kind", "wiki").Results
+	foundEntrypoints := false
+	for _, r := range main {
+		if strings.HasSuffix(r.Path, "wiki/entrypoints.md") {
+			foundEntrypoints = true
+		}
+	}
+	if !foundEntrypoints {
+		t.Fatalf("search \"main\" --kind wiki should surface entrypoints.md: %#v", main)
+	}
+}
+
 func TestMapQualityConfigHeavyRepo(t *testing.T) {
 	_, paths := initConfigHeavyFixture(t)
 

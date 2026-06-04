@@ -33,6 +33,12 @@ yet — everything lives under **Unreleased**.
   `exports.foo` / `module.exports.foo` (including `exports = module.exports = x`
   chains and object-literal exports) index as code-item hints. No require-path
   resolution, dependency graph, or route detection.
+- Monorepo entrypoint conventions: `apps/*`/`services/*` `src/main.*` and
+  `src/index.*`, `packages/*`/`libs/*` `index.*` (as candidate package/library
+  roots), and `crates/*` `src/main.rs`/`lib.rs` are detected as candidate
+  entrypoints, with shallow workspace evidence (`package.json` workspaces,
+  `pnpm-workspace.yaml`, `turbo.json`/`nx.json`/`lerna.json`, Cargo
+  `[workspace]`) surfaced in the wiki. No package graph.
 - `pactum prompt build` now prints a `Next:` hint pointing at `pactum execute
   dry-run`.
 - Built-in `codex` and `claude` agent execution boundaries.

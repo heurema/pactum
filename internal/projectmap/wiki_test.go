@@ -163,6 +163,98 @@ func TestRenderWikiFrontendStillDetectedForRealApp(t *testing.T) {
 	}
 }
 
+func TestRenderWikiMonorepoTSEntrypoints(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "package.json"), `{
+  "name": "monorepo",
+  "workspaces": ["apps/*", "packages/*"]
+}
+`)
+	writeTestFile(t, filepath.Join(root, "apps", "admin", "src", "main.ts"), "export const admin = 1\n")
+	writeTestFile(t, filepath.Join(root, "apps", "web", "src", "index.tsx"), "export const web = 1\n")
+	writeTestFile(t, filepath.Join(root, "packages", "ui", "src", "index.ts"), "export const ui = 1\n")
+	writeTestFile(t, filepath.Join(root, "packages", "utils", "index.ts"), "export const utils = 1\n")
+
+	pages := renderWikiForTest(t, root)
+	entry := pages["entrypoints.md"]
+	for _, want := range []string{"apps/admin/src/main.ts", "apps/web/src/index.tsx", "packages/ui/src/index.ts", "packages/utils/index.ts"} {
+		if !strings.Contains(entry, want) {
+			t.Fatalf("entrypoints.md missing %q:\n%s", want, entry)
+		}
+	}
+	if !strings.Contains(entry, "candidate package/library root") {
+		t.Fatalf("entrypoints.md should label package/library roots:\n%s", entry)
+	}
+	if !strings.Contains(entry, "workspace evidence:") {
+		t.Fatalf("entrypoints.md should cite workspace evidence:\n%s", entry)
+	}
+	if !strings.Contains(pages["structure.md"], "package.json workspaces") {
+		t.Fatalf("structure.md should surface workspace boundaries:\n%s", pages["structure.md"])
+	}
+	if !strings.Contains(pages["areas/apps.md"], "apps/admin/src/main.ts") {
+		t.Fatalf("areas/apps.md should list the app entrypoint:\n%s", pages["areas/apps.md"])
+	}
+	if !strings.Contains(pages["areas/packages.md"], "packages/ui/src/index.ts") {
+		t.Fatalf("areas/packages.md should list the package root:\n%s", pages["areas/packages.md"])
+	}
+	for rel, content := range pages {
+		if strings.Contains(content, root) {
+			t.Fatalf("page %s embeds absolute root %q", rel, root)
+		}
+	}
+}
+
+func TestRenderWikiMonorepoPnpmWorkspace(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "package.json"), "{\n  \"name\": \"mono\"\n}\n")
+	writeTestFile(t, filepath.Join(root, "pnpm-workspace.yaml"), "packages:\n  - 'apps/*'\n  - 'packages/*'\n")
+	writeTestFile(t, filepath.Join(root, "apps", "api", "src", "main.ts"), "export const api = 1\n")
+	writeTestFile(t, filepath.Join(root, "packages", "client", "src", "index.ts"), "export const client = 1\n")
+
+	pages := renderWikiForTest(t, root)
+	if !strings.Contains(pages["structure.md"], "pnpm-workspace.yaml") {
+		t.Fatalf("structure.md should surface pnpm workspace evidence:\n%s", pages["structure.md"])
+	}
+	for _, want := range []string{"apps/api/src/main.ts", "packages/client/src/index.ts"} {
+		if !strings.Contains(pages["entrypoints.md"], want) {
+			t.Fatalf("entrypoints.md missing %q:\n%s", want, pages["entrypoints.md"])
+		}
+	}
+}
+
+func TestRenderWikiMonorepoRustWorkspace(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "Cargo.toml"), "[workspace]\nmembers = [\"crates/cli\", \"crates/core\"]\n")
+	writeTestFile(t, filepath.Join(root, "crates", "cli", "src", "main.rs"), "fn main() {}\n")
+	writeTestFile(t, filepath.Join(root, "crates", "core", "src", "lib.rs"), "pub fn run() {}\n")
+
+	pages := renderWikiForTest(t, root)
+	entry := pages["entrypoints.md"]
+	if !strings.Contains(entry, "crates/cli/src/main.rs") {
+		t.Fatalf("entrypoints.md should list crates/cli/src/main.rs:\n%s", entry)
+	}
+	if !strings.Contains(entry, "crates/core/src/lib.rs") || !strings.Contains(entry, "candidate package/library root") {
+		t.Fatalf("entrypoints.md should list crates/core/src/lib.rs as a library root:\n%s", entry)
+	}
+	if !strings.Contains(pages["overview.md"], "Cargo.toml [workspace]") {
+		t.Fatalf("overview.md should cite the Cargo workspace:\n%s", pages["overview.md"])
+	}
+}
+
+func TestRenderWikiMonorepoIgnoresNestedDocsAndTestdata(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "package.json"), "{\n  \"name\": \"x\",\n  \"workspaces\": [\"apps/*\"]\n}\n")
+	writeTestFile(t, filepath.Join(root, "docs", "apps", "example", "src", "main.ts"), "export const x = 1\n")
+	writeTestFile(t, filepath.Join(root, "testdata", "apps", "foo", "src", "main.ts"), "export const y = 1\n")
+
+	entry := renderWikiForTest(t, root)["entrypoints.md"]
+	for _, unwanted := range []string{"docs/apps/example/src/main.ts", "testdata/apps/foo/src/main.ts"} {
+		if strings.Contains(entry, unwanted) {
+			t.Fatalf("entrypoints.md should not detect nested non-workspace path %q:\n%s", unwanted, entry)
+		}
+	}
+}
+
 func TestRenderWikiNeverEmbedsRoot(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.22\n")
