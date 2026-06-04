@@ -78,6 +78,12 @@ type wikiFacts struct {
 	hasSetupPy      bool
 	hasCargo        bool
 
+	hasDotNet       bool
+	dotnetProjects  []string
+	dotnetSolutions []string
+	hasGlobalJSON   bool
+	hasNuGetConfig  bool
+
 	pkg         *packageManifest
 	makeTargets []string
 	ciWorkflows []string
@@ -101,11 +107,12 @@ type wikiTestFacts struct {
 }
 
 type wikiCommandFacts struct {
-	MakeTargets []string
-	Scripts     []scriptEntry
-	GoCommands  []string
-	PyCommands  []string
-	CICommands  []string
+	MakeTargets    []string
+	Scripts        []scriptEntry
+	GoCommands     []string
+	PyCommands     []string
+	DotNetCommands []string
+	CICommands     []string
 }
 
 // RenderWiki gathers deterministic facts from the repository and renders the
@@ -148,6 +155,25 @@ func gatherWikiFacts(root string, generatedAt time.Time, scan ScanResult) wikiFa
 	facts.hasRequirements = has("requirements.txt") || has("requirements-dev.txt")
 	facts.hasSetupPy = has("setup.py") || has("setup.cfg")
 	facts.hasCargo = has("Cargo.toml")
+
+	// .NET project layout is identified by file extension (.csproj/.fsproj/
+	// .vbproj/.sln) rather than a single fixed manifest name, so it is gathered
+	// from the file inventory. scan.Files is already sorted by path, so the
+	// collected slices stay deterministic.
+	for _, file := range scan.Files {
+		base := pathBase(file.Path)
+		switch {
+		case strings.HasSuffix(base, ".csproj"), strings.HasSuffix(base, ".fsproj"), strings.HasSuffix(base, ".vbproj"):
+			facts.dotnetProjects = append(facts.dotnetProjects, file.Path)
+		case strings.HasSuffix(base, ".sln"):
+			facts.dotnetSolutions = append(facts.dotnetSolutions, file.Path)
+		case base == "global.json":
+			facts.hasGlobalJSON = true
+		case strings.EqualFold(base, "nuget.config"):
+			facts.hasNuGetConfig = true
+		}
+	}
+	facts.hasDotNet = len(facts.dotnetProjects) > 0 || len(facts.dotnetSolutions) > 0
 
 	if facts.hasGoMod {
 		facts.goModule = readGoModule(filepath.Join(root, "go.mod"))
@@ -228,6 +254,26 @@ func detectEcosystems(facts wikiFacts, has func(string) bool) []roleEvidence {
 		}
 	}
 
+	if facts.hasDotNet {
+		var evidence []string
+		if len(facts.dotnetSolutions) > 0 {
+			evidence = append(evidence, "solution file present ("+facts.dotnetSolutions[0]+")")
+		}
+		if len(facts.dotnetProjects) > 0 {
+			evidence = append(evidence, fmt.Sprintf("%d .NET project file(s), e.g. %s", len(facts.dotnetProjects), facts.dotnetProjects[0]))
+		}
+		if facts.hasGlobalJSON {
+			evidence = append(evidence, "global.json present")
+		}
+		if facts.hasNuGetConfig {
+			evidence = append(evidence, "nuget.config present")
+		}
+		if n := facts.scan.Languages["C#"]; n > 0 {
+			evidence = append(evidence, fmt.Sprintf("%d C# file(s) detected", n))
+		}
+		detected = append(detected, roleEvidence{Role: "C# / .NET", Evidence: evidence})
+	}
+
 	if facts.hasCargo {
 		detected = append(detected, roleEvidence{Role: "Rust", Evidence: []string{"Cargo.toml present"}})
 	}
@@ -298,6 +344,8 @@ func detectEntrypoints(facts wikiFacts) []entrypointFact {
 			add(path, "conventional package entrypoint (index.*)", false)
 		case isViteConfig(base):
 			add(path, "Vite config / build-related candidate", false)
+		case base == "Program.cs":
+			add(path, "conventional .NET entrypoint (Program.cs)", false)
 		}
 	}
 
@@ -343,6 +391,16 @@ func detectConfigs(files []FileRecord) []configFact {
 			add(path, "Go module definition")
 		case base == "go.sum":
 			add(path, "Go module checksums")
+		case strings.HasSuffix(base, ".csproj"), strings.HasSuffix(base, ".fsproj"), strings.HasSuffix(base, ".vbproj"):
+			add(path, ".NET project file")
+		case strings.HasSuffix(base, ".sln"):
+			add(path, ".NET solution file")
+		case base == "global.json":
+			add(path, ".NET SDK version pin")
+		case strings.EqualFold(base, "nuget.config"):
+			add(path, "NuGet configuration")
+		case base == "Directory.Build.props" || base == "Directory.Build.targets":
+			add(path, "MSBuild shared build configuration")
 		case base == "tsconfig.json" || (strings.HasPrefix(base, "tsconfig.") && strings.HasSuffix(base, ".json")):
 			add(path, "TypeScript compiler configuration")
 		case isViteConfig(base):
@@ -422,6 +480,9 @@ func (facts wikiFacts) validationCandidates() []string {
 	if facts.hasPytest() {
 		candidates = append(candidates, "pytest")
 	}
+	if facts.hasDotNet {
+		candidates = append(candidates, "dotnet test")
+	}
 	return dedupeStrings(candidates)
 }
 
@@ -456,6 +517,9 @@ func detectCommands(facts wikiFacts) wikiCommandFacts {
 		c.PyCommands = append(c.PyCommands, "python -m build")
 	}
 	c.PyCommands = dedupeStrings(c.PyCommands)
+	if facts.hasDotNet {
+		c.DotNetCommands = []string{"dotnet build", "dotnet test"}
+	}
 	c.CICommands = facts.ciCommands
 	return c
 }
@@ -726,6 +790,14 @@ func (facts wikiFacts) packageBoundaries() []string {
 	if facts.hasPyProject {
 		lines = append(lines, "Python project (`pyproject.toml`)")
 	}
+	if facts.hasDotNet {
+		if len(facts.dotnetSolutions) > 0 {
+			lines = append(lines, ".NET solution (`"+facts.dotnetSolutions[0]+"`)")
+		}
+		for _, project := range facts.dotnetProjects {
+			lines = append(lines, ".NET project (`"+project+"`)")
+		}
+	}
 	if facts.hasCargo {
 		lines = append(lines, "Rust crate (`Cargo.toml`)")
 	}
@@ -780,6 +852,17 @@ func renderCommands(facts wikiFacts) []byte {
 		fmt.Fprintln(&b, "- No Python project/config detected.")
 	} else {
 		for _, cmd := range c.PyCommands {
+			fmt.Fprintf(&b, "- `%s`\n", cmd)
+		}
+	}
+	fmt.Fprintln(&b)
+
+	fmt.Fprintln(&b, "## .NET commands")
+	fmt.Fprintln(&b)
+	if len(c.DotNetCommands) == 0 {
+		fmt.Fprintln(&b, "- No .NET project/solution detected.")
+	} else {
+		for _, cmd := range c.DotNetCommands {
 			fmt.Fprintf(&b, "- `%s`\n", cmd)
 		}
 	}

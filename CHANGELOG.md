@@ -17,8 +17,12 @@ yet — everything lives under **Unreleased**.
 - Deterministic search ranking polish: import-like entries are penalized and
   the entrypoints/commands/config wiki pages are boosted in unfiltered
   searches, with a small exact title/path-match boost.
-- Map quality fixture coverage (Go CLI, TS/Vue/Vite, Python, config-heavy) and
-  wiki overclaiming checks.
+- Map quality fixture coverage (Go CLI, TS/Vue/Vite, Python, .NET,
+  config-heavy) and wiki overclaiming checks.
+- .NET project detection in the map wiki: `.csproj`/`.fsproj`/`.vbproj`/`.sln`/
+  `global.json`/`nuget.config` are recognized as a "C# / .NET" ecosystem and
+  surfaced in config, with `dotnet build`/`dotnet test` command hints and
+  `Program.cs` as a candidate entrypoint.
 - `pactum prompt build` now prints a `Next:` hint pointing at `pactum execute
   dry-run`.
 - Built-in `codex` and `claude` agent execution boundaries.

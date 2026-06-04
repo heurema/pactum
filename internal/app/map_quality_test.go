@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/heurema/pactum/internal/artifacts"
+	"github.com/heurema/pactum/internal/codeindex"
 )
 
 // --- fixture builders ----------------------------------------------------
@@ -29,6 +30,18 @@ func initPythonFixture(t *testing.T) (string, artifacts.Paths) {
 	mustWriteFile(t, filepath.Join(root, "src", "pkg", "__init__.py"), "\n")
 	mustWriteFile(t, filepath.Join(root, "src", "pkg", "module.py"), "def handler():\n    return 1\n")
 	mustWriteFile(t, filepath.Join(root, "tests", "test_module.py"), "def test_handler():\n    assert True\n")
+	app := testApp(root)
+	wikiRunOK(t, app, "init")
+	return root, artifacts.New(root)
+}
+
+func initDotNetFixture(t *testing.T) (string, artifacts.Paths) {
+	t.Helper()
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "global.json"), "{\n  \"sdk\": { \"version\": \"8.0.100\" }\n}\n")
+	mustWriteFile(t, filepath.Join(root, "MyApp.sln"), "Microsoft Visual Studio Solution File, Format Version 12.00\n")
+	mustWriteFile(t, filepath.Join(root, "src", "MyApp", "MyApp.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net8.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n")
+	mustWriteFile(t, filepath.Join(root, "src", "MyApp", "Program.cs"), "namespace MyApp;\n\npublic class Program\n{\n    public static void Main()\n    {\n    }\n}\n\npublic class Greeter\n{\n    public string Greet()\n    {\n        return \"hi\";\n    }\n}\n")
 	app := testApp(root)
 	wikiRunOK(t, app, "init")
 	return root, artifacts.New(root)
@@ -144,6 +157,51 @@ func TestMapQualityPythonRepo(t *testing.T) {
 		if strings.Contains(commands, unwanted) {
 			t.Fatalf("commands.md should not guess %q for a Python-only repo:\n%s", unwanted, commands)
 		}
+	}
+}
+
+func TestMapQualityDotNetRepo(t *testing.T) {
+	root, paths := initDotNetFixture(t)
+	app := testApp(root)
+
+	overview := mustReadFile(t, paths.WikiOverview)
+	if !strings.Contains(overview, "Likely role: C# / .NET") {
+		t.Fatalf("overview.md should detect a .NET ecosystem:\n%s", overview)
+	}
+	for _, want := range []string{"solution file present", "global.json present"} {
+		if !strings.Contains(overview, want) {
+			t.Fatalf("overview.md .NET evidence missing %q:\n%s", want, overview)
+		}
+	}
+
+	config := mustReadFile(t, paths.WikiConfig)
+	for _, want := range []string{"src/MyApp/MyApp.csproj", "MyApp.sln", "global.json"} {
+		if !strings.Contains(config, want) {
+			t.Fatalf("config.md missing .NET file %q:\n%s", want, config)
+		}
+	}
+
+	commands := mustReadFile(t, paths.WikiCommands)
+	for _, want := range []string{"dotnet build", "dotnet test"} {
+		if !strings.Contains(commands, want) {
+			t.Fatalf("commands.md missing .NET command %q:\n%s", want, commands)
+		}
+	}
+
+	entrypoints := mustReadFile(t, paths.WikiEntrypoints)
+	if !strings.Contains(entrypoints, "src/MyApp/Program.cs") || !strings.Contains(entrypoints, "Program.cs") {
+		t.Fatalf("entrypoints.md should list Program.cs as a candidate:\n%s", entrypoints)
+	}
+
+	// C# is a supported language: definitions are extracted.
+	if !hasCodeItemKind(readCodeItems(t, paths.CodeItemsJSONL), "cs_class") {
+		t.Fatalf("expected C# code items (cs_class) from Program.cs")
+	}
+
+	// using/namespace markers stay out of code_item search.
+	found := wikiSearch(t, app, "Greeter", "--kind", "code_item").Results
+	if !hasCodeKind(found, "cs_class") {
+		t.Fatalf("search \"Greeter\" --kind code_item should find the cs_class: %#v", found)
 	}
 }
 
@@ -302,6 +360,15 @@ func TestSearchTestSurfacesWikiTestsPage(t *testing.T) {
 func hasCodeKind(results []wikiSearchResult, codeKind string) bool {
 	for _, r := range results {
 		if r.CodeKind == codeKind {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCodeItemKind(items []codeindex.Item, kind string) bool {
+	for _, item := range items {
+		if item.Kind == kind {
 			return true
 		}
 	}
