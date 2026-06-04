@@ -41,6 +41,12 @@ yet — everything lives under **Unreleased**.
 - CLI v0.2 cleanup: current run, JSON error envelopes, `pactum version`.
 
 ### Changed
+- Improved run-context search retrieval: instead of running the whole task
+  sentence as one (all-tokens-must-match) FTS query — which returned nothing for
+  natural-language tasks — the run now extracts targeted queries (paths, code
+  identifiers, domain terms) and combines their results, and refreshes this
+  context from the approved contract at `prompt build`. The executor context
+  shows the query source, targeted queries, and top results.
 - Replaced the old top-level `run` command with `task new`.
 - `execute run` and `review run` require confirmation or `--yes`.
 - Made the project map wiki-first in place: `repo-map.md` and `llms.txt` now
