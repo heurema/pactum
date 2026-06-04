@@ -151,6 +151,74 @@ func TestExtractParseFailureWarns(t *testing.T) {
 	}
 }
 
+func TestExtractCommonJSRequire(t *testing.T) {
+	result := Extract("lib/app.js", "javascript", []byte(`const express = require("express")
+var path = require("path")
+let debug = require("debug")("app")
+`))
+	for _, name := range []string{"express", "path", "debug"} {
+		assertItem(t, result.Items, "js_import", name)
+	}
+	// require bindings are import-like, not definitions.
+	for _, item := range result.Items {
+		if item.Kind == "js_import" && !item.IsImportLike() {
+			t.Fatalf("js_import should be import-like: %#v", item)
+		}
+	}
+}
+
+func TestExtractCommonJSModuleExportsIdentifier(t *testing.T) {
+	result := Extract("lib/app.js", "javascript", []byte(`function createApplication() {}
+module.exports = createApplication
+`))
+	assertItem(t, result.Items, "js_export", "createApplication")
+	// The export hint is a definition, not import-like.
+	for _, item := range result.Items {
+		if item.Kind == "js_export" && item.IsImportLike() {
+			t.Fatalf("js_export should not be import-like: %#v", item)
+		}
+	}
+}
+
+func TestExtractCommonJSExportsMember(t *testing.T) {
+	result := Extract("lib/router.js", "javascript", []byte(`function Router() {}
+exports.Router = Router
+module.exports.createApplication = createApplication
+`))
+	assertItem(t, result.Items, "js_export", "Router")
+	assertItem(t, result.Items, "js_export", "createApplication")
+}
+
+func TestExtractCommonJSChainedExports(t *testing.T) {
+	// Express's actual pattern: `exports = module.exports = createApplication`.
+	result := Extract("lib/express.js", "javascript", []byte(`function createApplication() {}
+exports = module.exports = createApplication
+`))
+	assertItem(t, result.Items, "js_export", "createApplication")
+}
+
+func TestExtractCommonJSObjectExports(t *testing.T) {
+	result := Extract("lib/index.js", "javascript", []byte(`module.exports = {
+  createApplication,
+  Router,
+}
+`))
+	assertItem(t, result.Items, "js_export", "createApplication")
+	assertItem(t, result.Items, "js_export", "Router")
+}
+
+func TestExtractCommonJSDoesNotOverExtract(t *testing.T) {
+	// Plain top-level statements that are not require/module.exports must not
+	// produce code items.
+	result := Extract("lib/run.js", "javascript", []byte(`const port = 3000
+app.listen(port)
+config.value = 1
+`))
+	if len(result.Items) != 0 {
+		t.Fatalf("expected no items for non-CommonJS statements, got %#v", result.Items)
+	}
+}
+
 func assertItem(t *testing.T, items []Item, kind string, name string) {
 	t.Helper()
 	for _, item := range items {

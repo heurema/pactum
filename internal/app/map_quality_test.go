@@ -314,6 +314,77 @@ func TestMapQualityRustRepo(t *testing.T) {
 	}
 }
 
+func initExpressFixture(t *testing.T) (string, artifacts.Paths) {
+	t.Helper()
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "package.json"), `{
+  "name": "express-like",
+  "main": "index.js",
+  "scripts": { "test": "mocha" }
+}
+`)
+	mustWriteFile(t, filepath.Join(root, "index.js"), `const express = require("express")
+
+function createApplication() {}
+
+module.exports = createApplication
+module.exports.Router = require("router")
+`)
+	mustWriteFile(t, filepath.Join(root, "lib", "application.js"), `const express = require("express")
+
+function createApplication() {}
+
+module.exports = createApplication
+`)
+	mustWriteFile(t, filepath.Join(root, "lib", "router", "index.js"), `const debug = require("debug")
+
+function Router() {}
+
+module.exports = Router
+`)
+	app := testApp(root)
+	wikiRunOK(t, app, "init")
+	return root, artifacts.New(root)
+}
+
+func TestMapQualityCommonJSExpress(t *testing.T) {
+	root, paths := initExpressFixture(t)
+	app := testApp(root)
+
+	overview := mustReadFile(t, paths.WikiOverview)
+	if !strings.Contains(overview, "Node.js / JavaScript") {
+		t.Fatalf("overview.md should detect Node.js:\n%s", overview)
+	}
+
+	entrypoints := mustReadFile(t, paths.WikiEntrypoints)
+	if !strings.Contains(entrypoints, "index.js") {
+		t.Fatalf("entrypoints.md should include index.js:\n%s", entrypoints)
+	}
+
+	if items := readCodeItems(t, paths.CodeItemsJSONL); len(items) == 0 {
+		t.Fatal("CommonJS repo should produce non-zero code items")
+	}
+
+	// require(...) is searchable as an import.
+	imports := wikiSearch(t, app, "express", "--kind", "import").Results
+	if !hasCodeKind(imports, "js_import") {
+		t.Fatalf("search \"express\" --kind import should find a js_import: %#v", imports)
+	}
+
+	// module.exports identifier is searchable as a code_item.
+	defs := wikiSearch(t, app, "createApplication", "--kind", "code_item").Results
+	if !hasCodeKind(defs, "js_export") {
+		t.Fatalf("search \"createApplication\" --kind code_item should find a js_export: %#v", defs)
+	}
+
+	// require items must not pollute code_item search.
+	for _, r := range wikiSearch(t, app, "express", "--kind", "code_item").Results {
+		if r.Kind == "import" || r.CodeKind == "js_import" {
+			t.Fatalf("--kind code_item should not return require/js_import entries: %#v", r)
+		}
+	}
+}
+
 func TestMapQualityConfigHeavyRepo(t *testing.T) {
 	_, paths := initConfigHeavyFixture(t)
 
