@@ -315,7 +315,7 @@ type versionCmd struct {
 type searchCmd struct {
 	Query      string `arg:"" name:"query" help:"Search query."`
 	Limit      int    `help:"Maximum number of results." default:"10"`
-	Kind       string `help:"Document kind filter." default:"any" enum:"any,repo_map,llms,file,code_item"`
+	Kind       string `help:"Document kind filter." default:"any" enum:"any,repo_map,llms,wiki,file,code_item,import"`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -1229,7 +1229,7 @@ func writeSearchResults(stdout io.Writer, response searchpkg.Response) {
 	for _, result := range response.Results {
 		fmt.Fprintf(stdout, "%d. %s %s\n", result.Rank, result.Kind, result.Path)
 		switch result.Kind {
-		case searchpkg.KindCodeItem:
+		case searchpkg.KindCodeItem, searchpkg.KindImport:
 			fmt.Fprintf(stdout, "   kind: %s\n", result.CodeKind)
 			fmt.Fprintf(stdout, "   name: %s\n", result.Title)
 			if result.Language != "" {

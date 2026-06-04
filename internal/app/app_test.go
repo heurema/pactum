@@ -53,6 +53,12 @@ func helper() {}
 		paths.CodeItemsJSONL,
 		paths.HashesJSONL,
 		paths.SearchSQLite,
+		paths.WikiOverview,
+		paths.WikiStructure,
+		paths.WikiCommands,
+		paths.WikiEntrypoints,
+		paths.WikiConfig,
+		paths.WikiTests,
 		filepath.Join(paths.MapRunsDir, "map_20260531_184012.json"),
 		paths.ProjectMemory,
 		paths.MemoryItems,
@@ -146,14 +152,23 @@ func helper() {}
 		"# Pactum Project Map",
 		"Repository root: `.`",
 		"## Summary",
-		"Code items:",
-		"## Code surface",
+		"Code items (best-effort hints):",
+		"## How to navigate this map",
+		"## Wiki pages",
+		"`wiki/overview.md`",
+		"`wiki/structure.md`",
+		"## Project map artifacts",
+		"## Code surface (best-effort code hints)",
 		"`src/main.go`: `go_main` `main`",
 		"`src/main.go`: `go_func` `main.Start`",
 		"`src/main.go`: `go_type` `main.Server`",
 		"## Language support",
 		"Go, Python, JavaScript, TypeScript/TSX/JSX, and C#",
 		"not complete semantic truth",
+		"Code items are best-effort navigation hints",
+		"Imports are not treated as primary code surface.",
+		"Unsupported languages/framework files may have no code items.",
+		"Source files remain the source of truth.",
 		"## Agent guidance",
 		"Before adding new code, search/read relevant files and code items.",
 		"README.md",
@@ -167,14 +182,23 @@ func helper() {}
 	if strings.Contains(repoMap, "Important entrypoints") {
 		t.Fatalf("repo-map.md should not use old entrypoints terminology:\n%s", repoMap)
 	}
+	// repo-map.md is wiki-first: the wiki pages must be listed before the
+	// best-effort code surface.
+	if wikiIdx, codeIdx := strings.Index(repoMap, "## Wiki pages"), strings.Index(repoMap, "## Code surface"); wikiIdx < 0 || codeIdx < 0 || wikiIdx > codeIdx {
+		t.Fatalf("repo-map.md must list wiki pages before code surface (wiki=%d code=%d):\n%s", wikiIdx, codeIdx, repoMap)
+	}
 	llms := mustReadFile(t, paths.LLMS)
 	for _, want := range []string{
-		"generated Pactum project map",
-		"repo-map.md",
-		"files.jsonl",
+		"deterministic Pactum project map",
+		"map/wiki/overview.md",
+		"map/wiki/structure.md",
+		"map/wiki/commands.md",
+		"map/wiki/entrypoints.md",
+		"map/wiki/config.md",
+		"map/wiki/tests.md",
 		"code-items.jsonl",
-		"Go, Python, JavaScript, TypeScript/TSX/JSX, and C#",
-		"not complete semantic truth",
+		"best-effort symbol hints",
+		"Source files remain the source of truth.",
 		"Not every possible symbol is indexed.",
 		"inspect relevant existing files",
 		"If ownership is unclear, ask for clarification.",
@@ -199,6 +223,22 @@ func helper() {}
 	}
 	if manifest.Artifacts["entries"] != "" {
 		t.Fatalf("manifest should not point to entries artifact: %#v", manifest.Artifacts)
+	}
+	for key, want := range map[string]string{
+		"wiki_overview":    "map/wiki/overview.md",
+		"wiki_structure":   "map/wiki/structure.md",
+		"wiki_commands":    "map/wiki/commands.md",
+		"wiki_entrypoints": "map/wiki/entrypoints.md",
+		"wiki_config":      "map/wiki/config.md",
+		"wiki_tests":       "map/wiki/tests.md",
+		"wiki_areas":       "map/wiki/areas/",
+	} {
+		if manifest.Artifacts[key] != want {
+			t.Fatalf("manifest %s artifact = %q, want %q", key, manifest.Artifacts[key], want)
+		}
+	}
+	if manifest.Schema != "pactum.map.manifest.v1" {
+		t.Fatalf("manifest schema = %q, want pactum.map.manifest.v1 (no v2 bump)", manifest.Schema)
 	}
 	if manifest.CodeIndex.Mode != codeindex.ModeAuto {
 		t.Fatalf("manifest code_index.mode = %q, want auto", manifest.CodeIndex.Mode)

@@ -27,6 +27,15 @@ type Paths struct {
 	SearchSQLite   string
 	MapRunsDir     string
 
+	WikiDir         string
+	WikiAreasDir    string
+	WikiOverview    string
+	WikiStructure   string
+	WikiCommands    string
+	WikiEntrypoints string
+	WikiConfig      string
+	WikiTests       string
+
 	RunsDir string
 
 	MemoryDir        string
@@ -77,6 +86,15 @@ func New(root string) Paths {
 		SearchSQLite:   filepath.Join(mapDir, "search.sqlite"),
 		MapRunsDir:     filepath.Join(mapDir, "runs"),
 
+		WikiDir:         filepath.Join(mapDir, "wiki"),
+		WikiAreasDir:    filepath.Join(mapDir, "wiki", "areas"),
+		WikiOverview:    filepath.Join(mapDir, "wiki", "overview.md"),
+		WikiStructure:   filepath.Join(mapDir, "wiki", "structure.md"),
+		WikiCommands:    filepath.Join(mapDir, "wiki", "commands.md"),
+		WikiEntrypoints: filepath.Join(mapDir, "wiki", "entrypoints.md"),
+		WikiConfig:      filepath.Join(mapDir, "wiki", "config.md"),
+		WikiTests:       filepath.Join(mapDir, "wiki", "tests.md"),
+
 		RunsDir: filepath.Join(workspace, "runs"),
 
 		MemoryDir:        memoryDir,
@@ -107,6 +125,8 @@ func (p Paths) Dirs() []string {
 		p.Workspace,
 		p.MapDir,
 		p.AreasDir,
+		p.WikiDir,
+		p.WikiAreasDir,
 		p.MapRunsDir,
 		p.RunsDir,
 		p.MemoryDir,

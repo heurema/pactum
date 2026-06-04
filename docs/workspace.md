@@ -16,11 +16,19 @@ artifacts, the accepted project memory, the event ledger, and scratch space.
 ├── manifest.json            # workspace manifest (schema, tool version, map run)
 ├── config.yaml              # workspace configuration
 ├── .gitignore               # ignores the generated areas below
-├── map/                     # generated project map + search index
+├── map/                     # generated, wiki-first project map + search index
+│   ├── wiki/                # deterministic map wiki (read this first)
+│   │   ├── overview.md
+│   │   ├── structure.md
+│   │   ├── commands.md
+│   │   ├── entrypoints.md
+│   │   ├── config.md
+│   │   ├── tests.md
+│   │   └── areas/           # one page per top-level directory
 │   ├── repo-map.md
 │   ├── llms.txt
 │   ├── files.jsonl
-│   ├── code-items.jsonl
+│   ├── code-items.jsonl     # best-effort symbol hints (incomplete by design)
 │   ├── hashes.jsonl
 │   ├── search.sqlite
 │   └── manifest.json
@@ -68,8 +76,10 @@ runs/*/execute/
 runs/*/review/
 ```
 
-- `map/` — rebuilt at any time with `pactum map refresh` (includes the binary
-  `search.sqlite` index).
+- `map/` — rebuilt at any time with `pactum map refresh` (includes the
+  generated `wiki/` pages and the binary `search.sqlite` index). The map is
+  wiki-first: start at `map/wiki/overview.md`. The wiki is generated from
+  deterministic facts; `code-items.jsonl` holds best-effort symbol hints only.
 - `ledger/` and `runs/*/ledger/` — append-only event logs.
 - `cache/`, `tmp/`, `locks/` — scratch and coordination state.
 - `runs/*/execute/` — captured agent stdout/stderr and attempt records, which
