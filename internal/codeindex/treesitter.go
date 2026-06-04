@@ -266,6 +266,129 @@ func extractJSLike(ctx sourceContext, root *sitter.Node, prefix string) []Item {
 				item := ctx.item(prefix+"_export", child, compact(ctx.text(child)))
 				items = append(items, item)
 			}
+		case "lexical_declaration", "variable_declaration":
+			// Best-effort CommonJS `const x = require("y")` import hints.
+			items = append(items, commonJSRequireItems(ctx, child, prefix)...)
+		case "expression_statement":
+			// Best-effort CommonJS `module.exports = ...` / `exports.foo = ...`
+			// export hints.
+			items = append(items, commonJSExportItems(ctx, child, prefix)...)
+		}
+	}
+	return dedupeItems(items)
+}
+
+// commonJSRequireItems emits best-effort, import-like hints for top-level
+// CommonJS `require(...)` bindings such as `const x = require("y")`. The item
+// kind is the import kind (js_import/ts_import) so these stay out of the
+// code_item search surface. This is a navigation hint only — require paths are
+// not resolved.
+func commonJSRequireItems(ctx sourceContext, decl *sitter.Node, prefix string) []Item {
+	var items []Item
+	for _, declarator := range descendants(decl, "variable_declarator") {
+		value := declarator.ChildByFieldName("value")
+		if value == nil {
+			continue
+		}
+		importPath := requireArgument(ctx, value)
+		if importPath == "" {
+			continue
+		}
+		item := ctx.item(prefix+"_import", declarator, importPath)
+		item.ImportPath = importPath
+		items = append(items, item)
+	}
+	return items
+}
+
+// requireArgument returns the module string of the first `require("...")` call
+// found within node (covering `require("x")` and `require("x")(...)`), or ""
+// when there is no require call.
+func requireArgument(ctx sourceContext, node *sitter.Node) string {
+	for _, call := range descendants(node, "call_expression") {
+		fn := call.ChildByFieldName("function")
+		if fn == nil || ctx.text(fn) != "require" {
+			continue
+		}
+		args := call.ChildByFieldName("arguments")
+		if args == nil {
+			continue
+		}
+		for _, str := range descendants(args, "string", "string_fragment") {
+			if value := unquote(ctx.text(str)); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+// commonJSExportItems emits best-effort export hints for top-level CommonJS
+// assignments: `module.exports = ...`, `exports.foo = ...`, and
+// `module.exports.foo = ...`. These use the export kind (not import-like) so
+// they are searchable as code_item navigation hints. Object shapes are read
+// only one level deep.
+func commonJSExportItems(ctx sourceContext, stmt *sitter.Node, prefix string) []Item {
+	var items []Item
+	// Iterate every assignment in the statement so assignment chains like
+	// `exports = module.exports = createApplication` (used by Express) are
+	// handled — only the assignments whose left side is module.exports /
+	// exports.X / module.exports.X qualify.
+	for _, assign := range descendants(stmt, "assignment_expression") {
+		left := assign.ChildByFieldName("left")
+		if left == nil || left.Kind() != "member_expression" {
+			continue
+		}
+		object := compact(ctx.text(left.ChildByFieldName("object")))
+		property := cleanName(ctx.text(left.ChildByFieldName("property")))
+		switch {
+		case object == "module" && property == "exports":
+			items = append(items, moduleExportsRHSItems(ctx, assign, prefix)...)
+		case object == "exports" && property != "":
+			items = append(items, ctx.item(prefix+"_export", left, property))
+		case object == "module.exports" && property != "":
+			items = append(items, ctx.item(prefix+"_export", left, property))
+		}
+	}
+	return items
+}
+
+// moduleExportsRHSItems names a `module.exports = RHS` assignment: a bare
+// identifier becomes that identifier, an object literal yields its top-level
+// keys, and anything else falls back to a generic `module.exports` hint.
+func moduleExportsRHSItems(ctx sourceContext, assign *sitter.Node, prefix string) []Item {
+	right := assign.ChildByFieldName("right")
+	if right == nil {
+		return []Item{ctx.item(prefix+"_export", assign, "module.exports")}
+	}
+	switch right.Kind() {
+	case "identifier":
+		if name := cleanName(ctx.text(right)); name != "" {
+			return []Item{ctx.item(prefix+"_export", right, name)}
+		}
+	case "object":
+		if items := objectExportItems(ctx, right, prefix); len(items) > 0 {
+			return items
+		}
+	}
+	return []Item{ctx.item(prefix+"_export", assign, "module.exports")}
+}
+
+// objectExportItems reads the top-level keys of an exported object literal
+// (`{ createApplication, Router }` or `{ foo: bar }`). It intentionally does
+// not recurse into nested objects.
+func objectExportItems(ctx sourceContext, obj *sitter.Node, prefix string) []Item {
+	var items []Item
+	for _, child := range namedChildren(obj) {
+		switch child.Kind() {
+		case "shorthand_property_identifier":
+			if name := cleanName(ctx.text(child)); name != "" {
+				items = append(items, ctx.item(prefix+"_export", child, name))
+			}
+		case "pair":
+			if name := cleanName(ctx.text(child.ChildByFieldName("key"))); name != "" {
+				items = append(items, ctx.item(prefix+"_export", child, name))
+			}
 		}
 	}
 	return items

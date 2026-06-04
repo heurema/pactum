@@ -28,6 +28,11 @@ yet — everything lives under **Unreleased**.
   `gradle`/`./gradlew` command hints (wrapper preferred when present).
 - Rust entrypoint conventions: `src/main.rs`/`main.rs`/`src/bin/*.rs` are listed
   as candidate Rust binary entrypoints when a `Cargo.toml` is present.
+- Best-effort CommonJS symbol hints for JavaScript/TypeScript: top-level
+  `require(...)` bindings index as import-like hints, and `module.exports` /
+  `exports.foo` / `module.exports.foo` (including `exports = module.exports = x`
+  chains and object-literal exports) index as code-item hints. No require-path
+  resolution, dependency graph, or route detection.
 - `pactum prompt build` now prints a `Next:` hint pointing at `pactum execute
   dry-run`.
 - Built-in `codex` and `claude` agent execution boundaries.
