@@ -34,7 +34,8 @@ The human output for `execute dry-run`, `execute run`, `review dry-run`, and
 `review run` includes a `Resolved` block once per command. It shows the selected
 agent plus the stage model and effort values Pactum applied: pinned values are
 shown directly, and empty values are shown as `inherit` because Pactum does not
-read the agent CLI's own config.
+read the agent CLI's own config. A `pinning` summary reads `pinned` (model and
+effort both set), `partial` (only one set), or `inherit` (neither).
 
 Pactum does **not** install, bundle, configure, or authenticate these CLIs. You
 must install and configure each agent CLI separately and make its command
@@ -46,7 +47,7 @@ the CLI is present.
 
 `pactum agents doctor` diagnoses the built-in agents **without launching them**.
 It reports the default executor and reviewer, and for each agent its command,
-input mode, resolved path on your `PATH`, and a status of `ready` or
+input mode, resolved path on your `PATH`, and a status of `on_path` or
 `missing_command` (with the issue listed when the command is not found). Pass
 `--agent <name>` to inspect a single agent.
 

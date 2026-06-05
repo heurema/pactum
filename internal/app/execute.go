@@ -335,10 +335,16 @@ func inheritedValue(value string) string {
 }
 
 func pinningMode(modelSpec agents.ModelSpec) string {
-	if modelSpec.Model == "" && modelSpec.Effort == "" {
+	switch {
+	case modelSpec.Model == "" && modelSpec.Effort == "":
 		return "inherit"
+	case modelSpec.Model != "" && modelSpec.Effort != "":
+		return "pinned"
+	default:
+		// Exactly one of model/effort is set; the other still inherits, so
+		// reporting "pinned" would be misleading.
+		return "partial"
 	}
-	return "pinned"
 }
 
 const (

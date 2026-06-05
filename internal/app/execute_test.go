@@ -231,6 +231,19 @@ func TestExecuteDryRunAppliesExecutorModelConfigToClaude(t *testing.T) {
 	assertResolvedBlock(t, stdout.String(), "claude", "claude-sonnet-4", "high", "pinned")
 }
 
+func TestExecuteDryRunResolvedPartialPin(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupApprovedAndBuiltPromptWithExecutorModel(t, root, ":high")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "codex"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute dry-run codex exited %d, stderr: %s", code, stderr.String())
+	}
+	// Effort-only pin: the model still inherits, so pinning is "partial", not "pinned".
+	assertResolvedBlock(t, stdout.String(), "codex", "inherit", "high", "partial")
+}
+
 func TestLegacyAgentConfigIsToleratedAndIgnored(t *testing.T) {
 	root := t.TempDir()
 	paths := artifacts.New(root)
