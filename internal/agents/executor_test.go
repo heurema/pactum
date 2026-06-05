@@ -35,11 +35,11 @@ func TestBuildCommandUsesStdinForBuiltInAgents(t *testing.T) {
 			agent: AgentDescriptor{
 				Name:    BuiltinClaude,
 				Command: "claude",
-				Args:    []string{"-p"},
+				Args:    []string{"-p", "--dangerously-skip-permissions"},
 				Input:   InputPromptFile,
 			},
 			command: "claude",
-			args:    []string{"-p"},
+			args:    []string{"-p", "--dangerously-skip-permissions"},
 		},
 	}
 
@@ -117,13 +117,13 @@ func TestRunSubprocessClaudeFiltersNestedAgentMarker(t *testing.T) {
 		RepoRoot:       root,
 		RunID:          "run_123",
 		AttemptID:      "attempt_001",
-		Agent:          AgentDescriptor{Name: BuiltinClaude, Command: "claude", Args: []string{"-p"}, Input: InputPromptFile},
+		Agent:          AgentDescriptor{Name: BuiltinClaude, Command: "claude", Args: []string{"-p", "--dangerously-skip-permissions"}, Input: InputPromptFile},
 		PromptRepoPath: promptRepoPath,
 	}, runner)
 	if err != nil {
 		t.Fatalf("RunSubprocess returned error: %v", err)
 	}
-	if runner.spec.Command != "claude" || !sameStringSlice(runner.spec.Args, []string{"-p"}) {
+	if runner.spec.Command != "claude" || !sameStringSlice(runner.spec.Args, []string{"-p", "--dangerously-skip-permissions"}) {
 		t.Fatalf("unexpected process spec: %#v", runner.spec)
 	}
 	if runner.stdin != "claude prompt" {

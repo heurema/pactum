@@ -564,7 +564,7 @@ func TestReviewDryRunExplicitReviewers(t *testing.T) {
 	if plan.Reviewer.Name != "claude" || plan.Reviewer.Command != "claude" {
 		t.Fatalf("claude reviewer mismatch: %#v", plan.Reviewer)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "-p" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
+	if strings.Join(plan.WouldRun.Args, " ") != "-p --dangerously-skip-permissions" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
 		t.Fatalf("claude would_run mismatch: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, reviewerPromptArtifact, runArtifactRepoRel(runID, reviewerPromptArtifact))
