@@ -137,6 +137,42 @@ func TestRunSubprocessClaudeFiltersNestedAgentMarker(t *testing.T) {
 	}
 }
 
+func TestReviewerBuiltinsAreReadOnly(t *testing.T) {
+	// Reviewers only read the diff and emit findings — they must never carry the
+	// executor's write/edit bypass.
+	for _, name := range []string{BuiltinCodex, BuiltinClaude} {
+		reviewer, err := ResolveReviewer(name)
+		if err != nil {
+			t.Fatalf("ResolveReviewer(%q) error: %v", name, err)
+		}
+		joined := strings.Join(reviewer.Args, " ")
+		for _, forbidden := range []string{"--dangerously-skip-permissions", "--dangerously-bypass-approvals-and-sandbox"} {
+			if strings.Contains(joined, forbidden) {
+				t.Fatalf("reviewer %q must not carry write-bypass flag %q: %v", name, forbidden, reviewer.Args)
+			}
+		}
+	}
+
+	codexReviewer, _ := ResolveReviewer(BuiltinCodex)
+	if got := strings.Join(codexReviewer.Args, " "); got != "exec --sandbox read-only" {
+		t.Fatalf("codex reviewer should run a read-only sandbox, got %q", got)
+	}
+	claudeReviewer, _ := ResolveReviewer(BuiltinClaude)
+	if got := strings.Join(claudeReviewer.Args, " "); got != "-p" {
+		t.Fatalf("claude reviewer should drop write-bypass, got %q", got)
+	}
+
+	// Executors must still carry the write bypass: both agents must be able to mutate.
+	codexExec, _ := ResolveExecutor(BuiltinCodex)
+	if !strings.Contains(strings.Join(codexExec.Args, " "), "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("codex executor should keep full bypass: %v", codexExec.Args)
+	}
+	claudeExec, _ := ResolveExecutor(BuiltinClaude)
+	if !strings.Contains(strings.Join(claudeExec.Args, " "), "--dangerously-skip-permissions") {
+		t.Fatalf("claude executor should keep skip-permissions: %v", claudeExec.Args)
+	}
+}
+
 type recordingRunner struct {
 	spec  processSpec
 	stdin string
