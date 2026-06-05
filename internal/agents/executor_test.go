@@ -42,7 +42,7 @@ func TestParseModelSpecRejectsMultipleColons(t *testing.T) {
 	}
 }
 
-func TestApplyExecutorModelSpecEmitsBuiltInAgentArgs(t *testing.T) {
+func TestApplyModelSpecEmitsBuiltInAgentArgs(t *testing.T) {
 	tests := []struct {
 		name  string
 		agent AgentDescriptor
@@ -78,13 +78,25 @@ func TestApplyExecutorModelSpecEmitsBuiltInAgentArgs(t *testing.T) {
 			spec:  ModelSpec{Model: "claude-sonnet-4", Effort: "high"},
 			args:  []string{"-p", "--dangerously-skip-permissions", "--model", "claude-sonnet-4", "--effort", "high"},
 		},
+		{
+			name:  "codex reviewer keeps read-only sandbox",
+			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--sandbox", "read-only"}, Input: InputPromptFile},
+			spec:  ModelSpec{Model: "gpt-5", Effort: "high"},
+			args:  []string{"exec", "--sandbox", "read-only", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"},
+		},
+		{
+			name:  "claude reviewer keeps reviewer mode",
+			agent: AgentDescriptor{Name: BuiltinClaude, Command: "claude", Args: []string{"-p"}, Input: InputPromptFile},
+			spec:  ModelSpec{Model: "claude-sonnet-4", Effort: "high"},
+			args:  []string{"-p", "--model", "claude-sonnet-4", "--effort", "high"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			agent, err := ApplyExecutorModelSpec(tt.agent, tt.spec)
+			agent, err := ApplyModelSpec(tt.agent, tt.spec)
 			if err != nil {
-				t.Fatalf("ApplyExecutorModelSpec returned error: %v", err)
+				t.Fatalf("ApplyModelSpec returned error: %v", err)
 			}
 			if !sameStringSlice(agent.Args, tt.args) {
 				t.Fatalf("args = %#v, want %#v", agent.Args, tt.args)

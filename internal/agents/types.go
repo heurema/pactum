@@ -6,9 +6,10 @@ type AgentConfig struct {
 	DefaultExecutor string                   `json:"default_executor" yaml:"default_executor"`
 	DefaultReviewer string                   `json:"default_reviewer" yaml:"default_reviewer"`
 	Adapters        map[string]AdapterConfig `json:"adapters" yaml:"adapters"`
-	// ExecutorModel pins the executor's model[:effort] (empty = inherit the agent
-	// CLI's own config). Executor-only for now; reviewer model[:effort] is a follow-up.
+	// ExecutorModel and ReviewerModel pin the per-stage model[:effort] (empty =
+	// inherit the agent CLI's own config).
 	ExecutorModel string `json:"executor_model,omitempty" yaml:"executor_model,omitempty"`
+	ReviewerModel string `json:"reviewer_model,omitempty" yaml:"reviewer_model,omitempty"`
 }
 
 type AdapterConfig struct {
