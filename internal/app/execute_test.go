@@ -190,6 +190,40 @@ func TestExecuteDryRunExplicitClaude(t *testing.T) {
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", executionPromptRepoPath(runID))
 }
 
+func TestExecuteDryRunAppliesExecutorModelConfigToCodex(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedAndBuiltPromptWithExecutorModel(t, root, "gpt-5:high")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "codex"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute dry-run codex exited %d, stderr: %s", code, stderr.String())
+	}
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	plan := readDryRunPlan(t, runPaths.DryRunJSON)
+	wantArgs := []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"}
+	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
+		t.Fatalf("codex would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
+	}
+}
+
+func TestExecuteDryRunAppliesExecutorModelConfigToClaude(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedAndBuiltPromptWithExecutorModel(t, root, "claude-sonnet-4:high")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "claude"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute dry-run claude exited %d, stderr: %s", code, stderr.String())
+	}
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	plan := readDryRunPlan(t, runPaths.DryRunJSON)
+	wantArgs := []string{"-p", "--dangerously-skip-permissions", "--model", "claude-sonnet-4", "--effort", "high"}
+	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
+		t.Fatalf("claude would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
+	}
+}
+
 func TestLegacyAgentConfigIsToleratedAndIgnored(t *testing.T) {
 	root := t.TempDir()
 	paths := artifacts.New(root)
@@ -655,6 +689,28 @@ func setupApprovedBuiltPromptWithHelperAgent(t *testing.T, root string, name str
 	t.Helper()
 	app, paths, runID := setupApprovedPromptContract(t, root)
 	app = configureHelperAgent(app, name)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"map", "refresh"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("prompt build exited %d, stderr: %s", code, stderr.String())
+	}
+	return app, paths, runID
+}
+
+func setupApprovedAndBuiltPromptWithExecutorModel(t *testing.T, root string, modelSpec string) (App, artifacts.Paths, string) {
+	t.Helper()
+	app, paths, runID := setupApprovedPromptContract(t, root)
+	config, err := readConfig(paths.Config)
+	assertNoError(t, err)
+	config.Agents.ExecutorModel = modelSpec
+	assertNoError(t, writeYAML(paths.Config, config))
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"map", "refresh"}, &stdout, &stderr)
