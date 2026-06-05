@@ -29,6 +29,7 @@ func ParseModelSpec(raw string) (ModelSpec, error) {
 }
 
 func ApplyExecutorModelSpec(agent AgentDescriptor, spec ModelSpec) (AgentDescriptor, error) {
+	// Clone so appending override flags never mutates the caller's descriptor.
 	agent = cloneDescriptor(agent)
 	if spec.Model == "" && spec.Effort == "" {
 		return agent, nil
