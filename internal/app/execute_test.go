@@ -78,6 +78,7 @@ func TestExecuteDryRunSucceedsAfterPromptBuild(t *testing.T) {
 	got := stdout.String()
 	for _, want := range []string{
 		"Execution dry-run prepared",
+		"Resolved:",
 		"Would run:",
 		"codex exec --dangerously-bypass-approvals-and-sandbox < .heurema/pactum/runs/" + runID + "/contract/prompt.md",
 		".heurema/pactum/runs/" + runID + "/execute/dry-run.json",
@@ -86,6 +87,7 @@ func TestExecuteDryRunSucceedsAfterPromptBuild(t *testing.T) {
 			t.Fatalf("execute dry-run output missing %q:\n%s", want, got)
 		}
 	}
+	assertResolvedBlock(t, got, "codex", "inherit", "inherit", "inherit")
 
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
 	if plan.Schema != agents.DryRunSchema || plan.RunID != runID || plan.Agent.Name != "codex" {
@@ -117,6 +119,9 @@ func TestExecuteDryRunJSONOutput(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "Execution dry-run prepared") {
 		t.Fatalf("json output should not include human output:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "Resolved:") {
+		t.Fatalf("json output should not include resolved human output:\n%s", stdout.String())
 	}
 }
 
@@ -205,6 +210,7 @@ func TestExecuteDryRunAppliesExecutorModelConfigToCodex(t *testing.T) {
 	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
 		t.Fatalf("codex would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
 	}
+	assertResolvedBlock(t, stdout.String(), "codex", "gpt-5", "high", "pinned")
 }
 
 func TestExecuteDryRunAppliesExecutorModelConfigToClaude(t *testing.T) {
@@ -222,6 +228,7 @@ func TestExecuteDryRunAppliesExecutorModelConfigToClaude(t *testing.T) {
 	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
 		t.Fatalf("claude would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
 	}
+	assertResolvedBlock(t, stdout.String(), "claude", "claude-sonnet-4", "high", "pinned")
 }
 
 func TestLegacyAgentConfigIsToleratedAndIgnored(t *testing.T) {
@@ -461,6 +468,8 @@ func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
 	}
 	if got := stdout.String(); !strings.Contains(got, "Execution attempt finished") || !strings.Contains(got, "attempt_001") {
 		t.Fatalf("execute run output mismatch:\n%s", got)
+	} else {
+		assertResolvedBlock(t, got, "helper", "inherit", "inherit", "inherit")
 	}
 
 	attemptPaths := executionAttemptPaths(runPaths, "attempt_001")
@@ -579,6 +588,9 @@ func TestExecuteRunJSONOutput(t *testing.T) {
 	if strings.Contains(stdout.String(), "Execution attempt finished") {
 		t.Fatalf("json output should not include human output:\n%s", stdout.String())
 	}
+	if strings.Contains(stdout.String(), "Resolved:") {
+		t.Fatalf("json output should not include resolved human output:\n%s", stdout.String())
+	}
 }
 
 func TestNextAttemptIDUsesExistingAttemptDirs(t *testing.T) {
@@ -644,6 +656,14 @@ func assertCommandArgsDoNotContain(t *testing.T, args []string, forbidden ...str
 		if strings.Contains(joined, value) {
 			t.Fatalf("command args should not contain %q: %#v", value, args)
 		}
+	}
+}
+
+func assertResolvedBlock(t *testing.T, got string, agent string, model string, effort string, pinning string) {
+	t.Helper()
+	want := fmt.Sprintf("Resolved:\n  agent: %s\n  model: %s\n  effort: %s\n  pinning: %s\n", agent, model, effort, pinning)
+	if !strings.Contains(got, want) {
+		t.Fatalf("resolved output mismatch, missing block:\n%s\noutput:\n%s", want, got)
 	}
 }
 

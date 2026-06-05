@@ -30,6 +30,12 @@ CLI inherits its own configured defaults. For `codex`, Pactum emits
 read-only reviewer command (`codex exec --sandbox read-only`, or `claude -p`)
 and do not add executor write-bypass flags.
 
+The human output for `execute dry-run`, `execute run`, `review dry-run`, and
+`review run` includes a `Resolved` block once per command. It shows the selected
+agent plus the stage model and effort values Pactum applied: pinned values are
+shown directly, and empty values are shown as `inherit` because Pactum does not
+read the agent CLI's own config.
+
 Pactum does **not** install, bundle, configure, or authenticate these CLIs. You
 must install and configure each agent CLI separately and make its command
 available on your `PATH` before Pactum can run it — Pactum only invokes the

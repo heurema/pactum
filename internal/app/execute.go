@@ -41,7 +41,7 @@ func (a App) ExecuteDryRun(stdout io.Writer, runID string, agentName string, jso
 	if jsonOutput {
 		return writeJSONResponse(stdout, plan)
 	}
-	writeExecuteDryRun(stdout, prep.State, plan)
+	writeExecuteDryRun(stdout, prep.State, plan, prep.ModelSpec)
 	return nil
 }
 
@@ -137,7 +137,7 @@ func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, timeou
 			return err
 		}
 	} else {
-		writeExecuteRun(stdout, prep.State, request, result)
+		writeExecuteRun(stdout, prep.State, request, result, prep.ModelSpec)
 	}
 	if runErr != nil {
 		if result.TimedOut {
@@ -155,6 +155,7 @@ type executionPreparation struct {
 	State          contractRunState
 	ContractSHA256 string
 	Agent          agents.AgentDescriptor
+	ModelSpec      agents.ModelSpec
 }
 
 func (a App) prepareExecution(root string, runID string, agentName string) (executionPreparation, error) {
@@ -247,6 +248,7 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 		State:          state,
 		ContractSHA256: hash,
 		Agent:          agent,
+		ModelSpec:      modelSpec,
 	}, nil
 }
 
@@ -282,12 +284,14 @@ func verifyExecutionMemoryBoundary(paths artifacts.Paths, runPaths contractRunPa
 	return nil
 }
 
-func writeExecuteDryRun(stdout io.Writer, state contractRunState, plan agents.DryRunPlan) {
+func writeExecuteDryRun(stdout io.Writer, state contractRunState, plan agents.DryRunPlan, modelSpec agents.ModelSpec) {
 	fmt.Fprintln(stdout, "Execution dry-run prepared")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", plan.RunID)
 	fmt.Fprintf(stdout, "  status: %s\n", state.Status)
+	fmt.Fprintln(stdout)
+	writeResolved(stdout, plan.Agent.Name, modelSpec)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Agent:")
 	fmt.Fprintf(stdout, "  name: %s\n", plan.Agent.Name)
@@ -313,6 +317,28 @@ func formatAgentCommand(command agents.DryRunCommand) string {
 		parts = append(parts, "<", command.Stdin)
 	}
 	return strings.Join(parts, " ")
+}
+
+func writeResolved(stdout io.Writer, agentName string, modelSpec agents.ModelSpec) {
+	fmt.Fprintln(stdout, "Resolved:")
+	fmt.Fprintf(stdout, "  agent: %s\n", agentName)
+	fmt.Fprintf(stdout, "  model: %s\n", inheritedValue(modelSpec.Model))
+	fmt.Fprintf(stdout, "  effort: %s\n", inheritedValue(modelSpec.Effort))
+	fmt.Fprintf(stdout, "  pinning: %s\n", pinningMode(modelSpec))
+}
+
+func inheritedValue(value string) string {
+	if value == "" {
+		return "inherit"
+	}
+	return value
+}
+
+func pinningMode(modelSpec agents.ModelSpec) string {
+	if modelSpec.Model == "" && modelSpec.Effort == "" {
+		return "inherit"
+	}
+	return "pinned"
 }
 
 const (
@@ -429,12 +455,14 @@ func executionResultTimestamp(result executionResultDocument, fallback time.Time
 	return fallback
 }
 
-func writeExecuteRun(stdout io.Writer, state contractRunState, request executionRequestDocument, result executionResultDocument) {
+func writeExecuteRun(stdout io.Writer, state contractRunState, request executionRequestDocument, result executionResultDocument, modelSpec agents.ModelSpec) {
 	fmt.Fprintln(stdout, "Execution attempt finished")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", result.RunID)
 	fmt.Fprintf(stdout, "  status: %s\n", state.Status)
+	fmt.Fprintln(stdout)
+	writeResolved(stdout, request.Agent.Name, modelSpec)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Attempt:")
 	fmt.Fprintf(stdout, "  id: %s\n", result.AttemptID)
