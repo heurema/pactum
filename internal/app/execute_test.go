@@ -184,7 +184,7 @@ func TestExecuteDryRunExplicitClaude(t *testing.T) {
 	if plan.Agent.Name != "claude" || plan.Agent.Command != "claude" {
 		t.Fatalf("claude agent mismatch: %#v", plan.Agent)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "-p" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
+	if strings.Join(plan.WouldRun.Args, " ") != "-p --dangerously-skip-permissions" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
 		t.Fatalf("claude would_run mismatch: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", executionPromptRepoPath(runID))

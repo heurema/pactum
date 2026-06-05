@@ -60,7 +60,7 @@ func (BuiltinRegistry) ListBuiltins() []AgentDescriptor {
 		{
 			Name:    BuiltinClaude,
 			Command: "claude",
-			Args:    []string{"-p"},
+			Args:    []string{"-p", "--dangerously-skip-permissions"},
 			Input:   InputPromptFile,
 		},
 	}
