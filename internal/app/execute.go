@@ -228,6 +228,18 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 	if err != nil {
 		return executionPreparation{}, err
 	}
+	config, err := readConfig(paths.Config)
+	if err != nil {
+		return executionPreparation{}, err
+	}
+	modelSpec, err := agents.ParseModelSpec(config.Agents.ExecutorModel)
+	if err != nil {
+		return executionPreparation{}, err
+	}
+	agent, err = agents.ApplyExecutorModelSpec(agent, modelSpec)
+	if err != nil {
+		return executionPreparation{}, err
+	}
 	return executionPreparation{
 		Root:           root,
 		Paths:          paths,

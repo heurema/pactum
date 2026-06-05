@@ -10,6 +10,89 @@ import (
 	"testing"
 )
 
+func TestParseModelSpec(t *testing.T) {
+	tests := []struct {
+		name   string
+		raw    string
+		model  string
+		effort string
+	}{
+		{name: "empty", raw: ""},
+		{name: "model only", raw: "gpt-5", model: "gpt-5"},
+		{name: "effort only", raw: ":high", effort: "high"},
+		{name: "model and effort", raw: "gpt-5:high", model: "gpt-5", effort: "high"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec, err := ParseModelSpec(tt.raw)
+			if err != nil {
+				t.Fatalf("ParseModelSpec returned error: %v", err)
+			}
+			if spec.Model != tt.model || spec.Effort != tt.effort {
+				t.Fatalf("ParseModelSpec(%q) = %#v, want model %q effort %q", tt.raw, spec, tt.model, tt.effort)
+			}
+		})
+	}
+}
+
+func TestParseModelSpecRejectsMultipleColons(t *testing.T) {
+	if _, err := ParseModelSpec("gpt-5:high:extra"); err == nil {
+		t.Fatalf("ParseModelSpec should reject multiple colons")
+	}
+}
+
+func TestApplyExecutorModelSpecEmitsBuiltInAgentArgs(t *testing.T) {
+	tests := []struct {
+		name  string
+		agent AgentDescriptor
+		spec  ModelSpec
+		args  []string
+	}{
+		{
+			name:  "codex empty",
+			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
+			args:  []string{"exec", "--dangerously-bypass-approvals-and-sandbox"},
+		},
+		{
+			name:  "codex model only",
+			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
+			spec:  ModelSpec{Model: "gpt-5"},
+			args:  []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=\"gpt-5\""},
+		},
+		{
+			name:  "codex effort only",
+			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
+			spec:  ModelSpec{Effort: "high"},
+			args:  []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=high"},
+		},
+		{
+			name:  "codex model and effort",
+			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
+			spec:  ModelSpec{Model: "gpt-5", Effort: "high"},
+			args:  []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"},
+		},
+		{
+			name:  "claude model and effort",
+			agent: AgentDescriptor{Name: BuiltinClaude, Command: "claude", Args: []string{"-p", "--dangerously-skip-permissions"}, Input: InputPromptFile},
+			spec:  ModelSpec{Model: "claude-sonnet-4", Effort: "high"},
+			args:  []string{"-p", "--dangerously-skip-permissions", "--model", "claude-sonnet-4", "--effort", "high"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			agent, err := ApplyExecutorModelSpec(tt.agent, tt.spec)
+			if err != nil {
+				t.Fatalf("ApplyExecutorModelSpec returned error: %v", err)
+			}
+			if !sameStringSlice(agent.Args, tt.args) {
+				t.Fatalf("args = %#v, want %#v", agent.Args, tt.args)
+			}
+		})
+	}
+}
+
 func TestBuildCommandUsesStdinForBuiltInAgents(t *testing.T) {
 	promptPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
 

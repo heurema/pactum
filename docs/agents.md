@@ -20,6 +20,15 @@ feeds that file to the agent process on standard input. Pick the executor with
 `--agent <name>` on the execute commands and the reviewer with `--reviewer
 <name>` on the review commands. When omitted, both default to `codex`.
 
+To pin the executor model, set `agents.executor_model` in
+`.heurema/pactum/config.yaml` to `model[:effort]`, for example
+`gpt-5:high`, `gpt-5`, or `:high`. When the field is empty or omitted, Pactum
+does not pass model flags and the agent CLI inherits its own configured
+defaults. The override applies only to `pactum execute`; reviewer commands do
+not read it. For `codex`, Pactum emits `-c model=...` and
+`-c model_reasoning_effort=...`; for `claude`, it emits `--model ...` and
+`--effort ...`.
+
 Pactum does **not** install, bundle, configure, or authenticate these CLIs. You
 must install and configure each agent CLI separately and make its command
 available on your `PATH` before Pactum can run it — Pactum only invokes the

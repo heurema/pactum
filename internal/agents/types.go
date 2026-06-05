@@ -3,9 +3,10 @@ package agents
 import "time"
 
 type AgentConfig struct {
-	DefaultExecutor string                   `json:"default_executor" yaml:"default_executor"`
-	DefaultReviewer string                   `json:"default_reviewer" yaml:"default_reviewer"`
-	Adapters        map[string]AdapterConfig `json:"adapters" yaml:"adapters"`
+	DefaultExecutor string                   `json:"default_executor,omitempty" yaml:"default_executor,omitempty"`
+	DefaultReviewer string                   `json:"default_reviewer,omitempty" yaml:"default_reviewer,omitempty"`
+	Adapters        map[string]AdapterConfig `json:"adapters,omitempty" yaml:"adapters,omitempty"`
+	ExecutorModel   string                   `json:"executor_model,omitempty" yaml:"executor_model,omitempty"`
 }
 
 type AdapterConfig struct {
