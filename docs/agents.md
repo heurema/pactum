@@ -78,6 +78,13 @@ There is also **no Docker support yet**.
   not a terminal (CI/automation), so it never launches an agent unattended by
   accident. `execute dry-run` never needs `--yes`.
 
+The two built-in executors use different output channels: codex streams its
+reasoning/progress to **stderr** (with the final result on stdout), while claude
+writes to **stdout** (stderr is often empty). Both streams are captured under
+`execute/attempts/attempt_NNN/{stdout,stderr}.log` and surfaced by
+`pactum execute show --logs`, so the meaningful trace may live in either file
+depending on the agent.
+
 Both first re-verify the prompt boundary: the contract is still approved and its
 hash matches, the project map is fresh and matches the prompt manifest, and the
 accepted-memory boundary recorded at prompt build is unchanged. If any check
