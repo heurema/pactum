@@ -475,6 +475,7 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 	got := stdout.String()
 	for _, want := range []string{
 		"Reviewer dry-run prepared",
+		"Resolved:",
 		"Would run:",
 		"codex exec --sandbox read-only < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt.md",
 		".heurema/pactum/runs/" + runID + "/review/reviewer-context.md",
@@ -483,6 +484,7 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 			t.Fatalf("review dry-run output missing %q:\n%s", want, got)
 		}
 	}
+	assertResolvedBlock(t, got, "codex", "inherit", "inherit", "inherit")
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	if plan.Schema != reviewerDryRunSchema || plan.RunID != runID || plan.Reviewer.Name != "codex" {
 		t.Fatalf("unexpected reviewer dry-run plan: %#v", plan)
@@ -528,6 +530,9 @@ func TestReviewDryRunJSONOutput(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "Reviewer dry-run prepared") {
 		t.Fatalf("json output should not include human output:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "Resolved:") {
+		t.Fatalf("json output should not include resolved human output:\n%s", stdout.String())
 	}
 }
 
@@ -575,7 +580,11 @@ func TestReviewDryRunAppliesReviewerModelConfigToCodex(t *testing.T) {
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	setReviewerModelConfig(t, paths, "gpt-5:high")
 
-	runReviewCommand(t, app, "review", "dry-run", runID, "--reviewer", "codex")
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "dry-run", runID, "--reviewer", "codex"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review dry-run codex exited %d, stderr: %s", code, stderr.String())
+	}
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	wantArgs := []string{"exec", "--sandbox", "read-only", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"}
 	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
@@ -584,6 +593,7 @@ func TestReviewDryRunAppliesReviewerModelConfigToCodex(t *testing.T) {
 	if plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
 		t.Fatalf("codex reviewer stdin = %q", plan.WouldRun.Stdin)
 	}
+	assertResolvedBlock(t, stdout.String(), "codex", "gpt-5", "high", "pinned")
 }
 
 func TestReviewDryRunAppliesReviewerModelConfigToClaude(t *testing.T) {
@@ -591,13 +601,18 @@ func TestReviewDryRunAppliesReviewerModelConfigToClaude(t *testing.T) {
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	setReviewerModelConfig(t, paths, "claude-sonnet-4:high")
 
-	runReviewCommand(t, app, "review", "dry-run", runID, "--reviewer", "claude")
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "dry-run", runID, "--reviewer", "claude"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review dry-run claude exited %d, stderr: %s", code, stderr.String())
+	}
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	wantArgs := []string{"-p", "--model", "claude-sonnet-4", "--effort", "high"}
 	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
 		t.Fatalf("claude reviewer would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "--dangerously-skip-permissions")
+	assertResolvedBlock(t, stdout.String(), "claude", "claude-sonnet-4", "high", "pinned")
 }
 
 func TestReviewDryRunUnsupportedReviewerFails(t *testing.T) {
@@ -844,6 +859,8 @@ func TestReviewRunWritesAttemptArtifacts(t *testing.T) {
 	}
 	if got := stdout.String(); !strings.Contains(got, "Reviewer attempt finished") || !strings.Contains(got, "reviewer_attempt_001") {
 		t.Fatalf("review run output mismatch:\n%s", got)
+	} else {
+		assertResolvedBlock(t, got, "helper", "inherit", "inherit", "inherit")
 	}
 
 	attemptPaths := reviewerAttemptPaths(runPaths, "reviewer_attempt_001")
@@ -1071,6 +1088,9 @@ func TestReviewRunJSONOutput(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "Reviewer attempt finished") {
 		t.Fatalf("json output should not include human output:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "Resolved:") {
+		t.Fatalf("json output should not include resolved human output:\n%s", stdout.String())
 	}
 }
 

@@ -151,6 +151,7 @@ type reviewerDryRunPreparation struct {
 	Proposals         []reviewProposalRecord
 	ProposalDecisions []reviewProposalDecisionRecord
 	Reviewer          agents.AgentDescriptor
+	ModelSpec         agents.ModelSpec
 }
 
 type reviewerDryRunDocument struct {
@@ -481,7 +482,7 @@ func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, j
 	if jsonOutput {
 		return writeJSONResponse(stdout, plan)
 	}
-	writeReviewDryRun(stdout, plan)
+	writeReviewDryRun(stdout, plan, prep.ModelSpec)
 	return nil
 }
 
@@ -571,7 +572,7 @@ func (a App) ReviewRun(stdout io.Writer, runID string, reviewerName string, time
 			return err
 		}
 	} else {
-		writeReviewRun(stdout, request, result)
+		writeReviewRun(stdout, request, result, prep.ModelSpec)
 	}
 	if runErr != nil {
 		if result.TimedOut {
@@ -706,6 +707,7 @@ func (a App) prepareReviewer(context reviewContext, reviewerName string, action 
 		Proposals:         proposals,
 		ProposalDecisions: proposalDecisions,
 		Reviewer:          reviewer,
+		ModelSpec:         modelSpec,
 	}, nil
 }
 
@@ -1361,11 +1363,13 @@ func writeReviewApproved(stdout io.Writer, state reviewStateResponse) {
 	}
 }
 
-func writeReviewDryRun(stdout io.Writer, plan reviewerDryRunDocument) {
+func writeReviewDryRun(stdout io.Writer, plan reviewerDryRunDocument, modelSpec agents.ModelSpec) {
 	fmt.Fprintln(stdout, "Reviewer dry-run prepared")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", plan.RunID)
+	fmt.Fprintln(stdout)
+	writeResolved(stdout, plan.Reviewer.Name, modelSpec)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Reviewer:")
 	fmt.Fprintf(stdout, "  name: %s\n", plan.Reviewer.Name)
@@ -1385,11 +1389,13 @@ func writeReviewDryRun(stdout io.Writer, plan reviewerDryRunDocument) {
 	fmt.Fprintf(stdout, "  dry run: %s\n", runArtifactRepoRel(plan.RunID, reviewerDryRunArtifact))
 }
 
-func writeReviewRun(stdout io.Writer, request reviewerRequestDocument, result reviewerResultDocument) {
+func writeReviewRun(stdout io.Writer, request reviewerRequestDocument, result reviewerResultDocument, modelSpec agents.ModelSpec) {
 	fmt.Fprintln(stdout, "Reviewer attempt finished")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", result.RunID)
+	fmt.Fprintln(stdout)
+	writeResolved(stdout, request.Reviewer.Name, modelSpec)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Reviewer:")
 	fmt.Fprintf(stdout, "  name: %s\n", request.Reviewer.Name)
