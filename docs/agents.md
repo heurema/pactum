@@ -69,7 +69,10 @@ There is also **no Docker support yet**.
   the boundaries pass and to see what would run.
 - `pactum execute run <run_id> --agent codex` launches the agent subprocess and
   captures the attempt — request, result (exit code, timing, timeout flag), and
-  stdout/stderr logs — under `execute/attempts/`. It honors `--timeout` (default
+  stdout/stderr logs — under `execute/attempts/`. This is real agent execution
+  and runs **unsandboxed**: the agent runs directly in your repository with no
+  container, VM, or filesystem confinement, exactly as described in the execution
+  model above. It honors `--timeout` (default
   10 minutes). Because execution is **unsandboxed**, `execute run` asks for
   confirmation on an interactive terminal and **requires `--yes`** when stdin is
   not a terminal (CI/automation), so it never launches an agent unattended by
