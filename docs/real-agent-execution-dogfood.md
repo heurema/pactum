@@ -156,4 +156,40 @@ non-interactive runs. The understood constraints stand: execution is
   technically write files. Before enabling codex⇄claude cross-review, split
   executor vs reviewer args so the reviewer runs without write-bypass.
 
+## Scope-overshoot round (M8.1)
+
+**Date:** 2026-06-05. Several recommendations above were addressed in M8.1 (reviewer
+least-privilege, `agents doctor` `ready` → `on_path`, `clarify list` alias,
+log-channel docs). This round answers the open scope-overshoot question.
+
+**Question:** does the `contract → gate` loop *mechanically* flag changes that fall
+outside the contract's declared scope?
+
+**Answer: no.** The gate's change detection (`computeGateChanges` in
+`internal/app/gate.go`) compares every repository file's hash against the project-map
+baseline and reports differences as `changed` / `new` / `missing` files. It contains
+**no `in_scope` / `out_of_scope` comparison** — the contract's scope lists are never
+consulted. The gate runs the validation commands, lists the changed files, and sets
+`needs_review`; judging whether those changes are in- or out-of-scope is left entirely
+to the human reviewer.
+
+**Demonstration (deterministic, this repo, no isolation).** Against an approved
+docs-only contract (out-of-scope: code changes), an out-of-scope code edit
+(`internal/version/version.go`) plus a stray new file were introduced, then
+`gate run --allow-commands`:
+
+- `changed files: 1`, `new files: 1`, validation `make check` `passed: 1 / failed: 0`
+- gate status: `needs_review`
+- `gate show` listed them as plain `changed file` / `new file` — **no scope flag, no
+  block** — identical to how an in-scope change is reported.
+
+A blatantly out-of-scope change therefore reaches `needs_review` exactly like an
+in-scope one. (No live agent run was needed: the gate's scope behavior is fully
+determined by its implementation, corroborated by the M8.0 gate run above.)
+
+**Recommendation (follow-up, not built here).** If mechanical scope enforcement is
+wanted — flag files changed outside the contract's declared scope, or block on
+`.heurema` writes — it is a dedicated feature for a future milestone, not a tiny fix.
+Until then, scope adherence is a human-review responsibility.
+
 No secrets, private local paths, or agent auth details are included in this report.

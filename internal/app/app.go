@@ -61,7 +61,7 @@ type mapCmd struct {
 type clarifyCmd struct {
 	Ask    clarifyAskCmd    `cmd:"" help:"Add a manual clarification question."`
 	Answer clarifyAnswerCmd `cmd:"" help:"Record a manual clarification answer."`
-	Status clarifyStatusCmd `cmd:"" help:"Print clarification status for a run."`
+	Status clarifyStatusCmd `cmd:"" aliases:"list" help:"Print clarification status for a run (alias: list)."`
 }
 
 type clarifyAskCmd struct {

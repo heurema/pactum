@@ -42,11 +42,11 @@ func (BuiltinRegistry) DefaultReviewer() string {
 }
 
 func (BuiltinRegistry) ResolveExecutor(name string) (AgentDescriptor, error) {
-	return resolveBuiltin(name, DefaultExecutor())
+	return resolveFrom(ListBuiltins(), name, DefaultExecutor())
 }
 
 func (BuiltinRegistry) ResolveReviewer(name string) (AgentDescriptor, error) {
-	return resolveBuiltin(name, DefaultReviewer())
+	return resolveFrom(reviewerBuiltins(), name, DefaultReviewer())
 }
 
 func (BuiltinRegistry) ListBuiltins() []AgentDescriptor {
@@ -70,12 +70,37 @@ func (BuiltinRegistry) ListBuiltins() []AgentDescriptor {
 	return builtins
 }
 
-func resolveBuiltin(name string, defaultName string) (AgentDescriptor, error) {
+// reviewerBuiltins returns read-only descriptors for the reviewer role. A reviewer
+// only reads the diff and emits findings, so it must NOT carry the executor's
+// write/edit bypass: codex runs in a read-only sandbox and claude omits
+// --dangerously-skip-permissions.
+func reviewerBuiltins() []AgentDescriptor {
+	builtins := []AgentDescriptor{
+		{
+			Name:    BuiltinCodex,
+			Command: "codex",
+			Args:    []string{"exec", "--sandbox", "read-only"},
+			Input:   InputPromptFile,
+		},
+		{
+			Name:    BuiltinClaude,
+			Command: "claude",
+			Args:    []string{"-p"},
+			Input:   InputPromptFile,
+		},
+	}
+	for i := range builtins {
+		builtins[i].Args = append([]string{}, builtins[i].Args...)
+	}
+	return builtins
+}
+
+func resolveFrom(descriptors []AgentDescriptor, name string, defaultName string) (AgentDescriptor, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = defaultName
 	}
-	for _, descriptor := range ListBuiltins() {
+	for _, descriptor := range descriptors {
 		if descriptor.Name == name {
 			return cloneDescriptor(descriptor), nil
 		}

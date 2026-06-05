@@ -6,7 +6,9 @@ import (
 )
 
 const (
-	DoctorStatusReady          = "ready"
+	// DoctorStatusOnPath means the agent command was found on PATH via
+	// exec.LookPath. It does NOT verify authentication or edit-capability.
+	DoctorStatusOnPath         = "on_path"
 	DoctorStatusMissingCommand = "missing_command"
 
 	DoctorReportSchema = "pactum.agents_doctor.v1"
@@ -60,7 +62,7 @@ func diagnoseAgent(agent AgentDescriptor) AgentDoctor {
 		Name:    agent.Name,
 		Command: agent.Command,
 		Input:   agent.Input,
-		Status:  DoctorStatusReady,
+		Status:  DoctorStatusOnPath,
 		Issues:  []string{},
 	}
 

@@ -50,4 +50,8 @@ func writeAgentsDoctor(stdout io.Writer, report agents.DoctorReport) {
 			fmt.Fprintln(stdout)
 		}
 	}
+	if len(report.Agents) > 0 {
+		fmt.Fprintln(stdout)
+		fmt.Fprintln(stdout, `Note: "on_path" means the command was found on PATH — auth and edit-capability are not verified.`)
+	}
 }
