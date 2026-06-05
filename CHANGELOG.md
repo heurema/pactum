@@ -33,6 +33,12 @@ yet — everything lives under **Unreleased**.
   `exports.foo` / `module.exports.foo` (including `exports = module.exports = x`
   chains and object-literal exports) index as code-item hints. No require-path
   resolution, dependency graph, or route detection.
+- Repo-local, cross-agent Pactum agent skill package
+  (`assets/agent-skills/pactum/`): a portable `SKILL.md` plus
+  `references/{workflow,install,safety}.md`, loadable by Codex (`.agents/skills`)
+  and Claude Code (`.claude/skills`), with a committed `AGENTS.md` pointer and
+  `docs/agent-skill.md` / `docs/skill-install.md`. Marketplace/plugin packaging
+  is deferred.
 - Monorepo entrypoint conventions: `apps/*`/`services/*` `src/main.*` and
   `src/index.*`, `packages/*`/`libs/*` `index.*` (as candidate package/library
   roots), and `crates/*` `src/main.rs`/`lib.rs` are detected as candidate

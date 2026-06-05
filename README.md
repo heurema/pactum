@@ -183,6 +183,11 @@ pactum version
   dry-run vs run, and the direct-subprocess execution model.
 - [docs/memory.md](docs/memory.md) — deterministic project memory: propose,
   accept, search, refresh/stale, and the prompt boundary.
+- [docs/agent-skill.md](docs/agent-skill.md) — the repo-local, cross-agent
+  Pactum skill package (`assets/agent-skills/pactum/`) for Codex and Claude
+  Code, and its safe default workflow.
+- [docs/skill-install.md](docs/skill-install.md) — installing the CLI and the
+  skill package today (marketplace packaging is deferred).
 - [CHANGELOG.md](CHANGELOG.md) — notable changes (everything is currently
   **Unreleased**; there are no packaged releases yet).
 - [docs/dogfood-second-repo.md](docs/dogfood-second-repo.md) — findings from
