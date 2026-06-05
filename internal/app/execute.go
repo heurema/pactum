@@ -236,7 +236,7 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 	if err != nil {
 		return executionPreparation{}, err
 	}
-	agent, err = agents.ApplyExecutorModelSpec(agent, modelSpec)
+	agent, err = agents.ApplyModelSpec(agent, modelSpec)
 	if err != nil {
 		return executionPreparation{}, err
 	}

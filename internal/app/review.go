@@ -679,6 +679,18 @@ func (a App) prepareReviewer(context reviewContext, reviewerName string, action 
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
+	config, err := readConfig(context.Paths.Config)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	modelSpec, err := agents.ParseModelSpec(config.Agents.ReviewerModel)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	reviewer, err = agents.ApplyModelSpec(reviewer, modelSpec)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
 	if reviewer.Input != agents.InputPromptFile {
 		return reviewerDryRunPreparation{}, fmt.Errorf("unsupported agent input mode: %s", reviewer.Input)
 	}

@@ -570,6 +570,36 @@ func TestReviewDryRunExplicitReviewers(t *testing.T) {
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, reviewerPromptArtifact, runArtifactRepoRel(runID, reviewerPromptArtifact))
 }
 
+func TestReviewDryRunAppliesReviewerModelConfigToCodex(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	setReviewerModelConfig(t, paths, "gpt-5:high")
+
+	runReviewCommand(t, app, "review", "dry-run", runID, "--reviewer", "codex")
+	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
+	wantArgs := []string{"exec", "--sandbox", "read-only", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"}
+	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
+		t.Fatalf("codex reviewer would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
+	}
+	if plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
+		t.Fatalf("codex reviewer stdin = %q", plan.WouldRun.Stdin)
+	}
+}
+
+func TestReviewDryRunAppliesReviewerModelConfigToClaude(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	setReviewerModelConfig(t, paths, "claude-sonnet-4:high")
+
+	runReviewCommand(t, app, "review", "dry-run", runID, "--reviewer", "claude")
+	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
+	wantArgs := []string{"-p", "--model", "claude-sonnet-4", "--effort", "high"}
+	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
+		t.Fatalf("claude reviewer would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
+	}
+	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "--dangerously-skip-permissions")
+}
+
 func TestReviewDryRunUnsupportedReviewerFails(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
@@ -1559,6 +1589,14 @@ func setupApprovedPreparedReview(t *testing.T, root string, gateStatus string) (
 	writeReviewGateReportForTest(t, runPaths, runID, gateStatus)
 	runReviewCommand(t, app, "review", "prepare", runID)
 	return app, paths, runID, runPaths
+}
+
+func setReviewerModelConfig(t *testing.T, paths artifacts.Paths, modelSpec string) {
+	t.Helper()
+	config, err := readConfig(paths.Config)
+	assertNoError(t, err)
+	config.Agents.ReviewerModel = modelSpec
+	assertNoError(t, writeYAML(paths.Config, config))
 }
 
 func setupApprovedReviewWithoutGateReport(t *testing.T, root string) (App, artifacts.Paths, string, contractRunPathSet) {

@@ -28,7 +28,7 @@ func ParseModelSpec(raw string) (ModelSpec, error) {
 	return spec, nil
 }
 
-func ApplyExecutorModelSpec(agent AgentDescriptor, spec ModelSpec) (AgentDescriptor, error) {
+func ApplyModelSpec(agent AgentDescriptor, spec ModelSpec) (AgentDescriptor, error) {
 	// Clone so appending override flags never mutates the caller's descriptor.
 	agent = cloneDescriptor(agent)
 	if spec.Model == "" && spec.Effort == "" {
@@ -54,7 +54,7 @@ func ApplyExecutorModelSpec(agent AgentDescriptor, spec ModelSpec) (AgentDescrip
 			agent.Args = append(agent.Args, "--effort", spec.Effort)
 		}
 	default:
-		return AgentDescriptor{}, fmt.Errorf("executor model override is unsupported for agent: %s", agent.Name)
+		return AgentDescriptor{}, fmt.Errorf("model override is unsupported for agent: %s", agent.Name)
 	}
 	return agent, nil
 }
