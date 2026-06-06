@@ -130,11 +130,12 @@ There is also **no Docker support yet**.
   stdout/stderr logs — under `execute/attempts/`. This is real agent execution
   and runs **unsandboxed**: the agent runs directly in your repository with no
   container, VM, or filesystem confinement, exactly as described in the execution
-  model above. It honors `--timeout` (default
-  10 minutes). Because execution is **unsandboxed**, `execute run` asks for
-  confirmation on an interactive terminal and **requires `--yes`** when stdin is
-  not a terminal (CI/automation), so it never launches an agent unattended by
-  accident. `execute dry-run` never needs `--yes`.
+  model above. It honors `--timeout` as an idle safety timeout: the process is
+  cancelled only after the configured duration passes with no stdout or stderr
+  output (default 10 minutes). Because execution is **unsandboxed**, `execute
+  run` asks for confirmation on an interactive terminal and **requires `--yes`**
+  when stdin is not a terminal (CI/automation), so it never launches an agent
+  unattended by accident. `execute dry-run` never needs `--yes`.
 
 The two built-in executors use different output channels: codex streams its
 reasoning/progress to **stderr** (with the final result on stdout), while claude
@@ -190,8 +191,8 @@ approve`.
 
 The drafter never answers clarification questions, changes the contract goal, or
 edits code. Like other agent-running commands, `contract draft` streams live
-agent output to stderr, honors `--timeout`, supports `--json`, and **requires
-`--yes`** for non-interactive/automated use.
+agent output to stderr, honors `--timeout` as an idle no-output timeout, supports
+`--json`, and **requires `--yes`** for non-interactive/automated use.
 
 ## Review: dry-run vs run
 
@@ -202,8 +203,8 @@ automatically.
   and context (`review/reviewer-prompt.md`, `review/reviewer-context.md`,
   `review/reviewer-dry-run.json`) without launching a reviewer.
 - `pactum review run <run_id> --reviewer codex` launches the reviewer subprocess
-  (same direct-subprocess model as execution, with `--timeout`) and captures its
-  attempt under `review/reviewer-attempts/`. Like `execute run`, it is
+  (same direct-subprocess model as execution, with the idle `--timeout`) and
+  captures its attempt under `review/reviewer-attempts/`. Like `execute run`, it is
   unsandboxed agent execution, so it asks for confirmation on an interactive
   terminal and **requires `--yes`** for non-interactive/automated use; `review
   dry-run` never needs `--yes`.
@@ -252,8 +253,8 @@ the flags are omitted, Pactum reads `limits.review.max_rounds`,
 config. The default clean-round requirement is 1, preserving the original "first
 clean round converges" behavior. The default no-change patience is 2: when a
 fixer runs but the source fingerprint is unchanged for two consecutive fixer
-rounds, the loop terminates as `stalemate`. `--timeout` applies to each reviewer
-or fixer subprocess, and `--json` prints the loop summary as JSON.
+rounds, the loop terminates as `stalemate`. The idle `--timeout` applies to each
+reviewer or fixer subprocess, and `--json` prints the loop summary as JSON.
 
 The loop writes `review/loop-summary.json` with the terminal reason and
 per-round open-finding counts, clean streak, and unchanged-fingerprint streak.

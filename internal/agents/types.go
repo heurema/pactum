@@ -67,7 +67,9 @@ type RunRequest struct {
 	Agent          AgentDescriptor
 	PromptRepoPath string
 	ArtifactDir    string
-	Timeout        time.Duration
+	// Timeout is an idle safety timeout: the process is cancelled only after
+	// this duration passes without stdout or stderr output.
+	Timeout time.Duration
 	// LiveOutput, when set, receives a copy of the agent's stdout and stderr as
 	// the process runs, in addition to the per-attempt log files. Callers pass
 	// the operator's stderr so multi-minute runs are not a silent black box.

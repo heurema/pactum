@@ -112,7 +112,7 @@ func (a App) ClarifySuggest(stdout io.Writer, liveOutput io.Writer, runID string
 		FinishedEvent:   "clarifier_attempt_finished",
 		ExitKind:        "clarifier",
 		TimeoutMessage: func(timeout time.Duration) string {
-			return fmt.Sprintf("clarifier process timed out after %s", timeout)
+			return fmt.Sprintf("clarifier process produced no output for %s", timeout)
 		},
 		Prepare: func(createdAt string) (agents.DryRunCommand, error) {
 			if err := writeClarifierPromptArtifacts(prep); err != nil {

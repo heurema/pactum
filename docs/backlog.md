@@ -5,11 +5,14 @@ reviews across M8–M10. Rough priority in parentheses.
 
 ## Execution / review UX
 
-- **Timeout vs. completion** (med). A run killed by `--timeout` reports
-  `timed_out: true` / `exit -1` even when the agent had already produced complete,
-  valid work (observed when codex self-runs `make check` past the wall).
-  Distinguish "timed out mid-work" from "timed out after a usable diff"; consider a
-  longer default `--timeout` for large tasks.
+- **Timeout follow-ups** (med). `--timeout` is now idle-based (M11.6). Still open:
+  (a) **completion-aware finalize** — when the idle timeout fires but the agent
+  already produced a usable diff, report it as completed-with-warning instead of
+  `timed_out: true` / `exit -1` (a killed-but-complete run currently looks failed);
+  (b) an optional **absolute total cap** (off by default) as a CI backstop for an
+  agent that keeps emitting output yet never finishes (the idle timer never fires);
+  (c) **per-project config defaults** for the idle window (and any cap) so a project
+  sets it once instead of passing `--timeout` on every run.
 - **Workspace config leaks across runs/branches** (med). `executor_model` (and other
   `agents.*` config) lives in the gitignored `.heurema/pactum/config.yaml`, which
   persists across branches. An M10.2 `executor_model: claude-opus-4-8:xhigh` leaked
@@ -56,6 +59,12 @@ reviews across M8–M10. Rough priority in parentheses.
   (dead-end — report "no additions" instead); re-running `contract draft` after accept
   clobbers the accepted proposal's audit fields; `accept-draft` hardcodes
   `accepted_by:"manual"` (no `--by`).
+- **Sharper clarify questioning** (med). The `clarify suggest` prompt currently
+  produces soft, surface-level questions. Strengthen it to interrogate the
+  requester adversarially — probe hidden assumptions, force concrete acceptance
+  criteria, surface edge cases, and push back on vague answers — so the resulting
+  contract is precise rather than agreeable. A "grill the requester" questioning
+  style, not a polite checklist.
 
 ## Hardening / cleanup
 
@@ -76,6 +85,10 @@ reviews across M8–M10. Rough priority in parentheses.
 
 ## Resolved (for reference)
 
+- Idle agent timeout (M11.6) — `--timeout` is now an idle (no-output) safety
+  timeout: a subprocess is killed only after the window passes with no stdout/stderr
+  (default 10m), so long actively-streaming runs are never cut mid-work; the fixed
+  total wall-clock cap is removed. Channel-based watchdog, race-clean.
 - Legacy `default_executor` / `default_reviewer` / `adapters` config removed (#44) —
   intentionally ignored, not a bug.
 - `agents doctor` status `ready` → `on_path`, `clarify list` alias, log-channel docs (#38).

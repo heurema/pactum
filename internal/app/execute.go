@@ -76,7 +76,7 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 		FinishedEvent:   "execution_attempt_finished",
 		ExitKind:        "agent",
 		TimeoutMessage: func(timeout time.Duration) string {
-			return fmt.Sprintf("agent process timed out after %s", timeout)
+			return fmt.Sprintf("agent process produced no output for %s", timeout)
 		},
 		Prepare: func(createdAt string) (agents.DryRunPlan, error) {
 			return ensureDryRunPlan(prep, createdAt)
