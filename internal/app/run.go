@@ -681,11 +681,6 @@ func draftContractFor(runID string, task string) draftContract {
 	}
 }
 
-func renderContractMD(task string, mapRunID string, searchResults int) []byte {
-	contract := draftContractFor("", task)
-	return renderContractMDFromDraft(contract, mapRunID, searchResults)
-}
-
 func renderContractMDFromDraft(contract draftContract, mapRunID string, searchResults int) []byte {
 	var buffer bytes.Buffer
 	fmt.Fprintln(&buffer, "# Contract Draft")
@@ -742,10 +737,6 @@ func renderContractMDFromDraft(contract draftContract, mapRunID string, searchRe
 		}
 	}
 	return buffer.Bytes()
-}
-
-func renderPromptMD(task string) []byte {
-	return renderPromptMDFromDraft(draftContractFor("", task))
 }
 
 func renderPromptMDFromDraft(contract draftContract) []byte {

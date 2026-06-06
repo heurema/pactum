@@ -69,7 +69,8 @@ reviews across M8–M10. Rough priority in parentheses.
 - **`-race` in CI** (med). `make check` runs `go test ./...` without `-race`, so the
   M10.2 live-output data race slipped through. The full suite is race-clean as of
   M10.2, so enabling `-race` (a CI step or a `make check-race` target) is now safe and
-  would catch this class — at a notable test-time cost (~20× the app package).
+  would catch this class — at a notable test-time cost (~20× the app package). The
+  `tool` directive added for `deadcode` (M11.3) is the pattern to reuse here.
 
 ## Resolved (for reference)
 
@@ -83,3 +84,8 @@ reviews across M8–M10. Rough priority in parentheses.
 - Lifecycle dedup (#53) — the five agent-run commands (`execute run`, `review run`,
   `review fix`, `clarify suggest`, `contract draft`) now share one attempt-lifecycle
   helper (`runAgentAttemptLifecycle`); behavior-preserving, net −137 LOC (M11.2).
+- Dead-code gate (M11.3) — `make check` now runs `go tool deadcode` (golang.org/x/
+  tools, pinned via the go.mod `tool` directive), which flags unused package-level
+  functions including production code reachable only from tests — the class `go vet`
+  misses (and how the M11.2 refactor left orphaned wrappers). Removed the 7 dead funcs
+  it found; tree is clean and the gate keeps it that way.

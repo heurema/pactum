@@ -263,10 +263,6 @@ func reviewFixPromptRepoPath(runID string) string {
 	return runArtifactRepoRel(runID, reviewFixPromptArtifact)
 }
 
-func reviewFixAttemptPaths(runPaths contractRunPathSet, attemptID string) attemptPathSet {
-	return agentAttemptPaths(runPaths.ReviewFixAttemptsDir, attemptID)
-}
-
 func renderReviewFixContext(prep reviewFixPreparation) string {
 	var b strings.Builder
 	state := buildReviewState(prep.Review, prep.Findings, prep.Resolutions)

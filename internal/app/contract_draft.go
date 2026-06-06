@@ -459,10 +459,6 @@ func contractDrafterPromptRepoPath(runID string) string {
 	return runArtifactRepoRel(runID, contractDrafterPromptArtifact)
 }
 
-func contractDrafterAttemptPaths(runPaths contractRunPathSet, attemptID string) attemptPathSet {
-	return agentAttemptPaths(runPaths.ContractDrafterAttemptsDir, attemptID)
-}
-
 func renderContractDrafterContext(prep contractDraftPreparation) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Contract Drafter Context")

@@ -351,10 +351,6 @@ func clarifierPromptRepoPath(runID string) string {
 	return runArtifactRepoRel(runID, clarifierPromptArtifact)
 }
 
-func clarifierAttemptPaths(runPaths contractRunPathSet, attemptID string) attemptPathSet {
-	return agentAttemptPaths(runPaths.ClarifierAttemptsDir, attemptID)
-}
-
 func renderClarifierContext(prep clarifierPreparation) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Clarifier Context")
