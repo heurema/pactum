@@ -62,6 +62,9 @@ func TestReviewLoopFindingsThenCleanUsesConfigMaxRounds(t *testing.T) {
 	if summary.Schema != reviewLoopSummarySchema || summary.RunID != runID || summary.MaxRounds != 2 || summary.TerminalReason != "clean_round" {
 		t.Fatalf("unexpected loop summary: %#v", summary)
 	}
+	if summary.CleanRoundsRequired != 1 || summary.StalematePatience != 2 {
+		t.Fatalf("default loop limits mismatch: %#v", summary)
+	}
 	if summary.Reviewer != reviewLoopReviewerName || summary.Agent != reviewLoopFixerName {
 		t.Fatalf("summary should record resolved agents: %#v", summary)
 	}
@@ -124,6 +127,81 @@ func TestReviewLoopStopsAtMaxRounds(t *testing.T) {
 	}
 	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_002").ResultJSON)
+}
+
+func TestReviewLoopStopsAtStalemateAfterUnchangedFixRounds(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "4", "--patience", "2", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.TerminalReason != "stalemate" || summary.MaxRounds != 4 || summary.StalematePatience != 2 {
+		t.Fatalf("stalemate summary mismatch: %#v", summary)
+	}
+	if len(summary.Rounds) != 2 {
+		t.Fatalf("rounds = %d, want 2: %#v", len(summary.Rounds), summary.Rounds)
+	}
+	if got := summary.Rounds[0]; got.ProposalsAccepted != 1 || got.UnchangedFingerprintStreak != 1 || got.WorkingTreeFingerprint == "" {
+		t.Fatalf("round 1 stalemate signals mismatch: %#v", got)
+	}
+	if got := summary.Rounds[1]; got.ProposalsAccepted != 1 || got.UnchangedFingerprintStreak != 2 || got.WorkingTreeFingerprint == "" {
+		t.Fatalf("round 2 stalemate signals mismatch: %#v", got)
+	}
+	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
+	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_002").ResultJSON)
+	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_003").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_003").ResultJSON)
+}
+
+func TestReviewLoopRequiresConsecutiveCleanRounds(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "clean_findings_clean_clean")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "4", "--clean-rounds", "2", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.TerminalReason != "clean_round" || summary.CleanRoundsRequired != 2 {
+		t.Fatalf("clean streak summary mismatch: %#v", summary)
+	}
+	if len(summary.Rounds) != 4 {
+		t.Fatalf("rounds = %d, want 4: %#v", len(summary.Rounds), summary.Rounds)
+	}
+	wantCleanStreaks := []int{1, 0, 1, 2}
+	for index, want := range wantCleanStreaks {
+		if got := summary.Rounds[index].CleanStreak; got != want {
+			t.Fatalf("round %d clean streak = %d, want %d: %#v", index+1, got, want, summary.Rounds[index])
+		}
+	}
+	if got := summary.Rounds[1]; got.ProposalsAccepted != 1 || got.FixerAttemptID != "attempt_001" || got.UnchangedFingerprintStreak != 1 {
+		t.Fatalf("non-clean round should reset clean streak and run one fixer: %#v", got)
+	}
+	assertFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_004").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_005").ResultJSON)
+	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
+	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_002").ResultJSON)
 }
 
 func TestReviewLoopUnparsedFindingsIsNotCleanRound(t *testing.T) {
@@ -261,7 +339,13 @@ func TestReviewLoopReviewerHelperProcess(t *testing.T) {
 		fmt.Print(reviewerStructuredOutput([]map[string]any{
 			{"message": "", "severity": "medium", "category": "quality"},
 		}))
-	case mode == "always_findings" || attempt == 1:
+	case mode == "always_findings":
+		fmt.Print(reviewerStructuredOutput(validFinding))
+	case mode == "clean_findings_clean_clean":
+		if attempt == 2 {
+			fmt.Print(reviewerStructuredOutput(validFinding))
+		}
+	case attempt == 1:
 		fmt.Print(reviewerStructuredOutput(validFinding))
 	}
 	os.Exit(0)

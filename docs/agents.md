@@ -195,11 +195,17 @@ findings, and runs the fixer when the current round creates open findings. After
 each fixer attempt, Pactum re-runs the gate with the approved validation
 commands, then starts another reviewer round.
 
-The loop stops on the first clean reviewer round or when `--max-rounds` is
-reached. If `--max-rounds` is omitted, Pactum reads `limits.review.max_rounds`
-from the workspace config. `--timeout` applies to each reviewer or fixer
-subprocess, and `--json` prints the loop summary as JSON.
+The loop stops after the configured number of consecutive clean reviewer rounds,
+after repeated no-change fixer rounds, or when `--max-rounds` is reached. If
+the flags are omitted, Pactum reads `limits.review.max_rounds`,
+`limits.review.clean_rounds`, and `limits.review.patience` from the workspace
+config. The default clean-round requirement is 1, preserving the original "first
+clean round converges" behavior. The default no-change patience is 2: when a
+fixer runs but the source fingerprint is unchanged for two consecutive fixer
+rounds, the loop terminates as `stalemate`. `--timeout` applies to each reviewer
+or fixer subprocess, and `--json` prints the loop summary as JSON.
 
 The loop writes `review/loop-summary.json` with the terminal reason and
-per-round open-finding counts. It does not run `pactum review approve`; the
-human approval gate remains explicit.
+per-round open-finding counts, clean streak, and unchanged-fingerprint streak.
+It does not run `pactum review approve`; the human approval gate remains
+explicit.
