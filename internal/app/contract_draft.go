@@ -127,110 +127,79 @@ func (a App) ContractDraft(stdout io.Writer, liveOutput io.Writer, runID string,
 		return err
 	}
 
-	if !confirm {
-		proceed, err := confirmDirectExecution(stdout)
-		if err != nil {
-			return err
-		}
-		if !proceed {
-			return fmt.Errorf("contract draft cancelled")
-		}
-	}
-
-	now := a.nowUTC()
-	if err := writeContractDrafterPromptArtifacts(prep); err != nil {
-		return err
-	}
-
-	attemptID, err := nextContractDrafterAttemptID(context.RunPaths.ContractDrafterAttemptsDir)
-	if err != nil {
-		return err
-	}
-	attemptPaths := contractDrafterAttemptPaths(context.RunPaths, attemptID)
-	if err := os.MkdirAll(attemptPaths.Dir, 0o755); err != nil {
-		return err
-	}
-
-	wouldRun, err := agents.BuildCommand(prep.Drafter, contractDrafterPromptRepoPath(runID))
-	if err != nil {
-		return err
-	}
-	request := contractDrafterRequestDocument{
-		Schema:    contractDrafterRequestSchema,
-		RunID:     runID,
-		AttemptID: attemptID,
-		CreatedAt: now.Format(time.RFC3339),
-		Drafter: agents.AgentDescriptor{
-			Name:    prep.Drafter.Name,
-			Command: prep.Drafter.Command,
-			Args:    append([]string{}, prep.Drafter.Args...),
-			Input:   prep.Drafter.Input,
+	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[agents.DryRunCommand, contractDrafterRequestDocument, contractDrafterResultDocument, contractDraftResponse]{
+		Stdout:          stdout,
+		LiveOutput:      liveOutput,
+		JSONOutput:      jsonOutput,
+		Confirm:         confirm,
+		CancelMessage:   "contract draft cancelled",
+		Root:            context.Root,
+		EventsJSONL:     context.Paths.EventsJSONL,
+		RunID:           runID,
+		AttemptsDir:     context.RunPaths.ContractDrafterAttemptsDir,
+		AttemptIDPrefix: "drafter_attempt",
+		LastResultJSON:  context.RunPaths.ContractDrafterLastResultJSON,
+		Agent:           prep.Drafter,
+		PromptRepoPath:  contractDrafterPromptRepoPath(runID),
+		ArtifactDir:     contractDrafterAttemptsArtifact,
+		Timeout:         timeout,
+		StartedEvent:    "contract_drafter_attempt_started",
+		FinishedEvent:   "contract_drafter_attempt_finished",
+		ExitKind:        "contract drafter",
+		TimeoutMessage: func(timeout time.Duration) string {
+			return fmt.Sprintf("contract drafter process timed out after %s", timeout)
 		},
-		Artifacts: defaultContractDraftArtifacts(),
-		WouldRun:  wouldRun,
-	}
-	if err := writeJSON(attemptPaths.RequestJSON, request); err != nil {
-		return err
-	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "contract_drafter_attempt_started", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
-		return err
-	}
-
-	runResult, runErr := agents.RunSubprocess(agents.RunRequest{
-		RepoRoot:       context.Root,
-		RunID:          runID,
-		AttemptID:      attemptID,
-		Agent:          prep.Drafter,
-		PromptRepoPath: contractDrafterPromptRepoPath(runID),
-		ArtifactDir:    contractDrafterAttemptsArtifact,
-		Timeout:        timeout,
-		LiveOutput:     liveOutput,
-	})
-	if runErr != nil && runResult.StartedAt == "" {
-		return runErr
-	}
-	result := contractDrafterResultFromRunResult(runID, attemptID, prep.Drafter.Name, runResult)
-	if err := writeJSON(attemptPaths.ResultJSON, result); err != nil {
-		return err
-	}
-	if err := writeJSON(context.RunPaths.ContractDrafterLastResultJSON, result); err != nil {
-		return err
-	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "contract_drafter_attempt_finished", Timestamp: contractDrafterResultTimestamp(result, now), RunID: runID, RepoRoot: context.Root}); err != nil {
-		return err
-	}
-	if runErr != nil {
-		if jsonOutput {
-			if err := writeJSONResponse(stdout, result); err != nil {
-				return err
+		Prepare: func(createdAt string) (agents.DryRunCommand, error) {
+			if err := writeContractDrafterPromptArtifacts(prep); err != nil {
+				return agents.DryRunCommand{}, err
 			}
-		} else {
+			return agents.BuildCommand(prep.Drafter, contractDrafterPromptRepoPath(runID))
+		},
+		BuildRequest: func(attempt agentAttemptContext[agents.DryRunCommand]) (contractDrafterRequestDocument, error) {
+			return contractDrafterRequestDocument{
+				Schema:    contractDrafterRequestSchema,
+				RunID:     runID,
+				AttemptID: attempt.AttemptID,
+				CreatedAt: attempt.CreatedAt,
+				Drafter:   agentDescriptorDocument(prep.Drafter),
+				Artifacts: defaultContractDraftArtifacts(),
+				WouldRun:  attempt.Prepared,
+			}, nil
+		},
+		BuildResult: func(attempt agentAttemptContext[agents.DryRunCommand], runResult agents.RunResult) contractDrafterResultDocument {
+			return contractDrafterResultDocument{
+				Schema:        contractDrafterResultSchema,
+				RunID:         runID,
+				AttemptID:     attempt.AttemptID,
+				Drafter:       prep.Drafter.Name,
+				processResult: processResultFromRunResult(runResult),
+			}
+		},
+		ProcessResult: func(result contractDrafterResultDocument) processResult {
+			return result.processResult
+		},
+		RenderRunOnly: func(stdout io.Writer, request contractDrafterRequestDocument, result contractDrafterResultDocument) {
 			writeContractDraftRunOnly(stdout, request, result, prep.ModelSpec)
-		}
-		if result.TimedOut {
-			return fmt.Errorf("contract drafter process timed out after %s", timeout)
-		}
-		return processExitError{Kind: "contract drafter", ExitCode: result.ExitCode}
-	}
-
-	proposal, warnings, err := a.recordContractDraftProposal(context, attemptID, prep.Drafter.Name, attemptPaths.StdoutLog, now)
-	if err != nil {
-		return err
-	}
-	response := contractDraftResponse{
-		RunID:     runID,
-		RunStatus: context.State.Status,
-		AttemptID: attemptID,
-		Drafter:   prep.Drafter.Name,
-		Result:    result,
-		Proposal:  proposal,
-		Warnings:  warnings,
-	}
-	if jsonOutput {
-		return writeJSONResponse(stdout, response)
-	}
-	writeContractDraft(stdout, response, request, prep.ModelSpec)
-	return nil
+		},
+		AfterSuccess: func(attempt agentAttemptContext[agents.DryRunCommand], request contractDrafterRequestDocument, result contractDrafterResultDocument, now time.Time) (contractDraftResponse, error) {
+			proposal, warnings, err := a.recordContractDraftProposal(context, attempt.AttemptID, prep.Drafter.Name, attempt.AttemptPaths.StdoutLog, now)
+			if err != nil {
+				return contractDraftResponse{}, err
+			}
+			return contractDraftResponse{
+				RunID:     runID,
+				RunStatus: context.State.Status,
+				AttemptID: attempt.AttemptID,
+				Drafter:   prep.Drafter.Name,
+				Result:    result,
+				Proposal:  proposal,
+				Warnings:  warnings,
+			}, nil
+		},
+		RenderSuccess: func(stdout io.Writer, response contractDraftResponse, request contractDrafterRequestDocument) {
+			writeContractDraft(stdout, response, request, prep.ModelSpec)
+		},
+	})
 }
 
 func (a App) ContractShowDraft(stdout io.Writer, runID string, jsonOutput bool) error {
@@ -490,46 +459,8 @@ func contractDrafterPromptRepoPath(runID string) string {
 	return runArtifactRepoRel(runID, contractDrafterPromptArtifact)
 }
 
-func nextContractDrafterAttemptID(attemptsDir string) (string, error) {
-	entries, err := os.ReadDir(attemptsDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "drafter_attempt_001", nil
-		}
-		return "", err
-	}
-	maxAttempt := 0
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		var number int
-		if _, err := fmt.Sscanf(entry.Name(), "drafter_attempt_%03d", &number); err == nil && number > maxAttempt {
-			maxAttempt = number
-		}
-	}
-	return fmt.Sprintf("drafter_attempt_%03d", maxAttempt+1), nil
-}
-
 func contractDrafterAttemptPaths(runPaths contractRunPathSet, attemptID string) attemptPathSet {
-	return newAttemptPaths(filepath.Join(runPaths.ContractDrafterAttemptsDir, attemptID))
-}
-
-func contractDrafterResultFromRunResult(runID string, attemptID string, drafter string, result agents.RunResult) contractDrafterResultDocument {
-	return contractDrafterResultDocument{
-		Schema:        contractDrafterResultSchema,
-		RunID:         runID,
-		AttemptID:     attemptID,
-		Drafter:       drafter,
-		processResult: processResultFromRunResult(result),
-	}
-}
-
-func contractDrafterResultTimestamp(result contractDrafterResultDocument, fallback time.Time) time.Time {
-	if parsed, err := time.Parse(time.RFC3339Nano, result.FinishedAt); err == nil {
-		return parsed
-	}
-	return fallback
+	return agentAttemptPaths(runPaths.ContractDrafterAttemptsDir, attemptID)
 }
 
 func renderContractDrafterContext(prep contractDraftPreparation) string {

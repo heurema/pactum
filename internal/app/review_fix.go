@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/heurema/pactum/internal/agents"
-	"github.com/heurema/pactum/internal/ledger"
 )
 
 const (
@@ -87,92 +86,58 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 		return err
 	}
 
-	// The fixer is an executor-role agent and can edit the repository. Require
-	// the same explicit confirmation used by execute/review run.
-	if !confirm {
-		proceed, err := confirmDirectExecution(stdout)
-		if err != nil {
-			return err
-		}
-		if !proceed {
-			return fmt.Errorf("review fix cancelled")
-		}
-	}
-
-	now := a.nowUTC()
-	plan, err := ensureReviewFixDryRunArtifacts(prep, now.Format(time.RFC3339))
-	if err != nil {
-		return err
-	}
-
-	attemptID, err := nextAttemptID(context.RunPaths.ReviewFixAttemptsDir)
-	if err != nil {
-		return err
-	}
-	attemptPaths := reviewFixAttemptPaths(context.RunPaths, attemptID)
-	if err := os.MkdirAll(attemptPaths.Dir, 0o755); err != nil {
-		return err
-	}
-
-	request := reviewFixRequestDocument{
-		Schema:    reviewFixRequestSchema,
-		RunID:     runID,
-		AttemptID: attemptID,
-		CreatedAt: now.Format(time.RFC3339),
-		Fixer: agents.AgentDescriptor{
-			Name:    prep.Fixer.Name,
-			Command: prep.Fixer.Command,
-			Args:    append([]string{}, prep.Fixer.Args...),
-			Input:   prep.Fixer.Input,
+	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[reviewFixDryRunDocument, reviewFixRequestDocument, reviewFixResultDocument, struct{}]{
+		Stdout:          stdout,
+		LiveOutput:      liveOutput,
+		JSONOutput:      jsonOutput,
+		Confirm:         confirm,
+		CancelMessage:   "review fix cancelled",
+		Root:            context.Root,
+		EventsJSONL:     context.Paths.EventsJSONL,
+		RunID:           runID,
+		AttemptsDir:     context.RunPaths.ReviewFixAttemptsDir,
+		AttemptIDPrefix: "attempt",
+		LastResultJSON:  context.RunPaths.ReviewFixLastResultJSON,
+		Agent:           prep.Fixer,
+		PromptRepoPath:  reviewFixPromptRepoPath(runID),
+		ArtifactDir:     reviewFixAttemptsArtifact,
+		Timeout:         timeout,
+		StartedEvent:    "review_fix_attempt_started",
+		FinishedEvent:   "review_fix_attempt_finished",
+		ExitKind:        "review fix",
+		TimeoutMessage: func(timeout time.Duration) string {
+			return fmt.Sprintf("review fix process timed out after %s", timeout)
 		},
-		Artifacts: plan.Artifacts,
-		WouldRun:  plan.WouldRun,
-	}
-	if err := writeJSON(attemptPaths.RequestJSON, request); err != nil {
-		return err
-	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_fix_attempt_started", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
-		return err
-	}
-
-	runResult, runErr := agents.RunSubprocess(agents.RunRequest{
-		RepoRoot:       context.Root,
-		RunID:          runID,
-		AttemptID:      attemptID,
-		Agent:          prep.Fixer,
-		PromptRepoPath: reviewFixPromptRepoPath(runID),
-		ArtifactDir:    reviewFixAttemptsArtifact,
-		Timeout:        timeout,
-		LiveOutput:     liveOutput,
+		Prepare: func(createdAt string) (reviewFixDryRunDocument, error) {
+			return ensureReviewFixDryRunArtifacts(prep, createdAt)
+		},
+		BuildRequest: func(context agentAttemptContext[reviewFixDryRunDocument]) (reviewFixRequestDocument, error) {
+			return reviewFixRequestDocument{
+				Schema:    reviewFixRequestSchema,
+				RunID:     runID,
+				AttemptID: context.AttemptID,
+				CreatedAt: context.CreatedAt,
+				Fixer:     agentDescriptorDocument(prep.Fixer),
+				Artifacts: context.Prepared.Artifacts,
+				WouldRun:  context.Prepared.WouldRun,
+			}, nil
+		},
+		BuildResult: func(context agentAttemptContext[reviewFixDryRunDocument], runResult agents.RunResult) reviewFixResultDocument {
+			return reviewFixResultDocument{
+				Schema:        reviewFixResultSchema,
+				RunID:         runID,
+				AttemptID:     context.AttemptID,
+				Fixer:         prep.Fixer.Name,
+				processResult: processResultFromRunResult(runResult),
+			}
+		},
+		ProcessResult: func(result reviewFixResultDocument) processResult {
+			return result.processResult
+		},
+		RenderRunOnly: func(stdout io.Writer, request reviewFixRequestDocument, result reviewFixResultDocument) {
+			writeReviewFixRun(stdout, request, result, prep.ModelSpec)
+		},
 	})
-	if runErr != nil && runResult.StartedAt == "" {
-		return runErr
-	}
-	result := reviewFixResultFromRunResult(runID, attemptID, prep.Fixer.Name, runResult)
-	if err := writeJSON(attemptPaths.ResultJSON, result); err != nil {
-		return err
-	}
-	if err := writeJSON(context.RunPaths.ReviewFixLastResultJSON, result); err != nil {
-		return err
-	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_fix_attempt_finished", Timestamp: reviewFixResultTimestamp(result, now), RunID: runID, RepoRoot: context.Root}); err != nil {
-		return err
-	}
-
-	if jsonOutput {
-		if err := writeJSONResponse(stdout, result); err != nil {
-			return err
-		}
-	} else {
-		writeReviewFixRun(stdout, request, result, prep.ModelSpec)
-	}
-	if runErr != nil {
-		if result.TimedOut {
-			return fmt.Errorf("review fix process timed out after %s", timeout)
-		}
-		return processExitError{Kind: "review fix", ExitCode: result.ExitCode}
-	}
-	return nil
 }
 
 func (a App) prepareReviewFixer(context reviewContext, agentName string) (reviewFixPreparation, error) {
@@ -299,24 +264,7 @@ func reviewFixPromptRepoPath(runID string) string {
 }
 
 func reviewFixAttemptPaths(runPaths contractRunPathSet, attemptID string) attemptPathSet {
-	return newAttemptPaths(filepath.Join(runPaths.ReviewFixAttemptsDir, attemptID))
-}
-
-func reviewFixResultFromRunResult(runID string, attemptID string, fixer string, result agents.RunResult) reviewFixResultDocument {
-	return reviewFixResultDocument{
-		Schema:        reviewFixResultSchema,
-		RunID:         runID,
-		AttemptID:     attemptID,
-		Fixer:         fixer,
-		processResult: processResultFromRunResult(result),
-	}
-}
-
-func reviewFixResultTimestamp(result reviewFixResultDocument, fallback time.Time) time.Time {
-	if parsed, err := time.Parse(time.RFC3339Nano, result.FinishedAt); err == nil {
-		return parsed
-	}
-	return fallback
+	return agentAttemptPaths(runPaths.ReviewFixAttemptsDir, attemptID)
 }
 
 func renderReviewFixContext(prep reviewFixPreparation) string {

@@ -496,92 +496,58 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, rev
 		return err
 	}
 
-	// Running a built-in reviewer is direct, unsandboxed agent execution in the
-	// repository — the same risk class as `execute run`. Require confirmation.
-	if !confirm {
-		proceed, err := confirmDirectExecution(stdout)
-		if err != nil {
-			return err
-		}
-		if !proceed {
-			return fmt.Errorf("review cancelled")
-		}
-	}
-
-	now := a.nowUTC()
-	plan, err := ensureReviewerDryRunArtifacts(prep, now.Format(time.RFC3339))
-	if err != nil {
-		return err
-	}
-
-	attemptID, err := nextReviewerAttemptID(context.RunPaths.ReviewAttemptsDir)
-	if err != nil {
-		return err
-	}
-	attemptPaths := reviewerAttemptPaths(context.RunPaths, attemptID)
-	if err := os.MkdirAll(attemptPaths.Dir, 0o755); err != nil {
-		return err
-	}
-
-	request := reviewerRequestDocument{
-		Schema:    reviewerRequestSchema,
-		RunID:     runID,
-		AttemptID: attemptID,
-		CreatedAt: now.Format(time.RFC3339),
-		Reviewer: agents.AgentDescriptor{
-			Name:    prep.Reviewer.Name,
-			Command: prep.Reviewer.Command,
-			Args:    append([]string{}, prep.Reviewer.Args...),
-			Input:   prep.Reviewer.Input,
+	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[reviewerDryRunDocument, reviewerRequestDocument, reviewerResultDocument, struct{}]{
+		Stdout:          stdout,
+		LiveOutput:      liveOutput,
+		JSONOutput:      jsonOutput,
+		Confirm:         confirm,
+		CancelMessage:   "review cancelled",
+		Root:            context.Root,
+		EventsJSONL:     context.Paths.EventsJSONL,
+		RunID:           runID,
+		AttemptsDir:     context.RunPaths.ReviewAttemptsDir,
+		AttemptIDPrefix: "reviewer_attempt",
+		LastResultJSON:  context.RunPaths.ReviewLastResultJSON,
+		Agent:           prep.Reviewer,
+		PromptRepoPath:  reviewerPromptRepoPath(runID),
+		ArtifactDir:     reviewerAttemptsArtifact,
+		Timeout:         timeout,
+		StartedEvent:    "reviewer_attempt_started",
+		FinishedEvent:   "reviewer_attempt_finished",
+		ExitKind:        "reviewer",
+		TimeoutMessage: func(timeout time.Duration) string {
+			return fmt.Sprintf("reviewer process timed out after %s", timeout)
 		},
-		Artifacts: plan.Artifacts,
-		WouldRun:  plan.WouldRun,
-	}
-	if err := writeJSON(attemptPaths.RequestJSON, request); err != nil {
-		return err
-	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "reviewer_attempt_started", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
-		return err
-	}
-
-	runResult, runErr := agents.RunSubprocess(agents.RunRequest{
-		RepoRoot:       context.Root,
-		RunID:          runID,
-		AttemptID:      attemptID,
-		Agent:          prep.Reviewer,
-		PromptRepoPath: reviewerPromptRepoPath(runID),
-		ArtifactDir:    reviewerAttemptsArtifact,
-		Timeout:        timeout,
-		LiveOutput:     liveOutput,
+		Prepare: func(createdAt string) (reviewerDryRunDocument, error) {
+			return ensureReviewerDryRunArtifacts(prep, createdAt)
+		},
+		BuildRequest: func(context agentAttemptContext[reviewerDryRunDocument]) (reviewerRequestDocument, error) {
+			return reviewerRequestDocument{
+				Schema:    reviewerRequestSchema,
+				RunID:     runID,
+				AttemptID: context.AttemptID,
+				CreatedAt: context.CreatedAt,
+				Reviewer:  agentDescriptorDocument(prep.Reviewer),
+				Artifacts: context.Prepared.Artifacts,
+				WouldRun:  context.Prepared.WouldRun,
+			}, nil
+		},
+		BuildResult: func(context agentAttemptContext[reviewerDryRunDocument], runResult agents.RunResult) reviewerResultDocument {
+			return reviewerResultDocument{
+				Schema:        reviewerResultSchema,
+				RunID:         runID,
+				AttemptID:     context.AttemptID,
+				Reviewer:      prep.Reviewer.Name,
+				processResult: processResultFromRunResult(runResult),
+			}
+		},
+		ProcessResult: func(result reviewerResultDocument) processResult {
+			return result.processResult
+		},
+		RenderRunOnly: func(stdout io.Writer, request reviewerRequestDocument, result reviewerResultDocument) {
+			writeReviewRun(stdout, request, result, prep.ModelSpec)
+		},
 	})
-	if runErr != nil && runResult.StartedAt == "" {
-		return runErr
-	}
-	result := reviewerResultFromRunResult(runID, attemptID, prep.Reviewer.Name, runResult)
-	if err := writeJSON(attemptPaths.ResultJSON, result); err != nil {
-		return err
-	}
-	if err := writeJSON(context.RunPaths.ReviewLastResultJSON, result); err != nil {
-		return err
-	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "reviewer_attempt_finished", Timestamp: reviewerResultTimestamp(result, now), RunID: runID, RepoRoot: context.Root}); err != nil {
-		return err
-	}
-
-	if jsonOutput {
-		if err := writeJSONResponse(stdout, result); err != nil {
-			return err
-		}
-	} else {
-		writeReviewRun(stdout, request, result, prep.ModelSpec)
-	}
-	if runErr != nil {
-		if result.TimedOut {
-			return fmt.Errorf("reviewer process timed out after %s", timeout)
-		}
-		return processExitError{Kind: "reviewer", ExitCode: result.ExitCode}
-	}
-	return nil
 }
 
 func (a App) loadPreparedReviewState(stdout io.Writer, runID string, jsonOutput bool) (reviewStateResponse, bool, error) {
@@ -1013,46 +979,8 @@ func reviewerPromptRepoPath(runID string) string {
 	return runArtifactRepoRel(runID, reviewerPromptArtifact)
 }
 
-func nextReviewerAttemptID(attemptsDir string) (string, error) {
-	entries, err := os.ReadDir(attemptsDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "reviewer_attempt_001", nil
-		}
-		return "", err
-	}
-	maxAttempt := 0
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		var number int
-		if _, err := fmt.Sscanf(entry.Name(), "reviewer_attempt_%03d", &number); err == nil && number > maxAttempt {
-			maxAttempt = number
-		}
-	}
-	return fmt.Sprintf("reviewer_attempt_%03d", maxAttempt+1), nil
-}
-
 func reviewerAttemptPaths(runPaths contractRunPathSet, attemptID string) attemptPathSet {
-	return newAttemptPaths(filepath.Join(runPaths.ReviewAttemptsDir, attemptID))
-}
-
-func reviewerResultFromRunResult(runID string, attemptID string, reviewer string, result agents.RunResult) reviewerResultDocument {
-	return reviewerResultDocument{
-		Schema:        reviewerResultSchema,
-		RunID:         runID,
-		AttemptID:     attemptID,
-		Reviewer:      reviewer,
-		processResult: processResultFromRunResult(result),
-	}
-}
-
-func reviewerResultTimestamp(result reviewerResultDocument, fallback time.Time) time.Time {
-	if parsed, err := time.Parse(time.RFC3339Nano, result.FinishedAt); err == nil {
-		return parsed
-	}
-	return fallback
+	return agentAttemptPaths(runPaths.ReviewAttemptsDir, attemptID)
 }
 
 // writeReviewerMemorySection summarizes the accepted-memory prompt boundary for

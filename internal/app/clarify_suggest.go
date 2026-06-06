@@ -92,113 +92,79 @@ func (a App) ClarifySuggest(stdout io.Writer, liveOutput io.Writer, runID string
 		return err
 	}
 
-	// The clarifier role uses reviewer/read-only descriptors, but it is still a
-	// direct agent subprocess in the repository and therefore requires operator
-	// confirmation unless --yes was provided.
-	if !confirm {
-		proceed, err := confirmDirectExecution(stdout)
-		if err != nil {
-			return err
-		}
-		if !proceed {
-			return fmt.Errorf("clarification suggestion cancelled")
-		}
-	}
-
-	now := a.nowUTC()
-	if err := writeClarifierPromptArtifacts(prep); err != nil {
-		return err
-	}
-
-	attemptID, err := nextClarifierAttemptID(context.RunPaths.ClarifierAttemptsDir)
-	if err != nil {
-		return err
-	}
-	attemptPaths := clarifierAttemptPaths(context.RunPaths, attemptID)
-	if err := os.MkdirAll(attemptPaths.Dir, 0o755); err != nil {
-		return err
-	}
-
-	wouldRun, err := agents.BuildCommand(prep.Clarifier, clarifierPromptRepoPath(runID))
-	if err != nil {
-		return err
-	}
-	request := clarifierRequestDocument{
-		Schema:    clarifierRequestSchema,
-		RunID:     runID,
-		AttemptID: attemptID,
-		CreatedAt: now.Format(time.RFC3339),
-		Clarifier: agents.AgentDescriptor{
-			Name:    prep.Clarifier.Name,
-			Command: prep.Clarifier.Command,
-			Args:    append([]string{}, prep.Clarifier.Args...),
-			Input:   prep.Clarifier.Input,
+	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[agents.DryRunCommand, clarifierRequestDocument, clarifierResultDocument, clarifySuggestResponse]{
+		Stdout:          stdout,
+		LiveOutput:      liveOutput,
+		JSONOutput:      jsonOutput,
+		Confirm:         confirm,
+		CancelMessage:   "clarification suggestion cancelled",
+		Root:            context.Root,
+		EventsJSONL:     context.Paths.EventsJSONL,
+		RunID:           runID,
+		AttemptsDir:     context.RunPaths.ClarifierAttemptsDir,
+		AttemptIDPrefix: "clarifier_attempt",
+		LastResultJSON:  context.RunPaths.ClarifierLastResultJSON,
+		Agent:           prep.Clarifier,
+		PromptRepoPath:  clarifierPromptRepoPath(runID),
+		ArtifactDir:     clarifierAttemptsArtifact,
+		Timeout:         timeout,
+		StartedEvent:    "clarifier_attempt_started",
+		FinishedEvent:   "clarifier_attempt_finished",
+		ExitKind:        "clarifier",
+		TimeoutMessage: func(timeout time.Duration) string {
+			return fmt.Sprintf("clarifier process timed out after %s", timeout)
 		},
-		Artifacts: defaultClarifierArtifacts(),
-		WouldRun:  wouldRun,
-	}
-	if err := writeJSON(attemptPaths.RequestJSON, request); err != nil {
-		return err
-	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "clarifier_attempt_started", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
-		return err
-	}
-
-	runResult, runErr := agents.RunSubprocess(agents.RunRequest{
-		RepoRoot:       context.Root,
-		RunID:          runID,
-		AttemptID:      attemptID,
-		Agent:          prep.Clarifier,
-		PromptRepoPath: clarifierPromptRepoPath(runID),
-		ArtifactDir:    clarifierAttemptsArtifact,
-		Timeout:        timeout,
-		LiveOutput:     liveOutput,
-	})
-	if runErr != nil && runResult.StartedAt == "" {
-		return runErr
-	}
-	result := clarifierResultFromRunResult(runID, attemptID, prep.Clarifier.Name, runResult)
-	if err := writeJSON(attemptPaths.ResultJSON, result); err != nil {
-		return err
-	}
-	if err := writeJSON(context.RunPaths.ClarifierLastResultJSON, result); err != nil {
-		return err
-	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "clarifier_attempt_finished", Timestamp: clarifierResultTimestamp(result, now), RunID: runID, RepoRoot: context.Root}); err != nil {
-		return err
-	}
-	if runErr != nil {
-		if jsonOutput {
-			if err := writeJSONResponse(stdout, result); err != nil {
-				return err
+		Prepare: func(createdAt string) (agents.DryRunCommand, error) {
+			if err := writeClarifierPromptArtifacts(prep); err != nil {
+				return agents.DryRunCommand{}, err
 			}
-		} else {
+			return agents.BuildCommand(prep.Clarifier, clarifierPromptRepoPath(runID))
+		},
+		BuildRequest: func(attempt agentAttemptContext[agents.DryRunCommand]) (clarifierRequestDocument, error) {
+			return clarifierRequestDocument{
+				Schema:    clarifierRequestSchema,
+				RunID:     runID,
+				AttemptID: attempt.AttemptID,
+				CreatedAt: attempt.CreatedAt,
+				Clarifier: agentDescriptorDocument(prep.Clarifier),
+				Artifacts: defaultClarifierArtifacts(),
+				WouldRun:  attempt.Prepared,
+			}, nil
+		},
+		BuildResult: func(attempt agentAttemptContext[agents.DryRunCommand], runResult agents.RunResult) clarifierResultDocument {
+			return clarifierResultDocument{
+				Schema:        clarifierResultSchema,
+				RunID:         runID,
+				AttemptID:     attempt.AttemptID,
+				Clarifier:     prep.Clarifier.Name,
+				processResult: processResultFromRunResult(runResult),
+			}
+		},
+		ProcessResult: func(result clarifierResultDocument) processResult {
+			return result.processResult
+		},
+		RenderRunOnly: func(stdout io.Writer, request clarifierRequestDocument, result clarifierResultDocument) {
 			writeClarifySuggestRunOnly(stdout, request, result, prep.ModelSpec)
-		}
-		if result.TimedOut {
-			return fmt.Errorf("clarifier process timed out after %s", timeout)
-		}
-		return processExitError{Kind: "clarifier", ExitCode: result.ExitCode}
-	}
-
-	created, warnings, status, err := a.recordClarifierSuggestions(context, attemptID, attemptPaths.StdoutLog, now)
-	if err != nil {
-		return err
-	}
-	response := clarifySuggestResponse{
-		RunID:     runID,
-		RunStatus: status.RunStatus,
-		AttemptID: attemptID,
-		Clarifier: prep.Clarifier.Name,
-		Result:    result,
-		Created:   created,
-		Warnings:  warnings,
-	}
-	if jsonOutput {
-		return writeJSONResponse(stdout, response)
-	}
-	writeClarifySuggest(stdout, response, request, prep.ModelSpec)
-	return nil
+		},
+		AfterSuccess: func(attempt agentAttemptContext[agents.DryRunCommand], request clarifierRequestDocument, result clarifierResultDocument, now time.Time) (clarifySuggestResponse, error) {
+			created, warnings, status, err := a.recordClarifierSuggestions(context, attempt.AttemptID, attempt.AttemptPaths.StdoutLog, now)
+			if err != nil {
+				return clarifySuggestResponse{}, err
+			}
+			return clarifySuggestResponse{
+				RunID:     runID,
+				RunStatus: status.RunStatus,
+				AttemptID: attempt.AttemptID,
+				Clarifier: prep.Clarifier.Name,
+				Result:    result,
+				Created:   created,
+				Warnings:  warnings,
+			}, nil
+		},
+		RenderSuccess: func(stdout io.Writer, response clarifySuggestResponse, request clarifierRequestDocument) {
+			writeClarifySuggest(stdout, response, request, prep.ModelSpec)
+		},
+	})
 }
 
 func (a App) prepareClarifier(context clarifyContext, reviewerName string) (clarifierPreparation, error) {
@@ -385,46 +351,8 @@ func clarifierPromptRepoPath(runID string) string {
 	return runArtifactRepoRel(runID, clarifierPromptArtifact)
 }
 
-func nextClarifierAttemptID(attemptsDir string) (string, error) {
-	entries, err := os.ReadDir(attemptsDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "clarifier_attempt_001", nil
-		}
-		return "", err
-	}
-	maxAttempt := 0
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		var number int
-		if _, err := fmt.Sscanf(entry.Name(), "clarifier_attempt_%03d", &number); err == nil && number > maxAttempt {
-			maxAttempt = number
-		}
-	}
-	return fmt.Sprintf("clarifier_attempt_%03d", maxAttempt+1), nil
-}
-
 func clarifierAttemptPaths(runPaths contractRunPathSet, attemptID string) attemptPathSet {
-	return newAttemptPaths(filepath.Join(runPaths.ClarifierAttemptsDir, attemptID))
-}
-
-func clarifierResultFromRunResult(runID string, attemptID string, clarifier string, result agents.RunResult) clarifierResultDocument {
-	return clarifierResultDocument{
-		Schema:        clarifierResultSchema,
-		RunID:         runID,
-		AttemptID:     attemptID,
-		Clarifier:     clarifier,
-		processResult: processResultFromRunResult(result),
-	}
-}
-
-func clarifierResultTimestamp(result clarifierResultDocument, fallback time.Time) time.Time {
-	if parsed, err := time.Parse(time.RFC3339Nano, result.FinishedAt); err == nil {
-		return parsed
-	}
-	return fallback
+	return agentAttemptPaths(runPaths.ClarifierAttemptsDir, attemptID)
 }
 
 func renderClarifierContext(prep clarifierPreparation) string {

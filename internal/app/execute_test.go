@@ -625,7 +625,7 @@ func TestExecuteRunJSONKeepsStdoutCleanWithLiveStderr(t *testing.T) {
 func TestNextAttemptIDUsesExistingAttemptDirs(t *testing.T) {
 	root := t.TempDir()
 	attemptsDir := filepath.Join(root, "attempts")
-	id, err := nextAttemptID(attemptsDir)
+	id, err := nextAgentAttemptID(attemptsDir, "attempt")
 	assertNoError(t, err)
 	if id != "attempt_001" {
 		t.Fatalf("next attempt without dir = %q", id)
@@ -634,7 +634,7 @@ func TestNextAttemptIDUsesExistingAttemptDirs(t *testing.T) {
 	assertNoError(t, os.MkdirAll(filepath.Join(attemptsDir, "attempt_002"), 0o755))
 	mustWriteFile(t, filepath.Join(attemptsDir, "attempt_099.txt"), "not a dir")
 
-	id, err = nextAttemptID(attemptsDir)
+	id, err = nextAgentAttemptID(attemptsDir, "attempt")
 	assertNoError(t, err)
 	if id != "attempt_003" {
 		t.Fatalf("next attempt with existing dirs = %q", id)

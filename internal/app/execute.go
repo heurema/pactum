@@ -56,97 +56,62 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 		return err
 	}
 
-	// Direct execution runs an external agent in the repository with no sandbox.
-	// Require an explicit confirmation (interactive prompt or --yes) first.
-	if !confirm {
-		proceed, err := confirmDirectExecution(stdout)
-		if err != nil {
-			return err
-		}
-		if !proceed {
-			return fmt.Errorf("execution cancelled")
-		}
-	}
-
-	now := a.nowUTC()
-	plan, err := ensureDryRunPlan(prep, now.Format(time.RFC3339))
-	if err != nil {
-		return err
-	}
-
-	attemptID, err := nextAttemptID(prep.RunPaths.AttemptsDir)
-	if err != nil {
-		return err
-	}
-	attemptPaths := executionAttemptPaths(prep.RunPaths, attemptID)
-	if err := os.MkdirAll(attemptPaths.Dir, 0o755); err != nil {
-		return err
-	}
-
 	promptRepoPath := executionPromptRepoPath(runID)
-	request := executionRequestDocument{
-		Schema:         executionRequestSchema,
-		RunID:          runID,
-		AttemptID:      attemptID,
-		CreatedAt:      now.Format(time.RFC3339),
-		ContractSHA256: prep.ContractSHA256,
-		Agent: agents.AgentDescriptor{
-			Name:    prep.Agent.Name,
-			Command: prep.Agent.Command,
-			Args:    append([]string{}, prep.Agent.Args...),
-			Input:   prep.Agent.Input,
+	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[agents.DryRunPlan, executionRequestDocument, executionResultDocument, struct{}]{
+		Stdout:          stdout,
+		LiveOutput:      liveOutput,
+		JSONOutput:      jsonOutput,
+		Confirm:         confirm,
+		CancelMessage:   "execution cancelled",
+		Root:            root,
+		EventsJSONL:     prep.Paths.EventsJSONL,
+		RunID:           runID,
+		AttemptsDir:     prep.RunPaths.AttemptsDir,
+		AttemptIDPrefix: "attempt",
+		LastResultJSON:  prep.RunPaths.LastResultJSON,
+		Agent:           prep.Agent,
+		PromptRepoPath:  promptRepoPath,
+		Timeout:         timeout,
+		StartedEvent:    "execution_attempt_started",
+		FinishedEvent:   "execution_attempt_finished",
+		ExitKind:        "agent",
+		TimeoutMessage: func(timeout time.Duration) string {
+			return fmt.Sprintf("agent process timed out after %s", timeout)
 		},
-		Artifacts: plan.Artifacts,
-		WouldRun: agents.DryRunCommand{
-			Command: plan.WouldRun.Command,
-			Args:    append([]string{}, plan.WouldRun.Args...),
-			Stdin:   plan.WouldRun.Stdin,
+		Prepare: func(createdAt string) (agents.DryRunPlan, error) {
+			return ensureDryRunPlan(prep, createdAt)
 		},
-	}
-	if err := writeJSON(attemptPaths.RequestJSON, request); err != nil {
-		return err
-	}
-	if err := ledger.Append(prep.Paths.EventsJSONL, ledger.Event{Type: "execution_attempt_started", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
-		return err
-	}
-
-	runResult, runErr := agents.RunSubprocess(agents.RunRequest{
-		RepoRoot:       root,
-		RunID:          runID,
-		AttemptID:      attemptID,
-		Agent:          prep.Agent,
-		PromptRepoPath: promptRepoPath,
-		Timeout:        timeout,
-		LiveOutput:     liveOutput,
+		BuildRequest: func(context agentAttemptContext[agents.DryRunPlan]) (executionRequestDocument, error) {
+			return executionRequestDocument{
+				Schema:         executionRequestSchema,
+				RunID:          runID,
+				AttemptID:      context.AttemptID,
+				CreatedAt:      context.CreatedAt,
+				ContractSHA256: prep.ContractSHA256,
+				Agent:          agentDescriptorDocument(prep.Agent),
+				Artifacts:      context.Prepared.Artifacts,
+				WouldRun: agents.DryRunCommand{
+					Command: context.Prepared.WouldRun.Command,
+					Args:    append([]string{}, context.Prepared.WouldRun.Args...),
+					Stdin:   context.Prepared.WouldRun.Stdin,
+				},
+			}, nil
+		},
+		BuildResult: func(context agentAttemptContext[agents.DryRunPlan], runResult agents.RunResult) executionResultDocument {
+			return executionResultDocument{
+				Schema:        executionResultSchema,
+				RunID:         runID,
+				AttemptID:     context.AttemptID,
+				processResult: processResultFromRunResult(runResult),
+			}
+		},
+		ProcessResult: func(result executionResultDocument) processResult {
+			return result.processResult
+		},
+		RenderRunOnly: func(stdout io.Writer, request executionRequestDocument, result executionResultDocument) {
+			writeExecuteRun(stdout, prep.State, request, result, prep.ModelSpec)
+		},
 	})
-	if runErr != nil && runResult.StartedAt == "" {
-		return runErr
-	}
-	result := executionResultFromRunResult(runID, attemptID, runResult)
-	if err := writeJSON(attemptPaths.ResultJSON, result); err != nil {
-		return err
-	}
-	if err := writeJSON(prep.RunPaths.LastResultJSON, result); err != nil {
-		return err
-	}
-	if err := ledger.Append(prep.Paths.EventsJSONL, ledger.Event{Type: "execution_attempt_finished", Timestamp: executionResultTimestamp(result, now), RunID: runID, RepoRoot: root}); err != nil {
-		return err
-	}
-
-	if jsonOutput {
-		if err := writeJSONResponse(stdout, result); err != nil {
-			return err
-		}
-	} else {
-		writeExecuteRun(stdout, prep.State, request, result, prep.ModelSpec)
-	}
-	if runErr != nil {
-		if result.TimedOut {
-			return fmt.Errorf("agent process timed out after %s", timeout)
-		}
-		return processExitError{Kind: "agent", ExitCode: result.ExitCode}
-	}
-	return nil
 }
 
 type executionPreparation struct {
@@ -417,49 +382,12 @@ func sameStringSlice(left []string, right []string) bool {
 	return true
 }
 
-func nextAttemptID(attemptsDir string) (string, error) {
-	entries, err := os.ReadDir(attemptsDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "attempt_001", nil
-		}
-		return "", err
-	}
-	maxAttempt := 0
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		var number int
-		if _, err := fmt.Sscanf(entry.Name(), "attempt_%03d", &number); err == nil && number > maxAttempt {
-			maxAttempt = number
-		}
-	}
-	return fmt.Sprintf("attempt_%03d", maxAttempt+1), nil
-}
-
 func executionAttemptPaths(runPaths contractRunPathSet, attemptID string) attemptPathSet {
-	return newAttemptPaths(filepath.Join(runPaths.AttemptsDir, attemptID))
+	return agentAttemptPaths(runPaths.AttemptsDir, attemptID)
 }
 
 func executionPromptRepoPath(runID string) string {
 	return filepath.ToSlash(filepath.Join(artifacts.WorkspaceRel, "runs", runID, agents.DryRunArtifactPrompt))
-}
-
-func executionResultFromRunResult(runID string, attemptID string, result agents.RunResult) executionResultDocument {
-	return executionResultDocument{
-		Schema:        executionResultSchema,
-		RunID:         runID,
-		AttemptID:     attemptID,
-		processResult: processResultFromRunResult(result),
-	}
-}
-
-func executionResultTimestamp(result executionResultDocument, fallback time.Time) time.Time {
-	if parsed, err := time.Parse(time.RFC3339Nano, result.FinishedAt); err == nil {
-		return parsed
-	}
-	return fallback
 }
 
 func writeExecuteRun(stdout io.Writer, state contractRunState, request executionRequestDocument, result executionResultDocument, modelSpec agents.ModelSpec) {
