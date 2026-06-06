@@ -1188,6 +1188,252 @@ func TestReviewRunPreconditionFailuresDoNotWriteAttemptEvents(t *testing.T) {
 	}
 }
 
+func TestReviewFixDryRunArtifactsUseWriteEnabledExecutorAndPrompt(t *testing.T) {
+	for _, tc := range []struct {
+		agent    string
+		wantArgs string
+		forbid   string
+	}{
+		{
+			agent:    "codex",
+			wantArgs: `exec --dangerously-bypass-approvals-and-sandbox -c model="gpt-5" -c model_reasoning_effort=high`,
+			forbid:   "--sandbox read-only",
+		},
+		{
+			agent:    "claude",
+			wantArgs: "-p --dangerously-skip-permissions --model gpt-5 --effort high",
+			forbid:   "--sandbox read-only",
+		},
+	} {
+		t.Run(tc.agent, func(t *testing.T) {
+			root := t.TempDir()
+			app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+			setExecutorModelConfig(t, paths, "gpt-5:high")
+			runReviewCommand(t, app, "review", "add-finding", runID, "Fix prompt should include accepted review finding", "--file", "internal/app/review.go", "--line", "42", "--blocking", "--category", "correctness")
+
+			var stdout bytes.Buffer
+			context, ok, err := app.loadReviewContext(&stdout, runID)
+			assertNoError(t, err)
+			if !ok {
+				t.Fatalf("expected review context")
+			}
+			prep, err := app.prepareReviewFixer(context, tc.agent)
+			assertNoError(t, err)
+			plan, err := ensureReviewFixDryRunArtifacts(prep, "2026-06-01T22:00:00Z")
+			assertNoError(t, err)
+
+			assertFile(t, runPaths.ReviewFixContextMD)
+			assertFile(t, runPaths.ReviewFixPromptMD)
+			assertFile(t, runPaths.ReviewFixDryRunJSON)
+			if plan.Schema != reviewFixDryRunSchema || plan.RunID != runID || plan.Fixer.Name != tc.agent {
+				t.Fatalf("unexpected review fix dry-run plan: %#v", plan)
+			}
+			if got := strings.Join(plan.WouldRun.Args, " "); got != tc.wantArgs {
+				t.Fatalf("%s fixer args = %q, want %q", tc.agent, got, tc.wantArgs)
+			}
+			if strings.Contains(strings.Join(plan.WouldRun.Args, " "), tc.forbid) {
+				t.Fatalf("fixer args should not contain reviewer-only flag %q: %#v", tc.forbid, plan.WouldRun.Args)
+			}
+			if plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewFixPromptArtifact) {
+				t.Fatalf("review fix stdin = %q", plan.WouldRun.Stdin)
+			}
+
+			prompt := mustReadFile(t, runPaths.ReviewFixPromptMD)
+			for _, want := range []string{
+				"# Review Fix Prompt",
+				"Goal: add deterministic prompt boundary",
+				"Fix prompt should include accepted review finding",
+				"f_001 severity=medium category=correctness blocking=true status=open",
+				"Trace each finding to the relevant code before acting.",
+				"For false positives, explain a concrete rebuttal instead of changing code.",
+			} {
+				if !strings.Contains(prompt, want) {
+					t.Fatalf("review fix prompt missing %q:\n%s", want, prompt)
+				}
+			}
+			assertDoesNotContainRoot(t, "review/fix/fixer-prompt.md", prompt, root)
+		})
+	}
+}
+
+func TestReviewFixRegeneratesPromptWhenFindingsChange(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	runReviewCommand(t, app, "review", "add-finding", runID, "first finding", "--category", "quality")
+
+	var buf bytes.Buffer
+	ctx, ok, err := app.loadReviewContext(&buf, runID)
+	assertNoError(t, err)
+	if !ok {
+		t.Fatalf("expected review context")
+	}
+	prep1, err := app.prepareReviewFixer(ctx, "codex")
+	assertNoError(t, err)
+	if _, err := ensureReviewFixDryRunArtifacts(prep1, "2026-06-01T22:00:00Z"); err != nil {
+		t.Fatalf("first ensure: %v", err)
+	}
+
+	// Add a second finding and re-prepare. The fixer prompt inlines the findings,
+	// so it must be regenerated rather than reusing the first attempt's stale prompt.
+	runReviewCommand(t, app, "review", "add-finding", runID, "second finding added later", "--category", "quality")
+	ctx2, ok, err := app.loadReviewContext(&buf, runID)
+	assertNoError(t, err)
+	if !ok {
+		t.Fatalf("expected review context")
+	}
+	prep2, err := app.prepareReviewFixer(ctx2, "codex")
+	assertNoError(t, err)
+	if _, err := ensureReviewFixDryRunArtifacts(prep2, "2026-06-01T22:05:00Z"); err != nil {
+		t.Fatalf("second ensure: %v", err)
+	}
+
+	prompt := mustReadFile(t, runPaths.ReviewFixPromptMD)
+	if !strings.Contains(prompt, "second finding added later") {
+		t.Fatalf("review fix prompt did not refresh with the new finding (stale reuse):\n%s", prompt)
+	}
+}
+
+func TestReviewFixRunWritesAttemptArtifacts(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperFixers(t, app, "helper")
+	runReviewCommand(t, app, "review", "add-finding", runID, "valid fixer finding", "--blocking", "--category", "quality")
+	t.Setenv("PACTUM_FIXER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_FIXER_EXPECTED_CWD", root)
+
+	beforeReview := mustReadFile(t, runPaths.ReviewJSON)
+	beforeFindings := mustReadFile(t, runPaths.ReviewFindingsJSONL)
+	beforeResolutions := mustReadFile(t, runPaths.ReviewResolutionsJSONL)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "fix", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review fix exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "Review fix attempt finished") || !strings.Contains(got, "attempt_001") {
+		t.Fatalf("review fix output mismatch:\n%s", got)
+	} else {
+		assertResolvedBlock(t, got, "helper", "inherit", "inherit", "inherit")
+	}
+
+	attemptPaths := reviewFixAttemptPaths(runPaths, "attempt_001")
+	assertFile(t, runPaths.ReviewFixContextMD)
+	assertFile(t, runPaths.ReviewFixPromptMD)
+	assertFile(t, runPaths.ReviewFixDryRunJSON)
+	assertFile(t, attemptPaths.RequestJSON)
+	assertFile(t, attemptPaths.StdoutLog)
+	assertFile(t, attemptPaths.StderrLog)
+	assertFile(t, attemptPaths.ResultJSON)
+	assertFile(t, runPaths.ReviewFixLastResultJSON)
+
+	var request reviewFixRequestDocument
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.RequestJSON)), &request))
+	if request.Schema != reviewFixRequestSchema || request.RunID != runID || request.AttemptID != "attempt_001" {
+		t.Fatalf("unexpected request: %#v", request)
+	}
+	if request.Fixer.Name != "helper" || request.Fixer.Command != os.Args[0] || request.Fixer.Input != agents.InputPromptFile {
+		t.Fatalf("unexpected request fixer: %#v", request.Fixer)
+	}
+	wantPrompt := ".heurema/pactum/runs/" + runID + "/review/fix/fixer-prompt.md"
+	if request.WouldRun.Stdin != wantPrompt {
+		t.Fatalf("unexpected would_run stdin = %q, want %q", request.WouldRun.Stdin, wantPrompt)
+	}
+	if request.Artifacts.FixerPrompt != reviewFixPromptArtifact || request.Artifacts.Findings != reviewFindingsArtifact {
+		t.Fatalf("unexpected request artifacts: %#v", request.Artifacts)
+	}
+
+	var result reviewFixResultDocument
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.ResultJSON)), &result))
+	if result.Schema != reviewFixResultSchema || result.Fixer != "helper" || result.ExitCode != 0 || result.TimedOut {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if result.Stdout != "review/fix/attempts/attempt_001/stdout.log" || result.Stderr != "review/fix/attempts/attempt_001/stderr.log" {
+		t.Fatalf("unexpected output artifact paths: %#v", result)
+	}
+	if got := mustReadFile(t, runPaths.ReviewFixLastResultJSON); got != mustReadFile(t, attemptPaths.ResultJSON) {
+		t.Fatalf("review fix last-result.json should copy result.json")
+	}
+	if got := mustReadFile(t, attemptPaths.StdoutLog); !strings.Contains(got, "cwd_is_repo=true") || !strings.Contains(got, "stdin_has_review_fix_prompt=true") {
+		t.Fatalf("stdout log mismatch:\n%s", got)
+	}
+	if got := mustReadFile(t, attemptPaths.StderrLog); !strings.Contains(got, "fixer-stderr-line") {
+		t.Fatalf("stderr log mismatch:\n%s", got)
+	}
+	if got := mustReadFile(t, runPaths.ReviewJSON); got != beforeReview {
+		t.Fatalf("review fix mutated review.json")
+	}
+	if got := mustReadFile(t, runPaths.ReviewFindingsJSONL); got != beforeFindings {
+		t.Fatalf("review fix mutated findings.jsonl")
+	}
+	if got := mustReadFile(t, runPaths.ReviewResolutionsJSONL); got != beforeResolutions {
+		t.Fatalf("review fix mutated resolutions.jsonl")
+	}
+
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	startedIndex := indexOfEvent(eventTypes, "review_fix_attempt_started")
+	finishedIndex := indexOfEvent(eventTypes, "review_fix_attempt_finished")
+	if startedIndex == -1 || finishedIndex == -1 || startedIndex > finishedIndex {
+		t.Fatalf("events missing ordered review fix attempt lifecycle:\n%v", eventTypes)
+	}
+}
+
+func TestReviewFixResolvedBlockShowsExecutorModel(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	setExecutorModelConfig(t, paths, "gpt-5:high")
+	runReviewCommand(t, app, "review", "add-finding", runID, "model pinning should be visible")
+	t.Setenv("PACTUM_FIXER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_FIXER_EXPECTED_CWD", root)
+	app.AgentRegistry = testAgentRegistry(agents.AgentDescriptor{
+		Name:    agents.BuiltinCodex,
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestReviewFixerHelperProcess", "--", "exec", "--dangerously-bypass-approvals-and-sandbox"},
+		Input:   agents.InputPromptFile,
+	})
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "fix", runID, "--agent", "codex", "--yes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review fix exited %d, stderr: %s", code, stderr.String())
+	}
+	assertResolvedBlock(t, stdout.String(), "codex", "gpt-5", "high", "pinned")
+
+	var request reviewFixRequestDocument
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").RequestJSON)), &request))
+	args := strings.Join(request.WouldRun.Args, " ")
+	for _, want := range []string{"--dangerously-bypass-approvals-and-sandbox", `model="gpt-5"`, "model_reasoning_effort=high"} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("review fix would_run args missing %q: %#v", want, request.WouldRun.Args)
+		}
+	}
+	if strings.Contains(args, "--sandbox read-only") {
+		t.Fatalf("review fix would_run should not use read-only reviewer args: %#v", request.WouldRun.Args)
+	}
+}
+
+func TestReviewFixJSONOutput(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperFixers(t, app, "helper")
+	runReviewCommand(t, app, "review", "add-finding", runID, "json output finding")
+	t.Setenv("PACTUM_FIXER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_FIXER_EXPECTED_CWD", root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "fix", runID, "--agent", "helper", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review fix --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var result reviewFixResultDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &result))
+	if result.AttemptID != "attempt_001" || result.Fixer != "helper" || result.ExitCode != 0 {
+		t.Fatalf("unexpected review fix json: %#v", result)
+	}
+	if strings.Contains(stdout.String(), "Review fix attempt finished") || strings.Contains(stdout.String(), "Resolved:") {
+		t.Fatalf("json output should not include human output:\n%s", stdout.String())
+	}
+}
+
 func TestReviewProposeFindingsBeforeInitPrintsGuidance(t *testing.T) {
 	root := t.TempDir()
 
@@ -1692,6 +1938,14 @@ func setReviewerModelConfig(t *testing.T, paths artifacts.Paths, modelSpec strin
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 
+func setExecutorModelConfig(t *testing.T, paths artifacts.Paths, modelSpec string) {
+	t.Helper()
+	config, err := readConfig(paths.Config)
+	assertNoError(t, err)
+	config.Agents.ExecutorModel = modelSpec
+	assertNoError(t, writeYAML(paths.Config, config))
+}
+
 func setCrossModelReviewConfig(t *testing.T, paths artifacts.Paths, enabled bool) {
 	t.Helper()
 	config, err := readConfig(paths.Config)
@@ -1934,6 +2188,21 @@ func configureHelperReviewers(t *testing.T, app App, paths artifacts.Paths, defa
 	return app
 }
 
+func configureHelperFixers(t *testing.T, app App, names ...string) App {
+	t.Helper()
+	descriptors := make([]agents.AgentDescriptor, 0, len(names))
+	for _, name := range names {
+		descriptors = append(descriptors, agents.AgentDescriptor{
+			Name:    name,
+			Command: os.Args[0],
+			Args:    []string{"-test.run=TestReviewFixerHelperProcess"},
+			Input:   agents.InputPromptFile,
+		})
+	}
+	app.AgentRegistry = testAgentRegistry(descriptors...)
+	return app
+}
+
 func TestReviewerHelperProcess(t *testing.T) {
 	if os.Getenv("PACTUM_REVIEWER_HELPER_PROCESS") != "1" {
 		return
@@ -1962,6 +2231,41 @@ func TestReviewerHelperProcess(t *testing.T) {
 	}
 	fmt.Fprintln(os.Stderr, "reviewer-stderr-line")
 	if raw := os.Getenv("PACTUM_REVIEWER_EXIT"); raw != "" {
+		code, err := strconv.Atoi(raw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "bad exit code: %v\n", err)
+			os.Exit(2)
+		}
+		os.Exit(code)
+	}
+	os.Exit(0)
+}
+
+func TestReviewFixerHelperProcess(t *testing.T) {
+	if os.Getenv("PACTUM_FIXER_HELPER_PROCESS") != "1" {
+		return
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cwd error: %v\n", err)
+		os.Exit(2)
+	}
+	expectedCWD := os.Getenv("PACTUM_FIXER_EXPECTED_CWD")
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(expectedCWD); err == nil {
+		expectedCWD = resolved
+	}
+	fmt.Printf("cwd_is_repo=%t\n", cwd == expectedCWD)
+	stdin, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stdin error: %v\n", err)
+		os.Exit(2)
+	}
+	fmt.Printf("stdin_has_review_fix_prompt=%t\n", strings.Contains(string(stdin), "# Review Fix Prompt"))
+	fmt.Fprintln(os.Stderr, "fixer-stderr-line")
+	if raw := os.Getenv("PACTUM_FIXER_EXIT"); raw != "" {
 		code, err := strconv.Atoi(raw)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "bad exit code: %v\n", err)

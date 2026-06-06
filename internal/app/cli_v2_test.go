@@ -620,6 +620,23 @@ func TestReviewRunWithoutYesFailsNonInteractive(t *testing.T) {
 	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_001").ResultJSON)
 }
 
+func TestReviewFixWithoutYesFailsNonInteractive(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperFixers(t, app, "helper")
+	runReviewCommand(t, app, "review", "add-finding", runID, "fixer requires explicit yes")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "fix", runID, "--agent", "helper"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("review fix without --yes exited %d, want 1, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "without --yes") {
+		t.Fatalf("review fix confirmation stderr mismatch:\n%s", stderr.String())
+	}
+	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
+}
+
 func TestExecuteDryRunDoesNotNeedYes(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupApprovedAndBuiltPrompt(t, root)

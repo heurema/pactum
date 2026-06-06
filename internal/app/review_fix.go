@@ -1,0 +1,450 @@
+package app
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/heurema/pactum/internal/agents"
+	"github.com/heurema/pactum/internal/ledger"
+)
+
+const (
+	reviewFixDirArtifact        = "review/fix"
+	reviewFixContextArtifact    = "review/fix/fixer-context.md"
+	reviewFixPromptArtifact     = "review/fix/fixer-prompt.md"
+	reviewFixDryRunArtifact     = "review/fix/fixer-dry-run.json"
+	reviewFixAttemptsArtifact   = "review/fix/attempts"
+	reviewFixLastResultArtifact = "review/fix/last-result.json"
+	reviewFixDryRunSchema       = "pactum.review_fix_dry_run.v1"
+	reviewFixRequestSchema      = "pactum.review_fix_request.v1"
+	reviewFixResultSchema       = "pactum.review_fix_result.v1"
+)
+
+type reviewFixPreparation struct {
+	Context     reviewContext
+	Contract    draftContract
+	Review      reviewDocument
+	Findings    []reviewFindingRecord
+	Resolutions []reviewResolutionRecord
+	Fixer       agents.AgentDescriptor
+	ModelSpec   agents.ModelSpec
+}
+
+type reviewFixDryRunDocument struct {
+	Schema    string                 `json:"schema"`
+	RunID     string                 `json:"run_id"`
+	CreatedAt string                 `json:"created_at"`
+	Fixer     agents.AgentDescriptor `json:"fixer"`
+	Checks    reviewFixChecks        `json:"checks"`
+	Artifacts reviewFixArtifacts     `json:"artifacts"`
+	WouldRun  agents.DryRunCommand   `json:"would_run"`
+}
+
+type reviewFixChecks struct {
+	ReviewPrepared   bool `json:"review_prepared"`
+	FindingsReady    bool `json:"findings_ready"`
+	ContractApproved bool `json:"contract_approved"`
+}
+
+type reviewFixArtifacts struct {
+	FixerPrompt  string `json:"fixer_prompt"`
+	FixerContext string `json:"fixer_context"`
+	Review       string `json:"review"`
+	Findings     string `json:"findings"`
+	Resolutions  string `json:"resolutions"`
+	Contract     string `json:"contract"`
+}
+
+type reviewFixRequestDocument struct {
+	Schema    string                 `json:"schema"`
+	RunID     string                 `json:"run_id"`
+	AttemptID string                 `json:"attempt_id"`
+	CreatedAt string                 `json:"created_at"`
+	Fixer     agents.AgentDescriptor `json:"fixer"`
+	Artifacts reviewFixArtifacts     `json:"artifacts"`
+	WouldRun  agents.DryRunCommand   `json:"would_run"`
+}
+
+type reviewFixResultDocument struct {
+	Schema    string `json:"schema"`
+	RunID     string `json:"run_id"`
+	AttemptID string `json:"attempt_id"`
+	Fixer     string `json:"fixer"`
+	processResult
+}
+
+func (a App) ReviewFix(stdout io.Writer, runID string, agentName string, timeout time.Duration, confirm bool, jsonOutput bool) error {
+	context, ok, err := a.loadReviewContext(stdout, runID)
+	if err != nil || !ok {
+		return err
+	}
+	prep, err := a.prepareReviewFixer(context, agentName)
+	if err != nil {
+		return err
+	}
+
+	// The fixer is an executor-role agent and can edit the repository. Require
+	// the same explicit confirmation used by execute/review run.
+	if !confirm {
+		proceed, err := confirmDirectExecution(stdout)
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			return fmt.Errorf("review fix cancelled")
+		}
+	}
+
+	now := a.nowUTC()
+	plan, err := ensureReviewFixDryRunArtifacts(prep, now.Format(time.RFC3339))
+	if err != nil {
+		return err
+	}
+
+	attemptID, err := nextAttemptID(context.RunPaths.ReviewFixAttemptsDir)
+	if err != nil {
+		return err
+	}
+	attemptPaths := reviewFixAttemptPaths(context.RunPaths, attemptID)
+	if err := os.MkdirAll(attemptPaths.Dir, 0o755); err != nil {
+		return err
+	}
+
+	request := reviewFixRequestDocument{
+		Schema:    reviewFixRequestSchema,
+		RunID:     runID,
+		AttemptID: attemptID,
+		CreatedAt: now.Format(time.RFC3339),
+		Fixer: agents.AgentDescriptor{
+			Name:    prep.Fixer.Name,
+			Command: prep.Fixer.Command,
+			Args:    append([]string{}, prep.Fixer.Args...),
+			Input:   prep.Fixer.Input,
+		},
+		Artifacts: plan.Artifacts,
+		WouldRun:  plan.WouldRun,
+	}
+	if err := writeJSON(attemptPaths.RequestJSON, request); err != nil {
+		return err
+	}
+	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_fix_attempt_started", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+		return err
+	}
+
+	runResult, runErr := agents.RunSubprocess(agents.RunRequest{
+		RepoRoot:       context.Root,
+		RunID:          runID,
+		AttemptID:      attemptID,
+		Agent:          prep.Fixer,
+		PromptRepoPath: reviewFixPromptRepoPath(runID),
+		ArtifactDir:    reviewFixAttemptsArtifact,
+		Timeout:        timeout,
+	})
+	if runErr != nil && runResult.StartedAt == "" {
+		return runErr
+	}
+	result := reviewFixResultFromRunResult(runID, attemptID, prep.Fixer.Name, runResult)
+	if err := writeJSON(attemptPaths.ResultJSON, result); err != nil {
+		return err
+	}
+	if err := writeJSON(context.RunPaths.ReviewFixLastResultJSON, result); err != nil {
+		return err
+	}
+	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_fix_attempt_finished", Timestamp: reviewFixResultTimestamp(result, now), RunID: runID, RepoRoot: context.Root}); err != nil {
+		return err
+	}
+
+	if jsonOutput {
+		if err := writeJSONResponse(stdout, result); err != nil {
+			return err
+		}
+	} else {
+		writeReviewFixRun(stdout, request, result, prep.ModelSpec)
+	}
+	if runErr != nil {
+		if result.TimedOut {
+			return fmt.Errorf("review fix process timed out after %s", timeout)
+		}
+		return processExitError{Kind: "review fix", ExitCode: result.ExitCode}
+	}
+	return nil
+}
+
+func (a App) prepareReviewFixer(context reviewContext, agentName string) (reviewFixPreparation, error) {
+	review, err := requireReviewPrepared(context.RunPaths, context.State.RunID)
+	if err != nil {
+		return reviewFixPreparation{}, err
+	}
+	contract, err := readDraftContract(context.RunPaths.ContractJSON)
+	if err != nil {
+		return reviewFixPreparation{}, err
+	}
+	approval, err := readApprovalState(context.RunPaths.ApprovalJSON)
+	if err != nil {
+		return reviewFixPreparation{}, err
+	}
+	if _, err := verifyApprovedContract(context.RunPaths, contract, approval, "run review fix"); err != nil {
+		return reviewFixPreparation{}, err
+	}
+	findings, resolutions, err := readReviewRecords(context.RunPaths)
+	if err != nil {
+		return reviewFixPreparation{}, err
+	}
+	if len(findings) == 0 {
+		return reviewFixPreparation{}, fmt.Errorf("cannot run review fix: no review findings found")
+	}
+	config, err := readConfig(context.Paths.Config)
+	if err != nil {
+		return reviewFixPreparation{}, err
+	}
+	fixer, err := a.agentRegistry().ResolveExecutor(agentName)
+	if err != nil {
+		return reviewFixPreparation{}, err
+	}
+	modelSpec, err := agents.ParseModelSpec(config.Agents.ExecutorModel)
+	if err != nil {
+		return reviewFixPreparation{}, err
+	}
+	fixer, err = agents.ApplyModelSpec(fixer, modelSpec)
+	if err != nil {
+		return reviewFixPreparation{}, err
+	}
+	if fixer.Input != agents.InputPromptFile {
+		return reviewFixPreparation{}, fmt.Errorf("unsupported agent input mode: %s", fixer.Input)
+	}
+
+	review = refreshReviewDocument(review, context.State.RunID, review.Gate.Status, findings, resolutions, "")
+	return reviewFixPreparation{
+		Context:     context,
+		Contract:    contract,
+		Review:      review,
+		Findings:    findings,
+		Resolutions: resolutions,
+		Fixer:       fixer,
+		ModelSpec:   modelSpec,
+	}, nil
+}
+
+func ensureReviewFixDryRunArtifacts(prep reviewFixPreparation, createdAt string) (reviewFixDryRunDocument, error) {
+	expected, err := buildReviewFixDryRunDocument(prep.Context.State.RunID, createdAt, prep.Fixer)
+	if err != nil {
+		return reviewFixDryRunDocument{}, err
+	}
+	// The fixer prompt and context inline the current findings and contract, both
+	// of which are mutable between attempts, so always regenerate them rather than
+	// reusing a prior attempt's artifacts — reuse would feed the fixer a stale
+	// finding set.
+	if err := writeReviewFixDryRunArtifacts(prep, expected); err != nil {
+		return reviewFixDryRunDocument{}, err
+	}
+	return expected, nil
+}
+
+func writeReviewFixDryRunArtifacts(prep reviewFixPreparation, plan reviewFixDryRunDocument) error {
+	if err := os.MkdirAll(prep.Context.RunPaths.ReviewFixDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(prep.Context.RunPaths.ReviewFixContextMD, []byte(renderReviewFixContext(prep)), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(prep.Context.RunPaths.ReviewFixPromptMD, []byte(renderReviewFixPrompt(prep)), 0o644); err != nil {
+		return err
+	}
+	return writeJSON(prep.Context.RunPaths.ReviewFixDryRunJSON, plan)
+}
+
+func buildReviewFixDryRunDocument(runID string, createdAt string, fixer agents.AgentDescriptor) (reviewFixDryRunDocument, error) {
+	wouldRun, err := agents.BuildCommand(fixer, reviewFixPromptRepoPath(runID))
+	if err != nil {
+		return reviewFixDryRunDocument{}, err
+	}
+	return reviewFixDryRunDocument{
+		Schema:    reviewFixDryRunSchema,
+		RunID:     runID,
+		CreatedAt: createdAt,
+		Fixer: agents.AgentDescriptor{
+			Name:    fixer.Name,
+			Command: fixer.Command,
+			Args:    append([]string{}, fixer.Args...),
+			Input:   fixer.Input,
+		},
+		Checks: reviewFixChecks{
+			ReviewPrepared:   true,
+			FindingsReady:    true,
+			ContractApproved: true,
+		},
+		Artifacts: reviewFixArtifacts{
+			FixerPrompt:  reviewFixPromptArtifact,
+			FixerContext: reviewFixContextArtifact,
+			Review:       reviewArtifact,
+			Findings:     reviewFindingsArtifact,
+			Resolutions:  reviewResolutionsArtifact,
+			Contract:     "contract/contract.json",
+		},
+		WouldRun: agents.DryRunCommand{
+			Command: wouldRun.Command,
+			Args:    append([]string{}, wouldRun.Args...),
+			Stdin:   wouldRun.Stdin,
+		},
+	}, nil
+}
+
+func reviewFixPromptRepoPath(runID string) string {
+	return runArtifactRepoRel(runID, reviewFixPromptArtifact)
+}
+
+func reviewFixAttemptPaths(runPaths contractRunPathSet, attemptID string) attemptPathSet {
+	return newAttemptPaths(filepath.Join(runPaths.ReviewFixAttemptsDir, attemptID))
+}
+
+func reviewFixResultFromRunResult(runID string, attemptID string, fixer string, result agents.RunResult) reviewFixResultDocument {
+	return reviewFixResultDocument{
+		Schema:        reviewFixResultSchema,
+		RunID:         runID,
+		AttemptID:     attemptID,
+		Fixer:         fixer,
+		processResult: processResultFromRunResult(result),
+	}
+}
+
+func reviewFixResultTimestamp(result reviewFixResultDocument, fallback time.Time) time.Time {
+	if parsed, err := time.Parse(time.RFC3339Nano, result.FinishedAt); err == nil {
+		return parsed
+	}
+	return fallback
+}
+
+func renderReviewFixContext(prep reviewFixPreparation) string {
+	var b strings.Builder
+	state := buildReviewState(prep.Review, prep.Findings, prep.Resolutions)
+
+	fmt.Fprintln(&b, "# Review Fixer Context")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Run")
+	fmt.Fprintf(&b, "- Run id: %s\n", prep.Context.State.RunID)
+	fmt.Fprintf(&b, "- Run status: %s\n", prep.Context.State.Status)
+	fmt.Fprintln(&b)
+	writeReviewFixContractSection(&b, prep.Contract)
+	fmt.Fprintln(&b)
+	writeReviewFixFindingsSection(&b, state)
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Artifacts")
+	fmt.Fprintln(&b, "- Contract: contract/contract.json")
+	fmt.Fprintln(&b, "- Review: review/review.json")
+	fmt.Fprintln(&b, "- Findings: review/findings.jsonl")
+	fmt.Fprintln(&b, "- Resolutions: review/resolutions.jsonl")
+	fmt.Fprintln(&b, "- Gate report: gate/gate-report.json")
+	fmt.Fprintln(&b, "- Execution result: execute/last-result.json")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Fixer guidance")
+	fmt.Fprintln(&b, "- Source files are the source of truth.")
+	fmt.Fprintln(&b, "- Use `pactum search \"<term>\"` and inspect current source files before relying on this context.")
+	fmt.Fprintln(&b, "- For each current review finding, trace the finding to the code.")
+	fmt.Fprintln(&b, "- If a finding is valid, fix it in place within the approved contract scope.")
+	fmt.Fprintln(&b, "- If a finding is a false positive, leave code unchanged for that finding and explain the rebuttal in your final output.")
+	fmt.Fprintln(&b, "- Do not approve the review or mutate review findings/resolutions/proposals.")
+	fmt.Fprintln(&b, "- Do not modify generated `.heurema` artifacts.")
+	return b.String()
+}
+
+func renderReviewFixPrompt(prep reviewFixPreparation) string {
+	fixerContextPath := runArtifactRepoRel(prep.Context.State.RunID, reviewFixContextArtifact)
+	contractPath := runArtifactRepoRel(prep.Context.State.RunID, "contract/contract.json")
+	reviewPath := runArtifactRepoRel(prep.Context.State.RunID, reviewArtifact)
+	findingsPath := runArtifactRepoRel(prep.Context.State.RunID, reviewFindingsArtifact)
+	resolutionsPath := runArtifactRepoRel(prep.Context.State.RunID, reviewResolutionsArtifact)
+
+	var b strings.Builder
+	fmt.Fprintln(&b, "# Review Fix Prompt")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "This prompt is prepared for a write-enabled executor agent subprocess.")
+	fmt.Fprintln(&b, "Pactum captures the fix attempt artifacts, but it does not mark review findings resolved automatically.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Objective")
+	fmt.Fprintln(&b, "Address the current run's review findings against the approved Pactum contract.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Inputs")
+	fmt.Fprintf(&b, "- Fixer context: %s\n", fixerContextPath)
+	fmt.Fprintf(&b, "- Contract: %s\n", contractPath)
+	fmt.Fprintf(&b, "- Review artifacts: %s, %s, %s\n", reviewPath, findingsPath, resolutionsPath)
+	fmt.Fprintln(&b)
+	writeReviewFixContractSection(&b, prep.Contract)
+	fmt.Fprintln(&b)
+	writeReviewFixFindingsSection(&b, buildReviewState(prep.Review, prep.Findings, prep.Resolutions))
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Fix boundaries")
+	fmt.Fprintln(&b, "- Trace each finding to the relevant code before acting.")
+	fmt.Fprintln(&b, "- Fix valid findings in place.")
+	fmt.Fprintln(&b, "- For false positives, explain a concrete rebuttal instead of changing code.")
+	fmt.Fprintln(&b, "- Keep changes inside the approved contract and review-finding scope.")
+	fmt.Fprintln(&b, "- Do not edit `.heurema` artifacts.")
+	fmt.Fprintln(&b, "- Do not run `pactum review approve`, `pactum review resolve`, or any review loop command.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Output shape")
+	fmt.Fprintln(&b, "In your final output, list each finding id with one of:")
+	fmt.Fprintln(&b, "- fixed: what changed and where")
+	fmt.Fprintln(&b, "- rebutted: why the finding is a false positive")
+	fmt.Fprintln(&b, "- blocked: what concrete information or state is missing")
+	return b.String()
+}
+
+func writeReviewFixContractSection(b *strings.Builder, contract draftContract) {
+	fmt.Fprintln(b, "## Approved contract")
+	fmt.Fprintf(b, "- Goal: %s\n", contract.Goal)
+	writeMarkdownStringList(b, "- In scope:", contract.Scope.In)
+	writeMarkdownStringList(b, "- Out of scope:", contract.Scope.Out)
+	writeMarkdownStringList(b, "- Acceptance criteria:", contract.AcceptanceCriteria)
+	writeMarkdownStringList(b, "- Validation commands:", contract.Validation.Commands)
+}
+
+func writeReviewFixFindingsSection(b *strings.Builder, state reviewStateResponse) {
+	fmt.Fprintln(b, "## Current review findings")
+	fmt.Fprintf(b, "- Summary: findings=%d open=%d resolved=%d blocking_open=%d\n", state.Review.Summary.Findings, state.Review.Summary.Open, state.Review.Summary.Resolved, state.Review.Summary.BlockingOpen)
+	if len(state.Findings) == 0 {
+		fmt.Fprintln(b, "- Findings: none")
+		return
+	}
+	fmt.Fprintln(b, "- Findings:")
+	for _, finding := range state.Findings {
+		fmt.Fprintf(b, "  - %s severity=%s category=%s blocking=%t status=%s: %s\n", finding.ID, finding.Severity, finding.Category, finding.Blocking, finding.Status, finding.Message)
+		if finding.File != "" {
+			location := finding.File
+			if finding.Line > 0 {
+				location = fmt.Sprintf("%s:%d", location, finding.Line)
+			}
+			fmt.Fprintf(b, "    location: %s\n", location)
+		}
+		if finding.LatestResolution != nil {
+			fmt.Fprintf(b, "    latest resolution: %s\n", valueOrNone(finding.LatestResolution.Note))
+		}
+	}
+}
+
+func writeReviewFixRun(stdout io.Writer, request reviewFixRequestDocument, result reviewFixResultDocument, modelSpec agents.ModelSpec) {
+	fmt.Fprintln(stdout, "Review fix attempt finished")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Run:")
+	fmt.Fprintf(stdout, "  id: %s\n", result.RunID)
+	fmt.Fprintln(stdout)
+	writeResolved(stdout, request.Fixer.Name, modelSpec)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Fixer:")
+	fmt.Fprintf(stdout, "  name: %s\n", request.Fixer.Name)
+	fmt.Fprintf(stdout, "  command: %s\n", request.Fixer.Command)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Attempt:")
+	fmt.Fprintf(stdout, "  id: %s\n", result.AttemptID)
+	fmt.Fprintf(stdout, "  exit code: %d\n", result.ExitCode)
+	fmt.Fprintf(stdout, "  timed out: %t\n", result.TimedOut)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Artifacts:")
+	fmt.Fprintf(stdout, "  request: %s\n", runArtifactRepoRel(result.RunID, filepath.ToSlash(filepath.Join(reviewFixAttemptsArtifact, result.AttemptID, "request.json"))))
+	fmt.Fprintf(stdout, "  result: %s\n", runArtifactRepoRel(result.RunID, filepath.ToSlash(filepath.Join(reviewFixAttemptsArtifact, result.AttemptID, "result.json"))))
+	fmt.Fprintf(stdout, "  stdout: %s\n", runArtifactRepoRel(result.RunID, result.Stdout))
+	fmt.Fprintf(stdout, "  stderr: %s\n", runArtifactRepoRel(result.RunID, result.Stderr))
+	fmt.Fprintf(stdout, "  last result: %s\n", runArtifactRepoRel(result.RunID, reviewFixLastResultArtifact))
+}

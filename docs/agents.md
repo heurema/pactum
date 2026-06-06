@@ -150,3 +150,24 @@ each one with `pactum review accept-proposal <run_id> p_001` (which creates a
 real review finding) or `pactum review reject-proposal <run_id> p_001 --reason
 "..."`. This is why there is no semantic trust of reviewer output: proposals are
 inert until a person accepts them.
+
+## Review fix
+
+`pactum review fix <run_id> --agent codex --yes` launches a fresh
+executor-role fixer against the run's current `review/findings.jsonl`. The
+fixer prompt includes the approved contract goal/scope/acceptance criteria and
+the current review findings, and instructs the agent to trace each finding to
+code, fix valid findings in place, and explain a rebuttal for false positives.
+
+This is write-enabled agent execution, not reviewer execution: `codex` uses
+`codex exec --dangerously-bypass-approvals-and-sandbox`, and `claude` uses the
+executor command with `--dangerously-skip-permissions`. The command honors the
+executor model pin (`agents.executor_model`), prints the same `Resolved` block
+as execution, captures request/result/stdout/stderr artifacts under
+`review/fix/attempts/`, and writes `review/fix/fixer-prompt.md`,
+`review/fix/fixer-context.md`, `review/fix/fixer-dry-run.json`, and
+`review/fix/last-result.json`.
+
+Like `execute run` and `review run`, `review fix` is unsandboxed and requires
+`--yes` for non-interactive/automated use. It does not approve reviews, resolve
+findings, re-run the gate, or start an automatic review loop.
