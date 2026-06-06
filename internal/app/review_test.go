@@ -550,6 +550,79 @@ func TestReviewDryRunUsesDefaultReviewer(t *testing.T) {
 	}
 }
 
+func TestReviewDryRunCrossModelReviewSelectsOppositeBuiltIn(t *testing.T) {
+	for _, tc := range []struct {
+		executor string
+		want     string
+	}{
+		{executor: agents.BuiltinCodex, want: agents.BuiltinClaude},
+		{executor: agents.BuiltinClaude, want: agents.BuiltinCodex},
+	} {
+		t.Run(tc.executor, func(t *testing.T) {
+			root := t.TempDir()
+			app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+			setCrossModelReviewConfig(t, paths, true)
+			writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", mustResolveExecutorForTest(t, tc.executor))
+
+			var stdout, stderr bytes.Buffer
+			code := app.Run([]string{"review", "dry-run", runID}, &stdout, &stderr)
+			if code != 0 {
+				t.Fatalf("review dry-run exited %d, stderr: %s", code, stderr.String())
+			}
+			plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
+			if plan.Reviewer.Name != tc.want {
+				t.Fatalf("cross-model reviewer = %q, want %q; plan: %#v", plan.Reviewer.Name, tc.want, plan.Reviewer)
+			}
+			assertResolvedBlock(t, stdout.String(), tc.want, "inherit", "inherit", "inherit")
+		})
+	}
+}
+
+func TestReviewDryRunCrossModelReviewExplicitReviewerWins(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	setCrossModelReviewConfig(t, paths, true)
+	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", mustResolveExecutorForTest(t, agents.BuiltinCodex))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "dry-run", runID, "--reviewer", agents.BuiltinCodex}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review dry-run exited %d, stderr: %s", code, stderr.String())
+	}
+	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
+	if plan.Reviewer.Name != agents.BuiltinCodex {
+		t.Fatalf("explicit reviewer should win, got: %#v", plan.Reviewer)
+	}
+	assertResolvedBlock(t, stdout.String(), agents.BuiltinCodex, "inherit", "inherit", "inherit")
+}
+
+func TestReviewDryRunCrossModelReviewFallsBackWhenExecutorUnknown(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	setCrossModelReviewConfig(t, paths, true)
+
+	runReviewCommand(t, app, "review", "dry-run", runID)
+	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
+	if plan.Reviewer.Name != "helper" {
+		t.Fatalf("unknown executor should fall back to default reviewer, got: %#v", plan.Reviewer)
+	}
+}
+
+func TestReviewDryRunCrossModelReviewFallsBackForNonBuiltInExecutor(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	setCrossModelReviewConfig(t, paths, true)
+	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", helperAgentDescriptor("helper"))
+
+	runReviewCommand(t, app, "review", "dry-run", runID)
+	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
+	if plan.Reviewer.Name != "helper" {
+		t.Fatalf("non-built-in executor should fall back to default reviewer, got: %#v", plan.Reviewer)
+	}
+}
+
 func TestReviewDryRunExplicitReviewers(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
@@ -1619,6 +1692,14 @@ func setReviewerModelConfig(t *testing.T, paths artifacts.Paths, modelSpec strin
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 
+func setCrossModelReviewConfig(t *testing.T, paths artifacts.Paths, enabled bool) {
+	t.Helper()
+	config, err := readConfig(paths.Config)
+	assertNoError(t, err)
+	config.Agents.CrossModelReview = enabled
+	assertNoError(t, writeYAML(paths.Config, config))
+}
+
 func setupApprovedReviewWithoutGateReport(t *testing.T, root string) (App, artifacts.Paths, string, contractRunPathSet) {
 	t.Helper()
 	app, paths, runID := setupApprovedPromptContract(t, root)
@@ -1637,6 +1718,60 @@ func runReviewCommand(t *testing.T, app App, args ...string) {
 	if code != 0 {
 		t.Fatalf("%v exited %d, stdout: %s stderr: %s", args, code, stdout.String(), stderr.String())
 	}
+}
+
+func writeExecutionAttemptForTest(t *testing.T, runPaths contractRunPathSet, runID string, attemptID string, agent agents.AgentDescriptor) {
+	t.Helper()
+	attemptPaths := executionAttemptPaths(runPaths, attemptID)
+	assertNoError(t, os.MkdirAll(attemptPaths.Dir, 0o755))
+	mustWriteFile(t, attemptPaths.StdoutLog, "")
+	mustWriteFile(t, attemptPaths.StderrLog, "")
+	promptPath := executionPromptRepoPath(runID)
+	wouldRun, err := agents.BuildCommand(agent, promptPath)
+	assertNoError(t, err)
+	request := executionRequestDocument{
+		Schema:         executionRequestSchema,
+		RunID:          runID,
+		AttemptID:      attemptID,
+		CreatedAt:      "2026-06-01T22:00:00Z",
+		ContractSHA256: "fixture",
+		Agent: agents.AgentDescriptor{
+			Name:    agent.Name,
+			Command: agent.Command,
+			Args:    append([]string{}, agent.Args...),
+			Input:   agent.Input,
+		},
+		Artifacts: agents.DryRunArtifacts{
+			Prompt:          agents.DryRunArtifactPrompt,
+			ExecutorContext: agents.DryRunArtifactContext,
+			PromptManifest:  agents.DryRunArtifactPromptManifest,
+		},
+		WouldRun: wouldRun,
+	}
+	assertNoError(t, writeJSON(attemptPaths.RequestJSON, request))
+	result := executionResultDocument{
+		Schema:    executionResultSchema,
+		RunID:     runID,
+		AttemptID: attemptID,
+		processResult: processResult{
+			StartedAt:      "2026-06-01T22:00:00Z",
+			FinishedAt:     "2026-06-01T22:00:01Z",
+			DurationMillis: 1000,
+			ExitCode:       0,
+			TimedOut:       false,
+			Stdout:         filepath.ToSlash(filepath.Join("execute", "attempts", attemptID, "stdout.log")),
+			Stderr:         filepath.ToSlash(filepath.Join("execute", "attempts", attemptID, "stderr.log")),
+		},
+	}
+	assertNoError(t, writeJSON(attemptPaths.ResultJSON, result))
+	assertNoError(t, writeJSON(runPaths.LastResultJSON, result))
+}
+
+func mustResolveExecutorForTest(t *testing.T, name string) agents.AgentDescriptor {
+	t.Helper()
+	agent, err := agents.ResolveExecutor(name)
+	assertNoError(t, err)
+	return agent
 }
 
 func writeReviewerAttemptForTest(t *testing.T, runPaths contractRunPathSet, runID string, attemptID string, stdout string, completed bool) {

@@ -18,7 +18,24 @@ Both agents receive their prompt from a prompt file that Pactum prepares (the
 built executor prompt for execution, or the reviewer prompt for review); Pactum
 feeds that file to the agent process on standard input. Pick the executor with
 `--agent <name>` on the execute commands and the reviewer with `--reviewer
-<name>` on the review commands. When omitted, both default to `codex`.
+<name>` on the review commands. When omitted, both default to `codex` unless
+cross-model review is enabled for reviewer selection.
+
+To opt into cross-model review, set `agents.cross_model_review: true` in
+`.heurema/pactum/config.yaml`:
+
+```yaml
+agents:
+  cross_model_review: true
+```
+
+The default is `false`, which preserves the existing reviewer selection. When
+enabled and `--reviewer` is omitted, Pactum reads the latest execution attempt
+and chooses the other built-in reviewer (`codex` execution -> `claude` review,
+`claude` execution -> `codex` review). An explicit `--reviewer` always wins. If
+the executor cannot be determined or is not one of the two built-ins, Pactum
+falls back to the configured default reviewer. The selected reviewer is shown in
+the existing `Resolved` block for `review dry-run` and `review run`.
 
 To pin a per-stage model, set `agents.executor_model` for `pactum execute` or
 `agents.reviewer_model` for `pactum review` in `.heurema/pactum/config.yaml` to
