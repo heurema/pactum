@@ -395,6 +395,7 @@ func renderApprovedPromptMD(contract draftContract, runID string, contractSHA256
 	writeMarkdownListSection(&buffer, "In scope", contract.Scope.In)
 	fmt.Fprintln(&buffer)
 	writeMarkdownListSection(&buffer, "Out of scope", contract.Scope.Out)
+	writePathScopeSections(&buffer, contract)
 	fmt.Fprintln(&buffer)
 	writeMarkdownListSection(&buffer, "Acceptance criteria", contract.AcceptanceCriteria)
 	fmt.Fprintln(&buffer)

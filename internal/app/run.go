@@ -69,6 +69,8 @@ type draftContract struct {
 	Status             string             `json:"status"`
 	Goal               string             `json:"goal"`
 	Scope              draftContractScope `json:"scope"`
+	PathsInScope       []string           `json:"paths_in_scope,omitempty"`
+	PathsOutOfScope    []string           `json:"paths_out_of_scope,omitempty"`
 	AcceptanceCriteria []string           `json:"acceptance_criteria"`
 	Validation         draftValidation    `json:"validation"`
 	Assumptions        []string           `json:"assumptions"`
@@ -721,6 +723,7 @@ func renderContractMDFromDraft(contract draftContract, mapRunID string, searchRe
 	writeMarkdownListSection(&buffer, "In scope", contract.Scope.In)
 	fmt.Fprintln(&buffer)
 	writeMarkdownListSection(&buffer, "Out of scope", contract.Scope.Out)
+	writePathScopeSections(&buffer, contract)
 	fmt.Fprintln(&buffer)
 	writeMarkdownListSection(&buffer, "Acceptance criteria", contract.AcceptanceCriteria)
 	fmt.Fprintln(&buffer)
@@ -751,6 +754,7 @@ func renderPromptMDFromDraft(contract draftContract) []byte {
 	writeMarkdownListSection(&buffer, "In scope", contract.Scope.In)
 	fmt.Fprintln(&buffer)
 	writeMarkdownListSection(&buffer, "Out of scope", contract.Scope.Out)
+	writePathScopeSections(&buffer, contract)
 	fmt.Fprintln(&buffer)
 	writeMarkdownListSection(&buffer, "Acceptance criteria", contract.AcceptanceCriteria)
 	fmt.Fprintln(&buffer)
@@ -777,6 +781,20 @@ func writeMarkdownListSection(buffer *bytes.Buffer, heading string, values []str
 	}
 	for _, value := range values {
 		fmt.Fprintf(buffer, "- %s\n", value)
+	}
+}
+
+func writePathScopeSections(buffer *bytes.Buffer, contract draftContract) {
+	if len(contract.PathsInScope) == 0 && len(contract.PathsOutOfScope) == 0 {
+		return
+	}
+	fmt.Fprintln(buffer)
+	if len(contract.PathsInScope) > 0 {
+		writeMarkdownListSection(buffer, "Paths in scope", contract.PathsInScope)
+		fmt.Fprintln(buffer)
+	}
+	if len(contract.PathsOutOfScope) > 0 {
+		writeMarkdownListSection(buffer, "Paths out of scope", contract.PathsOutOfScope)
 	}
 }
 

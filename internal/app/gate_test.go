@@ -176,6 +176,108 @@ func TestGateRunDetectsNewFile(t *testing.T) {
 	}
 }
 
+func TestGateRunReportsUndeclaredPathScopeWarnings(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-in-scope", "internal/app/**"}, nil, true)
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
+	mustWriteFile(t, filepath.Join(root, "notes.txt"), "outside declared paths\n")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("gate run with undeclared scope warnings exited %d, stderr: %s", code, stderr.String())
+	}
+	report := readGateReport(t, contractRunPaths(filepath.Join(paths.RunsDir, runID)).GateReportJSON)
+	if report.Status != "needs_review" || report.Scope == nil || report.Scope.Status != "warnings" {
+		t.Fatalf("scope warnings not reported: %#v", report)
+	}
+	if !containsString(report.Scope.Undeclared, "README.md") || !containsString(report.Scope.Undeclared, "notes.txt") {
+		t.Fatalf("undeclared files not reported: %#v", report.Scope)
+	}
+	if len(report.Scope.OutOfScope) != 0 {
+		t.Fatalf("unexpected out-of-scope files: %#v", report.Scope.OutOfScope)
+	}
+	for _, want := range []string{"Scope:", "Warnings:", "undeclared file: README.md", "undeclared file: notes.txt"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("gate run output missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestGateRunScopeCleanWhenFilesAreDeclared(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-in-scope", "internal/app/**"}, nil, true)
+	mustWriteFile(t, filepath.Join(root, "internal", "app", "new.go"), "package app\n")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("gate run with clean path scope exited %d, stderr: %s", code, stderr.String())
+	}
+	report := readGateReport(t, contractRunPaths(filepath.Join(paths.RunsDir, runID)).GateReportJSON)
+	if report.Status != "needs_review" || report.Scope == nil || report.Scope.Status != "clean" {
+		t.Fatalf("scope clean report mismatch: %#v", report)
+	}
+	if len(report.Scope.Undeclared) != 0 || len(report.Scope.OutOfScope) != 0 || len(report.Scope.Warnings) != 0 {
+		t.Fatalf("clean scope should have no warnings: %#v", report.Scope)
+	}
+	if got := stdout.String(); !strings.Contains(got, "Scope:") || !strings.Contains(got, "status: clean") || strings.Contains(got, "Warnings:") {
+		t.Fatalf("gate run clean scope output mismatch:\n%s", got)
+	}
+}
+
+func TestGateRunReportsOutOfScopePathWarnings(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-out-of-scope", "README.md"}, nil, true)
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("gate run with out-of-scope warning exited %d, stderr: %s", code, stderr.String())
+	}
+	report := readGateReport(t, contractRunPaths(filepath.Join(paths.RunsDir, runID)).GateReportJSON)
+	if report.Scope == nil || report.Scope.Status != "warnings" || !containsString(report.Scope.OutOfScope, "README.md") {
+		t.Fatalf("out-of-scope file not reported: %#v", report.Scope)
+	}
+	if len(report.Scope.Undeclared) != 0 {
+		t.Fatalf("undeclared should not be populated without paths_in_scope: %#v", report.Scope.Undeclared)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"gate", "show", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("gate show exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "out-of-scope file: README.md") || !strings.Contains(got, "Warnings:") {
+		t.Fatalf("gate show scope output mismatch:\n%s", got)
+	}
+}
+
+func TestGateRunOmitsScopeSectionWithoutPathGlobs(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("gate run without path globs exited %d, stderr: %s", code, stderr.String())
+	}
+	report := readGateReport(t, runPaths.GateReportJSON)
+	if report.Status != "needs_review" || report.Scope != nil {
+		t.Fatalf("scope report should be omitted without path globs: %#v", report)
+	}
+	if strings.Contains(mustReadFile(t, runPaths.GateReportJSON), `"scope"`) {
+		t.Fatalf("gate report JSON should omit scope without path globs:\n%s", mustReadFile(t, runPaths.GateReportJSON))
+	}
+	if strings.Contains(stdout.String(), "Scope:") || strings.Contains(stdout.String(), "Warnings:") {
+		t.Fatalf("gate run output should omit scope without path globs:\n%s", stdout.String())
+	}
+}
+
 func TestGateRunDetectsValidationCommandChanges(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("PACTUM_GATE_HELPER_PROCESS", "1")
@@ -389,14 +491,20 @@ func TestGateRunUsesLatestCompletedAttempt(t *testing.T) {
 
 func setupGatePreparedRun(t *testing.T, root string, validationCommands []string, execute bool) (App, artifacts.Paths, string) {
 	t.Helper()
+	return setupGatePreparedRunWithRevision(t, root, nil, validationCommands, execute)
+}
+
+func setupGatePreparedRunWithRevision(t *testing.T, root string, reviseFlags []string, validationCommands []string, execute bool) (App, artifacts.Paths, string) {
+	t.Helper()
 	app, paths, runID := setupContractRun(t, root)
 	var stdout, stderr bytes.Buffer
 
-	if len(validationCommands) > 0 {
+	if len(validationCommands) > 0 || len(reviseFlags) > 0 {
 		args := []string{"contract", "revise", runID, "--goal", "add deterministic gate"}
 		for _, command := range validationCommands {
 			args = append(args, "--add-validation", command)
 		}
+		args = append(args, reviseFlags...)
 		code := app.Run(args, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("contract revise exited %d, stderr: %s", code, stderr.String())

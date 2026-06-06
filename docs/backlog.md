@@ -59,9 +59,10 @@ reviews across M8–M10. Rough priority in parentheses.
 
 ## Hardening / cleanup
 
-- **Mechanical scope enforcement** (med). The gate surfaces changed files and runs
-  validation but does not check them against the contract's in/out-of-scope lists;
-  scope adherence is human-only today. Consider flagging out-of-scope changes.
+- **Blocking path-scope enforcement** (med). The gate now emits advisory warnings
+  for changed/new files outside declared path globs, but it intentionally does not
+  hard-fail on those warnings. Decide whether and how to promote path-scope
+  violations to a blocking gate policy.
 - **Clarify commands reset approval silently** (med). `clarify ask` / `answer` /
   `suggest` add open questions via `refreshClarificationArtifacts`, which calls
   `resetApprovalIfApproved` — so running them on an already-approved/executed run
@@ -96,3 +97,8 @@ reviews across M8–M10. Rough priority in parentheses.
   `(file, line, message)` instead of minting a duplicate finding — it records a
   `duplicate` proposal-decision + one `review_proposal_duplicate` event. Resolved/
   rejected re-proposals are not suppressed; the M10.1 unparsed-findings guard is intact.
+- Mechanical path-scope warnings (M11.5) — contracts can now carry
+  `paths_in_scope` / `paths_out_of_scope` slash globs, `contract revise` can append
+  them, and the gate reports advisory warnings for changed/new files that are
+  undeclared or explicitly out of scope. Hard-fail/blocking behavior is intentionally
+  left as a separate follow-up.

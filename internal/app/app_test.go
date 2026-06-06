@@ -1157,6 +1157,9 @@ func TestContractReviseAppendsFields(t *testing.T) {
 		"--add-in-scope", "Persist cache metadata",
 		"--add-in-scope", "Expose status summary",
 		"--add-out-of-scope", "Implement cache eviction",
+		"--add-path-in-scope", "internal/app/**",
+		"--add-path-in-scope", "cmd/pactum/*.go",
+		"--add-path-out-of-scope", "docs/**",
 		"--add-acceptance", "Cache survives process restart",
 		"--add-validation", "go test ./...",
 		"--add-assumption", "SQLite is available through the standard driver",
@@ -1175,6 +1178,12 @@ func TestContractReviseAppendsFields(t *testing.T) {
 	if len(contract.Scope.Out) != 1 || contract.Scope.Out[0] != "Implement cache eviction" {
 		t.Fatalf("contract out-of-scope mismatch: %#v", contract.Scope.Out)
 	}
+	if len(contract.PathsInScope) != 2 || contract.PathsInScope[0] != "internal/app/**" || contract.PathsInScope[1] != "cmd/pactum/*.go" {
+		t.Fatalf("contract path in-scope mismatch: %#v", contract.PathsInScope)
+	}
+	if len(contract.PathsOutOfScope) != 1 || contract.PathsOutOfScope[0] != "docs/**" {
+		t.Fatalf("contract path out-of-scope mismatch: %#v", contract.PathsOutOfScope)
+	}
 	if len(contract.AcceptanceCriteria) != 1 || contract.AcceptanceCriteria[0] != "Cache survives process restart" {
 		t.Fatalf("contract acceptance mismatch: %#v", contract.AcceptanceCriteria)
 	}
@@ -1189,6 +1198,8 @@ func TestContractReviseAppendsFields(t *testing.T) {
 	for _, want := range []string{
 		"## In scope\n- Add show, revise, and approve commands\n- Persist cache metadata\n- Expose status summary",
 		"## Out of scope\n- Implement cache eviction",
+		"## Paths in scope\n- internal/app/**\n- cmd/pactum/*.go",
+		"## Paths out of scope\n- docs/**",
 		"## Acceptance criteria\n- Cache survives process restart",
 		"## Validation commands\n- go test ./...",
 		"## Assumptions\n- SQLite is available through the standard driver",
@@ -1201,11 +1212,28 @@ func TestContractReviseAppendsFields(t *testing.T) {
 	for _, want := range []string{
 		"## In scope\n- Add show, revise, and approve commands\n- Persist cache metadata\n- Expose status summary",
 		"## Out of scope\n- Implement cache eviction",
+		"## Paths in scope\n- internal/app/**\n- cmd/pactum/*.go",
+		"## Paths out of scope\n- docs/**",
 		"## Acceptance criteria\n- Cache survives process restart",
 		"## Validation commands\n- go test ./...",
 	} {
 		if !strings.Contains(promptMD, want) {
 			t.Fatalf("prompt.md missing %q:\n%s", want, promptMD)
+		}
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"contract", "show", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract show exited %d, stderr: %s", code, stderr.String())
+	}
+	for _, want := range []string{
+		"## Paths in scope\n- internal/app/**\n- cmd/pactum/*.go",
+		"## Paths out of scope\n- docs/**",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("contract show missing %q:\n%s", want, stdout.String())
 		}
 	}
 }
