@@ -59,9 +59,10 @@ type mapCmd struct {
 }
 
 type clarifyCmd struct {
-	Ask    clarifyAskCmd    `cmd:"" help:"Add a manual clarification question."`
-	Answer clarifyAnswerCmd `cmd:"" help:"Record a manual clarification answer."`
-	Status clarifyStatusCmd `cmd:"" aliases:"list" help:"Print clarification status for a run (alias: list)."`
+	Ask     clarifyAskCmd     `cmd:"" help:"Add a manual clarification question."`
+	Answer  clarifyAnswerCmd  `cmd:"" help:"Record a manual clarification answer."`
+	Suggest clarifySuggestCmd `cmd:"" help:"Run a read-only clarifier agent and record proposed questions."`
+	Status  clarifyStatusCmd  `cmd:"" aliases:"list" help:"Print clarification status for a run (alias: list)."`
 }
 
 type clarifyAskCmd struct {
@@ -73,6 +74,14 @@ type clarifyAskCmd struct {
 type clarifyAnswerCmd struct {
 	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <question_id> <answer>"`
 	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type clarifySuggestCmd struct {
+	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to suggest clarifications for."`
+	Reviewer   string        `name:"reviewer" help:"Built-in clarifier agent name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
+	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the clarifier process."`
+	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
+	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type clarifyStatusCmd struct {
@@ -551,6 +560,14 @@ func (c *clarifyAnswerCmd) Run(r *runner) error {
 		return err
 	}
 	return r.App.ClarifyAnswer(r.Stdout, runID, questionID, answer, c.JSONOutput)
+}
+
+func (c *clarifySuggestCmd) Run(r *runner) error {
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ClarifySuggest(r.Stdout, r.Stderr, runID, c.Reviewer, c.Timeout, c.Yes, c.JSONOutput)
 }
 
 func (c *clarifyStatusCmd) Run(r *runner) error {

@@ -15,11 +15,12 @@ one of these two by name.
 | `claude` | `claude -p` | executor / reviewer |
 
 Both agents receive their prompt from a prompt file that Pactum prepares (the
-built executor prompt for execution, or the reviewer prompt for review); Pactum
-feeds that file to the agent process on standard input. Pick the executor with
-`--agent <name>` on the execute commands and the reviewer with `--reviewer
-<name>` on the review commands. When omitted, both default to `codex` unless
-cross-model review is enabled for reviewer selection.
+built executor prompt for execution, the clarifier prompt for `clarify suggest`,
+or the reviewer prompt for review); Pactum feeds that file to the agent process
+on standard input. Pick the executor with `--agent <name>` on the execute
+commands and the reviewer/clarifier with `--reviewer <name>` on the clarify and
+review commands. When omitted, both default to `codex` unless cross-model review
+is enabled for reviewer selection.
 
 To opt into cross-model review, set `agents.cross_model_review: true` in
 `.heurema/pactum/config.yaml`:
@@ -32,11 +33,13 @@ agents:
 The default is `false`, which preserves the existing reviewer selection. When
 enabled and `--reviewer` is omitted, Pactum reads the latest execution attempt
 and chooses the other built-in reviewer (`codex` execution -> `claude` review,
-`claude` execution -> `codex` review). An explicit `--reviewer` always wins. If
-the executor cannot be determined or is not one of the two built-ins, Pactum
-falls back to the default built-in reviewer (`codex`) — in that case cross-model
-review may not be achieved, so check the selected reviewer in the existing
-`Resolved` block for `review dry-run` and `review run`.
+`claude` execution -> `codex` review). The same reviewer-selection rule is used
+by `clarify suggest`; before any execution attempt exists it falls back to the
+default built-in reviewer. An explicit `--reviewer` always wins. If the executor
+cannot be determined or is not one of the two built-ins, Pactum falls back to
+the default built-in reviewer (`codex`) — in that case cross-model review may
+not be achieved, so check the selected reviewer in the existing `Resolved` block
+for `clarify suggest`, `review dry-run`, and `review run`.
 
 To pin a per-stage model, set `agents.executor_model` for `pactum execute` or
 `agents.reviewer_model` for `pactum review` in `.heurema/pactum/config.yaml` to
@@ -48,12 +51,13 @@ CLI inherits its own configured defaults. For `codex`, Pactum emits
 read-only reviewer command (`codex exec --sandbox read-only`, or `claude -p`)
 and do not add executor write-bypass flags.
 
-The human output for `execute dry-run`, `execute run`, `review dry-run`, and
-`review run` includes a `Resolved` block once per command. It shows the selected
-agent plus the stage model and effort values Pactum applied: pinned values are
-shown directly, and empty values are shown as `inherit` because Pactum does not
-read the agent CLI's own config. A `pinning` summary reads `pinned` (model and
-effort both set), `partial` (only one set), or `inherit` (neither).
+The human output for `clarify suggest`, `execute dry-run`, `execute run`,
+`review dry-run`, and `review run` includes a `Resolved` block once per command.
+It shows the selected agent plus the stage model and effort values Pactum
+applied: pinned values are shown directly, and empty values are shown as
+`inherit` because Pactum does not read the agent CLI's own config. A `pinning`
+summary reads `pinned` (model and effort both set), `partial` (only one set), or
+`inherit` (neither).
 
 Pactum does **not** install, bundle, configure, or authenticate these CLIs. You
 must install and configure each agent CLI separately and make its command
@@ -88,11 +92,12 @@ repository**:
 
 ## Live output
 
-`execute run`, `review run`, and `review fix` (and each per-round reviewer/fixer
-sub-run inside `review loop`) stream the agent's stdout and stderr live to
-**your terminal's stderr** as the process runs, so a multi-minute run is not a
-silent black box. This is in addition to — not instead of — the per-attempt log
-files, which are still written in full under the attempt directory.
+`clarify suggest`, `execute run`, `review run`, and `review fix` (and each
+per-round reviewer/fixer sub-run inside `review loop`) stream the agent's stdout
+and stderr live to **your terminal's stderr** as the process runs, so a
+multi-minute run is not a silent black box. This is in addition to — not instead
+of — the per-attempt log files, which are still written in full under the
+attempt directory.
 
 The live stream goes to stderr on purpose: stdout stays the clean result channel
 in every mode. The human summary (or, with `--json`, the machine-readable result
@@ -142,6 +147,23 @@ fails, neither dry-run nor run proceeds.
 
 After execution, gate the result with `pactum gate run <run_id>` (validation
 commands run only with `--allow-commands`).
+
+## Clarify suggest
+
+`pactum clarify suggest <run_id> --reviewer codex --yes` launches a read-only
+reviewer-role agent to propose clarification questions from the contract goal,
+repository context, first-pass search results, and existing clarifications. It
+writes `clarify/clarifier-prompt.md`, `clarify/clarifier-context.md`, captures
+the attempt under `clarify/clarifier-attempts/`, and stores the latest result at
+`clarify/clarifier-last-result.json`.
+
+The clarifier must emit a fenced JSON block with
+`schema: "pactum.clarification_suggestions.v1"`. Pactum parses those suggestions
+directly into **open clarification questions** in `clarify/questions.jsonl` for
+a human to answer later with `pactum clarify answer`; the agent never answers
+questions, revises the contract, or edits code. Like other agent-running
+commands, it asks for confirmation on an interactive terminal and **requires
+`--yes`** for non-interactive/automated use.
 
 ## Review: dry-run vs run
 

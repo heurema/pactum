@@ -412,6 +412,9 @@ func renderApprovedPromptMD(contract draftContract, runID string, contractSHA256
 				blocking = " [blocking]"
 			}
 			fmt.Fprintf(&buffer, "- %s%s %s\n", question.ID, blocking, question.Question)
+			if question.Rationale != "" {
+				fmt.Fprintf(&buffer, "  Rationale: %s\n", question.Rationale)
+			}
 			decision := question.Answer
 			if strings.TrimSpace(decision) == "" {
 				decision = "pending"

@@ -21,14 +21,16 @@ const (
 )
 
 type clarificationQuestionRecord struct {
-	Schema    string    `json:"schema"`
-	ID        string    `json:"id"`
-	RunID     string    `json:"run_id"`
-	Question  string    `json:"question"`
-	Blocking  bool      `json:"blocking"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	Source    string    `json:"source"`
+	Schema             string    `json:"schema"`
+	ID                 string    `json:"id"`
+	RunID              string    `json:"run_id"`
+	Question           string    `json:"question"`
+	Blocking           bool      `json:"blocking"`
+	Rationale          string    `json:"rationale,omitempty"`
+	Status             string    `json:"status"`
+	CreatedAt          time.Time `json:"created_at"`
+	Source             string    `json:"source"`
+	ClarifierAttemptID string    `json:"clarifier_attempt_id,omitempty"`
 }
 
 type clarificationAnswerRecord struct {
@@ -56,11 +58,12 @@ type contractClarifySet struct {
 }
 
 type clarifyQuestionStatus struct {
-	ID       string `json:"id"`
-	Question string `json:"question"`
-	Blocking bool   `json:"blocking"`
-	Status   string `json:"status"`
-	Answer   string `json:"answer,omitempty"`
+	ID        string `json:"id"`
+	Question  string `json:"question"`
+	Blocking  bool   `json:"blocking"`
+	Rationale string `json:"rationale,omitempty"`
+	Status    string `json:"status"`
+	Answer    string `json:"answer,omitempty"`
 }
 
 type clarifyStatusResponse struct {
@@ -303,11 +306,12 @@ func buildClarificationStatus(runPaths contractRunPathSet, state contractRunStat
 			}
 		}
 		response.Questions = append(response.Questions, clarifyQuestionStatus{
-			ID:       question.ID,
-			Question: question.Question,
-			Blocking: question.Blocking,
-			Status:   questionStatus,
-			Answer:   answerText,
+			ID:        question.ID,
+			Question:  question.Question,
+			Blocking:  question.Blocking,
+			Rationale: question.Rationale,
+			Status:    questionStatus,
+			Answer:    answerText,
 		})
 	}
 	response.Total = len(response.Questions)
