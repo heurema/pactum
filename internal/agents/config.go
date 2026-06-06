@@ -21,14 +21,6 @@ func DefaultReviewer() string {
 	return BuiltinCodex
 }
 
-func ResolveExecutor(name string) (AgentDescriptor, error) {
-	return BuiltinRegistry{}.ResolveExecutor(name)
-}
-
-func ResolveReviewer(name string) (AgentDescriptor, error) {
-	return BuiltinRegistry{}.ResolveReviewer(name)
-}
-
 func ListBuiltins() []AgentDescriptor {
 	return BuiltinRegistry{}.ListBuiltins()
 }

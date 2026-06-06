@@ -2078,7 +2078,7 @@ func writeExecutionAttemptForTest(t *testing.T, runPaths contractRunPathSet, run
 
 func mustResolveExecutorForTest(t *testing.T, name string) agents.AgentDescriptor {
 	t.Helper()
-	agent, err := agents.ResolveExecutor(name)
+	agent, err := agents.BuiltinRegistry{}.ResolveExecutor(name)
 	assertNoError(t, err)
 	return agent
 }

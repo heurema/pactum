@@ -4,7 +4,7 @@
 # that building, testing, and installing Pactum from source is a single command.
 # There is no release, packaging, or Docker automation here.
 
-.PHONY: build test vet check install clean smoke
+.PHONY: build test vet deadcode check install clean smoke
 
 # Version metadata stamped into the binary. Override on the command line, e.g.
 # `make build VERSION=0.1.0`.
@@ -26,8 +26,20 @@ test:
 vet:
 	go vet ./...
 
-# check is the local gate: tests, vet, and a whitespace/conflict-marker check.
-check: test vet
+# deadcode flags functions unreachable from any main entry point (golang.org/x/
+# tools, pinned via the go.mod tool directive). It catches what `go vet` cannot:
+# unused package-level functions, including production code reachable only from
+# tests. Any finding fails the gate; the tree is expected to stay empty.
+deadcode:
+	@out="$$(go tool deadcode ./...)"; \
+	if [ -n "$$out" ]; then \
+		echo "$$out"; \
+		echo "deadcode: unreachable functions found (above); remove them"; \
+		exit 1; \
+	fi
+
+# check is the local gate: tests, vet, dead-code, and a whitespace/conflict-marker check.
+check: test vet deadcode
 	git diff --check
 
 # install builds and installs pactum into the Go bin directory (go env GOBIN).
