@@ -244,53 +244,6 @@ func TestExecuteDryRunResolvedPartialPin(t *testing.T) {
 	assertResolvedBlock(t, stdout.String(), "codex", "inherit", "high", "partial")
 }
 
-func TestLegacyAgentConfigIsToleratedAndIgnored(t *testing.T) {
-	root := t.TempDir()
-	paths := artifacts.New(root)
-	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
-	config := defaultConfigFile()
-	config.Agents = agents.AgentConfig{
-		DefaultExecutor: "legacy-helper",
-		DefaultReviewer: "legacy-reviewer",
-		Adapters: map[string]agents.AdapterConfig{
-			"legacy-helper": {
-				Command: "legacy-helper",
-				Args:    []string{"run"},
-				Input:   agents.InputPromptFile,
-			},
-			"legacy-reviewer": {
-				Command: "legacy-reviewer",
-				Args:    []string{"review"},
-				Input:   agents.InputPromptFile,
-			},
-		},
-	}
-	assertNoError(t, writeYAML(paths.Config, config))
-
-	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
-	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("execute dry-run with legacy config exited %d, stderr: %s", code, stderr.String())
-	}
-	plan := readDryRunPlan(t, runPaths.DryRunJSON)
-	if plan.Agent.Name != "codex" || plan.Agent.Command != "codex" {
-		t.Fatalf("legacy config should be ignored by runtime, got: %#v", plan.Agent)
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = app.Run([]string{"execute", "dry-run", runID, "--agent", "legacy-helper"}, &stdout, &stderr)
-	if code == 0 {
-		t.Fatalf("legacy adapter name should not be supported")
-	}
-	if got := stderr.String(); !strings.Contains(got, "unsupported agent: legacy-helper") {
-		t.Fatalf("legacy adapter stderr mismatch:\n%s", got)
-	}
-}
-
 func TestExecuteDryRunHashMismatchFails(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)

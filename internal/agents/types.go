@@ -3,20 +3,11 @@ package agents
 import "time"
 
 type AgentConfig struct {
-	DefaultExecutor  string                   `json:"default_executor" yaml:"default_executor"`
-	DefaultReviewer  string                   `json:"default_reviewer" yaml:"default_reviewer"`
-	Adapters         map[string]AdapterConfig `json:"adapters" yaml:"adapters"`
-	CrossModelReview bool                     `json:"cross_model_review,omitempty" yaml:"cross_model_review,omitempty"`
+	CrossModelReview bool `json:"cross_model_review,omitempty" yaml:"cross_model_review,omitempty"`
 	// ExecutorModel and ReviewerModel pin the per-stage model[:effort] (empty =
 	// inherit the agent CLI's own config).
 	ExecutorModel string `json:"executor_model,omitempty" yaml:"executor_model,omitempty"`
 	ReviewerModel string `json:"reviewer_model,omitempty" yaml:"reviewer_model,omitempty"`
-}
-
-type AdapterConfig struct {
-	Command string   `json:"command" yaml:"command"`
-	Args    []string `json:"args" yaml:"args"`
-	Input   string   `json:"input" yaml:"input"`
 }
 
 type AgentDescriptor struct {
