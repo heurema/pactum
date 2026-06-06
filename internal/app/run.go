@@ -208,6 +208,11 @@ type contractRunPathSet struct {
 	AnswersJSONL   string
 	DecisionsJSONL string
 
+	ClarifierContextMD      string
+	ClarifierPromptMD       string
+	ClarifierAttemptsDir    string
+	ClarifierLastResultJSON string
+
 	ContractJSON   string
 	ContractMD     string
 	PromptMD       string
@@ -270,6 +275,10 @@ func contractRunPaths(runDir string) contractRunPathSet {
 		QuestionsJSONL:               filepath.Join(clarifyDir, "questions.jsonl"),
 		AnswersJSONL:                 filepath.Join(clarifyDir, "answers.jsonl"),
 		DecisionsJSONL:               filepath.Join(clarifyDir, "decisions.jsonl"),
+		ClarifierContextMD:           filepath.Join(clarifyDir, "clarifier-context.md"),
+		ClarifierPromptMD:            filepath.Join(clarifyDir, "clarifier-prompt.md"),
+		ClarifierAttemptsDir:         filepath.Join(clarifyDir, "clarifier-attempts"),
+		ClarifierLastResultJSON:      filepath.Join(clarifyDir, "clarifier-last-result.json"),
 		ContractJSON:                 filepath.Join(contractDir, "contract.json"),
 		ContractMD:                   filepath.Join(contractDir, "contract.md"),
 		PromptMD:                     filepath.Join(contractDir, "prompt.md"),
@@ -690,6 +699,9 @@ func renderContractMDFromDraft(contract draftContract, mapRunID string, searchRe
 				blocking = " [blocking]"
 			}
 			fmt.Fprintf(&buffer, "- %s%s — %s\n", question.ID, blocking, question.Question)
+			if question.Rationale != "" {
+				fmt.Fprintf(&buffer, "  Rationale: %s\n", question.Rationale)
+			}
 			if question.Answer != "" {
 				fmt.Fprintf(&buffer, "  Answer: %s\n", question.Answer)
 			} else {

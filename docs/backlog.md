@@ -45,15 +45,23 @@ reviews across M8–M10. Rough priority in parentheses.
   only final gate (no per-finding severity schema).
 - **Cross-model panel** (med). Run N reviewers (codex + claude) per round; merge and
   de-duplicate findings; reconcile severity.
-- **Phase 1 — clarify loop** (high, large). The agent generates clarification
-  questions and refines the contract; the human answers; loop to a precise contract,
-  preserving the human approve gate.
+- **Phase 1 — clarify loop** (high, large). `clarify suggest` (agent proposes
+  clarification questions, M11.0) is the first slice. Remaining: agent contract-
+  drafting (refine fields from answers), the loop driver (suggest → answer → refine →
+  repeat to a precise contract), and dedup of re-proposed questions on re-run.
+  `clarify suggest` also fuses run+parse, so a non-zero clarifier exit discards valid
+  output — decouple like `review propose-findings`, or salvage on non-zero.
 
 ## Hardening / cleanup
 
 - **Mechanical scope enforcement** (med). The gate surfaces changed files and runs
   validation but does not check them against the contract's in/out-of-scope lists;
   scope adherence is human-only today. Consider flagging out-of-scope changes.
+- **Clarify commands reset approval silently** (med). `clarify ask` / `answer` /
+  `suggest` add open questions via `refreshClarificationArtifacts`, which calls
+  `resetApprovalIfApproved` — so running them on an already-approved/executed run
+  silently regresses it to `clarifying`. Guard or warn when the run is already
+  approved (pre-existing; `clarify suggest` makes bulk creation easier).
 - **Lifecycle dedup** (low). `execute run` / `review run` / `review fix` share a
   near-identical attempt/result/event lifecycle. A shared helper would reduce drift
   (the L1 staleness bug came from the fork) — revisit once the shape is stable (after
@@ -70,4 +78,4 @@ reviews across M8–M10. Rough priority in parentheses.
 - `agents doctor` status `ready` → `on_path`, `clarify list` alias, log-channel docs (#38).
 - Per-stage `model[:effort]` + resolved-config header (#39, #41, #42); cross-model
   review (#43); fix stage (#46); review loop driver (#47); live agent output (#49);
-  loop stop conditions — stalemate + K-consecutive-clean (M10.3).
+  loop stop conditions — stalemate + K-consecutive-clean (M10.3); clarify suggest (M11.0).
