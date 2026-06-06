@@ -34,8 +34,9 @@ enabled and `--reviewer` is omitted, Pactum reads the latest execution attempt
 and chooses the other built-in reviewer (`codex` execution -> `claude` review,
 `claude` execution -> `codex` review). An explicit `--reviewer` always wins. If
 the executor cannot be determined or is not one of the two built-ins, Pactum
-falls back to the configured default reviewer. The selected reviewer is shown in
-the existing `Resolved` block for `review dry-run` and `review run`.
+falls back to the default built-in reviewer (`codex`) — in that case cross-model
+review may not be achieved, so check the selected reviewer in the existing
+`Resolved` block for `review dry-run` and `review run`.
 
 To pin a per-stage model, set `agents.executor_model` for `pactum execute` or
 `agents.reviewer_model` for `pactum review` in `.heurema/pactum/config.yaml` to
