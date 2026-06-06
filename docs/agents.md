@@ -16,11 +16,12 @@ one of these two by name.
 
 Both agents receive their prompt from a prompt file that Pactum prepares (the
 built executor prompt for execution, the clarifier prompt for `clarify suggest`,
-or the reviewer prompt for review); Pactum feeds that file to the agent process
-on standard input. Pick the executor with `--agent <name>` on the execute
-commands and the reviewer/clarifier with `--reviewer <name>` on the clarify and
-review commands. When omitted, both default to `codex` unless cross-model review
-is enabled for reviewer selection.
+the contract drafter prompt for `contract draft`, or the reviewer prompt for
+review); Pactum feeds that file to the agent process on standard input. Pick the
+executor with `--agent <name>` on the execute commands and the
+reviewer/clarifier/drafter with `--reviewer <name>` on the clarify, contract
+draft, and review commands. When omitted, both default to `codex` unless
+cross-model review is enabled for reviewer selection.
 
 To opt into cross-model review, set `agents.cross_model_review: true` in
 `.heurema/pactum/config.yaml`:
@@ -39,25 +40,26 @@ default built-in reviewer. An explicit `--reviewer` always wins. If the executor
 cannot be determined or is not one of the two built-ins, Pactum falls back to
 the default built-in reviewer (`codex`) — in that case cross-model review may
 not be achieved, so check the selected reviewer in the existing `Resolved` block
-for `clarify suggest`, `review dry-run`, and `review run`.
+for `clarify suggest`, `contract draft`, `review dry-run`, and `review run`.
 
 To pin a per-stage model, set `agents.executor_model` for `pactum execute` or
-`agents.reviewer_model` for `pactum review` in `.heurema/pactum/config.yaml` to
-`model[:effort]`, for example `gpt-5:high`, `gpt-5`, or `:high`. When a field is
-empty or omitted, Pactum does not pass model flags for that stage and the agent
-CLI inherits its own configured defaults. For `codex`, Pactum emits
+`agents.reviewer_model` for read-only reviewer-role commands (`clarify suggest`,
+`contract draft`, and `review`) in `.heurema/pactum/config.yaml` to
+`model[:effort]`, for example `gpt-5:high`, `gpt-5`, or `:high`. When a field
+is empty or omitted, Pactum does not pass model flags for that stage and the
+agent CLI inherits its own configured defaults. For `codex`, Pactum emits
 `-c model=...` and `-c model_reasoning_effort=...`; for `claude`, it emits
 `--model ...` and `--effort ...`. Reviewer model flags are appended to the
 read-only reviewer command (`codex exec --sandbox read-only`, or `claude -p`)
 and do not add executor write-bypass flags.
 
-The human output for `clarify suggest`, `execute dry-run`, `execute run`,
-`review dry-run`, and `review run` includes a `Resolved` block once per command.
-It shows the selected agent plus the stage model and effort values Pactum
-applied: pinned values are shown directly, and empty values are shown as
-`inherit` because Pactum does not read the agent CLI's own config. A `pinning`
-summary reads `pinned` (model and effort both set), `partial` (only one set), or
-`inherit` (neither).
+The human output for `clarify suggest`, `contract draft`, `execute dry-run`,
+`execute run`, `review dry-run`, and `review run` includes a `Resolved` block
+once per command. It shows the selected agent plus the stage model and effort
+values Pactum applied: pinned values are shown directly, and empty values are
+shown as `inherit` because Pactum does not read the agent CLI's own config. A
+`pinning` summary reads `pinned` (model and effort both set), `partial` (only
+one set), or `inherit` (neither).
 
 Pactum does **not** install, bundle, configure, or authenticate these CLIs. You
 must install and configure each agent CLI separately and make its command
@@ -92,9 +94,10 @@ repository**:
 
 ## Live output
 
-`clarify suggest`, `execute run`, `review run`, and `review fix` (and each
-per-round reviewer/fixer sub-run inside `review loop`) stream the agent's stdout
-and stderr live to **your terminal's stderr** as the process runs, so a
+`clarify suggest`, `contract draft`, `execute run`, `review run`, and
+`review fix` (and each per-round reviewer/fixer sub-run inside `review loop`)
+stream the agent's stdout and stderr live to **your terminal's stderr** as the
+process runs, so a
 multi-minute run is not a silent black box. This is in addition to — not instead
 of — the per-attempt log files, which are still written in full under the
 attempt directory.
@@ -163,6 +166,31 @@ directly into **open clarification questions** in `clarify/questions.jsonl` for
 a human to answer later with `pactum clarify answer`; the agent never answers
 questions, revises the contract, or edits code. Like other agent-running
 commands, it asks for confirmation on an interactive terminal and **requires
+`--yes`** for non-interactive/automated use.
+
+## Contract draft
+
+`pactum contract draft <run_id> --reviewer codex --yes` launches a read-only
+reviewer-role agent to propose missing contract fields from the contract goal,
+answered clarifications, repository context, and first-pass search results. It
+writes `contract/drafter-prompt.md`, `contract/drafter-context.md`, captures
+the attempt under `contract/drafter-attempts/`, and records the latest pending
+proposal at `contract/draft-proposal.json` with a Markdown preview at
+`contract/draft-proposal.md`.
+
+The drafter must emit a fenced JSON block with
+`schema: "pactum.contract_draft_proposal.v1"` and the proposal fields
+`in_scope`, `out_of_scope`, `acceptance`, `validation`, and `assumptions`.
+Pactum does **not** apply this output automatically: `pactum contract
+show-draft <run_id>` shows the pending proposal, and a human must run `pactum
+contract accept-draft <run_id>` to append the proposed fields through the normal
+contract revision path. Accepting the draft resets contract approval like any
+other revision; the human still approves separately with `pactum contract
+approve`.
+
+The drafter never answers clarification questions, changes the contract goal, or
+edits code. Like other agent-running commands, `contract draft` streams live
+agent output to stderr, honors `--timeout`, supports `--json`, and **requires
 `--yes`** for non-interactive/automated use.
 
 ## Review: dry-run vs run

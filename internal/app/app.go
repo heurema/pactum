@@ -90,9 +90,12 @@ type clarifyStatusCmd struct {
 }
 
 type contractCmd struct {
-	Show    contractShowCmd    `cmd:"" help:"Show a run contract."`
-	Revise  contractReviseCmd  `cmd:"" help:"Revise deterministic contract fields."`
-	Approve contractApproveCmd `cmd:"" help:"Approve a run contract."`
+	Show        contractShowCmd        `cmd:"" help:"Show a run contract."`
+	Draft       contractDraftCmd       `cmd:"" help:"Run a read-only agent to propose contract fields."`
+	ShowDraft   contractShowDraftCmd   `cmd:"show-draft" help:"Show the latest contract draft proposal."`
+	AcceptDraft contractAcceptDraftCmd `cmd:"accept-draft" help:"Accept the latest contract draft proposal."`
+	Revise      contractReviseCmd      `cmd:"" help:"Revise deterministic contract fields."`
+	Approve     contractApproveCmd     `cmd:"" help:"Approve a run contract."`
 }
 
 type promptCmd struct {
@@ -143,6 +146,24 @@ type memoryCmd struct {
 
 type contractShowCmd struct {
 	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type contractDraftCmd struct {
+	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to draft contract fields for."`
+	Reviewer   string        `name:"reviewer" help:"Built-in read-only drafter name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
+	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the drafter process."`
+	Yes        bool          `name:"yes" help:"Required confirmation for direct drafter execution."`
+	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type contractShowDraftCmd struct {
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type contractAcceptDraftCmd struct {
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id whose latest draft proposal should be accepted."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -584,6 +605,30 @@ func (c *contractShowCmd) Run(r *runner) error {
 		return err
 	}
 	return r.App.ContractShow(r.Stdout, runID, c.JSONOutput)
+}
+
+func (c *contractDraftCmd) Run(r *runner) error {
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ContractDraft(r.Stdout, r.Stderr, runID, c.Reviewer, c.Timeout, c.Yes, c.JSONOutput)
+}
+
+func (c *contractShowDraftCmd) Run(r *runner) error {
+	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
+	if err != nil || !ok {
+		return err
+	}
+	return r.App.ContractShowDraft(r.Stdout, runID, c.JSONOutput)
+}
+
+func (c *contractAcceptDraftCmd) Run(r *runner) error {
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ContractAcceptDraft(r.Stdout, runID, c.JSONOutput)
 }
 
 func (c *contractReviseCmd) Run(r *runner) error {

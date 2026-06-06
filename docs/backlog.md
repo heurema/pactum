@@ -45,12 +45,16 @@ reviews across M8–M10. Rough priority in parentheses.
   only final gate (no per-finding severity schema).
 - **Cross-model panel** (med). Run N reviewers (codex + claude) per round; merge and
   de-duplicate findings; reconcile severity.
-- **Phase 1 — clarify loop** (high, large). `clarify suggest` (agent proposes
-  clarification questions, M11.0) is the first slice. Remaining: agent contract-
-  drafting (refine fields from answers), the loop driver (suggest → answer → refine →
-  repeat to a precise contract), and dedup of re-proposed questions on re-run.
-  `clarify suggest` also fuses run+parse, so a non-zero clarifier exit discards valid
-  output — decouple like `review propose-findings`, or salvage on non-zero.
+- **Phase 1 — clarify loop** (high, large). Slices done: `clarify suggest` (agent
+  proposes questions, M11.0) and `contract draft` (agent drafts contract fields from
+  answers → proposal → `accept-draft`, M11.1). Remaining: the **loop driver**
+  (suggest → answer → draft → repeat to a precise contract, with caps). Open edges:
+  re-proposed-question dedup; the clarifier/drafter fuse run+parse so a non-zero exit
+  discards valid output (decouple like `review propose-findings`); an all-empty
+  `contract draft` records a pending proposal that `accept-draft` then rejects
+  (dead-end — report "no additions" instead); re-running `contract draft` after accept
+  clobbers the accepted proposal's audit fields; `accept-draft` hardcodes
+  `accepted_by:"manual"` (no `--by`).
 
 ## Hardening / cleanup
 
@@ -62,10 +66,12 @@ reviews across M8–M10. Rough priority in parentheses.
   `resetApprovalIfApproved` — so running them on an already-approved/executed run
   silently regresses it to `clarifying`. Guard or warn when the run is already
   approved (pre-existing; `clarify suggest` makes bulk creation easier).
-- **Lifecycle dedup** (low). `execute run` / `review run` / `review fix` share a
-  near-identical attempt/result/event lifecycle. A shared helper would reduce drift
-  (the L1 staleness bug came from the fork) — revisit once the shape is stable (after
-  L3b), and only if it abstracts cleanly.
+- **Lifecycle dedup** (low→med). `execute run` / `review run` / `review fix` /
+  `clarify suggest` / `contract draft` now share a near-identical agent-run +
+  attempt/result/event lifecycle — **5 copies**. A shared helper would reduce drift
+  (the L1 staleness bug came from the fork) and the accept-step revise-then-mark
+  ordering window (shared by review/contract accept). Revisit now that the shape is
+  stable, if it abstracts cleanly.
 - **`-race` in CI** (med). `make check` runs `go test ./...` without `-race`, so the
   M10.2 live-output data race slipped through. The full suite is race-clean as of
   M10.2, so enabling `-race` (a CI step or a `make check-race` target) is now safe and
@@ -78,4 +84,5 @@ reviews across M8–M10. Rough priority in parentheses.
 - `agents doctor` status `ready` → `on_path`, `clarify list` alias, log-channel docs (#38).
 - Per-stage `model[:effort]` + resolved-config header (#39, #41, #42); cross-model
   review (#43); fix stage (#46); review loop driver (#47); live agent output (#49);
-  loop stop conditions — stalemate + K-consecutive-clean (M10.3); clarify suggest (M11.0).
+  loop stop conditions — stalemate + K-consecutive-clean (M10.3); clarify suggest
+  (M11.0); contract drafting (M11.1).
