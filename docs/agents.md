@@ -145,11 +145,11 @@ automatically.
 
 A reviewer can emit optional structured finding proposals as a fenced JSON block.
 `pactum review propose-findings <run_id>` parses the captured reviewer stdout
-into **pending proposals** — it does not create findings. A human then decides
-each one with `pactum review accept-proposal <run_id> p_001` (which creates a
-real review finding) or `pactum review reject-proposal <run_id> p_001 --reason
-"..."`. This is why there is no semantic trust of reviewer output: proposals are
-inert until a person accepts them.
+into **pending proposals** — it does not create findings. In the manual flow, a
+human then decides each one with `pactum review accept-proposal <run_id> p_001`
+(which creates a real review finding) or `pactum review reject-proposal <run_id>
+p_001 --reason "..."`. Outside the explicit `review loop` command, proposals
+are inert until a person accepts them.
 
 ## Review fix
 
@@ -170,4 +170,21 @@ as execution, captures request/result/stdout/stderr artifacts under
 
 Like `execute run` and `review run`, `review fix` is unsandboxed and requires
 `--yes` for non-interactive/automated use. It does not approve reviews, resolve
-findings, re-run the gate, or start an automatic review loop.
+findings, or re-run the gate.
+
+## Review loop
+
+`pactum review loop <run_id> --reviewer codex --agent codex --yes` runs the
+reviewer, parses structured finding proposals, accepts the proposals into review
+findings, and runs the fixer when the current round creates open findings. After
+each fixer attempt, Pactum re-runs the gate with the approved validation
+commands, then starts another reviewer round.
+
+The loop stops on the first clean reviewer round or when `--max-rounds` is
+reached. If `--max-rounds` is omitted, Pactum reads `limits.review.max_rounds`
+from the workspace config. `--timeout` applies to each reviewer or fixer
+subprocess, and `--json` prints the loop summary as JSON.
+
+The loop writes `review/loop-summary.json` with the terminal reason and
+per-round open-finding counts. It does not run `pactum review approve`; the
+human approval gate remains explicit.
