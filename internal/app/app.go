@@ -342,6 +342,10 @@ type searchCmd struct {
 type runner struct {
 	App    App
 	Stdout io.Writer
+	// Stderr is the operator's stderr. Agent-running commands pass it as the live
+	// output writer so the agent's stdout/stderr stream there as it runs, keeping
+	// Stdout the clean result channel (human summary or --json).
+	Stderr io.Writer
 }
 
 type workspaceManifest struct {
@@ -461,7 +465,7 @@ func (a App) Run(args []string, stdout, stderr io.Writer) (code int) {
 		fmt.Fprintln(stderr, "Run 'pactum --help' for usage.")
 		return 2
 	}
-	if err := ctx.Run(&runner{App: a, Stdout: stdout}); err != nil {
+	if err := ctx.Run(&runner{App: a, Stdout: stdout, Stderr: stderr}); err != nil {
 		// Command errors exit 1. With --json, emit a machine-readable error
 		// envelope on stdout (stderr stays empty); otherwise a human line on
 		// stderr.
@@ -614,7 +618,7 @@ func (c *executeRunCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	return r.App.ExecuteRun(r.Stdout, runID, c.Agent, c.Timeout, c.Yes, c.JSONOutput)
+	return r.App.ExecuteRun(r.Stdout, r.Stderr, runID, c.Agent, c.Timeout, c.Yes, c.JSONOutput)
 }
 
 func (c *executeStatusCmd) Run(r *runner) error {
@@ -738,7 +742,7 @@ func (c *reviewRunCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	return r.App.ReviewRun(r.Stdout, runID, c.Reviewer, c.Timeout, c.Yes, c.JSONOutput)
+	return r.App.ReviewRun(r.Stdout, r.Stderr, runID, c.Reviewer, c.Timeout, c.Yes, c.JSONOutput)
 }
 
 func (c *reviewFixCmd) Run(r *runner) error {
@@ -746,7 +750,7 @@ func (c *reviewFixCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	return r.App.ReviewFix(r.Stdout, runID, c.Agent, c.Timeout, c.Yes, c.JSONOutput)
+	return r.App.ReviewFix(r.Stdout, r.Stderr, runID, c.Agent, c.Timeout, c.Yes, c.JSONOutput)
 }
 
 func (c *reviewLoopCmd) Run(r *runner) error {
@@ -754,7 +758,7 @@ func (c *reviewLoopCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	return r.App.ReviewLoop(r.Stdout, runID, reviewLoopOptions{
+	return r.App.ReviewLoop(r.Stdout, r.Stderr, runID, reviewLoopOptions{
 		Reviewer:   c.Reviewer,
 		Agent:      c.Agent,
 		MaxRounds:  c.MaxRounds,

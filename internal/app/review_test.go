@@ -914,6 +914,33 @@ func TestReviewRunUnsupportedInputModeFails(t *testing.T) {
 	}
 }
 
+func TestReviewRunStreamsLiveOutputToStderr(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper", "--yes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
+	}
+
+	// The reviewer's stdout and stderr both stream live to the operator's stderr.
+	if got := stderr.String(); !strings.Contains(got, "cwd_is_repo=true") || !strings.Contains(got, "stdin_has_reviewer_prompt=true") || !strings.Contains(got, "reviewer-stderr-line") {
+		t.Fatalf("live reviewer output missing from stderr:\n%s", got)
+	}
+	// Stdout stays the clean human summary; agent output never leaks there.
+	out := stdout.String()
+	if !strings.Contains(out, "Reviewer attempt finished") {
+		t.Fatalf("stdout missing human summary:\n%s", out)
+	}
+	if strings.Contains(out, "cwd_is_repo=") || strings.Contains(out, "reviewer-stderr-line") {
+		t.Fatalf("agent output leaked into stdout:\n%s", out)
+	}
+}
+
 func TestReviewRunWritesAttemptArtifacts(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
@@ -1374,6 +1401,34 @@ func TestReviewFixRunWritesAttemptArtifacts(t *testing.T) {
 	finishedIndex := indexOfEvent(eventTypes, "review_fix_attempt_finished")
 	if startedIndex == -1 || finishedIndex == -1 || startedIndex > finishedIndex {
 		t.Fatalf("events missing ordered review fix attempt lifecycle:\n%v", eventTypes)
+	}
+}
+
+func TestReviewFixStreamsLiveOutputToStderr(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperFixers(t, app, "helper")
+	runReviewCommand(t, app, "review", "add-finding", runID, "valid fixer finding", "--blocking", "--category", "quality")
+	t.Setenv("PACTUM_FIXER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_FIXER_EXPECTED_CWD", root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "fix", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review fix exited %d, stderr: %s", code, stderr.String())
+	}
+
+	// The fixer's stdout and stderr both stream live to the operator's stderr.
+	if got := stderr.String(); !strings.Contains(got, "cwd_is_repo=true") || !strings.Contains(got, "stdin_has_review_fix_prompt=true") || !strings.Contains(got, "fixer-stderr-line") {
+		t.Fatalf("live fixer output missing from stderr:\n%s", got)
+	}
+	// Stdout stays the clean human summary; agent output never leaks there.
+	out := stdout.String()
+	if !strings.Contains(out, "Review fix attempt finished") {
+		t.Fatalf("stdout missing human summary:\n%s", out)
+	}
+	if strings.Contains(out, "cwd_is_repo=") || strings.Contains(out, "fixer-stderr-line") {
+		t.Fatalf("agent output leaked into stdout:\n%s", out)
 	}
 }
 

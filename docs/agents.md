@@ -86,6 +86,21 @@ repository**:
 - The prepared prompt is piped to the agent's standard input.
 - The agent's stdout and stderr are captured to attempt artifacts.
 
+## Live output
+
+`execute run`, `review run`, and `review fix` (and each per-round reviewer/fixer
+sub-run inside `review loop`) stream the agent's stdout and stderr live to
+**your terminal's stderr** as the process runs, so a multi-minute run is not a
+silent black box. This is in addition to — not instead of — the per-attempt log
+files, which are still written in full under the attempt directory.
+
+The live stream goes to stderr on purpose: stdout stays the clean result channel
+in every mode. The human summary (or, with `--json`, the machine-readable result
+document) remains the only thing on stdout, so `--json` output stays parseable
+and `review loop` can still parse its sub-command JSON. Redirect stderr (for
+example `2>/dev/null`) to silence the live trace without affecting the result on
+stdout.
+
 There is **no Pactum-managed isolation**: no container, no virtual machine, no
 sandbox, and no filesystem confinement. The agent can read and write your
 repository exactly as if you had launched it yourself — the default `codex`

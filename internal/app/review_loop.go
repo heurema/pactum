@@ -54,7 +54,7 @@ type reviewLoopRoundSummary struct {
 	GateReportArtifact string   `json:"gate_report_artifact,omitempty"`
 }
 
-func (a App) ReviewLoop(stdout io.Writer, runID string, options reviewLoopOptions) error {
+func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, options reviewLoopOptions) error {
 	if !options.Yes {
 		return fmt.Errorf("review loop requires --yes because it runs reviewer/fixer agents directly")
 	}
@@ -88,7 +88,7 @@ func (a App) ReviewLoop(stdout io.Writer, runID string, options reviewLoopOption
 
 	var loopErr error
 	for round := 1; round <= maxRounds; round++ {
-		reviewerResult, proposals, err := a.runReviewLoopReviewRound(runID, options.Reviewer, options.Timeout)
+		reviewerResult, proposals, err := a.runReviewLoopReviewRound(liveOutput, runID, options.Reviewer, options.Timeout)
 		if err != nil {
 			loopErr = err
 			break
@@ -138,7 +138,7 @@ func (a App) ReviewLoop(stdout io.Writer, runID string, options reviewLoopOption
 			break
 		}
 
-		fixResult, err := a.runReviewLoopFixRound(runID, options.Agent, options.Timeout)
+		fixResult, err := a.runReviewLoopFixRound(liveOutput, runID, options.Agent, options.Timeout)
 		if err != nil {
 			summary.Rounds = append(summary.Rounds, roundSummary)
 			loopErr = err
@@ -214,8 +214,8 @@ func (a App) resolveReviewLoopMaxRounds(context reviewContext, override int) (in
 	return maxRounds, nil
 }
 
-func (a App) runReviewLoopReviewRound(runID string, reviewer string, timeout time.Duration) (reviewerResultDocument, reviewProposeFindingsResponse, error) {
-	reviewerResult, err := a.runReviewLoopReviewer(runID, reviewer, timeout)
+func (a App) runReviewLoopReviewRound(liveOutput io.Writer, runID string, reviewer string, timeout time.Duration) (reviewerResultDocument, reviewProposeFindingsResponse, error) {
+	reviewerResult, err := a.runReviewLoopReviewer(liveOutput, runID, reviewer, timeout)
 	if err != nil {
 		return reviewerResultDocument{}, reviewProposeFindingsResponse{}, err
 	}
@@ -226,9 +226,9 @@ func (a App) runReviewLoopReviewRound(runID string, reviewer string, timeout tim
 	return reviewerResult, proposals, nil
 }
 
-func (a App) runReviewLoopReviewer(runID string, reviewer string, timeout time.Duration) (reviewerResultDocument, error) {
+func (a App) runReviewLoopReviewer(liveOutput io.Writer, runID string, reviewer string, timeout time.Duration) (reviewerResultDocument, error) {
 	var stdout bytes.Buffer
-	if err := a.ReviewRun(&stdout, runID, reviewer, timeout, true, true); err != nil {
+	if err := a.ReviewRun(&stdout, liveOutput, runID, reviewer, timeout, true, true); err != nil {
 		return reviewerResultDocument{}, err
 	}
 	var result reviewerResultDocument
@@ -254,9 +254,9 @@ func (a App) acceptReviewLoopProposal(runID string, proposalID string) error {
 	return a.ReviewAcceptProposal(io.Discard, runID, proposalID, false)
 }
 
-func (a App) runReviewLoopFixRound(runID string, agent string, timeout time.Duration) (reviewFixResultDocument, error) {
+func (a App) runReviewLoopFixRound(liveOutput io.Writer, runID string, agent string, timeout time.Duration) (reviewFixResultDocument, error) {
 	var stdout bytes.Buffer
-	if err := a.ReviewFix(&stdout, runID, agent, timeout, true, true); err != nil {
+	if err := a.ReviewFix(&stdout, liveOutput, runID, agent, timeout, true, true); err != nil {
 		return reviewFixResultDocument{}, err
 	}
 	var result reviewFixResultDocument

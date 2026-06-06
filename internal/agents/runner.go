@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/heurema/pactum/internal/artifacts"
@@ -17,6 +18,20 @@ import (
 
 func RunSubprocess(request RunRequest) (RunResult, error) {
 	return runSubprocessWithRunner(request, osProcessRunner{})
+}
+
+// lockedWriter serializes concurrent writes to an underlying writer. os/exec
+// copies a command's stdout and stderr on separate goroutines, so a live writer
+// shared by both streams must be guarded.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
 
 type processRunner interface {
@@ -87,6 +102,20 @@ func runSubprocessWithRunner(request RunRequest, runner processRunner) (RunResul
 	}
 	defer stderr.Close()
 
+	// Capture to the per-attempt log files always; when a live writer is set,
+	// also tee both streams to it (the operator's stderr) so the run is visible
+	// as it happens. The agent's stdout is teed to the same live writer, keeping
+	// the caller's own stdout free for the clean result channel.
+	var stdoutWriter io.Writer = stdout
+	var stderrWriter io.Writer = stderr
+	if request.LiveOutput != nil {
+		// os/exec copies stdout and stderr on separate goroutines, so the shared
+		// live writer must be synchronized to avoid concurrent writes (data race).
+		live := &lockedWriter{w: request.LiveOutput}
+		stdoutWriter = io.MultiWriter(stdout, live)
+		stderrWriter = io.MultiWriter(stderr, live)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	if request.Timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, request.Timeout)
@@ -100,8 +129,8 @@ func runSubprocessWithRunner(request RunRequest, runner processRunner) (RunResul
 		Dir:     request.RepoRoot,
 		Env:     executor.env(os.Environ()),
 		Stdin:   bytes.NewReader(prompt),
-		Stdout:  stdout,
-		Stderr:  stderr,
+		Stdout:  stdoutWriter,
+		Stderr:  stderrWriter,
 	})
 	finished := time.Now().UTC()
 
