@@ -165,6 +165,51 @@ func TestReviewLoopStopsAtStalemateAfterUnchangedFixRounds(t *testing.T) {
 	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_003").ResultJSON)
 }
 
+func TestReviewLoopResetsStalemateStreakWhenFixerChangesWorkingTree(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_SEQUENCE_FILE", filepath.Join(stateDir, "fixer-sequence"))
+	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_MODE", "append_readme")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3", "--patience", "2", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.TerminalReason != "max_rounds" {
+		t.Fatalf("changing fixer should avoid premature stalemate: %#v", summary)
+	}
+	if len(summary.Rounds) != 3 {
+		t.Fatalf("rounds = %d, want 3: %#v", len(summary.Rounds), summary.Rounds)
+	}
+	for index, round := range summary.Rounds {
+		if round.ProposalsAccepted != 1 || round.FixerAttemptID == "" || round.WorkingTreeFingerprint == "" {
+			t.Fatalf("round %d fix signals mismatch: %#v", index+1, round)
+		}
+		if round.UnchangedFingerprintStreak != 0 {
+			t.Fatalf("round %d unchanged streak = %d, want 0 after changed fix: %#v", index+1, round.UnchangedFingerprintStreak, round)
+		}
+	}
+	if got := summary.Rounds[2]; got.FixerAttemptID != "attempt_003" || got.GateStatus != "needs_review" {
+		t.Fatalf("loop should run all fixer rounds with changed gate status: %#v", got)
+	}
+	if got := mustReadFile(t, filepath.Join(root, "README.md")); !strings.Contains(got, "fixer-change=3") {
+		t.Fatalf("fixer did not append distinct README changes:\n%s", got)
+	}
+	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_003").ResultJSON)
+	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_004").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_004").ResultJSON)
+}
+
 func TestReviewLoopRequiresConsecutiveCleanRounds(t *testing.T) {
 	root := t.TempDir()
 	stateDir := t.TempDir()
@@ -362,6 +407,23 @@ func TestReviewLoopFixerHelperProcess(t *testing.T) {
 		os.Exit(2)
 	}
 	fmt.Printf("stdin_has_review_fix_prompt=%t\n", strings.Contains(string(stdin), "# Review Fix Prompt"))
+	if os.Getenv("PACTUM_REVIEW_LOOP_FIXER_MODE") == "append_readme" {
+		attempt := nextReviewLoopHelperAttempt("PACTUM_REVIEW_LOOP_FIXER_SEQUENCE_FILE")
+		file, err := os.OpenFile("README.md", os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "fixer open error: %v\n", err)
+			os.Exit(2)
+		}
+		if _, err := fmt.Fprintf(file, "fixer-change=%d\n", attempt); err != nil {
+			_ = file.Close()
+			fmt.Fprintf(os.Stderr, "fixer write error: %v\n", err)
+			os.Exit(2)
+		}
+		if err := file.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "fixer close error: %v\n", err)
+			os.Exit(2)
+		}
+	}
 	os.Exit(0)
 }
 
@@ -385,7 +447,11 @@ func assertReviewLoopHelperCWD() {
 }
 
 func nextReviewLoopReviewerAttempt() int {
-	path := os.Getenv("PACTUM_REVIEW_LOOP_REVIEWER_SEQUENCE_FILE")
+	return nextReviewLoopHelperAttempt("PACTUM_REVIEW_LOOP_REVIEWER_SEQUENCE_FILE")
+}
+
+func nextReviewLoopHelperAttempt(sequenceFileEnv string) int {
+	path := os.Getenv(sequenceFileEnv)
 	if path == "" {
 		return 1
 	}
