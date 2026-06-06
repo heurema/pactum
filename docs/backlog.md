@@ -66,12 +66,6 @@ reviews across M8–M10. Rough priority in parentheses.
   `resetApprovalIfApproved` — so running them on an already-approved/executed run
   silently regresses it to `clarifying`. Guard or warn when the run is already
   approved (pre-existing; `clarify suggest` makes bulk creation easier).
-- **Lifecycle dedup** (low→med). `execute run` / `review run` / `review fix` /
-  `clarify suggest` / `contract draft` now share a near-identical agent-run +
-  attempt/result/event lifecycle — **5 copies**. A shared helper would reduce drift
-  (the L1 staleness bug came from the fork) and the accept-step revise-then-mark
-  ordering window (shared by review/contract accept). Revisit now that the shape is
-  stable, if it abstracts cleanly.
 - **`-race` in CI** (med). `make check` runs `go test ./...` without `-race`, so the
   M10.2 live-output data race slipped through. The full suite is race-clean as of
   M10.2, so enabling `-race` (a CI step or a `make check-race` target) is now safe and
@@ -86,3 +80,6 @@ reviews across M8–M10. Rough priority in parentheses.
   review (#43); fix stage (#46); review loop driver (#47); live agent output (#49);
   loop stop conditions — stalemate + K-consecutive-clean (M10.3); clarify suggest
   (M11.0); contract drafting (M11.1).
+- Lifecycle dedup (#53) — the five agent-run commands (`execute run`, `review run`,
+  `review fix`, `clarify suggest`, `contract draft`) now share one attempt-lifecycle
+  helper (`runAgentAttemptLifecycle`); behavior-preserving, net −137 LOC (M11.2).
