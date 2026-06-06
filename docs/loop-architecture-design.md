@@ -107,18 +107,31 @@ failure — the agent crashed or produced no diff at all — which is distinct f
 **Goal:** converge code quality by iterating *find → fix → re-validate → re-review*
 until no critical findings remain.
 
-**Loop:**
+**Loop (one fresh agent session per step):**
 
-1. **gate** — run validation (e.g. `make check`) and detect changed files.
-2. **review run** — the reviewer agent emits findings, each with a severity.
-3. If **critical** findings remain → **fix** — an executor agent fixes them, scoped
-   to the findings, in a **fresh context** (only the current findings + diff, not
-   the full history).
-4. **re-gate + re-review.**
-5. Exit when no critical findings remain → **human `review approve`.**
+1. **gate** — run validation (`make check`) and detect changed files.
+2. **review run** — the reviewer agent (a *different* model than the executor; see
+   Cross-model review) emits findings. On a re-review, the fixer's prior rebuttal is
+   fed back so the reviewer re-judges its earlier findings rather than repeating them.
+3. **fix** — an executor agent (write-enabled, fresh context scoped to the findings)
+   *evaluates each finding*: traces it to the code, then either **fixes it in place**
+   or **records a rebuttal** explaining why it is a false positive. It does **not**
+   emit a "done" signal — even after fixing.
+4. **re-gate + re-review** — the only thing that ends the loop is a *review round that
+   finds nothing*.
+5. Converged (a clean review round) → **human `review approve`**.
 
-**Validation lives inside the loop.** The cycle is `fix → gate → review`, never
-`fix → review` — so a fix that breaks the build is caught before a quality review.
+**Convergence by clean round, not by fixer claim.** "Done" means *this review round
+surfaced zero (critical) findings* — never "the fixer says it finished." Convergence
+is therefore a property the *reviewer* asserts, which guarantees the last fix was
+itself re-reviewed: a fix is never shipped un-re-reviewed.
+
+**Validation lives inside the loop:** the cycle is `fix → gate → review`, never
+`fix → review`, so a fix that breaks the build is caught before a quality review.
+
+**Iteration-aware diff (token economy).** Round 1 reviews the whole change
+(`git diff <base>...HEAD`); later rounds review only the just-applied fixes
+(`git diff`), since the earlier code was already judged.
 
 ### Cross-model review
 
@@ -131,6 +144,10 @@ that each review independently.
 - **Independence.** An author model tends to rationalize its own choices; an
   independent model is a stronger critic and surfaces issues that same-model review
   misses.
+- **Adversarial, with rebuttal.** The fixer does not blindly accept findings — it
+  fixes valid ones and rebuts false positives. The rebuttal is fed back to the
+  reviewer on the next round to re-judge, so disagreements resolve through a channel
+  instead of looping blindly.
 - **Safe by construction.** Reviewers run read-only (the reviewer role carries no
   write/edit bypass), so running additional models as reviewers cannot mutate the
   tree — only the fix step (an executor) writes.
@@ -144,22 +161,39 @@ that each review independently.
 - **Cost.** Each additional reviewer multiplies per-round cost; panel size is bounded
   by the budget stop and by which models are configured.
 
-### Stop conditions (all required)
+### Severity by composition, not a data model
+
+Findings do **not** need a per-finding `severity` field. Strictness is enforced by
+*which review runs in which phase*:
+
+- a **broad** pass first (more reviewers / a wider prompt) that fixes everything
+  confirmed, then
+- a **narrow final gate** — a critical/major-only review (`"ignore minor"`) that also
+  re-checks for regressions the broad fixes may have introduced.
+
+This gives tiered strictness with zero issue-tracking schema; the existing `blocking`
+attribute on findings is a coarse model-side hint, not a required taxonomy.
+
+### Stop conditions
 
 A naive "loop until a clean review" both runs away and converges falsely, because the
-reviewer is a non-deterministic LLM (a single clean run ≠ actually clean). The loop
-must therefore be bounded by:
+reviewer is a non-deterministic LLM. The loop is bounded by several **independent**
+stops:
 
-- **Severity gate** — loop while "critical" (blocking) findings exist; exit when only
-  minor/none remain. Maps to the existing `blocking` flag on findings.
-- **K-consecutive-clean** — require *K* review rounds with no critical findings before
-  declaring convergence, to absorb reviewer variance.
-- **No-progress / oscillation detection** — if a round's findings equal the previous
-  round's (same unfixed) or the count stops decreasing, stop and **escalate to the
-  human**.
+- **Clean review round** (primary terminal) — convergence asserted by the reviewer
+  finding nothing, re-verified per the clean-round protocol above. Optionally require
+  *K* consecutive clean rounds for extra safety against reviewer variance; with the
+  re-verify protocol, `K = 1` is usually enough.
+- **Stalemate by working-tree fingerprint** — count consecutive rounds where `HEAD`
+  **and** a hash of the working tree are unchanged; after *N* such rounds, stop and
+  escalate to the human. This reuses the gate's existing file-hashing
+  (`computeGateChanges`) and is robust precisely because it ignores finding *text* —
+  if no bytes changed and the reviewer still objects, the loop is stuck.
 - **`review.max_rounds`** — hard cap on rounds.
-- **Budget stop** — `budget.mode` / `budget.max_usd`. Review rounds at high reasoning
-  effort are expensive; the budget must be able to halt the loop.
+- **Budget stop** — `budget.mode` / `budget.max_usd`, a distinct ceiling independent
+  of round count (review at high reasoning effort is expensive). This is the stop a
+  pure iteration-count model lacks; for unattended runs on metered models it is the
+  real backstop.
 - **Final human gate** — `review approve --by manual` even after the loop converges.
 
 ---
@@ -254,6 +288,8 @@ unenforced. Wiring them is the implementation — not new config surface.
 - Config caps and the `budget` block are declared.
 - The contract has an `Assumptions` section.
 - Two agent stages exist (execute, review), each a fresh subprocess.
+- Per-stage `model[:effort]` (executor + reviewer) with a resolved-config header, and
+  opt-in cross-model review (reviewer model differs from the executor) — M9.0–M9.3.
 
 **To build:**
 
@@ -261,24 +297,32 @@ unenforced. Wiring them is the implementation — not new config surface.
   loop. Today the contract is human-edited fields with no agent involvement; this
   makes contract drafting a *bounded* agent stage while preserving the human approve
   gate. Wire the declared `clarify` caps.
-- **Phase 3:** the review loop driver — a *fix* stage that consumes findings, then
-  re-gate and re-review; a severity taxonomy beyond a single `blocking` flag;
-  `K-consecutive-clean` and no-progress detection; validation inside the loop.
-- **Cross-cutting:** enforce the declared caps; budget stop; per-iteration
-  fresh-context discipline; `model[:effort]`.
+- **Phase 3 (review→fix loop), in slices:**
+  - **L1 — fix stage:** an executor agent (write-enabled, fresh context) that
+    *evaluates* the current findings and either fixes in place or records a rebuttal.
+    The missing primitive; useful standalone (manual review → fix → review).
+  - **L2 — severity by composition:** a broad fix pass then a critical-only final
+    gate (no per-finding severity schema).
+  - **L3 — loop driver:** clean-round-exit with forced re-verify, the rebuttal
+    channel back to the reviewer, stalemate-by-fingerprint (reusing the gate hashes),
+    `review.max_rounds`, and the budget stop.
+- **Cross-cutting (already shipped):** per-iteration fresh-context (each stage is a
+  fresh subprocess), per-stage `model[:effort]` + resolved header (M9.0–M9.2),
+  cross-model reviewer default (M9.3). Remaining: enforce the declared caps and wire
+  the budget stop into the loop.
 
 ## Open questions / decisions
 
 - **Contract drafting as a third agent stage.** Keep agent edits structured (proposed
   field diffs, not free-form prose) and preserve the human approve gate.
-- **Convergence definition.** What value of *K* (consecutive clean reviews)? Should a
-  *deterministic* signal (lint / tests) be folded into "critical" to reduce reliance
-  on a non-deterministic reviewer?
-- **Severity taxonomy.** Minimal (`blocking` / non-blocking) vs richer
-  (`critical` / `major` / `minor`).
-- **Cross-model review.** The default reviewer model vs the executor; a single
-  cross-model reviewer vs a panel; the aggregation / severity-reconciliation rule
-  (any-reviewer-critical vs majority); panel size vs budget.
+- **Convergence definition.** The primary terminal is a clean review round with the
+  forced re-verify; is `K = 1` enough or should K consecutive clean rounds be
+  required? Should a *deterministic* signal (lint / tests passing) gate convergence
+  alongside the reviewer's judgment?
+- **Severity.** *Decided:* enforced by phase composition (broad pass → critical-only
+  gate), not a per-finding taxonomy. The `blocking` attribute stays a coarse hint.
+- **Cross-model panel.** Single cross-model reviewer (shipped, M9.3) vs a panel of N
+  models; the finding aggregation / dedup rule; panel size vs the budget stop.
 - **No decomposition.** Confirm that a bounded-change-only scope is acceptable; large
   features are sliced into multiple contracts by hand.
 - **Who is "the human" in headless / CI runs?** The clarify loop requires an answerer.
@@ -287,9 +331,12 @@ unenforced. Wiring them is the implementation — not new config surface.
 
 ## Indicative milestones
 
-Ordering is still open; these are independent enough to sequence freely:
-
-1. **`model[:effort]` pin-or-inherit + resolved-config header** — small, isolated,
-   immediate value.
-2. **Review loop** — find → fix → re-review with the stop conditions above.
-3. **Clarify loop** — agent question-generation + contract refinement, human-answered.
+1. `model[:effort]` pin-or-inherit + resolved-config header — **done** (M9.0–M9.2).
+2. Cross-model review (reviewer model differs from executor) — **done, opt-in** (M9.3).
+3. **Review→fix loop**, in slices:
+   - **L1** — fix stage: executor evaluates findings → fix in place or rebut.
+   - **L2** — severity by composition: broad pass → critical-only final gate.
+   - **L3** — loop driver: clean-round-exit with forced re-verify, the rebuttal
+     channel, stalemate-by-fingerprint, `review.max_rounds`, and the budget stop.
+4. **Cross-model panel** — N reviewers + finding aggregation (a branch of L3).
+5. **Clarify loop** — agent question-generation + contract refinement, human-answered.
