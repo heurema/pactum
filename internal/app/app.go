@@ -168,14 +168,16 @@ type contractAcceptDraftCmd struct {
 }
 
 type contractReviseCmd struct {
-	RunID         string   `arg:"" optional:"" name:"run_id" help:"Run id to revise."`
-	Goal          string   `name:"goal" help:"Replace the contract goal."`
-	AddInScope    []string `name:"add-in-scope" sep:"none" help:"Append an in-scope item."`
-	AddOutOfScope []string `name:"add-out-of-scope" sep:"none" help:"Append an out-of-scope item."`
-	AddAcceptance []string `name:"add-acceptance" sep:"none" help:"Append an acceptance criterion."`
-	AddValidation []string `name:"add-validation" sep:"none" help:"Append a validation command."`
-	AddAssumption []string `name:"add-assumption" sep:"none" help:"Append an assumption."`
-	JSONOutput    bool     `name:"json" help:"Print machine-readable JSON output."`
+	RunID             string   `arg:"" optional:"" name:"run_id" help:"Run id to revise."`
+	Goal              string   `name:"goal" help:"Replace the contract goal."`
+	AddInScope        []string `name:"add-in-scope" sep:"none" help:"Append an in-scope item."`
+	AddOutOfScope     []string `name:"add-out-of-scope" sep:"none" help:"Append an out-of-scope item."`
+	AddPathInScope    []string `name:"add-path-in-scope" sep:"none" help:"Append a repo-relative path glob that is in scope."`
+	AddPathOutOfScope []string `name:"add-path-out-of-scope" sep:"none" help:"Append a repo-relative path glob that is out of scope."`
+	AddAcceptance     []string `name:"add-acceptance" sep:"none" help:"Append an acceptance criterion."`
+	AddValidation     []string `name:"add-validation" sep:"none" help:"Append a validation command."`
+	AddAssumption     []string `name:"add-assumption" sep:"none" help:"Append an assumption."`
+	JSONOutput        bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type contractApproveCmd struct {
@@ -637,12 +639,14 @@ func (c *contractReviseCmd) Run(r *runner) error {
 		return err
 	}
 	revision := contractRevision{
-		Goal:          c.Goal,
-		AddInScope:    c.AddInScope,
-		AddOutOfScope: c.AddOutOfScope,
-		AddAcceptance: c.AddAcceptance,
-		AddValidation: c.AddValidation,
-		AddAssumption: c.AddAssumption,
+		Goal:              c.Goal,
+		AddInScope:        c.AddInScope,
+		AddOutOfScope:     c.AddOutOfScope,
+		AddPathInScope:    c.AddPathInScope,
+		AddPathOutOfScope: c.AddPathOutOfScope,
+		AddAcceptance:     c.AddAcceptance,
+		AddValidation:     c.AddValidation,
+		AddAssumption:     c.AddAssumption,
 	}
 	return r.App.ContractRevise(r.Stdout, runID, revision, c.JSONOutput)
 }

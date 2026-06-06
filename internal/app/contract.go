@@ -15,12 +15,14 @@ import (
 const approvalSchema = "pactum.approval.v1"
 
 type contractRevision struct {
-	Goal          string
-	AddInScope    []string
-	AddOutOfScope []string
-	AddAcceptance []string
-	AddValidation []string
-	AddAssumption []string
+	Goal              string
+	AddInScope        []string
+	AddOutOfScope     []string
+	AddPathInScope    []string
+	AddPathOutOfScope []string
+	AddAcceptance     []string
+	AddValidation     []string
+	AddAssumption     []string
 }
 
 // runContext is the fully-loaded state of a run directory: its resolved paths,
@@ -229,6 +231,8 @@ func (revision contractRevision) hasChanges() bool {
 	return strings.TrimSpace(revision.Goal) != "" ||
 		len(revision.AddInScope) > 0 ||
 		len(revision.AddOutOfScope) > 0 ||
+		len(revision.AddPathInScope) > 0 ||
+		len(revision.AddPathOutOfScope) > 0 ||
 		len(revision.AddAcceptance) > 0 ||
 		len(revision.AddValidation) > 0 ||
 		len(revision.AddAssumption) > 0
@@ -240,6 +244,8 @@ func applyContractRevision(contract *draftContract, revision contractRevision) {
 	}
 	contract.Scope.In = append(contract.Scope.In, revision.AddInScope...)
 	contract.Scope.Out = append(contract.Scope.Out, revision.AddOutOfScope...)
+	contract.PathsInScope = append(contract.PathsInScope, revision.AddPathInScope...)
+	contract.PathsOutOfScope = append(contract.PathsOutOfScope, revision.AddPathOutOfScope...)
 	contract.AcceptanceCriteria = append(contract.AcceptanceCriteria, revision.AddAcceptance...)
 	contract.Validation.Commands = append(contract.Validation.Commands, revision.AddValidation...)
 	contract.Assumptions = append(contract.Assumptions, revision.AddAssumption...)

@@ -31,6 +31,7 @@ type gateReportDocument struct {
 	Status     string               `json:"status"`
 	Execution  gateExecutionReport  `json:"execution"`
 	Changes    gateChangeReport     `json:"changes"`
+	Scope      *gateScopeReport     `json:"scope,omitempty"`
 	Validation gateValidationReport `json:"validation"`
 	Summary    gateSummary          `json:"summary"`
 }
@@ -48,6 +49,13 @@ type gateChangeReport struct {
 	NewFiles     []string `json:"new_files"`
 	MissingFiles []string `json:"missing_files"`
 	Reasons      []string `json:"reasons"`
+}
+
+type gateScopeReport struct {
+	Status     string   `json:"status"`
+	Undeclared []string `json:"undeclared"`
+	OutOfScope []string `json:"out_of_scope"`
+	Warnings   []string `json:"warnings"`
 }
 
 type gateValidationReport struct {
@@ -145,6 +153,7 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 		}
 	}
 	changes := buildGateChangeReport(context.Root, context.Paths)
+	scope := buildGateScopeReport(context.Contract, changes)
 
 	summary := gateSummary{
 		ExecutionPassed:   attempt.Result.ExitCode == 0 && !attempt.Result.TimedOut,
@@ -164,6 +173,7 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 			Result:    resultArtifact,
 		},
 		Changes:    changes,
+		Scope:      scope,
 		Validation: validation,
 		Summary:    summary,
 	}
@@ -435,6 +445,73 @@ func gateChangeReasons(report gateChangeReport) []string {
 	return reasons
 }
 
+func buildGateScopeReport(contract draftContract, changes gateChangeReport) *gateScopeReport {
+	pathsInScope := nonEmptyPathGlobs(contract.PathsInScope)
+	pathsOutOfScope := nonEmptyPathGlobs(contract.PathsOutOfScope)
+	if len(pathsInScope) == 0 && len(pathsOutOfScope) == 0 {
+		return nil
+	}
+
+	report := &gateScopeReport{
+		Status:     "clean",
+		Undeclared: []string{},
+		OutOfScope: []string{},
+		Warnings:   []string{},
+	}
+	for _, path := range gateScopeCandidateFiles(changes) {
+		if len(pathsInScope) > 0 && !pathGlobMatchesAny(pathsInScope, path) {
+			report.Undeclared = append(report.Undeclared, path)
+		}
+		if len(pathsOutOfScope) > 0 && pathGlobMatchesAny(pathsOutOfScope, path) {
+			report.OutOfScope = append(report.OutOfScope, path)
+		}
+	}
+	if len(report.Undeclared)+len(report.OutOfScope) > 0 {
+		report.Status = "warnings"
+		report.Warnings = gateScopeWarnings(report)
+	}
+	return report
+}
+
+func nonEmptyPathGlobs(patterns []string) []string {
+	filtered := make([]string, 0, len(patterns))
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		// Drop globs that normalize to nothing (e.g. "/", "./"): they match no
+		// path, so keeping them would flag every changed file as undeclared.
+		if pattern == "" || normalizePathGlob(pattern) == "" {
+			continue
+		}
+		filtered = append(filtered, pattern)
+	}
+	return filtered
+}
+
+func gateScopeCandidateFiles(changes gateChangeReport) []string {
+	seen := map[string]bool{}
+	files := make([]string, 0, len(changes.ChangedFiles)+len(changes.NewFiles))
+	for _, path := range append(append([]string{}, changes.ChangedFiles...), changes.NewFiles...) {
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		files = append(files, path)
+	}
+	sort.Strings(files)
+	return files
+}
+
+func gateScopeWarnings(report *gateScopeReport) []string {
+	warnings := make([]string, 0, len(report.Undeclared)+len(report.OutOfScope))
+	for _, path := range report.Undeclared {
+		warnings = append(warnings, "undeclared file: "+path)
+	}
+	for _, path := range report.OutOfScope {
+		warnings = append(warnings, "out-of-scope file: "+path)
+	}
+	return warnings
+}
+
 func (a App) runGateValidationCommand(root string, runPaths contractRunPathSet, id string, commandText string, timeout time.Duration) (gateValidationCommandReport, error) {
 	commandDir := filepath.Join(runPaths.GateValidationDir, id)
 	if err := os.MkdirAll(commandDir, 0o755); err != nil {
@@ -564,6 +641,7 @@ func writeGateRun(stdout io.Writer, state contractRunState, report gateReportDoc
 	fmt.Fprintf(stdout, "  new files: %d\n", len(report.Changes.NewFiles))
 	fmt.Fprintf(stdout, "  missing files: %d\n", len(report.Changes.MissingFiles))
 	fmt.Fprintln(stdout)
+	writeGateScopeSummary(stdout, report.Scope)
 	fmt.Fprintln(stdout, "Validation:")
 	passed, failed := gateValidationCounts(report.Validation.Commands)
 	fmt.Fprintf(stdout, "  commands: %d\n", len(report.Validation.Commands))
@@ -601,6 +679,7 @@ func writeGateShow(stdout io.Writer, report gateReportDocument) {
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Changes:")
 	writeGateShowChanges(stdout, report.Changes)
+	writeGateShowScope(stdout, report.Scope)
 }
 
 func writeGateShowChanges(stdout io.Writer, changes gateChangeReport) {
@@ -616,6 +695,42 @@ func writeGateShowChanges(stdout io.Writer, changes gateChangeReport) {
 	}
 	for _, path := range changes.MissingFiles {
 		fmt.Fprintf(stdout, "  - missing file: %s\n", path)
+	}
+}
+
+func writeGateScopeSummary(stdout io.Writer, scope *gateScopeReport) {
+	if scope == nil {
+		return
+	}
+	fmt.Fprintln(stdout, "Scope:")
+	fmt.Fprintf(stdout, "  status: %s\n", scope.Status)
+	fmt.Fprintf(stdout, "  undeclared: %d\n", len(scope.Undeclared))
+	fmt.Fprintf(stdout, "  out of scope: %d\n", len(scope.OutOfScope))
+	writeGateScopeWarnings(stdout, scope, "  ")
+	fmt.Fprintln(stdout)
+}
+
+func writeGateShowScope(stdout io.Writer, scope *gateScopeReport) {
+	if scope == nil {
+		return
+	}
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Scope:")
+	fmt.Fprintf(stdout, "  status: %s\n", scope.Status)
+	if len(scope.Warnings) == 0 {
+		fmt.Fprintln(stdout, "  warnings: 0")
+		return
+	}
+	writeGateScopeWarnings(stdout, scope, "  ")
+}
+
+func writeGateScopeWarnings(stdout io.Writer, scope *gateScopeReport, indent string) {
+	if len(scope.Warnings) == 0 {
+		return
+	}
+	fmt.Fprintf(stdout, "%sWarnings:\n", indent)
+	for _, warning := range scope.Warnings {
+		fmt.Fprintf(stdout, "%s  - %s\n", indent, warning)
 	}
 }
 

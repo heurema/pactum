@@ -88,10 +88,12 @@ contract approval and prompt build.
 
 `pactum contract revise <run_id>` appends to the deterministic contract fields
 (`--goal`, `--add-in-scope`, `--add-out-of-scope`, `--add-acceptance`,
-`--add-validation`, `--add-assumption`). `pactum contract approve <run_id> --by
-manual` approves the contract and pins the approval to the contract's SHA-256
-hash. Revising an already-approved contract resets the approval, because the
-recorded hash no longer matches.
+`--add-path-in-scope`, `--add-path-out-of-scope`, `--add-validation`,
+`--add-assumption`). Path scope entries are repo-relative slash globs; `*`
+matches within one path segment, while `**` matches any number of path segments.
+`pactum contract approve <run_id> --by manual` approves the contract and pins the
+approval to the contract's SHA-256 hash. Revising an already-approved contract
+resets the approval, because the recorded hash no longer matches.
 
 ### Prompt
 
@@ -123,8 +125,12 @@ matches the prompt manifest, and the accepted-memory boundary is unchanged.
 the project map hashes to report changed/new/missing files, and summarizes the
 latest matching execution attempt. Validation commands from the contract run
 **only** when you pass `--allow-commands`; without it, Pactum refuses to run
-them and says so. The gate status is `passed`, `needs_review`, or `failed`.
-`pactum gate show` prints the latest report.
+them and says so. When the approved contract declares `paths_in_scope` and/or
+`paths_out_of_scope`, the gate also compares changed and new files against those
+globs and records advisory scope warnings for undeclared or explicitly
+out-of-scope files. Scope warnings do not make the gate fail; promotion to a
+blocking policy is a deliberate follow-up. The gate status is `passed`,
+`needs_review`, or `failed`. `pactum gate show` prints the latest report.
 
 ### Review
 
