@@ -62,7 +62,6 @@ type reviewLoopRoundSummary struct {
 	ProposalsCreated           int      `json:"proposals_created"`
 	ProposalsAccepted          int      `json:"proposals_accepted"`
 	OpenFindings               int      `json:"open_findings"`
-	TotalOpenFindings          int      `json:"total_open_findings"`
 	Warnings                   []string `json:"warnings,omitempty"`
 	CleanStreak                int      `json:"clean_streak"`
 	UnchangedFingerprintStreak int      `json:"unchanged_fingerprint_streak"`
@@ -120,12 +119,29 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 			summary.Reviewer = reviewerResult.Reviewer
 		}
 
+		openFindings, err := reviewLoopOpenFindingFingerprints(context.RunPaths)
+		if err != nil {
+			loopErr = err
+			break
+		}
 		accepted := 0
+		duplicates := 0
 		for _, proposal := range proposals.Created {
-			if err := a.acceptReviewLoopProposal(runID, proposal.ID); err != nil {
+			fingerprint := fingerprintReviewFinding(proposal.findingCore)
+			if existingFinding, ok := openFindings[fingerprint]; ok {
+				if err := a.recordDuplicateReviewLoopProposal(context, proposal.ID, existingFinding.ID); err != nil {
+					loopErr = err
+					break
+				}
+				duplicates++
+				continue
+			}
+			finding, err := a.acceptReviewLoopProposal(runID, proposal.ID)
+			if err != nil {
 				loopErr = err
 				break
 			}
+			openFindings[fingerprint] = finding
 			accepted++
 		}
 		if loopErr != nil {
@@ -142,17 +158,15 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 			ReviewerAttemptID: reviewerResult.AttemptID,
 			ProposalsCreated:  len(proposals.Created),
 			ProposalsAccepted: accepted,
-			OpenFindings:      accepted,
-			TotalOpenFindings: totalOpen,
+			OpenFindings:      totalOpen,
 			Warnings:          append([]string{}, proposals.Warnings...),
 		}
-		// A round that accepts no proposals ends the loop, but only a round that
-		// reported NOTHING is a clean pass. If the reviewer reported findings that
-		// could not be parsed into proposals (warnings), the code was not actually
-		// cleared — terminate with a distinct, non-pass reason so real findings are
-		// never silently dropped.
-		if accepted == 0 {
-			if len(proposals.Warnings) == 0 {
+		// A round with no accepted or duplicate proposals ends the loop, but only a
+		// round that reported NOTHING is a clean pass. If the reviewer reported
+		// findings that could not be parsed into proposals (warnings), the code was
+		// not actually cleared.
+		if accepted == 0 && duplicates == 0 {
+			if len(proposals.Created) == 0 && len(proposals.Warnings) == 0 {
 				cleanStreak++
 			} else {
 				cleanStreak = 0
@@ -338,8 +352,43 @@ func (a App) runReviewLoopProposeFindings(runID string, reviewerAttemptID string
 	return response, nil
 }
 
-func (a App) acceptReviewLoopProposal(runID string, proposalID string) error {
-	return a.ReviewAcceptProposal(io.Discard, runID, proposalID, false)
+func (a App) acceptReviewLoopProposal(runID string, proposalID string) (reviewFindingRecord, error) {
+	var stdout bytes.Buffer
+	if err := a.ReviewAcceptProposal(&stdout, runID, proposalID, true); err != nil {
+		return reviewFindingRecord{}, err
+	}
+	var response reviewAcceptProposalResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		return reviewFindingRecord{}, err
+	}
+	return response.Finding, nil
+}
+
+func (a App) recordDuplicateReviewLoopProposal(context reviewContext, proposalID string, findingID string) error {
+	_, decisions, err := readReviewProposalRecords(context.RunPaths)
+	if err != nil {
+		return err
+	}
+	if isProposalDecided(proposalID, decisions) {
+		return fmt.Errorf("review proposal already decided: %s", proposalID)
+	}
+
+	now := a.nowUTC()
+	decision := reviewProposalDecisionRecord{
+		Schema:     reviewProposalDecisionSchema,
+		ID:         nextReviewID("pd", len(decisions)+1),
+		RunID:      context.State.RunID,
+		ProposalID: proposalID,
+		Decision:   "duplicate",
+		FindingID:  findingID,
+		Reason:     "matches currently open finding",
+		CreatedAt:  now.Format(time.RFC3339),
+		Source:     "review_loop",
+	}
+	if err := appendJSONLine(context.RunPaths.ReviewProposalDecisionsJSONL, decision); err != nil {
+		return err
+	}
+	return ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_proposal_duplicate", Timestamp: now, RunID: context.State.RunID, RepoRoot: context.Root})
 }
 
 func (a App) runReviewLoopFixRound(liveOutput io.Writer, runID string, agent string, timeout time.Duration) (reviewFixResultDocument, error) {
@@ -372,6 +421,28 @@ func reviewLoopTotalOpenFindings(runPaths contractRunPathSet) (int, error) {
 		return 0, err
 	}
 	return summarizeReview(findings, resolutions).Open, nil
+}
+
+func reviewLoopOpenFindingFingerprints(runPaths contractRunPathSet) (map[reviewFindingFingerprint]reviewFindingRecord, error) {
+	findings, resolutions, err := readReviewRecords(runPaths)
+	if err != nil {
+		return nil, err
+	}
+	resolved := latestReviewResolutions(resolutions)
+	open := make(map[reviewFindingFingerprint]reviewFindingRecord)
+	for _, finding := range findings {
+		if _, ok := resolved[finding.ID]; ok {
+			continue
+		}
+		// Autonomous-loop dedup is deliberately exact: only the stored
+		// (file, line, message) tuple matches. Reworded messages and line drift
+		// remain separate findings until a later semantic dedup design exists.
+		fingerprint := fingerprintReviewFinding(finding.findingCore)
+		if _, exists := open[fingerprint]; !exists {
+			open[fingerprint] = finding
+		}
+	}
+	return open, nil
 }
 
 func reviewLoopWorkingTreeFingerprint(context reviewContext) (string, error) {

@@ -557,6 +557,9 @@ func summarizeReviewProposals(proposals []reviewProposalView) reviewProposalSumm
 			summary.Accepted++
 		case "rejected":
 			summary.Rejected++
+		case "duplicate":
+			// Duplicate is a terminal autonomous-loop decision, but the summary
+			// schema only distinguishes accepted/rejected/pending.
 		default:
 			summary.Pending++
 		}
@@ -566,7 +569,7 @@ func summarizeReviewProposals(proposals []reviewProposalView) reviewProposalSumm
 
 func isProposalDecided(proposalID string, decisions []reviewProposalDecisionRecord) bool {
 	if decision, ok := latestReviewProposalDecisions(decisions)[proposalID]; ok {
-		return decision.Decision == "accepted" || decision.Decision == "rejected"
+		return decision.Decision == "accepted" || decision.Decision == "rejected" || decision.Decision == "duplicate"
 	}
 	return false
 }
