@@ -237,13 +237,13 @@ type reviewApproveCmd struct {
 
 type reviewDryRunCmd struct {
 	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to prepare reviewer artifacts for."`
-	Reviewer   string `name:"reviewer" help:"Built-in reviewer name. Defaults to codex."`
+	Reviewer   string `name:"reviewer" help:"Built-in reviewer name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to review."`
-	Reviewer   string        `name:"reviewer" help:"Built-in reviewer name. Defaults to codex."`
+	Reviewer   string        `name:"reviewer" help:"Built-in reviewer name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
 	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the reviewer process."`
 	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`

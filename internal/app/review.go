@@ -676,11 +676,11 @@ func (a App) prepareReviewer(context reviewContext, reviewerName string, action 
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
-	reviewer, err := a.agentRegistry().ResolveReviewer(reviewerName)
+	config, err := readConfig(context.Paths.Config)
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
-	config, err := readConfig(context.Paths.Config)
+	reviewer, err := a.agentRegistry().ResolveReviewer(resolveReviewerNameForReview(context, reviewerName, config.Agents.CrossModelReview))
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
@@ -709,6 +709,40 @@ func (a App) prepareReviewer(context reviewContext, reviewerName string, action 
 		Reviewer:          reviewer,
 		ModelSpec:         modelSpec,
 	}, nil
+}
+
+func resolveReviewerNameForReview(context reviewContext, reviewerName string, crossModelReview bool) string {
+	if strings.TrimSpace(reviewerName) != "" || !crossModelReview {
+		return reviewerName
+	}
+	executorName, ok := latestExecutionExecutorName(context)
+	if !ok {
+		return ""
+	}
+	switch executorName {
+	case agents.BuiltinCodex:
+		return agents.BuiltinClaude
+	case agents.BuiltinClaude:
+		return agents.BuiltinCodex
+	default:
+		return ""
+	}
+}
+
+func latestExecutionExecutorName(context reviewContext) (string, bool) {
+	attempt, ok, err := loadExecutionAttempt(executeReportContext{
+		RunPaths: context.RunPaths,
+		State:    context.State,
+	}, "")
+	if err != nil || !ok {
+		return "", false
+	}
+	var request executionRequestDocument
+	if err := readJSON(attempt.Paths.RequestJSON, &request); err != nil {
+		return "", false
+	}
+	name := strings.TrimSpace(request.Agent.Name)
+	return name, name != ""
 }
 
 func writeReviewerDryRunArtifacts(prep reviewerDryRunPreparation, plan reviewerDryRunDocument) error {
