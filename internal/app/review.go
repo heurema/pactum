@@ -530,7 +530,7 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, rev
 		FinishedEvent:   "reviewer_attempt_finished",
 		ExitKind:        "reviewer",
 		TimeoutMessage: func(timeout time.Duration) string {
-			return fmt.Sprintf("reviewer process timed out after %s", timeout)
+			return fmt.Sprintf("reviewer process produced no output for %s", timeout)
 		},
 		Prepare: func(createdAt string) (reviewerDryRunDocument, error) {
 			return ensureReviewerDryRunArtifacts(prep, createdAt)

@@ -79,7 +79,7 @@ type clarifyAnswerCmd struct {
 type clarifySuggestCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to suggest clarifications for."`
 	Reviewer   string        `name:"reviewer" help:"Built-in clarifier agent name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
-	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the clarifier process."`
+	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum idle duration without clarifier output."`
 	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
@@ -152,7 +152,7 @@ type contractShowCmd struct {
 type contractDraftCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to draft contract fields for."`
 	Reviewer   string        `name:"reviewer" help:"Built-in read-only drafter name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
-	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the drafter process."`
+	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum idle duration without drafter output."`
 	Yes        bool          `name:"yes" help:"Required confirmation for direct drafter execution."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
@@ -205,7 +205,7 @@ type executeDryRunCmd struct {
 type executeRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to execute."`
 	Agent      string        `name:"agent" help:"Built-in agent name. Defaults to codex."`
-	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the built-in agent process."`
+	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum idle duration without agent output."`
 	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
@@ -278,7 +278,7 @@ type reviewDryRunCmd struct {
 type reviewRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to review."`
 	Reviewer   string        `name:"reviewer" help:"Built-in reviewer name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
-	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the reviewer process."`
+	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum idle duration without reviewer output."`
 	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
@@ -286,7 +286,7 @@ type reviewRunCmd struct {
 type reviewFixCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id whose review findings should be fixed."`
 	Agent      string        `name:"agent" help:"Built-in fixer agent name. Defaults to codex."`
-	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the fixer process."`
+	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum idle duration without fixer output."`
 	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
@@ -298,7 +298,7 @@ type reviewLoopCmd struct {
 	MaxRounds   int           `name:"max-rounds" help:"Maximum review rounds. Defaults to limits.review.max_rounds."`
 	Patience    int           `name:"patience" help:"Consecutive no-change fixer rounds before stopping as stalemate. Defaults to limits.review.patience."`
 	CleanRounds int           `name:"clean-rounds" help:"Consecutive clean review rounds required before convergence. Defaults to limits.review.clean_rounds."`
-	Timeout     time.Duration `name:"timeout" default:"10m" help:"Maximum duration for each reviewer or fixer process."`
+	Timeout     time.Duration `name:"timeout" default:"10m" help:"Maximum idle duration without reviewer or fixer output."`
 	Yes         bool          `name:"yes" help:"Required confirmation for direct reviewer/fixer execution."`
 	JSONOutput  bool          `name:"json" help:"Print machine-readable JSON output."`
 }

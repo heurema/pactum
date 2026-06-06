@@ -106,7 +106,7 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 		FinishedEvent:   "review_fix_attempt_finished",
 		ExitKind:        "review fix",
 		TimeoutMessage: func(timeout time.Duration) string {
-			return fmt.Sprintf("review fix process timed out after %s", timeout)
+			return fmt.Sprintf("review fix process produced no output for %s", timeout)
 		},
 		Prepare: func(createdAt string) (reviewFixDryRunDocument, error) {
 			return ensureReviewFixDryRunArtifacts(prep, createdAt)

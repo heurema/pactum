@@ -147,7 +147,7 @@ func (a App) ContractDraft(stdout io.Writer, liveOutput io.Writer, runID string,
 		FinishedEvent:   "contract_drafter_attempt_finished",
 		ExitKind:        "contract drafter",
 		TimeoutMessage: func(timeout time.Duration) string {
-			return fmt.Sprintf("contract drafter process timed out after %s", timeout)
+			return fmt.Sprintf("contract drafter process produced no output for %s", timeout)
 		},
 		Prepare: func(createdAt string) (agents.DryRunCommand, error) {
 			if err := writeContractDrafterPromptArtifacts(prep); err != nil {

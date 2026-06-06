@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/heurema/pactum/internal/artifacts"
@@ -32,6 +33,21 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.w.Write(p)
+}
+
+type activityWriter struct {
+	w        io.Writer
+	activity chan<- struct{}
+}
+
+func (w activityWriter) Write(p []byte) (int, error) {
+	if len(p) > 0 {
+		select {
+		case w.activity <- struct{}{}:
+		default:
+		}
+	}
+	return w.w.Write(p)
 }
 
 type processRunner interface {
@@ -117,8 +133,13 @@ func runSubprocessWithRunner(request RunRequest, runner processRunner) (RunResul
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	var idleTimedOut atomic.Bool
+	stopIdleTimeout := func() {}
 	if request.Timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, request.Timeout)
+		activity := make(chan struct{}, 1)
+		stdoutWriter = activityWriter{w: stdoutWriter, activity: activity}
+		stderrWriter = activityWriter{w: stderrWriter, activity: activity}
+		stopIdleTimeout = startIdleTimeout(request.Timeout, activity, cancel, &idleTimedOut)
 	}
 	defer cancel()
 
@@ -133,9 +154,10 @@ func runSubprocessWithRunner(request RunRequest, runner processRunner) (RunResul
 		Stderr:  stderrWriter,
 	})
 	finished := time.Now().UTC()
+	stopIdleTimeout()
 
 	exitCode := 0
-	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
+	timedOut := idleTimedOut.Load()
 	if err != nil {
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) {
@@ -160,4 +182,39 @@ func runSubprocessWithRunner(request RunRequest, runner processRunner) (RunResul
 		StdoutPath:     stdoutArtifact,
 		StderrPath:     stderrArtifact,
 	}, err
+}
+
+func startIdleTimeout(timeout time.Duration, activity <-chan struct{}, cancel context.CancelFunc, timedOut *atomic.Bool) func() {
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+
+		for {
+			select {
+			case <-timer.C:
+				timedOut.Store(true)
+				cancel()
+				return
+			case <-activity:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(timeout)
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	return func() {
+		close(done)
+		<-stopped
+	}
 }

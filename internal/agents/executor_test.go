@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseModelSpec(t *testing.T) {
@@ -292,6 +293,57 @@ func TestRunSubprocessWithoutLiveOutputIsCaptureOnly(t *testing.T) {
 	}
 }
 
+func TestRunSubprocessTimesOutAfterIdleOutputGap(t *testing.T) {
+	root := t.TempDir()
+	promptRepoPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
+	writePrompt(t, root, promptRepoPath, "executor prompt body")
+
+	result, err := runSubprocessWithRunner(RunRequest{
+		RepoRoot:       root,
+		RunID:          "run_123",
+		AttemptID:      "attempt_001",
+		Agent:          AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec"}, Input: InputPromptFile},
+		PromptRepoPath: promptRepoPath,
+		Timeout:        30 * time.Millisecond,
+	}, idleRunner{})
+	if err == nil {
+		t.Fatalf("RunSubprocess should return an error after idle timeout")
+	}
+	if !result.TimedOut || result.ExitCode != -1 {
+		t.Fatalf("timeout result mismatch: %#v", result)
+	}
+}
+
+func TestRunSubprocessIdleTimeoutResetsOnOutput(t *testing.T) {
+	root := t.TempDir()
+	promptRepoPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
+	writePrompt(t, root, promptRepoPath, "executor prompt body")
+
+	timeout := 120 * time.Millisecond
+	result, err := runSubprocessWithRunner(RunRequest{
+		RepoRoot:       root,
+		RunID:          "run_123",
+		AttemptID:      "attempt_001",
+		Agent:          AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec"}, Input: InputPromptFile},
+		PromptRepoPath: promptRepoPath,
+		Timeout:        timeout,
+	}, periodicOutputRunner{Writes: 6, Interval: 30 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("RunSubprocess returned error despite periodic output: %v", err)
+	}
+	if result.TimedOut || result.ExitCode != 0 {
+		t.Fatalf("periodic output should prevent timeout: %#v", result)
+	}
+	if result.DurationMillis < timeout.Milliseconds() {
+		t.Fatalf("run should exceed the old wall-clock timeout, got duration %dms", result.DurationMillis)
+	}
+
+	stdout := filepath.Join(root, ".heurema", "pactum", "runs", "run_123", "execute", "attempts", "attempt_001", "stdout.log")
+	if got := readFile(t, stdout); !strings.Contains(got, "tick-6") {
+		t.Fatalf("stdout log should capture periodic output: %q", got)
+	}
+}
+
 func TestReviewerBuiltinsAreReadOnly(t *testing.T) {
 	// Reviewers only read the diff and emit findings — they must never carry the
 	// executor's write/edit bypass.
@@ -352,6 +404,30 @@ func (r *recordingRunner) Run(_ context.Context, spec processSpec) error {
 	fmt.Fprintln(spec.Stderr, "stderr-line")
 	if r.err != nil {
 		return r.err
+	}
+	return nil
+}
+
+type idleRunner struct{}
+
+func (idleRunner) Run(ctx context.Context, _ processSpec) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+type periodicOutputRunner struct {
+	Writes   int
+	Interval time.Duration
+}
+
+func (r periodicOutputRunner) Run(ctx context.Context, spec processSpec) error {
+	for i := 0; i < r.Writes; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(r.Interval):
+		}
+		fmt.Fprintf(spec.Stdout, "tick-%d\n", i+1)
 	}
 	return nil
 }
