@@ -235,6 +235,12 @@ type contractRunPathSet struct {
 	ReviewDryRunJSON             string
 	ReviewAttemptsDir            string
 	ReviewLastResultJSON         string
+	ReviewFixDir                 string
+	ReviewFixContextMD           string
+	ReviewFixPromptMD            string
+	ReviewFixDryRunJSON          string
+	ReviewFixAttemptsDir         string
+	ReviewFixLastResultJSON      string
 }
 
 func contractRunPaths(runDir string) contractRunPathSet {
@@ -286,6 +292,12 @@ func contractRunPaths(runDir string) contractRunPathSet {
 		ReviewDryRunJSON:             filepath.Join(reviewDir, "reviewer-dry-run.json"),
 		ReviewAttemptsDir:            filepath.Join(reviewDir, "reviewer-attempts"),
 		ReviewLastResultJSON:         filepath.Join(reviewDir, "reviewer-last-result.json"),
+		ReviewFixDir:                 filepath.Join(reviewDir, "fix"),
+		ReviewFixContextMD:           filepath.Join(reviewDir, "fix", "fixer-context.md"),
+		ReviewFixPromptMD:            filepath.Join(reviewDir, "fix", "fixer-prompt.md"),
+		ReviewFixDryRunJSON:          filepath.Join(reviewDir, "fix", "fixer-dry-run.json"),
+		ReviewFixAttemptsDir:         filepath.Join(reviewDir, "fix", "attempts"),
+		ReviewFixLastResultJSON:      filepath.Join(reviewDir, "fix", "last-result.json"),
 	}
 }
 

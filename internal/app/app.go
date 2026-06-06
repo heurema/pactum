@@ -112,6 +112,7 @@ type reviewCmd struct {
 	Approve         reviewApproveCmd         `cmd:"" help:"Approve a manual review."`
 	DryRun          reviewDryRunCmd          `cmd:"dry-run" help:"Prepare reviewer artifacts without running a reviewer."`
 	Run             reviewRunCmd             `cmd:"run" help:"Run a built-in reviewer and capture attempt artifacts."`
+	Fix             reviewFixCmd             `cmd:"fix" help:"Run a write-enabled fixer against current review findings."`
 	ProposeFindings reviewProposeFindingsCmd `cmd:"propose-findings" help:"Parse reviewer output into pending finding proposals."`
 	AcceptProposal  reviewAcceptProposalCmd  `cmd:"accept-proposal" help:"Accept a pending review finding proposal."`
 	RejectProposal  reviewRejectProposalCmd  `cmd:"reject-proposal" help:"Reject a pending review finding proposal."`
@@ -245,6 +246,14 @@ type reviewRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to review."`
 	Reviewer   string        `name:"reviewer" help:"Built-in reviewer name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
 	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the reviewer process."`
+	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
+	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type reviewFixCmd struct {
+	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id whose review findings should be fixed."`
+	Agent      string        `name:"agent" help:"Built-in fixer agent name. Defaults to codex."`
+	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for the fixer process."`
 	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
@@ -719,6 +728,14 @@ func (c *reviewRunCmd) Run(r *runner) error {
 		return err
 	}
 	return r.App.ReviewRun(r.Stdout, runID, c.Reviewer, c.Timeout, c.Yes, c.JSONOutput)
+}
+
+func (c *reviewFixCmd) Run(r *runner) error {
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ReviewFix(r.Stdout, runID, c.Agent, c.Timeout, c.Yes, c.JSONOutput)
 }
 
 func (c *reviewProposeFindingsCmd) Run(r *runner) error {
