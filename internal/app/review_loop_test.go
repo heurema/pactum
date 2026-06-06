@@ -153,6 +153,40 @@ func TestReviewLoopUnparsedFindingsIsNotCleanRound(t *testing.T) {
 	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 }
 
+func TestReviewLoopStreamsSubRunOutputToStderrWithCleanStdout(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	setReviewLoopMaxRoundsConfig(t, paths, 2)
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "findings_then_clean")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	// The loop's own stdout stays a clean, parseable summary. The sub-command
+	// JSON the loop parses internally must not leak onto it.
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.TerminalReason != "clean_round" {
+		t.Fatalf("unexpected loop summary: %#v", summary)
+	}
+	if out := stdout.String(); strings.Contains(out, "stdin_has_reviewer_prompt=") || strings.Contains(out, "stdin_has_review_fix_prompt=") {
+		t.Fatalf("sub-run agent output leaked into loop stdout:\n%s", out)
+	}
+
+	// The per-round reviewer and fixer agent output streams live to the
+	// operator's stderr.
+	if got := stderr.String(); !strings.Contains(got, "stdin_has_reviewer_prompt=true") || !strings.Contains(got, "stdin_has_review_fix_prompt=true") {
+		t.Fatalf("sub-run live output missing from stderr:\n%s", got)
+	}
+}
+
 func configureReviewLoopHelpers(app App) App {
 	app.AgentRegistry = testAgentRegistry(
 		agents.AgentDescriptor{

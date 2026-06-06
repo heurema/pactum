@@ -1,6 +1,9 @@
 package agents
 
-import "time"
+import (
+	"io"
+	"time"
+)
 
 type AgentConfig struct {
 	CrossModelReview bool `json:"cross_model_review,omitempty" yaml:"cross_model_review,omitempty"`
@@ -65,6 +68,11 @@ type RunRequest struct {
 	PromptRepoPath string
 	ArtifactDir    string
 	Timeout        time.Duration
+	// LiveOutput, when set, receives a copy of the agent's stdout and stderr as
+	// the process runs, in addition to the per-attempt log files. Callers pass
+	// the operator's stderr so multi-minute runs are not a silent black box.
+	// Leaving it nil preserves capture-only behavior.
+	LiveOutput io.Writer
 }
 
 type RunResult struct {

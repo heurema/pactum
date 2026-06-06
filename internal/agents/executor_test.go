@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -229,6 +230,65 @@ func TestRunSubprocessClaudeFiltersNestedAgentMarker(t *testing.T) {
 	}
 	if !envContainsName(runner.spec.Env, "ANTHROPIC_API_KEY") {
 		t.Fatalf("claude env should preserve ANTHROPIC_API_KEY")
+	}
+}
+
+func TestRunSubprocessTeesLiveOutput(t *testing.T) {
+	root := t.TempDir()
+	promptRepoPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
+	writePrompt(t, root, promptRepoPath, "executor prompt body")
+
+	var live bytes.Buffer
+	_, err := runSubprocessWithRunner(RunRequest{
+		RepoRoot:       root,
+		RunID:          "run_123",
+		AttemptID:      "attempt_001",
+		Agent:          AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec"}, Input: InputPromptFile},
+		PromptRepoPath: promptRepoPath,
+		LiveOutput:     &live,
+	}, &recordingRunner{})
+	if err != nil {
+		t.Fatalf("RunSubprocess returned error: %v", err)
+	}
+
+	// The live writer receives a copy of both the agent's stdout and stderr.
+	if got := live.String(); !strings.Contains(got, "stdout-line") || !strings.Contains(got, "stderr-line") {
+		t.Fatalf("live output should tee both streams: %q", got)
+	}
+
+	// The per-attempt log files are still captured in full.
+	attemptDir := filepath.Join(root, ".heurema", "pactum", "runs", "run_123", "execute", "attempts", "attempt_001")
+	if got := readFile(t, filepath.Join(attemptDir, "stdout.log")); !strings.Contains(got, "stdout-line") {
+		t.Fatalf("stdout log should still be written: %q", got)
+	}
+	if got := readFile(t, filepath.Join(attemptDir, "stderr.log")); !strings.Contains(got, "stderr-line") {
+		t.Fatalf("stderr log should still be written: %q", got)
+	}
+}
+
+func TestRunSubprocessWithoutLiveOutputIsCaptureOnly(t *testing.T) {
+	root := t.TempDir()
+	promptRepoPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
+	writePrompt(t, root, promptRepoPath, "executor prompt body")
+
+	// No LiveOutput set: the run must still capture to the log files unchanged.
+	_, err := runSubprocessWithRunner(RunRequest{
+		RepoRoot:       root,
+		RunID:          "run_123",
+		AttemptID:      "attempt_001",
+		Agent:          AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec"}, Input: InputPromptFile},
+		PromptRepoPath: promptRepoPath,
+	}, &recordingRunner{})
+	if err != nil {
+		t.Fatalf("RunSubprocess returned error: %v", err)
+	}
+
+	attemptDir := filepath.Join(root, ".heurema", "pactum", "runs", "run_123", "execute", "attempts", "attempt_001")
+	if got := readFile(t, filepath.Join(attemptDir, "stdout.log")); !strings.Contains(got, "stdout-line") {
+		t.Fatalf("stdout log should still be written: %q", got)
+	}
+	if got := readFile(t, filepath.Join(attemptDir, "stderr.log")); !strings.Contains(got, "stderr-line") {
+		t.Fatalf("stderr log should still be written: %q", got)
 	}
 }
 

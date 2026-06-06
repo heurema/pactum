@@ -486,7 +486,7 @@ func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, j
 	return nil
 }
 
-func (a App) ReviewRun(stdout io.Writer, runID string, reviewerName string, timeout time.Duration, confirm bool, jsonOutput bool) error {
+func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration, confirm bool, jsonOutput bool) error {
 	context, ok, err := a.loadReviewContext(stdout, runID)
 	if err != nil || !ok {
 		return err
@@ -552,6 +552,7 @@ func (a App) ReviewRun(stdout io.Writer, runID string, reviewerName string, time
 		PromptRepoPath: reviewerPromptRepoPath(runID),
 		ArtifactDir:    reviewerAttemptsArtifact,
 		Timeout:        timeout,
+		LiveOutput:     liveOutput,
 	})
 	if runErr != nil && runResult.StartedAt == "" {
 		return runErr

@@ -45,7 +45,7 @@ func (a App) ExecuteDryRun(stdout io.Writer, runID string, agentName string, jso
 	return nil
 }
 
-func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, timeout time.Duration, confirm bool, jsonOutput bool) error {
+func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, agentName string, timeout time.Duration, confirm bool, jsonOutput bool) error {
 	root, _, ok, err := a.requireWorkspace(stdout, false)
 	if err != nil || !ok {
 		return err
@@ -117,6 +117,7 @@ func (a App) ExecuteRun(stdout io.Writer, runID string, agentName string, timeou
 		Agent:          prep.Agent,
 		PromptRepoPath: promptRepoPath,
 		Timeout:        timeout,
+		LiveOutput:     liveOutput,
 	})
 	if runErr != nil && runResult.StartedAt == "" {
 		return runErr

@@ -559,6 +559,69 @@ func TestExecuteRunJSONOutput(t *testing.T) {
 	}
 }
 
+func TestExecuteRunStreamsLiveOutputToStderr(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedBuiltPromptWithHelperAgent(t, root, "helper")
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	t.Setenv("PACTUM_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
+	}
+
+	// The agent's stdout and stderr both stream live to the operator's stderr.
+	if got := stderr.String(); !strings.Contains(got, "cwd_is_repo=true") || !strings.Contains(got, "stdin_has_executor_prompt=true") || !strings.Contains(got, "stderr-line") {
+		t.Fatalf("live agent output missing from stderr:\n%s", got)
+	}
+	// Stdout stays the clean human result channel and never carries agent output.
+	out := stdout.String()
+	if !strings.Contains(out, "Execution attempt finished") {
+		t.Fatalf("stdout missing human summary:\n%s", out)
+	}
+	if strings.Contains(out, "cwd_is_repo=") || strings.Contains(out, "stderr-line") {
+		t.Fatalf("agent output leaked into stdout:\n%s", out)
+	}
+
+	// The attempt log files are still captured.
+	attemptPaths := executionAttemptPaths(runPaths, "attempt_001")
+	if got := mustReadFile(t, attemptPaths.StdoutLog); !strings.Contains(got, "cwd_is_repo=true") {
+		t.Fatalf("stdout log not captured:\n%s", got)
+	}
+	if got := mustReadFile(t, attemptPaths.StderrLog); !strings.Contains(got, "stderr-line") {
+		t.Fatalf("stderr log not captured:\n%s", got)
+	}
+}
+
+func TestExecuteRunJSONKeepsStdoutCleanWithLiveStderr(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupApprovedBuiltPromptWithHelperAgent(t, root, "helper")
+	t.Setenv("PACTUM_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute run --json exited %d, stderr: %s", code, stderr.String())
+	}
+
+	// --json: stdout is a single parseable result document with no agent output.
+	var result executionResultDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &result))
+	if result.AttemptID != "attempt_001" || result.ExitCode != 0 {
+		t.Fatalf("unexpected execute run json: %#v", result)
+	}
+	if strings.Contains(stdout.String(), "cwd_is_repo=") || strings.Contains(stdout.String(), "stderr-line") {
+		t.Fatalf("agent output leaked into --json stdout:\n%s", stdout.String())
+	}
+	// Live output still reaches stderr in --json mode.
+	if got := stderr.String(); !strings.Contains(got, "cwd_is_repo=true") || !strings.Contains(got, "stderr-line") {
+		t.Fatalf("live agent output missing from stderr in --json mode:\n%s", got)
+	}
+}
+
 func TestNextAttemptIDUsesExistingAttemptDirs(t *testing.T) {
 	root := t.TempDir()
 	attemptsDir := filepath.Join(root, "attempts")

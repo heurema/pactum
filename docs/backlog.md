@@ -54,6 +54,10 @@ reviews across M8–M10. Rough priority in parentheses.
   near-identical attempt/result/event lifecycle. A shared helper would reduce drift
   (the L1 staleness bug came from the fork) — revisit once the shape is stable (after
   L3b), and only if it abstracts cleanly.
+- **`-race` in CI** (med). `make check` runs `go test ./...` without `-race`, so the
+  M10.2 live-output data race slipped through. The full suite is race-clean as of
+  M10.2, so enabling `-race` (a CI step or a `make check-race` target) is now safe and
+  would catch this class — at a notable test-time cost (~20× the app package).
 
 ## Resolved (for reference)
 
