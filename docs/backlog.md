@@ -28,10 +28,11 @@ reviews across M8–M10. Rough priority in parentheses.
   prerequisite slice.
 - **Rebuttal channel** (med). Feed the fixer's rebuttal of a false positive back to
   the reviewer on the next round so it re-judges instead of re-reporting.
-- **Dedup findings across rounds** (med). An unfixed issue re-proposed each round is
-  accepted as a *new* finding; counts inflate and the ledger fills with duplicates.
-  Dedup proposals against open findings; fix the round-summary `open_findings` field
-  (it currently equals the per-round accept count, not the live open count).
+- **Semantic review-finding dedup** (low). The autonomous review loop now dedups
+  proposals against currently open findings only by the exact stored
+  `(file, line, message)` tuple. Reworded messages, line-number drift, and other
+  semantic duplicates are still treated as distinct findings; add fuzzy/semantic
+  reconciliation only after the exact-match behavior has settled.
 - **Gate-failure-in-loop policy** (med). A fixer that breaks `make check` makes the
   loop abort (summary recorded, as an error). Define a meaningful terminal — stop +
   escalate — distinct from infrastructure errors.
@@ -89,3 +90,9 @@ reviews across M8–M10. Rough priority in parentheses.
   functions including production code reachable only from tests — the class `go vet`
   misses (and how the M11.2 refactor left orphaned wrappers). Removed the 7 dead funcs
   it found; tree is clean and the gate keeps it that way.
+- Review-loop correctness (M11.4) — round-summary `open_findings` now reports the live
+  open-finding count (was the per-round accept count); redundant `total_open_findings`
+  removed. The loop dedups a re-proposed currently-open finding by exact
+  `(file, line, message)` instead of minting a duplicate finding — it records a
+  `duplicate` proposal-decision + one `review_proposal_duplicate` event. Resolved/
+  rejected re-proposals are not suppressed; the M10.1 unparsed-findings guard is intact.

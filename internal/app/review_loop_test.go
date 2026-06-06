@@ -59,6 +59,9 @@ func TestReviewLoopFindingsThenCleanUsesConfigMaxRounds(t *testing.T) {
 
 	var summary reviewLoopSummaryDocument
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if strings.Contains(stdout.String(), "total_open_findings") {
+		t.Fatalf("loop summary JSON should not include total_open_findings:\n%s", stdout.String())
+	}
 	if summary.Schema != reviewLoopSummarySchema || summary.RunID != runID || summary.MaxRounds != 2 || summary.TerminalReason != "clean_round" {
 		t.Fatalf("unexpected loop summary: %#v", summary)
 	}
@@ -71,10 +74,10 @@ func TestReviewLoopFindingsThenCleanUsesConfigMaxRounds(t *testing.T) {
 	if len(summary.Rounds) != 2 {
 		t.Fatalf("rounds = %d, want 2: %#v", len(summary.Rounds), summary.Rounds)
 	}
-	if got := summary.Rounds[0]; got.OpenFindings != 1 || got.TotalOpenFindings != 1 || got.ProposalsCreated != 1 || got.ProposalsAccepted != 1 || got.FixerAttemptID != "attempt_001" || got.GateStatus != "passed" {
+	if got := summary.Rounds[0]; got.OpenFindings != 1 || got.ProposalsCreated != 1 || got.ProposalsAccepted != 1 || got.FixerAttemptID != "attempt_001" || got.GateStatus != "passed" {
 		t.Fatalf("round 1 summary mismatch: %#v", got)
 	}
-	if got := summary.Rounds[1]; got.OpenFindings != 0 || got.TotalOpenFindings != 1 || got.ProposalsCreated != 0 || got.ProposalsAccepted != 0 || got.FixerAttemptID != "" || got.GateStatus != "" {
+	if got := summary.Rounds[1]; got.OpenFindings != 1 || got.ProposalsCreated != 0 || got.ProposalsAccepted != 0 || got.FixerAttemptID != "" || got.GateStatus != "" {
 		t.Fatalf("round 2 summary mismatch: %#v", got)
 	}
 
@@ -129,7 +132,7 @@ func TestReviewLoopStopsAtMaxRounds(t *testing.T) {
 	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_002").ResultJSON)
 }
 
-func TestReviewLoopStopsAtStalemateAfterUnchangedFixRounds(t *testing.T) {
+func TestReviewLoopDedupsReproposedOpenFindingAcrossRounds(t *testing.T) {
 	root := t.TempDir()
 	stateDir := t.TempDir()
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
@@ -153,16 +156,144 @@ func TestReviewLoopStopsAtStalemateAfterUnchangedFixRounds(t *testing.T) {
 	if len(summary.Rounds) != 2 {
 		t.Fatalf("rounds = %d, want 2: %#v", len(summary.Rounds), summary.Rounds)
 	}
-	if got := summary.Rounds[0]; got.ProposalsAccepted != 1 || got.UnchangedFingerprintStreak != 1 || got.WorkingTreeFingerprint == "" {
-		t.Fatalf("round 1 stalemate signals mismatch: %#v", got)
+	if got := summary.Rounds[0]; got.ProposalsCreated != 1 || got.ProposalsAccepted != 1 || got.OpenFindings != 1 || got.UnchangedFingerprintStreak != 1 || got.WorkingTreeFingerprint == "" {
+		t.Fatalf("round 1 dedup/stalemate signals mismatch: %#v", got)
 	}
-	if got := summary.Rounds[1]; got.ProposalsAccepted != 1 || got.UnchangedFingerprintStreak != 2 || got.WorkingTreeFingerprint == "" {
-		t.Fatalf("round 2 stalemate signals mismatch: %#v", got)
+	if got := summary.Rounds[1]; got.ProposalsCreated != 1 || got.ProposalsAccepted != 0 || got.OpenFindings != 1 || got.UnchangedFingerprintStreak != 2 || got.WorkingTreeFingerprint == "" {
+		t.Fatalf("round 2 dedup/stalemate signals mismatch: %#v", got)
+	}
+	findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL)
+	if len(findings) != 1 {
+		t.Fatalf("re-proposed open finding should stay a single finding: %#v", findings)
+	}
+	decisions := readReviewProposalDecisions(t, runPaths.ReviewProposalDecisionsJSONL)
+	if len(decisions) != 2 || decisions[0].Decision != "accepted" || decisions[0].FindingID != "f_001" || decisions[1].Decision != "duplicate" || decisions[1].FindingID != "f_001" {
+		t.Fatalf("duplicate proposal decisions mismatch: %#v", decisions)
+	}
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "review_proposal_accepted") != 1 || countEvents(eventTypes, "review_finding_added") != 1 || countEvents(eventTypes, "review_proposal_duplicate") != 1 {
+		t.Fatalf("duplicate loop ledger event counts mismatch:\n%v", eventTypes)
 	}
 	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_002").ResultJSON)
 	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_003").ResultJSON)
 	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_003").ResultJSON)
+}
+
+func TestReviewLoopAcceptsNewFindingInLaterRound(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_new_findings")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "2", "--patience", "3", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.TerminalReason != "max_rounds" || len(summary.Rounds) != 2 {
+		t.Fatalf("new later finding summary mismatch: %#v", summary)
+	}
+	if got := summary.Rounds[0]; got.ProposalsCreated != 1 || got.ProposalsAccepted != 1 || got.OpenFindings != 1 {
+		t.Fatalf("round 1 new finding summary mismatch: %#v", got)
+	}
+	if got := summary.Rounds[1]; got.ProposalsCreated != 1 || got.ProposalsAccepted != 1 || got.OpenFindings != 2 {
+		t.Fatalf("round 2 new finding summary mismatch: %#v", got)
+	}
+	findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL)
+	if len(findings) != 2 || findings[0].ID != "f_001" || findings[1].ID != "f_002" {
+		t.Fatalf("new later finding should be accepted: %#v", findings)
+	}
+	decisions := readReviewProposalDecisions(t, runPaths.ReviewProposalDecisionsJSONL)
+	if len(decisions) != 2 || decisions[0].Decision != "accepted" || decisions[1].Decision != "accepted" {
+		t.Fatalf("new later finding decisions mismatch: %#v", decisions)
+	}
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "review_proposal_accepted") != 2 || countEvents(eventTypes, "review_finding_added") != 2 || countEvents(eventTypes, "review_proposal_duplicate") != 0 {
+		t.Fatalf("new later finding ledger event counts mismatch:\n%v", eventTypes)
+	}
+}
+
+func TestReviewLoopDedupsIdenticalProposalsWithinRound(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "same_round_duplicates")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.TerminalReason != "max_rounds" || len(summary.Rounds) != 1 {
+		t.Fatalf("same-round duplicate summary mismatch: %#v", summary)
+	}
+	if got := summary.Rounds[0]; got.ProposalsCreated != 2 || got.ProposalsAccepted != 1 || got.OpenFindings != 1 {
+		t.Fatalf("same-round duplicate round mismatch: %#v", got)
+	}
+	findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL)
+	if len(findings) != 1 {
+		t.Fatalf("same-round duplicates should create one finding: %#v", findings)
+	}
+	decisions := readReviewProposalDecisions(t, runPaths.ReviewProposalDecisionsJSONL)
+	if len(decisions) != 2 || decisions[0].Decision != "accepted" || decisions[0].FindingID != "f_001" || decisions[1].Decision != "duplicate" || decisions[1].FindingID != "f_001" {
+		t.Fatalf("same-round duplicate decisions mismatch: %#v", decisions)
+	}
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "review_proposal_accepted") != 1 || countEvents(eventTypes, "review_finding_added") != 1 || countEvents(eventTypes, "review_proposal_duplicate") != 1 {
+		t.Fatalf("same-round duplicate ledger event counts mismatch:\n%v", eventTypes)
+	}
+}
+
+func TestReviewLoopReacceptsResolvedFindingWhenReproposed(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	appendReviewLoopFindingForTest(t, runPaths, runID, "f_001", reviewLoopFixtureFindingCore("loop reviewer found a fixable issue", 42))
+	appendReviewLoopResolutionForTest(t, runPaths, runID, "r_001", "f_001")
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if len(summary.Rounds) != 1 || summary.Rounds[0].ProposalsAccepted != 1 || summary.Rounds[0].OpenFindings != 1 {
+		t.Fatalf("resolved reproposal summary mismatch: %#v", summary)
+	}
+	findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL)
+	if len(findings) != 2 || findings[1].ID != "f_002" {
+		t.Fatalf("resolved finding should not suppress reproposal: %#v", findings)
+	}
+	decisions := readReviewProposalDecisions(t, runPaths.ReviewProposalDecisionsJSONL)
+	if len(decisions) != 1 || decisions[0].Decision != "accepted" || decisions[0].FindingID != "f_002" {
+		t.Fatalf("resolved reproposal decision mismatch: %#v", decisions)
+	}
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "review_proposal_duplicate") != 0 || countEvents(eventTypes, "review_finding_added") != 1 {
+		t.Fatalf("resolved reproposal ledger event counts mismatch:\n%v", eventTypes)
+	}
 }
 
 func TestReviewLoopResetsStalemateStreakWhenFixerChangesWorkingTree(t *testing.T) {
@@ -173,7 +304,7 @@ func TestReviewLoopResetsStalemateStreakWhenFixerChangesWorkingTree(t *testing.T
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
 	app = configureReviewLoopHelpers(app)
-	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_new_findings")
 	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_SEQUENCE_FILE", filepath.Join(stateDir, "fixer-sequence"))
 	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_MODE", "append_readme")
 
@@ -238,6 +369,12 @@ func TestReviewLoopRequiresConsecutiveCleanRounds(t *testing.T) {
 	for index, want := range wantCleanStreaks {
 		if got := summary.Rounds[index].CleanStreak; got != want {
 			t.Fatalf("round %d clean streak = %d, want %d: %#v", index+1, got, want, summary.Rounds[index])
+		}
+	}
+	wantOpenFindings := []int{0, 1, 1, 1}
+	for index, want := range wantOpenFindings {
+		if got := summary.Rounds[index].OpenFindings; got != want {
+			t.Fatalf("round %d open findings = %d, want %d: %#v", index+1, got, want, summary.Rounds[index])
 		}
 	}
 	if got := summary.Rounds[1]; got.ProposalsAccepted != 1 || got.FixerAttemptID != "attempt_001" || got.UnchangedFingerprintStreak != 1 {
@@ -353,6 +490,58 @@ func readReviewLoopSummary(t *testing.T, path string) reviewLoopSummaryDocument 
 	return summary
 }
 
+func reviewLoopFixtureFindingCore(message string, line int) findingCore {
+	return findingCore{
+		Message:  message,
+		Severity: "medium",
+		Category: "quality",
+		File:     "internal/app/review_loop.go",
+		Line:     line,
+		Blocking: true,
+	}
+}
+
+func reviewLoopFixtureFinding(message string, line int) map[string]any {
+	core := reviewLoopFixtureFindingCore(message, line)
+	return map[string]any{
+		"message":  core.Message,
+		"severity": core.Severity,
+		"category": core.Category,
+		"file":     core.File,
+		"line":     core.Line,
+		"blocking": core.Blocking,
+		"evidence": "fixture reviewer sequence",
+	}
+}
+
+func appendReviewLoopFindingForTest(t *testing.T, runPaths contractRunPathSet, runID string, findingID string, core findingCore) {
+	t.Helper()
+	record := reviewFindingRecord{
+		Schema:      reviewFindingSchema,
+		ID:          findingID,
+		RunID:       runID,
+		findingCore: core,
+		Status:      "open",
+		CreatedAt:   "2026-06-01T22:00:00Z",
+		Source:      "reviewer_proposal",
+	}
+	assertNoError(t, appendJSONLine(runPaths.ReviewFindingsJSONL, record))
+}
+
+func appendReviewLoopResolutionForTest(t *testing.T, runPaths contractRunPathSet, runID string, resolutionID string, findingID string) {
+	t.Helper()
+	record := reviewResolutionRecord{
+		Schema:    reviewResolutionSchema,
+		ID:        resolutionID,
+		RunID:     runID,
+		FindingID: findingID,
+		Note:      "fixture resolved finding",
+		CreatedAt: "2026-06-01T22:01:00Z",
+		Source:    "manual",
+	}
+	assertNoError(t, appendJSONLine(runPaths.ReviewResolutionsJSONL, record))
+}
+
 func TestReviewLoopReviewerHelperProcess(t *testing.T) {
 	if os.Getenv("PACTUM_REVIEW_LOOP_REVIEWER_PROCESS") != "1" {
 		return
@@ -366,17 +555,7 @@ func TestReviewLoopReviewerHelperProcess(t *testing.T) {
 	fmt.Printf("stdin_has_reviewer_prompt=%t\n", strings.Contains(string(stdin), "# Reviewer Prompt"))
 	attempt := nextReviewLoopReviewerAttempt()
 	mode := os.Getenv("PACTUM_REVIEW_LOOP_REVIEWER_MODE")
-	validFinding := []map[string]any{
-		{
-			"message":  "loop reviewer found a fixable issue",
-			"severity": "medium",
-			"category": "quality",
-			"file":     "internal/app/review_loop.go",
-			"line":     42,
-			"blocking": true,
-			"evidence": "fixture reviewer sequence",
-		},
-	}
+	validFinding := []map[string]any{reviewLoopFixtureFinding("loop reviewer found a fixable issue", 42)}
 	switch {
 	case mode == "malformed":
 		// Empty message -> propose-findings skips it with a warning (0 created),
@@ -386,6 +565,15 @@ func TestReviewLoopReviewerHelperProcess(t *testing.T) {
 		}))
 	case mode == "always_findings":
 		fmt.Print(reviewerStructuredOutput(validFinding))
+	case mode == "always_new_findings":
+		fmt.Print(reviewerStructuredOutput([]map[string]any{
+			reviewLoopFixtureFinding(fmt.Sprintf("loop reviewer found fixable issue %d", attempt), 42+attempt),
+		}))
+	case mode == "same_round_duplicates":
+		fmt.Print(reviewerStructuredOutput([]map[string]any{
+			reviewLoopFixtureFinding("loop reviewer found a fixable issue", 42),
+			reviewLoopFixtureFinding("loop reviewer found a fixable issue", 42),
+		}))
 	case mode == "clean_findings_clean_clean":
 		if attempt == 2 {
 			fmt.Print(reviewerStructuredOutput(validFinding))

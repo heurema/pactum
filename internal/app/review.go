@@ -97,6 +97,20 @@ type findingCore struct {
 	Blocking bool   `json:"blocking"`
 }
 
+type reviewFindingFingerprint struct {
+	File    string
+	Line    int
+	Message string
+}
+
+func fingerprintReviewFinding(core findingCore) reviewFindingFingerprint {
+	return reviewFindingFingerprint{
+		File:    core.File,
+		Line:    core.Line,
+		Message: core.Message,
+	}
+}
+
 type reviewFindingRecord struct {
 	Schema string `json:"schema"`
 	ID     string `json:"id"`
