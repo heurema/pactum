@@ -2,9 +2,14 @@ package app
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/heurema/pactum/internal/ledger"
@@ -16,25 +21,35 @@ const (
 )
 
 type reviewLoopOptions struct {
-	Reviewer   string
-	Agent      string
-	MaxRounds  int
-	Timeout    time.Duration
-	Yes        bool
-	JSONOutput bool
+	Reviewer    string
+	Agent       string
+	MaxRounds   int
+	Patience    int
+	CleanRounds int
+	Timeout     time.Duration
+	Yes         bool
+	JSONOutput  bool
+}
+
+type reviewLoopLimits struct {
+	MaxRounds   int
+	Patience    int
+	CleanRounds int
 }
 
 type reviewLoopSummaryDocument struct {
-	Schema         string                   `json:"schema"`
-	RunID          string                   `json:"run_id"`
-	StartedAt      string                   `json:"started_at"`
-	FinishedAt     string                   `json:"finished_at"`
-	Reviewer       string                   `json:"reviewer,omitempty"`
-	Agent          string                   `json:"agent,omitempty"`
-	MaxRounds      int                      `json:"max_rounds"`
-	TerminalReason string                   `json:"terminal_reason"`
-	Rounds         []reviewLoopRoundSummary `json:"rounds"`
-	Artifacts      reviewLoopArtifacts      `json:"artifacts"`
+	Schema              string                   `json:"schema"`
+	RunID               string                   `json:"run_id"`
+	StartedAt           string                   `json:"started_at"`
+	FinishedAt          string                   `json:"finished_at"`
+	Reviewer            string                   `json:"reviewer,omitempty"`
+	Agent               string                   `json:"agent,omitempty"`
+	MaxRounds           int                      `json:"max_rounds"`
+	StalematePatience   int                      `json:"stalemate_patience"`
+	CleanRoundsRequired int                      `json:"clean_rounds_required"`
+	TerminalReason      string                   `json:"terminal_reason"`
+	Rounds              []reviewLoopRoundSummary `json:"rounds"`
+	Artifacts           reviewLoopArtifacts      `json:"artifacts"`
 }
 
 type reviewLoopArtifacts struct {
@@ -42,16 +57,19 @@ type reviewLoopArtifacts struct {
 }
 
 type reviewLoopRoundSummary struct {
-	Round              int      `json:"round"`
-	ReviewerAttemptID  string   `json:"reviewer_attempt_id"`
-	ProposalsCreated   int      `json:"proposals_created"`
-	ProposalsAccepted  int      `json:"proposals_accepted"`
-	OpenFindings       int      `json:"open_findings"`
-	TotalOpenFindings  int      `json:"total_open_findings"`
-	Warnings           []string `json:"warnings,omitempty"`
-	FixerAttemptID     string   `json:"fixer_attempt_id,omitempty"`
-	GateStatus         string   `json:"gate_status,omitempty"`
-	GateReportArtifact string   `json:"gate_report_artifact,omitempty"`
+	Round                      int      `json:"round"`
+	ReviewerAttemptID          string   `json:"reviewer_attempt_id"`
+	ProposalsCreated           int      `json:"proposals_created"`
+	ProposalsAccepted          int      `json:"proposals_accepted"`
+	OpenFindings               int      `json:"open_findings"`
+	TotalOpenFindings          int      `json:"total_open_findings"`
+	Warnings                   []string `json:"warnings,omitempty"`
+	CleanStreak                int      `json:"clean_streak"`
+	UnchangedFingerprintStreak int      `json:"unchanged_fingerprint_streak"`
+	WorkingTreeFingerprint     string   `json:"working_tree_fingerprint,omitempty"`
+	FixerAttemptID             string   `json:"fixer_attempt_id,omitempty"`
+	GateStatus                 string   `json:"gate_status,omitempty"`
+	GateReportArtifact         string   `json:"gate_report_artifact,omitempty"`
 }
 
 func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, options reviewLoopOptions) error {
@@ -66,18 +84,21 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 	if _, err := requireReviewPrepared(context.RunPaths, runID); err != nil {
 		return err
 	}
-	maxRounds, err := a.resolveReviewLoopMaxRounds(context, options.MaxRounds)
+	limits, err := a.resolveReviewLoopLimits(context, options)
 	if err != nil {
 		return err
 	}
+	maxRounds := limits.MaxRounds
 
 	startedAt := a.nowUTC()
 	summary := reviewLoopSummaryDocument{
-		Schema:    reviewLoopSummarySchema,
-		RunID:     runID,
-		StartedAt: startedAt.Format(time.RFC3339),
-		MaxRounds: maxRounds,
-		Rounds:    []reviewLoopRoundSummary{},
+		Schema:              reviewLoopSummarySchema,
+		RunID:               runID,
+		StartedAt:           startedAt.Format(time.RFC3339),
+		MaxRounds:           maxRounds,
+		StalematePatience:   limits.Patience,
+		CleanRoundsRequired: limits.CleanRounds,
+		Rounds:              []reviewLoopRoundSummary{},
 		Artifacts: reviewLoopArtifacts{
 			Summary: reviewLoopSummaryArtifact,
 		},
@@ -87,6 +108,8 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 	}
 
 	var loopErr error
+	cleanStreak := 0
+	unchangedFingerprintStreak := 0
 	for round := 1; round <= maxRounds; round++ {
 		reviewerResult, proposals, err := a.runReviewLoopReviewRound(liveOutput, runID, options.Reviewer, options.Timeout)
 		if err != nil {
@@ -129,12 +152,39 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 		// cleared — terminate with a distinct, non-pass reason so real findings are
 		// never silently dropped.
 		if accepted == 0 {
+			if len(proposals.Warnings) == 0 {
+				cleanStreak++
+			} else {
+				cleanStreak = 0
+			}
+			roundSummary.CleanStreak = cleanStreak
+			roundSummary.UnchangedFingerprintStreak = unchangedFingerprintStreak
+			fingerprint, err := reviewLoopWorkingTreeFingerprint(context)
+			if err != nil {
+				summary.Rounds = append(summary.Rounds, roundSummary)
+				loopErr = err
+				break
+			}
+			roundSummary.WorkingTreeFingerprint = fingerprint
 			summary.Rounds = append(summary.Rounds, roundSummary)
 			if len(proposals.Warnings) > 0 {
 				summary.TerminalReason = "reviewer_findings_unparsed"
-			} else {
+			} else if cleanStreak >= limits.CleanRounds {
 				summary.TerminalReason = "clean_round"
+			} else if round == maxRounds {
+				summary.TerminalReason = "max_rounds"
+			} else {
+				continue
 			}
+			break
+		}
+
+		cleanStreak = 0
+		roundSummary.CleanStreak = cleanStreak
+		fingerprintBefore, err := reviewLoopWorkingTreeFingerprint(context)
+		if err != nil {
+			summary.Rounds = append(summary.Rounds, roundSummary)
+			loopErr = err
 			break
 		}
 
@@ -148,6 +198,19 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 			summary.Agent = fixResult.Fixer
 		}
 		roundSummary.FixerAttemptID = fixResult.AttemptID
+		fingerprintAfter, err := reviewLoopWorkingTreeFingerprint(context)
+		if err != nil {
+			summary.Rounds = append(summary.Rounds, roundSummary)
+			loopErr = err
+			break
+		}
+		roundSummary.WorkingTreeFingerprint = fingerprintAfter
+		if fingerprintAfter == fingerprintBefore {
+			unchangedFingerprintStreak++
+		} else {
+			unchangedFingerprintStreak = 0
+		}
+		roundSummary.UnchangedFingerprintStreak = unchangedFingerprintStreak
 
 		gateReport, err := a.runReviewLoopGate(runID)
 		if err != nil {
@@ -159,6 +222,10 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 		roundSummary.GateReportArtifact = gateReportArtifact
 		summary.Rounds = append(summary.Rounds, roundSummary)
 
+		if unchangedFingerprintStreak >= limits.Patience {
+			summary.TerminalReason = "stalemate"
+			break
+		}
 		if round == maxRounds {
 			summary.TerminalReason = "max_rounds"
 			break
@@ -193,25 +260,46 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 	return nil
 }
 
-func (a App) resolveReviewLoopMaxRounds(context reviewContext, override int) (int, error) {
+func (a App) resolveReviewLoopLimits(context reviewContext, options reviewLoopOptions) (reviewLoopLimits, error) {
+	config, err := readConfig(context.Paths.Config)
+	if err != nil {
+		return reviewLoopLimits{}, err
+	}
+	defaults := defaultConfigFile().Limits.Review
+	maxRounds, err := resolveReviewLoopLimit("max rounds", options.MaxRounds, config.Limits.Review.MaxRounds, defaults.MaxRounds)
+	if err != nil {
+		return reviewLoopLimits{}, err
+	}
+	patience, err := resolveReviewLoopLimit("patience", options.Patience, config.Limits.Review.Patience, defaults.Patience)
+	if err != nil {
+		return reviewLoopLimits{}, err
+	}
+	cleanRounds, err := resolveReviewLoopLimit("clean rounds", options.CleanRounds, config.Limits.Review.CleanRounds, defaults.CleanRounds)
+	if err != nil {
+		return reviewLoopLimits{}, err
+	}
+	return reviewLoopLimits{
+		MaxRounds:   maxRounds,
+		Patience:    patience,
+		CleanRounds: cleanRounds,
+	}, nil
+}
+
+func resolveReviewLoopLimit(name string, override int, configured int, fallback int) (int, error) {
 	if override < 0 {
-		return 0, fmt.Errorf("max rounds must be positive")
+		return 0, fmt.Errorf("%s must be positive", name)
 	}
 	if override > 0 {
 		return override, nil
 	}
-	config, err := readConfig(context.Paths.Config)
-	if err != nil {
-		return 0, err
+	value := configured
+	if value <= 0 {
+		value = fallback
 	}
-	maxRounds := config.Limits.Review.MaxRounds
-	if maxRounds <= 0 {
-		maxRounds = defaultConfigFile().Limits.Review.MaxRounds
+	if value <= 0 {
+		return 0, fmt.Errorf("review %s must be positive", name)
 	}
-	if maxRounds <= 0 {
-		return 0, fmt.Errorf("review max rounds must be positive")
-	}
-	return maxRounds, nil
+	return value, nil
 }
 
 func (a App) runReviewLoopReviewRound(liveOutput io.Writer, runID string, reviewer string, timeout time.Duration) (reviewerResultDocument, reviewProposeFindingsResponse, error) {
@@ -286,6 +374,57 @@ func reviewLoopTotalOpenFindings(runPaths contractRunPathSet) (int, error) {
 	return summarizeReview(findings, resolutions).Open, nil
 }
 
+func reviewLoopWorkingTreeFingerprint(context reviewContext) (string, error) {
+	changes := buildGateChangeReport(context.Root, context.Paths)
+	hasher := sha256.New()
+	fmt.Fprintf(hasher, "head\x00%s\x00", reviewLoopGitHead(context.Root))
+	fmt.Fprintf(hasher, "status\x00%s\x00", changes.Status)
+	for _, reason := range changes.Reasons {
+		fmt.Fprintf(hasher, "reason\x00%s\x00", reason)
+	}
+	for _, path := range changes.ChangedFiles {
+		if err := reviewLoopHashFingerprintFile(hasher, context.Root, "changed", path); err != nil {
+			return "", err
+		}
+	}
+	for _, path := range changes.NewFiles {
+		if err := reviewLoopHashFingerprintFile(hasher, context.Root, "new", path); err != nil {
+			return "", err
+		}
+	}
+	for _, path := range changes.MissingFiles {
+		fmt.Fprintf(hasher, "missing\x00%s\x00", path)
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func reviewLoopHashFingerprintFile(hasher io.Writer, root string, kind string, repoPath string) error {
+	fullPath := filepath.Join(root, filepath.FromSlash(repoPath))
+	if !isRegularFile(fullPath) {
+		fmt.Fprintf(hasher, "%s\x00%s\x00missing\x00", kind, repoPath)
+		return nil
+	}
+	hash, err := fileSHA256(fullPath)
+	if err != nil {
+		return fmt.Errorf("fingerprint %s file %s: %w", kind, repoPath, err)
+	}
+	fmt.Fprintf(hasher, "%s\x00%s\x00%s\x00", kind, repoPath, hash)
+	return nil
+}
+
+func reviewLoopGitHead(root string) string {
+	cmd := exec.Command("git", "-C", root, "rev-parse", "--verify", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return "unavailable"
+	}
+	head := strings.TrimSpace(string(output))
+	if head == "" {
+		return "unavailable"
+	}
+	return head
+}
+
 func writeReviewLoopSummary(stdout io.Writer, summary reviewLoopSummaryDocument) {
 	fmt.Fprintln(stdout, "Review loop finished")
 	fmt.Fprintln(stdout)
@@ -293,6 +432,8 @@ func writeReviewLoopSummary(stdout io.Writer, summary reviewLoopSummaryDocument)
 	fmt.Fprintf(stdout, "  id: %s\n", summary.RunID)
 	fmt.Fprintf(stdout, "  terminal reason: %s\n", summary.TerminalReason)
 	fmt.Fprintf(stdout, "  rounds: %d/%d\n", len(summary.Rounds), summary.MaxRounds)
+	fmt.Fprintf(stdout, "  clean rounds: %d\n", summary.CleanRoundsRequired)
+	fmt.Fprintf(stdout, "  stalemate patience: %d\n", summary.StalematePatience)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Round results:")
 	for _, round := range summary.Rounds {
@@ -302,6 +443,12 @@ func writeReviewLoopSummary(stdout io.Writer, summary reviewLoopSummaryDocument)
 		}
 		if round.GateStatus != "" {
 			fmt.Fprintf(stdout, ", gate %s", round.GateStatus)
+		}
+		if round.CleanStreak > 0 {
+			fmt.Fprintf(stdout, ", clean streak %d", round.CleanStreak)
+		}
+		if round.FixerAttemptID != "" {
+			fmt.Fprintf(stdout, ", unchanged streak %d", round.UnchangedFingerprintStreak)
 		}
 		fmt.Fprintln(stdout)
 	}

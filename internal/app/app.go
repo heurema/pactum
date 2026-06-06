@@ -260,13 +260,15 @@ type reviewFixCmd struct {
 }
 
 type reviewLoopCmd struct {
-	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to review."`
-	Reviewer   string        `name:"reviewer" help:"Built-in reviewer name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
-	Agent      string        `name:"agent" help:"Built-in fixer agent name. Defaults to codex."`
-	MaxRounds  int           `name:"max-rounds" help:"Maximum review rounds. Defaults to limits.review.max_rounds."`
-	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum duration for each reviewer or fixer process."`
-	Yes        bool          `name:"yes" help:"Required confirmation for direct reviewer/fixer execution."`
-	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
+	RunID       string        `arg:"" optional:"" name:"run_id" help:"Run id to review."`
+	Reviewer    string        `name:"reviewer" help:"Built-in reviewer name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
+	Agent       string        `name:"agent" help:"Built-in fixer agent name. Defaults to codex."`
+	MaxRounds   int           `name:"max-rounds" help:"Maximum review rounds. Defaults to limits.review.max_rounds."`
+	Patience    int           `name:"patience" help:"Consecutive no-change fixer rounds before stopping as stalemate. Defaults to limits.review.patience."`
+	CleanRounds int           `name:"clean-rounds" help:"Consecutive clean review rounds required before convergence. Defaults to limits.review.clean_rounds."`
+	Timeout     time.Duration `name:"timeout" default:"10m" help:"Maximum duration for each reviewer or fixer process."`
+	Yes         bool          `name:"yes" help:"Required confirmation for direct reviewer/fixer execution."`
+	JSONOutput  bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewProposeFindingsCmd struct {
@@ -393,7 +395,9 @@ type executeLimits struct {
 }
 
 type reviewLimits struct {
-	MaxRounds int `yaml:"max_rounds"`
+	MaxRounds   int `yaml:"max_rounds"`
+	Patience    int `yaml:"patience"`
+	CleanRounds int `yaml:"clean_rounds"`
 }
 
 type budgetConfig struct {
@@ -759,12 +763,14 @@ func (c *reviewLoopCmd) Run(r *runner) error {
 		return err
 	}
 	return r.App.ReviewLoop(r.Stdout, r.Stderr, runID, reviewLoopOptions{
-		Reviewer:   c.Reviewer,
-		Agent:      c.Agent,
-		MaxRounds:  c.MaxRounds,
-		Timeout:    c.Timeout,
-		Yes:        c.Yes,
-		JSONOutput: c.JSONOutput,
+		Reviewer:    c.Reviewer,
+		Agent:       c.Agent,
+		MaxRounds:   c.MaxRounds,
+		Patience:    c.Patience,
+		CleanRounds: c.CleanRounds,
+		Timeout:     c.Timeout,
+		Yes:         c.Yes,
+		JSONOutput:  c.JSONOutput,
 	})
 }
 
@@ -1165,7 +1171,9 @@ func defaultConfigFile() configFile {
 				MaxIterations: 10,
 			},
 			Review: reviewLimits{
-				MaxRounds: 4,
+				MaxRounds:   4,
+				Patience:    2,
+				CleanRounds: 1,
 			},
 		},
 		Budget: budgetConfig{
