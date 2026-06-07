@@ -7,7 +7,8 @@ import (
 )
 
 type AgentConfig struct {
-	CrossModelReview bool `json:"cross_model_review,omitempty" yaml:"cross_model_review,omitempty"`
+	CrossModelReview bool     `json:"cross_model_review,omitempty" yaml:"cross_model_review,omitempty"`
+	ReviewPanel      []string `json:"review_panel,omitempty" yaml:"review_panel,omitempty"`
 	// ExecutorModel and ReviewerModel pin the per-stage model[:effort] (empty =
 	// inherit the agent CLI's own config).
 	ExecutorModel string `json:"executor_model,omitempty" yaml:"executor_model,omitempty"`

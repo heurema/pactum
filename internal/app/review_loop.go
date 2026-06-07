@@ -11,8 +11,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/heurema/pactum/internal/agents"
 	"github.com/heurema/pactum/internal/ledger"
 )
 
@@ -56,6 +58,7 @@ type reviewLoopSummaryDocument struct {
 	StartedAt           string                   `json:"started_at"`
 	FinishedAt          string                   `json:"finished_at"`
 	Reviewer            string                   `json:"reviewer,omitempty"`
+	Reviewers           []string                 `json:"reviewers,omitempty"`
 	Agent               string                   `json:"agent,omitempty"`
 	MaxRounds           int                      `json:"max_rounds"`
 	StalematePatience   int                      `json:"stalemate_patience"`
@@ -80,6 +83,7 @@ type reviewLoopArtifacts struct {
 type reviewLoopRoundSummary struct {
 	Round                      int      `json:"round"`
 	ReviewerAttemptID          string   `json:"reviewer_attempt_id"`
+	ReviewerAttemptIDs         []string `json:"reviewer_attempt_ids,omitempty"`
 	ProposalsCreated           int      `json:"proposals_created"`
 	ProposalsAccepted          int      `json:"proposals_accepted"`
 	OpenFindings               int      `json:"open_findings"`
@@ -90,6 +94,33 @@ type reviewLoopRoundSummary struct {
 	FixerAttemptID             string   `json:"fixer_attempt_id,omitempty"`
 	GateStatus                 string   `json:"gate_status,omitempty"`
 	GateReportArtifact         string   `json:"gate_report_artifact,omitempty"`
+}
+
+type reviewLoopReviewer struct {
+	Agent     agents.AgentDescriptor
+	ModelSpec agents.ModelSpec
+}
+
+type reviewLoopReviewRoundResult struct {
+	Reviewers  []string
+	AttemptIDs []string
+	Proposals  reviewLoopProposalBatch
+}
+
+type reviewLoopProposalBatch struct {
+	Created  []reviewProposalRecord
+	Warnings []string
+}
+
+type synchronizedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (w *synchronizedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.w.Write(p)
 }
 
 func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, options reviewLoopOptions) error {
@@ -108,14 +139,20 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 	if err != nil {
 		return err
 	}
+	reviewers, err := a.resolveReviewLoopReviewers(context, options.Reviewer)
+	if err != nil {
+		return err
+	}
 	limits := settings.Limits
 	maxRounds := limits.MaxRounds
+	reviewerNames := reviewLoopReviewerNames(reviewers)
 
 	startedAt := a.nowUTC()
 	summary := reviewLoopSummaryDocument{
 		Schema:              reviewLoopSummarySchema,
 		RunID:               runID,
 		StartedAt:           startedAt.Format(time.RFC3339),
+		Reviewer:            strings.Join(reviewerNames, ","),
 		MaxRounds:           maxRounds,
 		StalematePatience:   limits.Patience,
 		CleanRoundsRequired: limits.CleanRounds,
@@ -123,6 +160,9 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 		Artifacts: reviewLoopArtifacts{
 			Summary: reviewLoopSummaryArtifact,
 		},
+	}
+	if len(reviewerNames) > 1 {
+		summary.Reviewers = reviewerNames
 	}
 	if settings.Budget.MaxTokens != nil {
 		summary.Budget = &reviewLoopBudgetSummary{
@@ -151,14 +191,12 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 			}
 		}
 
-		reviewerResult, proposals, err := a.runReviewLoopReviewRound(liveOutput, runID, options.Reviewer, options.Timeout)
+		reviewerResult, err := a.runReviewLoopReviewRound(context, liveOutput, runID, reviewers, options.Timeout)
 		if err != nil {
 			loopErr = err
 			break
 		}
-		if summary.Reviewer == "" {
-			summary.Reviewer = reviewerResult.Reviewer
-		}
+		proposals := reviewerResult.Proposals
 
 		openFindings, err := reviewLoopOpenFindingFingerprints(context.RunPaths)
 		if err != nil {
@@ -173,6 +211,14 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 				if err := a.recordDuplicateReviewLoopProposal(context, proposal.ID, existingFinding.ID); err != nil {
 					loopErr = err
 					break
+				}
+				upgradedFinding, upgraded, err := a.upgradeDuplicateReviewFindingSeverity(context, existingFinding, proposal)
+				if err != nil {
+					loopErr = err
+					break
+				}
+				if upgraded {
+					openFindings[fingerprint] = upgradedFinding
 				}
 				duplicates++
 				continue
@@ -196,11 +242,14 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 
 		roundSummary := reviewLoopRoundSummary{
 			Round:             round,
-			ReviewerAttemptID: reviewerResult.AttemptID,
+			ReviewerAttemptID: firstString(reviewerResult.AttemptIDs),
 			ProposalsCreated:  len(proposals.Created),
 			ProposalsAccepted: accepted,
 			OpenFindings:      totalOpen,
 			Warnings:          append([]string{}, proposals.Warnings...),
+		}
+		if len(reviewerResult.AttemptIDs) > 1 {
+			roundSummary.ReviewerAttemptIDs = append([]string{}, reviewerResult.AttemptIDs...)
 		}
 		// A round with no accepted or duplicate proposals ends the loop, but only a
 		// round that reported NOTHING is a clean pass. If the reviewer reported
@@ -425,21 +474,116 @@ func reviewLoopCapturedTokenTotal(runPaths contractRunPathSet) (int64, error) {
 	return total, nil
 }
 
-func (a App) runReviewLoopReviewRound(liveOutput io.Writer, runID string, reviewer string, timeout time.Duration) (reviewerResultDocument, reviewProposeFindingsResponse, error) {
-	reviewerResult, err := a.runReviewLoopReviewer(liveOutput, runID, reviewer, timeout)
+func (a App) resolveReviewLoopReviewers(context reviewContext, reviewerName string) ([]reviewLoopReviewer, error) {
+	config, err := readConfig(context.Paths.Config)
 	if err != nil {
-		return reviewerResultDocument{}, reviewProposeFindingsResponse{}, err
+		return nil, err
 	}
-	proposals, err := a.runReviewLoopProposeFindings(runID, reviewerResult.AttemptID)
+	modelSpec, err := agents.ParseModelSpec(config.Agents.ReviewerModel)
 	if err != nil {
-		return reviewerResultDocument{}, reviewProposeFindingsResponse{}, err
+		return nil, err
 	}
-	return reviewerResult, proposals, nil
+	names := []string{}
+	if explicit := strings.TrimSpace(reviewerName); explicit != "" {
+		names = append(names, explicit)
+	} else if len(config.Agents.ReviewPanel) > 0 {
+		for _, name := range config.Agents.ReviewPanel {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				return nil, fmt.Errorf("agents.review_panel contains an empty reviewer name")
+			}
+			names = append(names, name)
+		}
+	} else {
+		names = append(names, resolveReviewerNameForReview(context, "", config.Agents.CrossModelReview))
+	}
+
+	reviewers := make([]reviewLoopReviewer, 0, len(names))
+	for _, name := range names {
+		reviewer, err := a.agentRegistry().ResolveReviewer(name)
+		if err != nil {
+			if len(config.Agents.ReviewPanel) > 0 && strings.TrimSpace(reviewerName) == "" {
+				return nil, fmt.Errorf("agents.review_panel reviewer %q: %w", name, err)
+			}
+			return nil, err
+		}
+		reviewer, err = agents.ApplyModelSpec(reviewer, modelSpec)
+		if err != nil {
+			return nil, err
+		}
+		if reviewer.Input != agents.InputPromptFile {
+			return nil, fmt.Errorf("unsupported agent input mode: %s", reviewer.Input)
+		}
+		reviewers = append(reviewers, reviewLoopReviewer{Agent: reviewer, ModelSpec: modelSpec})
+	}
+	return reviewers, nil
 }
 
-func (a App) runReviewLoopReviewer(liveOutput io.Writer, runID string, reviewer string, timeout time.Duration) (reviewerResultDocument, error) {
+func reviewLoopReviewerNames(reviewers []reviewLoopReviewer) []string {
+	names := make([]string, 0, len(reviewers))
+	for _, reviewer := range reviewers {
+		names = append(names, reviewer.Agent.Name)
+	}
+	return names
+}
+
+func (a App) runReviewLoopReviewRound(context reviewContext, liveOutput io.Writer, runID string, reviewers []reviewLoopReviewer, timeout time.Duration) (reviewLoopReviewRoundResult, error) {
+	if len(reviewers) == 0 {
+		return reviewLoopReviewRoundResult{}, fmt.Errorf("review loop requires at least one reviewer")
+	}
+	prep, err := a.prepareReviewerForAgent(context, reviewers[0].Agent, reviewers[0].ModelSpec, "run reviewer")
+	if err != nil {
+		return reviewLoopReviewRoundResult{}, err
+	}
+	if err := writeReviewerPromptAndContext(prep); err != nil {
+		return reviewLoopReviewRoundResult{}, err
+	}
+
+	results := make([]reviewerResultDocument, len(reviewers))
+	errs := make([]error, len(reviewers))
+	var wg sync.WaitGroup
+	var sharedLive io.Writer = liveOutput
+	if liveOutput != nil && len(reviewers) > 1 {
+		sharedLive = &synchronizedWriter{w: liveOutput}
+	}
+	for index, reviewer := range reviewers {
+		wg.Add(1)
+		go func(index int, reviewer reviewLoopReviewer) {
+			defer wg.Done()
+			results[index], errs[index] = a.runReviewLoopReviewerWithAgent(sharedLive, runID, prep, reviewer, timeout)
+		}(index, reviewer)
+	}
+	wg.Wait()
+	for index, err := range errs {
+		if err != nil {
+			return reviewLoopReviewRoundResult{}, fmt.Errorf("reviewer %s: %w", reviewers[index].Agent.Name, err)
+		}
+	}
+
+	batch := reviewLoopProposalBatch{
+		Created:  []reviewProposalRecord{},
+		Warnings: []string{},
+	}
+	attemptIDs := make([]string, 0, len(results))
+	for _, result := range results {
+		attemptIDs = append(attemptIDs, result.AttemptID)
+		proposals, err := a.runReviewLoopProposeFindings(runID, result.AttemptID)
+		if err != nil {
+			return reviewLoopReviewRoundResult{}, err
+		}
+		batch.Created = append(batch.Created, proposals.Created...)
+		batch.Warnings = append(batch.Warnings, proposals.Warnings...)
+	}
+	return reviewLoopReviewRoundResult{
+		Reviewers:  reviewLoopReviewerNames(reviewers),
+		AttemptIDs: attemptIDs,
+		Proposals:  batch,
+	}, nil
+}
+
+func (a App) runReviewLoopReviewerWithAgent(liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, timeout time.Duration) (reviewerResultDocument, error) {
 	var stdout bytes.Buffer
-	if err := a.ReviewRun(&stdout, liveOutput, runID, reviewer, timeout, true, true); err != nil {
+	if err := a.runReviewerAttempt(&stdout, liveOutput, runID, prep, reviewer, timeout, true, true, false); err != nil {
 		return reviewerResultDocument{}, err
 	}
 	var result reviewerResultDocument
@@ -447,6 +591,66 @@ func (a App) runReviewLoopReviewer(liveOutput io.Writer, runID string, reviewer 
 		return reviewerResultDocument{}, err
 	}
 	return result, nil
+}
+
+func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, timeout time.Duration, confirm bool, jsonOutput bool, writeDryRunArtifacts bool) error {
+	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[reviewerDryRunDocument, reviewerRequestDocument, reviewerResultDocument, struct{}]{
+		Stdout:          stdout,
+		LiveOutput:      liveOutput,
+		JSONOutput:      jsonOutput,
+		Confirm:         confirm,
+		CancelMessage:   "review cancelled",
+		Root:            prep.Context.Root,
+		EventsJSONL:     prep.Context.Paths.EventsJSONL,
+		RunID:           runID,
+		Stage:           "review",
+		AttemptsDir:     prep.Context.RunPaths.ReviewAttemptsDir,
+		AttemptIDPrefix: "reviewer_attempt",
+		LastResultJSON:  prep.Context.RunPaths.ReviewLastResultJSON,
+		Agent:           reviewer.Agent,
+		RequestModel:    reviewer.ModelSpec.Model,
+		PromptRepoPath:  reviewerPromptRepoPath(runID),
+		ArtifactDir:     reviewerAttemptsArtifact,
+		Timeout:         timeout,
+		StartedEvent:    "reviewer_attempt_started",
+		FinishedEvent:   "reviewer_attempt_finished",
+		ExitKind:        "reviewer",
+		TimeoutMessage: func(timeout time.Duration) string {
+			return fmt.Sprintf("reviewer process produced no output for %s", timeout)
+		},
+		Prepare: func(createdAt string) (reviewerDryRunDocument, error) {
+			if writeDryRunArtifacts {
+				return ensureReviewerDryRunArtifacts(prep, createdAt)
+			}
+			return buildReviewerDryRunDocument(runID, createdAt, reviewer.Agent)
+		},
+		BuildRequest: func(context agentAttemptContext[reviewerDryRunDocument]) (reviewerRequestDocument, error) {
+			return reviewerRequestDocument{
+				Schema:    reviewerRequestSchema,
+				RunID:     runID,
+				AttemptID: context.AttemptID,
+				CreatedAt: context.CreatedAt,
+				Reviewer:  agentDescriptorDocument(reviewer.Agent),
+				Artifacts: context.Prepared.Artifacts,
+				WouldRun:  context.Prepared.WouldRun,
+			}, nil
+		},
+		BuildResult: func(context agentAttemptContext[reviewerDryRunDocument], runResult agents.RunResult) reviewerResultDocument {
+			return reviewerResultDocument{
+				Schema:        reviewerResultSchema,
+				RunID:         runID,
+				AttemptID:     context.AttemptID,
+				Reviewer:      reviewer.Agent.Name,
+				processResult: processResultFromRunResult(runResult),
+			}
+		},
+		ProcessResult: func(result reviewerResultDocument) processResult {
+			return result.processResult
+		},
+		RenderRunOnly: func(stdout io.Writer, request reviewerRequestDocument, result reviewerResultDocument) {
+			writeReviewRun(stdout, request, result, reviewer.ModelSpec)
+		},
+	})
 }
 
 func (a App) runReviewLoopProposeFindings(runID string, reviewerAttemptID string) (reviewProposeFindingsResponse, error) {
@@ -498,6 +702,53 @@ func (a App) recordDuplicateReviewLoopProposal(context reviewContext, proposalID
 		return err
 	}
 	return ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_proposal_duplicate", Timestamp: now, RunID: context.State.RunID, RepoRoot: context.Root})
+}
+
+func (a App) upgradeDuplicateReviewFindingSeverity(context reviewContext, existing reviewFindingRecord, proposal reviewProposalRecord) (reviewFindingRecord, bool, error) {
+	if reviewSeverityRank(proposal.Severity) <= reviewSeverityRank(existing.Severity) {
+		return existing, false, nil
+	}
+	findings, _, err := readReviewRecords(context.RunPaths)
+	if err != nil {
+		return reviewFindingRecord{}, false, err
+	}
+	updated := existing
+	found := false
+	for index := range findings {
+		if findings[index].ID != existing.ID {
+			continue
+		}
+		findings[index].Severity = proposal.Severity
+		updated = findings[index]
+		found = true
+		break
+	}
+	if !found {
+		return reviewFindingRecord{}, false, fmt.Errorf("review finding not found for severity upgrade: %s", existing.ID)
+	}
+	if err := writeJSONLines(context.RunPaths.ReviewFindingsJSONL, findings); err != nil {
+		return reviewFindingRecord{}, false, err
+	}
+	now := a.nowUTC()
+	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_finding_severity_upgraded", Timestamp: now, RunID: context.State.RunID, RepoRoot: context.Root}); err != nil {
+		return reviewFindingRecord{}, false, err
+	}
+	return updated, true, nil
+}
+
+func reviewSeverityRank(severity string) int {
+	switch severity {
+	case "low":
+		return 1
+	case "medium":
+		return 2
+	case "high":
+		return 3
+	case "critical":
+		return 4
+	default:
+		return 0
+	}
 }
 
 func (a App) runReviewLoopFixRound(liveOutput io.Writer, runID string, agent string, timeout time.Duration) (reviewFixResultDocument, error) {
@@ -630,7 +881,11 @@ func writeReviewLoopSummary(stdout io.Writer, summary reviewLoopSummaryDocument)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Round results:")
 	for _, round := range summary.Rounds {
-		fmt.Fprintf(stdout, "  - round %d: open findings %d, proposals accepted %d, reviewer %s", round.Round, round.OpenFindings, round.ProposalsAccepted, round.ReviewerAttemptID)
+		reviewerAttempts := round.ReviewerAttemptID
+		if len(round.ReviewerAttemptIDs) > 0 {
+			reviewerAttempts = strings.Join(round.ReviewerAttemptIDs, ",")
+		}
+		fmt.Fprintf(stdout, "  - round %d: open findings %d, proposals accepted %d, reviewer %s", round.Round, round.OpenFindings, round.ProposalsAccepted, reviewerAttempts)
 		if round.FixerAttemptID != "" {
 			fmt.Fprintf(stdout, ", fixer %s", round.FixerAttemptID)
 		}
@@ -663,4 +918,11 @@ func writeReviewLoopSummary(stdout io.Writer, summary reviewLoopSummaryDocument)
 			}
 		}
 	}
+}
+
+func firstString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
 }

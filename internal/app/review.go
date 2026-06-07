@@ -509,61 +509,7 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, rev
 	if err != nil {
 		return err
 	}
-
-	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[reviewerDryRunDocument, reviewerRequestDocument, reviewerResultDocument, struct{}]{
-		Stdout:          stdout,
-		LiveOutput:      liveOutput,
-		JSONOutput:      jsonOutput,
-		Confirm:         confirm,
-		CancelMessage:   "review cancelled",
-		Root:            context.Root,
-		EventsJSONL:     context.Paths.EventsJSONL,
-		RunID:           runID,
-		Stage:           "review",
-		AttemptsDir:     context.RunPaths.ReviewAttemptsDir,
-		AttemptIDPrefix: "reviewer_attempt",
-		LastResultJSON:  context.RunPaths.ReviewLastResultJSON,
-		Agent:           prep.Reviewer,
-		RequestModel:    prep.ModelSpec.Model,
-		PromptRepoPath:  reviewerPromptRepoPath(runID),
-		ArtifactDir:     reviewerAttemptsArtifact,
-		Timeout:         timeout,
-		StartedEvent:    "reviewer_attempt_started",
-		FinishedEvent:   "reviewer_attempt_finished",
-		ExitKind:        "reviewer",
-		TimeoutMessage: func(timeout time.Duration) string {
-			return fmt.Sprintf("reviewer process produced no output for %s", timeout)
-		},
-		Prepare: func(createdAt string) (reviewerDryRunDocument, error) {
-			return ensureReviewerDryRunArtifacts(prep, createdAt)
-		},
-		BuildRequest: func(context agentAttemptContext[reviewerDryRunDocument]) (reviewerRequestDocument, error) {
-			return reviewerRequestDocument{
-				Schema:    reviewerRequestSchema,
-				RunID:     runID,
-				AttemptID: context.AttemptID,
-				CreatedAt: context.CreatedAt,
-				Reviewer:  agentDescriptorDocument(prep.Reviewer),
-				Artifacts: context.Prepared.Artifacts,
-				WouldRun:  context.Prepared.WouldRun,
-			}, nil
-		},
-		BuildResult: func(context agentAttemptContext[reviewerDryRunDocument], runResult agents.RunResult) reviewerResultDocument {
-			return reviewerResultDocument{
-				Schema:        reviewerResultSchema,
-				RunID:         runID,
-				AttemptID:     context.AttemptID,
-				Reviewer:      prep.Reviewer.Name,
-				processResult: processResultFromRunResult(runResult),
-			}
-		},
-		ProcessResult: func(result reviewerResultDocument) processResult {
-			return result.processResult
-		},
-		RenderRunOnly: func(stdout io.Writer, request reviewerRequestDocument, result reviewerResultDocument) {
-			writeReviewRun(stdout, request, result, prep.ModelSpec)
-		},
-	})
+	return a.runReviewerAttempt(stdout, liveOutput, runID, prep, reviewLoopReviewer{Agent: prep.Reviewer, ModelSpec: prep.ModelSpec}, timeout, confirm, jsonOutput, true)
 }
 
 func (a App) loadPreparedReviewState(stdout io.Writer, runID string, jsonOutput bool) (reviewStateResponse, bool, error) {
@@ -678,7 +624,52 @@ func (a App) prepareReviewer(context reviewContext, reviewerName string, action 
 	if reviewer.Input != agents.InputPromptFile {
 		return reviewerDryRunPreparation{}, fmt.Errorf("unsupported agent input mode: %s", reviewer.Input)
 	}
+	review = refreshReviewDocument(review, context.State.RunID, gateReport.Status, findings, resolutions, "")
+	return reviewerDryRunPreparation{
+		Context:           context,
+		Contract:          contract,
+		GateReport:        gateReport,
+		Review:            review,
+		Findings:          findings,
+		Resolutions:       resolutions,
+		Proposals:         proposals,
+		ProposalDecisions: proposalDecisions,
+		Reviewer:          reviewer,
+		ModelSpec:         modelSpec,
+	}, nil
+}
 
+func (a App) prepareReviewerForAgent(context reviewContext, reviewer agents.AgentDescriptor, modelSpec agents.ModelSpec, action string) (reviewerDryRunPreparation, error) {
+	review, err := requireReviewPrepared(context.RunPaths, context.State.RunID)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	if !isRegularFile(context.RunPaths.GateReportJSON) {
+		return reviewerDryRunPreparation{}, fmt.Errorf("cannot %s: gate report not found", action)
+	}
+	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	contract, err := readDraftContract(context.RunPaths.ContractJSON)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	approval, err := readApprovalState(context.RunPaths.ApprovalJSON)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	if _, err := verifyApprovedContract(context.RunPaths, contract, approval, action); err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	findings, resolutions, err := readReviewRecords(context.RunPaths)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	proposals, proposalDecisions, err := readReviewProposalRecords(context.RunPaths)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
 	review = refreshReviewDocument(review, context.State.RunID, gateReport.Status, findings, resolutions, "")
 	return reviewerDryRunPreparation{
 		Context:           context,
@@ -729,16 +720,20 @@ func latestExecutionExecutorName(context reviewContext) (string, bool) {
 }
 
 func writeReviewerDryRunArtifacts(prep reviewerDryRunPreparation, plan reviewerDryRunDocument) error {
+	if err := writeReviewerPromptAndContext(prep); err != nil {
+		return err
+	}
+	return writeJSON(prep.Context.RunPaths.ReviewDryRunJSON, plan)
+}
+
+func writeReviewerPromptAndContext(prep reviewerDryRunPreparation) error {
 	if err := os.MkdirAll(prep.Context.RunPaths.ReviewDir, 0o755); err != nil {
 		return err
 	}
 	if err := os.WriteFile(prep.Context.RunPaths.ReviewContextMD, []byte(renderReviewerContext(prep)), 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(prep.Context.RunPaths.ReviewPromptMD, []byte(renderReviewerPrompt(prep.Context.State.RunID)), 0o644); err != nil {
-		return err
-	}
-	return writeJSON(prep.Context.RunPaths.ReviewDryRunJSON, plan)
+	return os.WriteFile(prep.Context.RunPaths.ReviewPromptMD, []byte(renderReviewerPrompt(prep.Context.State.RunID)), 0o644)
 }
 
 func ensureReviewerDryRunArtifacts(prep reviewerDryRunPreparation, createdAt string) (reviewerDryRunDocument, error) {

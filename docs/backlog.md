@@ -53,8 +53,6 @@ reviews across M8–M10. Rough priority in parentheses.
 
 - **L2 — severity by composition** (med). A broad fix pass, then a critical/major-
   only final gate (no per-finding severity schema).
-- **Cross-model panel** (med). Run N reviewers (codex + claude) per round; merge and
-  de-duplicate findings; reconcile severity.
 - **Phase 1 — clarify loop** (high, large). Slices done: `clarify suggest` (agent
   proposes questions, M11.0) and `contract draft` (agent drafts contract fields from
   answers → proposal → `accept-draft`, M11.1). Remaining: the **loop driver**
@@ -82,6 +80,22 @@ reviews across M8–M10. Rough priority in parentheses.
 
 ## Resolved (for reference)
 
+- Cross-model review panel (M12.4) — `agents.review_panel` lists two or more reviewer
+  agents; each autonomous review-loop round runs them CONCURRENTLY against the same
+  diff/contract (goroutine fan-out, sequential per-attempt proposal parsing in panel
+  order), then the existing `(file, line, message)` fingerprint dedup merges cross-
+  reviewer duplicates (first accepted, rest recorded as `duplicate` decisions, so
+  corroboration stays in the audit). Severity is reconciled to the max: a duplicate
+  proposal that outranks the open finding upgrades it (`low<medium<high<critical`) and
+  emits a `review_finding_severity_upgraded` event. An explicit `--reviewer` disables
+  the panel; empty/absent `review_panel` is byte-for-byte the single-reviewer path.
+  Concurrency is race-clean: a package-level mutex guards only the shared lifecycle
+  sections (attempt-id allocation + mkdir, the events/usage ledger appends, the shared
+  last-result write) so the agent subprocess still runs lock-free; concurrent reviewers
+  share a synchronized live-output writer. Validated under `go test -race`. The N×
+  per-round token cost is already bounded by the M12.2 budget stop. Deferred: an
+  agreement-count field and severity-threshold gating (require K reviewers); per-panel-
+  member model pins (all members share `agents.reviewer_model` today).
 - Token accounting — slices 1-2 (M12.0, M12.1) — executor/fixer agents and read-stage
   reviewer/clarifier/drafter agents now run with structured output (`codex exec --json`
   / `claude -p --output-format json`, with read-stage Codex kept read-only); the

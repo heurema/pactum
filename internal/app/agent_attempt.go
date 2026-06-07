@@ -6,11 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/heurema/pactum/internal/agents"
 	"github.com/heurema/pactum/internal/ledger"
 )
+
+var agentAttemptLifecycleMu sync.Mutex
 
 type agentAttemptLifecycle[Prepared any, Request any, Result any, Response any] struct {
 	Stdout     io.Writer
@@ -76,14 +79,18 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 		return err
 	}
 
+	agentAttemptLifecycleMu.Lock()
 	attemptID, err := nextAgentAttemptID(cfg.AttemptsDir, cfg.AttemptIDPrefix)
 	if err != nil {
+		agentAttemptLifecycleMu.Unlock()
 		return err
 	}
 	attemptPaths := newAttemptPaths(filepath.Join(cfg.AttemptsDir, attemptID))
 	if err := os.MkdirAll(attemptPaths.Dir, 0o755); err != nil {
+		agentAttemptLifecycleMu.Unlock()
 		return err
 	}
+	agentAttemptLifecycleMu.Unlock()
 
 	context := agentAttemptContext[Prepared]{
 		Prepared:     prepared,
@@ -99,7 +106,10 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 	if err := writeJSON(attemptPaths.RequestJSON, request); err != nil {
 		return err
 	}
-	if err := ledger.Append(cfg.EventsJSONL, ledger.Event{Type: cfg.StartedEvent, Timestamp: now, RunID: cfg.RunID, RepoRoot: cfg.Root}); err != nil {
+	agentAttemptLifecycleMu.Lock()
+	err = ledger.Append(cfg.EventsJSONL, ledger.Event{Type: cfg.StartedEvent, Timestamp: now, RunID: cfg.RunID, RepoRoot: cfg.Root})
+	agentAttemptLifecycleMu.Unlock()
+	if err != nil {
 		return err
 	}
 
@@ -120,11 +130,14 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 	if err := writeJSON(attemptPaths.ResultJSON, result); err != nil {
 		return err
 	}
-	if err := writeJSON(cfg.LastResultJSON, result); err != nil {
-		return err
+	agentAttemptLifecycleMu.Lock()
+	err = writeJSON(cfg.LastResultJSON, result)
+	if err == nil {
+		appendUsageRecordBestEffort(cfg, attemptID, runResult)
+		err = ledger.Append(cfg.EventsJSONL, ledger.Event{Type: cfg.FinishedEvent, Timestamp: agentAttemptFinishedAt(cfg.ProcessResult(result), now), RunID: cfg.RunID, RepoRoot: cfg.Root})
 	}
-	appendUsageRecordBestEffort(cfg, attemptID, runResult)
-	if err := ledger.Append(cfg.EventsJSONL, ledger.Event{Type: cfg.FinishedEvent, Timestamp: agentAttemptFinishedAt(cfg.ProcessResult(result), now), RunID: cfg.RunID, RepoRoot: cfg.Root}); err != nil {
+	agentAttemptLifecycleMu.Unlock()
+	if err != nil {
 		return err
 	}
 
