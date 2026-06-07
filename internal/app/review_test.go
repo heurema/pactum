@@ -477,7 +477,7 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 		"Reviewer dry-run prepared",
 		"Resolved:",
 		"Would run:",
-		"codex exec --sandbox read-only < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt.md",
+		"codex exec --json --sandbox read-only < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt.md",
 		".heurema/pactum/runs/" + runID + "/review/reviewer-context.md",
 	} {
 		if !strings.Contains(got, want) {
@@ -490,7 +490,7 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 		t.Fatalf("unexpected reviewer dry-run plan: %#v", plan)
 	}
 	wantPrompt := runArtifactRepoRel(runID, reviewerPromptArtifact)
-	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec --sandbox read-only" || plan.WouldRun.Stdin != wantPrompt {
+	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec --json --sandbox read-only" || plan.WouldRun.Stdin != wantPrompt {
 		t.Fatalf("unexpected would_run command: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, reviewerPromptArtifact, wantPrompt)
@@ -524,7 +524,7 @@ func TestReviewDryRunJSONOutput(t *testing.T) {
 	if plan.Artifacts.ReviewerPrompt != reviewerPromptArtifact ||
 		plan.Artifacts.ReviewerContext != reviewerContextArtifact ||
 		plan.WouldRun.Command != "codex" ||
-		strings.Join(plan.WouldRun.Args, " ") != "exec --sandbox read-only" ||
+		strings.Join(plan.WouldRun.Args, " ") != "exec --json --sandbox read-only" ||
 		plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
 		t.Fatalf("reviewer dry-run json missing artifacts/would_run: %#v", plan)
 	}
@@ -545,7 +545,7 @@ func TestReviewDryRunUsesDefaultReviewer(t *testing.T) {
 	if plan.Reviewer.Name != "codex" || plan.Reviewer.Command != "codex" {
 		t.Fatalf("default reviewer mismatch: %#v", plan.Reviewer)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "exec --sandbox read-only" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
+	if strings.Join(plan.WouldRun.Args, " ") != "exec --json --sandbox read-only" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
 		t.Fatalf("default reviewer would_run mismatch: %#v", plan.WouldRun)
 	}
 }
@@ -632,7 +632,7 @@ func TestReviewDryRunExplicitReviewers(t *testing.T) {
 	if plan.Reviewer.Name != "codex" || plan.Reviewer.Command != "codex" {
 		t.Fatalf("codex reviewer mismatch: %#v", plan.Reviewer)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "exec --sandbox read-only" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
+	if strings.Join(plan.WouldRun.Args, " ") != "exec --json --sandbox read-only" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
 		t.Fatalf("codex would_run mismatch: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, reviewerPromptArtifact, runArtifactRepoRel(runID, reviewerPromptArtifact))
@@ -642,7 +642,7 @@ func TestReviewDryRunExplicitReviewers(t *testing.T) {
 	if plan.Reviewer.Name != "claude" || plan.Reviewer.Command != "claude" {
 		t.Fatalf("claude reviewer mismatch: %#v", plan.Reviewer)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "-p" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
+	if strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
 		t.Fatalf("claude would_run mismatch: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, reviewerPromptArtifact, runArtifactRepoRel(runID, reviewerPromptArtifact))
@@ -659,7 +659,7 @@ func TestReviewDryRunAppliesReviewerModelConfigToCodex(t *testing.T) {
 		t.Fatalf("review dry-run codex exited %d, stderr: %s", code, stderr.String())
 	}
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
-	wantArgs := []string{"exec", "--sandbox", "read-only", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"}
+	wantArgs := []string{"exec", "--json", "--sandbox", "read-only", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"}
 	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
 		t.Fatalf("codex reviewer would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
 	}
@@ -680,7 +680,7 @@ func TestReviewDryRunAppliesReviewerModelConfigToClaude(t *testing.T) {
 		t.Fatalf("review dry-run claude exited %d, stderr: %s", code, stderr.String())
 	}
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
-	wantArgs := []string{"-p", "--model", "claude-sonnet-4", "--effort", "high"}
+	wantArgs := []string{"-p", "--output-format", "json", "--model", "claude-sonnet-4", "--effort", "high"}
 	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
 		t.Fatalf("claude reviewer would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
 	}
@@ -2283,6 +2283,9 @@ func TestReviewerHelperProcess(t *testing.T) {
 	fmt.Printf("stdin_has_reviewer_prompt=%t\n", strings.Contains(string(stdin), "# Reviewer Prompt"))
 	if os.Getenv("PACTUM_REVIEWER_FINDING_TEXT") == "1" {
 		fmt.Println("FINDING: critical issue in generated code")
+	}
+	if os.Getenv("PACTUM_REVIEWER_CODEX_USAGE") == "1" {
+		fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":210,"cached_input_tokens":40,"output_tokens":50,"reasoning_output_tokens":15}}`)
 	}
 	fmt.Fprintln(os.Stderr, "reviewer-stderr-line")
 	if raw := os.Getenv("PACTUM_REVIEWER_EXIT"); raw != "" {

@@ -364,7 +364,7 @@ func (a App) recordContractDraftProposal(context runContext, attemptID string, d
 }
 
 func parseContractDraftProposalBlocks(output string) ([]contractDraftProposalBlock, []string) {
-	jsonBlocks := extractFencedJSONBlocks(output)
+	jsonBlocks := extractFencedJSONBlocks(agentMessageText([]byte(output)))
 	blocks := make([]contractDraftProposalBlock, 0, len(jsonBlocks))
 	warnings := []string{}
 	for _, raw := range jsonBlocks {

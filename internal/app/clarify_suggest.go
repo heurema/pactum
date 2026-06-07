@@ -293,7 +293,7 @@ func (a App) recordClarifierSuggestions(context clarifyContext, attemptID string
 }
 
 func parseClarifierSuggestionBlocks(output string) ([]clarifierSuggestionsBlock, []string) {
-	jsonBlocks := extractFencedJSONBlocks(output)
+	jsonBlocks := extractFencedJSONBlocks(agentMessageText([]byte(output)))
 	blocks := make([]clarifierSuggestionsBlock, 0, len(jsonBlocks))
 	warnings := []string{}
 	for _, raw := range jsonBlocks {

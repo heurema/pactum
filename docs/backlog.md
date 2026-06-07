@@ -74,9 +74,10 @@ reviews across M8–M10. Rough priority in parentheses.
 
 ## Resolved (for reference)
 
-- Token accounting — slice 1 (M12.0) — write-stage (executor/fixer) agents now run
-  with `codex exec --json` / `claude -p --output-format json`; the runner parses token
-  usage per agent (best-effort, never fatal), normalized per
+- Token accounting — slices 1-2 (M12.0, M12.1) — executor/fixer agents and read-stage
+  reviewer/clarifier/drafter agents now run with structured output (`codex exec --json`
+  / `claude -p --output-format json`, with read-stage Codex kept read-only); the
+  runner parses token usage per agent (best-effort, never fatal), normalized per
   [`cost-budget-design.md`](cost-budget-design.md), recorded as a `UsageRecord` to the
   per-run `ledger/usage.jsonl` via the shared lifecycle, and surfaced as tokens-per-task
   in `status` and a new `pactum usage` command. Tokens are the unit; cost/budget/

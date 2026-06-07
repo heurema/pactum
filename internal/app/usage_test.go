@@ -70,6 +70,38 @@ func TestExecuteRunRecordsCapturedCodexUsage(t *testing.T) {
 	}
 }
 
+func TestReviewRunRecordsCapturedCodexUsage(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	app.AgentRegistry = testAgentRegistry(codexReviewerHelperAgentDescriptor())
+	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_REVIEWER_CODEX_USAGE", "1")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "codex", "--yes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
+	}
+
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	records, err := readUsageRecords(runPaths.UsageJSONL)
+	assertNoError(t, err)
+	if len(records) != 1 {
+		t.Fatalf("usage record count = %d, want 1: %#v", len(records), records)
+	}
+	record := records[0]
+	if !record.Captured || record.Stage != "review" || record.Provider != "codex" || record.Agent != "codex" {
+		t.Fatalf("reviewer usage should be captured with review identity: %#v", record)
+	}
+	if record.InputTokens != 210 || record.OutputTokens != 65 || record.TotalTokens != 275 {
+		t.Fatalf("reviewer usage counts mismatch: %#v", record)
+	}
+	if record.CacheReadTokens != 40 || record.ReasoningTokens != 15 || len(record.Raw) == 0 {
+		t.Fatalf("reviewer usage classes/raw mismatch: %#v", record)
+	}
+}
+
 func TestExecuteRunUsageParseMissWarnsButSucceeds(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
@@ -215,6 +247,15 @@ func codexHelperAgentDescriptor() agents.AgentDescriptor {
 		Name:    agents.BuiltinCodex,
 		Command: os.Args[0],
 		Args:    []string{"-test.run=TestExecutionHelperProcess", "--", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox"},
+		Input:   agents.InputPromptFile,
+	}
+}
+
+func codexReviewerHelperAgentDescriptor() agents.AgentDescriptor {
+	return agents.AgentDescriptor{
+		Name:    agents.BuiltinCodex,
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestReviewerHelperProcess", "--", "exec", "--json", "--sandbox", "read-only"},
 		Input:   agents.InputPromptFile,
 	}
 }

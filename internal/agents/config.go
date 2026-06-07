@@ -65,19 +65,20 @@ func (BuiltinRegistry) ListBuiltins() []AgentDescriptor {
 // reviewerBuiltins returns read-only descriptors for the reviewer role. A reviewer
 // only reads the diff and emits findings, so it must NOT carry the executor's
 // write/edit bypass: codex runs in a read-only sandbox and claude omits
-// --dangerously-skip-permissions.
+// --dangerously-skip-permissions. Both keep structured output enabled so the
+// shared runner can capture token usage for read-stage calls.
 func reviewerBuiltins() []AgentDescriptor {
 	builtins := []AgentDescriptor{
 		{
 			Name:    BuiltinCodex,
 			Command: "codex",
-			Args:    []string{"exec", "--sandbox", "read-only"},
+			Args:    []string{"exec", "--json", "--sandbox", "read-only"},
 			Input:   InputPromptFile,
 		},
 		{
 			Name:    BuiltinClaude,
 			Command: "claude",
-			Args:    []string{"-p"},
+			Args:    []string{"-p", "--output-format", "json"},
 			Input:   InputPromptFile,
 		},
 	}
