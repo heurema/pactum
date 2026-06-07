@@ -34,7 +34,12 @@ the workspace ledger (`ledger/events.jsonl`). Read-only commands (`status`,
 
 `pactum init` creates the `.heurema/pactum/` workspace, writes the default
 `config.yaml`, and builds the project map: a deterministic scan of the
-repository. The map is **wiki-first**. It produces a generated map wiki under
+repository. `init` also writes a workspace `.gitignore` that version-controls the
+durable run record — contracts, decisions, the ledger, gate verdicts, review
+findings, and memory — while ignoring regenerable artifacts (`map/`, per-run
+`context/`) and raw `*.log` transcripts: the run outcome lives in git history and
+the learnings in memory, so the bulky agent transcripts are not committed. The map
+is **wiki-first**. It produces a generated map wiki under
 `map/wiki/` (`overview.md`, `structure.md`, `commands.md`, `entrypoints.md`,
 `config.md`, `tests.md`, and one `areas/<area>.md` page per top-level
 directory), a file inventory, a human-readable `repo-map.md`, an `llms.txt`

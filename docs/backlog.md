@@ -18,10 +18,15 @@ reviews across M8–M10. Rough priority in parentheses.
   persists across branches. An M10.2 `executor_model: claude-opus-4-8:xhigh` leaked
   into M10.3 and broke a codex run (pactum passes model flags blind; codex rejected a
   claude model). Consider warning on agent/model mismatch and/or scoping model pins.
-- **Spurious project-map staleness** (low). `prompt build` / `execute dry-run`
-  intermittently report "project map is stale" with a clean working tree, needing a
-  `map refresh` + `prompt build` again. Investigate what invalidates freshness when
-  nothing tracked changed.
+- **Project map should honor `.gitignore`** (med). The map scan uses a hardcoded
+  ignore list (`.heurema`, `node_modules`, a few binary exts) and does NOT read the
+  repo's `.gitignore`, so it indexes build artifacts (`__pycache__/*.pyc`, `dist/`,
+  `target/`, …). Regenerating those (any test/build run) changes the map hashes →
+  "project map is stale" → blocks `prompt build`/`execute` until `map refresh`.
+  Invisible on Go (no in-tree build artifacts), bites Python/Rust/Java/etc. — found by
+  the foreign-repo generality test (this is the real root cause of the "spurious
+  staleness" reports). Fix: enumerate files via git (respecting `.gitignore`) when the
+  repo is git-backed, falling back to the hardcoded list otherwise.
 
 ## Review→fix loop (L3b and beyond)
 
@@ -76,6 +81,13 @@ reviews across M8–M10. Rough priority in parentheses.
   approved (pre-existing; `clarify suggest` makes bulk creation easier).
 ## Resolved (for reference)
 
+- `.heurema` version-control policy (M11.9) — `init` now writes a `.gitignore` that
+  versions the durable run record (contracts, decisions, the ledger/audit timeline,
+  gate verdicts, review findings, memory) and ignores only regenerable artifacts
+  (`map/`, `cache/`, `runs/*/context/`) and raw `*.log` transcripts. The outcome lives
+  in git history and the learnings in memory, so the bulky agent transcripts are not
+  committed. Found via the foreign-repo generality test, which showed the old split
+  committed generated context + gate logs while ignoring the ledger.
 - `-race` in CI (M11.7) — a `make test-race` target (`go test -race ./...`) plus a
   dedicated `race` CI job run the race detector on every PR, catching the data-race
   class (e.g. the M10.2 live-output race) that a non-race `make check` misses. Local
