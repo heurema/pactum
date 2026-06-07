@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1",
+  "id": "command_001",
+  "command": "make check",
+  "started_at": "2026-06-05T13:36:17.259361Z",
+  "finished_at": "2026-06-05T13:36:24.584643Z",
+  "duration_ms": 7325,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "gate/validation/command_001/stdout.log",
+  "stderr": "gate/validation/command_001/stderr.log"
+}

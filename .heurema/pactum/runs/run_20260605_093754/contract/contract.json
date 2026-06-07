@@ -1,0 +1,40 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260605_093754",
+  "status": "approved",
+  "goal": "Add one sentence to docs/agents.md clarifying that real agent execution (pactum execute run) runs unsandboxed",
+  "scope": {
+    "in": [
+      "Make a tiny bounded docs-only change"
+    ],
+    "out": [
+      "Large refactor",
+      "Dependency changes",
+      "Touching generated .heurema artifacts"
+    ]
+  },
+  "acceptance_criteria": [
+    "Change is small and reviewable"
+  ],
+  "validation": {
+    "commands": [
+      "make check"
+    ]
+  },
+  "assumptions": [],
+  "open_questions": [],
+  "clarifications": {
+    "questions": [
+      {
+        "id": "q_001",
+        "question": "Should this real execution dogfood keep the change tiny and reversible?",
+        "blocking": true,
+        "status": "answered",
+        "answer": "Yes. The task should be small, reversible, and validated by make check."
+      }
+    ]
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}

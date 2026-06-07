@@ -1,0 +1,38 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260605_132959",
+  "status": "approved",
+  "goal": "Surface the resolved per-stage model/effort once per run in execute and review output, so the operator can see what was applied: show the pinned model[:effort] when set, or 'inherit' (the agent CLI's own default) when empty",
+  "scope": {
+    "in": [
+      "Add a 'Resolved' summary (agent, model, effort, pinned-or-inherit) to execute dry-run and execute run human output",
+      "Add the same Resolved summary to reviewer dry-run and review run output",
+      "Reuse the already-parsed ModelSpec from the execute/reviewer preparation — do not re-read config or re-parse",
+      "Tests for the rendered Resolved output, plus a docs/agents.md note"
+    ],
+    "out": [
+      "Reading the agent CLI's own config (e.g. ~/.codex/config.toml) to resolve an inherited model — show 'inherit', not the actual CLI default",
+      "Changing model/effort/sandbox behavior",
+      "Native LLM API or model/provider abstraction",
+      "Touching generated .heurema artifacts"
+    ]
+  },
+  "acceptance_criteria": [
+    "When model[:effort] is pinned, the Resolved block shows the pinned model and effort",
+    "When empty, the Resolved block shows 'inherit' for model and effort",
+    "Shown for both the executor (execute) and the reviewer (review); reuses the existing parsed ModelSpec; covered by tests"
+  ],
+  "validation": {
+    "commands": [
+      "make check"
+    ]
+  },
+  "assumptions": [],
+  "open_questions": [],
+  "clarifications": {
+    "questions": []
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "schema": "pactum.execution_request.v1",
+  "run_id": "run_20260605_132959",
+  "attempt_id": "attempt_001",
+  "created_at": "2026-06-05T13:30:07Z",
+  "contract_sha256": "5e8ef42af44233b81c7d8277d5bab6448d1eac215e7c2d61514d238980ab5924",
+  "agent": {
+    "name": "codex",
+    "command": "codex",
+    "args": [
+      "exec",
+      "--dangerously-bypass-approvals-and-sandbox"
+    ],
+    "input": "prompt_file"
+  },
+  "artifacts": {
+    "prompt": "contract/prompt.md",
+    "executor_context": "context/executor-context.md",
+    "prompt_manifest": "contract/prompt-manifest.json"
+  },
+  "would_run": {
+    "command": "codex",
+    "args": [
+      "exec",
+      "--dangerously-bypass-approvals-and-sandbox"
+    ],
+    "stdin": ".heurema/pactum/runs/run_20260605_132959/contract/prompt.md"
+  }
+}

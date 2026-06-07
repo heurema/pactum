@@ -1,0 +1,45 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260607_194548",
+  "status": "approved",
+  "goal": "Slice 2 of token accounting (docs/cost-budget-design.md): capture token usage from the READ-stage agents (reviewer, clarify suggest, contract draft) too. Switch their invocation to json output and adapt the findings/questions/draft parsers to extract the agent's message text from the json envelope before parsing fenced JSON. The runner's slice-1 usage capture then covers read stages automatically. Best-effort: text extraction must never panic or break findings parsing / the review loop",
+  "scope": {
+    "in": [
+      "Flip reviewerBuiltins (internal/agents/config.go) to structured json output: codex 'exec --json --sandbox read-only' and claude '-p --output-format json' (keep them read-only; these stages do not write)",
+      "Add an agent-output text extractor, e.g. agentMessageText(stdout []byte) string, that returns the agent's message text by AUTO-DETECTING the format: claude --output-format json -\u003e the single result object's 'result' string field; codex --json -\u003e the concatenation of agent_message item texts from the JSONL item.completed events; fallback -\u003e the raw stdout unchanged (so plain-text / non-json / unparseable output still works). Never panics",
+      "In the three read-stage parsers (review propose-findings in review_proposals.go, clarify suggest in clarify_suggest.go, contract draft in contract_draft.go), pass the stdout bytes through agentMessageText before extractFencedJSONBlocks, so fenced-JSON findings/questions/draft are extracted from the agent text regardless of the json wrapping",
+      "Verify read-stage usage is captured: with the json args, the existing runner path (structuredUsageEnabled/parseAgentUsage) and the shared lifecycle record a UsageRecord (captured=true) for the reviewer/clarify/draft stages; full-run totals in status / pactum usage now include read stages",
+      "Tests: agentMessageText extraction (codex JSONL with agent_message item.completed -\u003e text; claude result object -\u003e .result; plain-text/non-json -\u003e raw fallback; malformed/empty -\u003e raw fallback, no panic); the findings/questions/draft parsers still extract correctly from json-wrapped reviewer output; a reviewer run configured with json args records captured reviewer usage"
+    ],
+    "out": [
+      "Cost in dollars, budget enforcement, estimation (later slices)",
+      "Changing the fenced-JSON block format or the findings/clarification/draft schemas",
+      "Decoupling the clarifier/drafter run+parse fusion (separate backlog item); changing how live agent output is rendered",
+      "Native LLM API or provider abstraction; editing generated .heurema run artifacts"
+    ]
+  },
+  "paths_in_scope": [
+    "internal/agents/**",
+    "internal/app/**",
+    "docs/**"
+  ],
+  "acceptance_criteria": [
+    "reviewer / clarify suggest / contract draft run with json output, and their token usage is captured (captured=true) and recorded to runs/\u003cid\u003e/ledger/usage.jsonl, surfaced by status / pactum usage; full-run totals now include read stages",
+    "Findings / clarification questions / contract draft fields are still correctly extracted from the json-wrapped agent output; review loop and clarify/draft behavior is otherwise unchanged",
+    "Plain-text / non-json agent output still parses via the raw fallback (existing fake-agent tests pass); extraction never panics or fails a run on malformed output",
+    "make check green (incl deadcode); go test -race ./... clean"
+  ],
+  "validation": {
+    "commands": [
+      "make check"
+    ]
+  },
+  "assumptions": [],
+  "open_questions": [],
+  "clarifications": {
+    "questions": []
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}

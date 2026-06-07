@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260607_201714",
+  "status": "contract_approved",
+  "task": "Token budget stop: the autonomous review loop halts once a run's cumulative token usage reaches budget.max_tokens, with a distinct budget_exceeded terminal",
+  "created_at": "2026-06-07T20:17:14.648775Z",
+  "updated_at": "2026-06-07T20:17:14.669054Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260607_201714",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

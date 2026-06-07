@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260605_130815",
+  "status": "contract_approved",
+  "task": "Add per-stage model[:effort] config for the reviewer agent, symmetric to the executor's, reusing the existing model-spec logic",
+  "created_at": "2026-06-05T13:08:15.397029Z",
+  "updated_at": "2026-06-05T13:08:15.427814Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260605_130815",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

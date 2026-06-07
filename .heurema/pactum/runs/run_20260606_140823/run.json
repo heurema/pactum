@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260606_140823",
+  "status": "contract_approved",
+  "task": "Add a pactum review loop command that drives review-\u003efix-\u003ere-review to a clean review round or max_rounds, reusing the existing review run/review fix/gate primitives",
+  "created_at": "2026-06-06T14:08:23.679195Z",
+  "updated_at": "2026-06-06T14:08:23.700311Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260606_140823",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

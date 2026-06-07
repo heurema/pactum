@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260606_203005",
+  "status": "contract_approved",
+  "task": "Add a pactum clarify suggest command: a read-only agent proposes clarification questions for the run from the goal and repo context; pactum records them as open questions for the human to answer",
+  "created_at": "2026-06-06T20:30:05.532946Z",
+  "updated_at": "2026-06-06T20:30:05.554142Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260606_203005",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260606_190824",
+  "status": "approved",
+  "goal": "Stream the agent's live stdout/stderr to the operator's terminal during execute run, review run, and review fix (and per-round in review loop), in addition to capturing it to the per-attempt log files, so these commands are not a silent black box during multi-minute runs",
+  "scope": {
+    "in": [
+      "Add an optional live-output writer to agents.RunRequest; in the subprocess runner, tee the agent's stdout and stderr to it via io.MultiWriter alongside the existing per-attempt log files (unset = unchanged behavior)",
+      "Stream the live output to the operator's STDERR so stdout stays the clean result channel (human summary or --json) in all modes",
+      "Wire it from execute run / review run / review fix (pass the command stderr), and from review loop for its per-round reviewer/fixer sub-runs, so the sub-command JSON the loop parses on stdout stays unpolluted",
+      "Tests: live output appears on stderr, stdout result stays clean/parseable (including --json), attempt log files are still written, review loop sub-command JSON parsing unaffected; plus a docs/agents.md note"
+    ],
+    "out": [
+      "Streaming/structured JSON parsing of agent output (raw tee only); progress bars or TUI",
+      "Changing what is captured to the attempt log files",
+      "Native LLM API or model/provider abstraction",
+      "Touching generated .heurema artifacts"
+    ]
+  },
+  "acceptance_criteria": [
+    "During execute/review/fix the agent output appears live on the operator's stderr AND is still written to the attempt log files",
+    "stdout stays clean in all modes: the --json response remains parseable and review loop sub-command JSON parsing is unaffected",
+    "When no live writer is set, behavior is unchanged; covered by tests"
+  ],
+  "validation": {
+    "commands": [
+      "make check"
+    ]
+  },
+  "assumptions": [],
+  "open_questions": [],
+  "clarifications": {
+    "questions": []
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}

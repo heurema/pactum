@@ -1,0 +1,45 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260607_154501",
+  "status": "approved",
+  "goal": "Make path-scope enforcement BLOCKING by default. When a contract declares path globs (paths_in_scope / paths_out_of_scope), a changed or new file outside that scope makes the gate FAIL (status 'failed'), not just an advisory warning. A new config 'gate.scope_enforcement' (default 'block') can downgrade to 'warn' (the current M11.5 advisory behavior). When no path globs are declared, scope is not checked (unchanged)",
+  "scope": {
+    "in": [
+      "Config: add a 'gate' section with 'scope_enforcement: block | warn', default 'block' (empty/missing =\u003e block; invalid value =\u003e error or default to block). Add it to the config struct and the default config that 'init' writes",
+      "gate.go: buildGateScopeReport takes the enforcement mode. On violations (undeclared or out_of_scope non-empty): set scope.Status = 'blocked' when mode is block, 'warnings' when mode is warn. Add gateSummary.ScopeBlocked (true when scope != nil and Status == 'blocked'); gateStatus returns 'failed' when ScopeBlocked. warn mode leaves the gate status unaffected (current behavior). No path globs =\u003e nil scope =\u003e unchanged",
+      "Gate output (human + JSON) clearly reflects a blocked scope: the scope section shows status blocked and the offending files, and the overall gate status is failed",
+      "Tests: block (default) + out-of-scope/undeclared change =\u003e gate status failed; warn + same violation =\u003e gate passes with advisory warnings (M11.5 behavior); block + in-scope clean =\u003e passed; no path globs =\u003e no scope section and gate unaffected; config parsing of block/warn/empty(-\u003eblock)",
+      "Docs: update docs/flow.md (gate scope enforcement modes) and docs/backlog.md (resolve the blocking path-scope item; note it composes with the M11.8 gate_failed loop terminal)"
+    ],
+    "out": [
+      "Per-contract scope-enforcement override (config-level only this slice)",
+      "Changing the path-glob matcher (M11.5) or the .heurema VCS policy (M11.9)",
+      "Adding loop code for the blocking case — it composes with the existing M11.8 gate_failed terminal; just verify, do not duplicate",
+      "Native LLM API or provider abstraction; editing generated .heurema run artifacts"
+    ]
+  },
+  "paths_in_scope": [
+    "internal/app/**",
+    "docs/**"
+  ],
+  "acceptance_criteria": [
+    "By default (no gate config), a contract with path globs whose run changed an out-of-scope or undeclared file =\u003e gate status 'failed'; the scope section reports status 'blocked' with the offending files",
+    "gate.scope_enforcement: warn =\u003e the same violation is advisory (gate not failed), matching M11.5",
+    "No path globs declared =\u003e gate behaves exactly as before (no scope section, no effect on status)",
+    "In the review loop, a blocking scope failure terminates as gate_failed (composition with M11.8), not a generic error",
+    "make check is green (incl. deadcode); go test -race ./... is clean"
+  ],
+  "validation": {
+    "commands": [
+      "make check"
+    ]
+  },
+  "assumptions": [],
+  "open_questions": [],
+  "clarifications": {
+    "questions": []
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}

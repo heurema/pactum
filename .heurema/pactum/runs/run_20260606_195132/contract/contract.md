@@ -1,0 +1,42 @@
+# Contract Draft
+
+## Goal
+Make 'pactum review loop' safe for long autonomous runs by adding two stop conditions beyond max_rounds: stalemate detection (stop when the fixer stops changing the working tree) and K-consecutive-clean (require K clean review rounds before declaring convergence), each with a distinct terminal reason
+
+## Current status
+Contract status: approved
+Manual clarification, contract approval, prompt build, and agent execution are available through staged Pactum commands.
+
+## Relevant repository context
+- Map run: map_20260606_195132
+- Repo map: .heurema/pactum/map/repo-map.md
+- Search results: context/search-results.json (1 result(s))
+
+## Clarifications
+- None
+
+## In scope
+- Stalemate-by-fingerprint: after each round compute a fingerprint of the working tree (reuse the gate's file hashing / a hash of changed files + HEAD). If N consecutive rounds in which a fix ran leave the fingerprint unchanged, terminate with terminal_reason 'stalemate'. N from config (e.g. limits.review.patience) or a flag, with a sane default (e.g. 2)
+- K-consecutive-clean: require K clean review rounds (no created proposals, no warnings) in a row before terminating as 'clean_round'; a non-clean round resets the streak. K from config/flag, default 1 (preserving current L3a behavior)
+- Record the per-round signals in the loop summary (e.g. unchanged-fingerprint streak, clean streak); add a docs/agents.md note
+- Tests with fake agents: stalemate triggers after N unchanged fix rounds; K-clean requires K consecutive clean rounds; default behavior unchanged
+
+## Out of scope
+- Budget/cost stop (needs token/cost accounting from the agent CLIs — a separate slice)
+- Rebuttal channel, dedup findings across rounds, severity composition, multi-reviewer panel
+- Native LLM API or model/provider abstraction
+- Touching generated .heurema artifacts
+
+## Acceptance criteria
+- When a fix runs but the working tree is unchanged for N consecutive rounds, the loop stops with terminal_reason 'stalemate' instead of grinding to max_rounds
+- With K>1 the loop requires K consecutive clean review rounds before terminal_reason 'clean_round'; a non-clean round resets the clean streak
+- Default behavior (no new config/flags) is unchanged from L3a; covered by tests
+
+## Validation commands
+- make check
+
+## Assumptions
+TBD
+
+## Open questions
+- None

@@ -1,0 +1,37 @@
+{
+  "schema": "pactum.review_loop.v1",
+  "run_id": "run_20260606_195132",
+  "started_at": "2026-06-06T20:05:07Z",
+  "finished_at": "2026-06-06T20:16:50Z",
+  "reviewer": "claude",
+  "agent": "codex",
+  "max_rounds": 2,
+  "terminal_reason": "max_rounds",
+  "rounds": [
+    {
+      "round": 1,
+      "reviewer_attempt_id": "reviewer_attempt_001",
+      "proposals_created": 1,
+      "proposals_accepted": 1,
+      "open_findings": 1,
+      "total_open_findings": 1,
+      "fixer_attempt_id": "attempt_001",
+      "gate_status": "needs_review",
+      "gate_report_artifact": "gate/gate-report.json"
+    },
+    {
+      "round": 2,
+      "reviewer_attempt_id": "reviewer_attempt_002",
+      "proposals_created": 1,
+      "proposals_accepted": 1,
+      "open_findings": 1,
+      "total_open_findings": 2,
+      "fixer_attempt_id": "attempt_002",
+      "gate_status": "needs_review",
+      "gate_report_artifact": "gate/gate-report.json"
+    }
+  ],
+  "artifacts": {
+    "summary": "review/loop-summary.json"
+  }
+}

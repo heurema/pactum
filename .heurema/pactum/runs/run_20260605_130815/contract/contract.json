@@ -1,0 +1,38 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260605_130815",
+  "status": "approved",
+  "goal": "Add per-stage model[:effort] config for the reviewer agent with pin-or-inherit semantics, symmetric to the existing executor model[:effort]; reuse ParseModelSpec and the model-spec application logic rather than duplicating it",
+  "scope": {
+    "in": [
+      "Add a reviewer model[:effort] config field (agents.reviewer_model) to pactum.config.v1, defaulting to empty",
+      "Apply the reviewer override to the reviewer command (codex '-c model=' / '-c model_reasoning_effort='; claude '--model' / '--effort'), reusing ParseModelSpec",
+      "Generalize/reuse the existing executor model-spec application so executor and reviewer share the flag-emission logic (no duplication)",
+      "Unit tests + reviewer dry-run tests, plus a docs/agents.md note"
+    ],
+    "out": [
+      "Changing executor model[:effort] behavior",
+      "Resolved-config visibility header",
+      "Native LLM API or model/provider abstraction",
+      "Touching generated .heurema artifacts"
+    ]
+  },
+  "acceptance_criteria": [
+    "With empty reviewer_model, reviewer commands are unchanged",
+    "With reviewer_model set, the reviewer command gets the model/effort flags while PRESERVING the read-only reviewer sandbox (codex exec --sandbox read-only, claude -p)",
+    "Executor and reviewer reuse the same flag-emission logic; covered by tests"
+  ],
+  "validation": {
+    "commands": [
+      "make check"
+    ]
+  },
+  "assumptions": [],
+  "open_questions": [],
+  "clarifications": {
+    "questions": []
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}
