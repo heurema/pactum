@@ -1,5 +1,6 @@
-# Pactum workspace — generated artifacts, never committed.
-/.heurema/
+# Pactum workspace — the durable run record (contracts, decisions, the ledger,
+# gate verdicts, review findings, memory) is versioned; regenerable artifacts and
+# raw transcripts are excluded by .heurema/pactum/.gitignore.
 
 # Local build output (make build / go build -o bin/pactum).
 /bin/

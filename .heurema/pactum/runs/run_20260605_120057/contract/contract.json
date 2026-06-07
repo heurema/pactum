@@ -1,0 +1,38 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260605_120057",
+  "status": "approved",
+  "goal": "Add per-stage model[:effort] config for the executor agent with pin-or-inherit semantics: empty inherits the CLI's own config; a set value emits the override to the agent command",
+  "scope": {
+    "in": [
+      "Add an executor model[:effort] config field to pactum.config.v1, defaulting to empty",
+      "Parse the model[:effort] spec (empty, model-only, :effort-only, model:effort)",
+      "Emit overrides to the executor command: codex via '-c model=' and '-c model_reasoning_effort='; claude via '--model' and '--effort'",
+      "Unit tests for the parser and the emitted executor command args, plus a brief docs/agents.md note"
+    ],
+    "out": [
+      "Reviewer model[:effort] (executor only in this slice)",
+      "Dry-run resolved-config visibility header",
+      "Any native LLM API call or model/provider abstraction",
+      "Touching generated .heurema artifacts"
+    ]
+  },
+  "acceptance_criteria": [
+    "With empty config, executor commands are unchanged (no model/effort flags emitted)",
+    "With model[:effort] set, codex gets '-c model=' / '-c model_reasoning_effort=' and claude gets '--model' / '--effort'",
+    "Parser handles empty, model-only, ':effort'-only, and 'model:effort'; covered by tests"
+  ],
+  "validation": {
+    "commands": [
+      "make check"
+    ]
+  },
+  "assumptions": [],
+  "open_questions": [],
+  "clarifications": {
+    "questions": []
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}

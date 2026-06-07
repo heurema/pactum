@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260607_194548",
+  "status": "contract_approved",
+  "task": "Slice 2: capture token usage from read-stage agents (reviewer/clarify/draft) by switching them to json output and extracting agent text before parsing fenced JSON",
+  "created_at": "2026-06-07T19:45:48.053273Z",
+  "updated_at": "2026-06-07T19:45:48.073909Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260607_194547",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

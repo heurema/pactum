@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260606_205654",
+  "status": "contract_approved",
+  "task": "Add agent-assisted contract drafting: a read-only agent proposes contract fields from the goal, answered clarifications, and repo context into a draft artifact; a separate accept applies it to the contract",
+  "created_at": "2026-06-06T20:56:54.304509Z",
+  "updated_at": "2026-06-06T20:56:54.324839Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260606_205654",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

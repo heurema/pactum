@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260605_120057",
+  "status": "contract_approved",
+  "task": "Add per-stage model[:effort] config for the executor agent (codex/claude) with pin-or-inherit semantics",
+  "created_at": "2026-06-05T12:00:57.100018Z",
+  "updated_at": "2026-06-05T12:01:08.960706Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260605_120031",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

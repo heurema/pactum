@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260607_190043",
+  "status": "contract_approved",
+  "task": "Slice 1: token accounting for write stages — capture per-call token usage from codex/claude, record to the run usage ledger, surface tokens-per-task in status and a usage command",
+  "created_at": "2026-06-07T19:00:43.096172Z",
+  "updated_at": "2026-06-07T19:01:11.226177Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260607_190042",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

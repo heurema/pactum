@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260606_234156",
+  "status": "approved",
+  "goal": "Replace the total wall-clock default timeout with an idle (no-output) safety timeout in the agent runner",
+  "scope": {
+    "in": [],
+    "out": []
+  },
+  "acceptance_criteria": [],
+  "validation": {
+    "commands": []
+  },
+  "assumptions": [],
+  "open_questions": [],
+  "clarifications": {
+    "questions": []
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}

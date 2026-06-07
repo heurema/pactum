@@ -1,0 +1,12 @@
+# Regenerable artifacts derived from the repo, the project map, or memory.
+locks/
+cache/
+tmp/
+map/
+runs/*/context/
+
+# Raw command transcripts. The run outcome lives in git history and the durable
+# learnings are distilled into the committed memory records; the structured run
+# records (contracts, decisions, the ledger, gate verdicts, review findings) are
+# versioned, but these logs are not.
+*.log
