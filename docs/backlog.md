@@ -36,9 +36,6 @@ reviews across M8–M10. Rough priority in parentheses.
   `(file, line, message)` tuple. Reworded messages, line-number drift, and other
   semantic duplicates are still treated as distinct findings; add fuzzy/semantic
   reconciliation only after the exact-match behavior has settled.
-- **Gate-failure-in-loop policy** (med). A fixer that breaks `make check` makes the
-  loop abort (summary recorded, as an error). Define a meaningful terminal — stop +
-  escalate — distinct from infrastructure errors.
 - **JSON sub-command contract** (low). The loop json-parses sub-command stdout; a
   mid-loop not-ready condition could inject human text into the parsed buffer. Make
   the contract explicit.
@@ -83,6 +80,11 @@ reviews across M8–M10. Rough priority in parentheses.
   dedicated `race` CI job run the race detector on every PR, catching the data-race
   class (e.g. the M10.2 live-output race) that a non-race `make check` misses. Local
   `make check` stays fast; the race run is CI/pre-merge only.
+
+- Gate-failure-in-loop policy (M11.8) — a fixer-induced failed gate now stops the
+  autonomous review loop with terminal reason `gate_failed`, records the failed
+  gate status and report artifact in the round summary, and returns cleanly for
+  escalation. Infrastructure gate errors still terminate as `error`.
 
 - Idle agent timeout (M11.6) — `--timeout` is now an idle (no-output) safety
   timeout: a subprocess is killed only after the window passes with no stdout/stderr

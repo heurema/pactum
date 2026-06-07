@@ -153,6 +153,26 @@ reviewer's captured stdout into **pending proposals**. A human then runs
 `pactum review reject-proposal <run_id> p_001 --reason "..."`. Pending proposals
 must be decided before memory can be proposed.
 
+### Review loop terminal reasons
+
+`pactum review loop` writes `review/loop-summary.json` with a
+`terminal_reason` so operators can tell why the autonomous reviewer/fixer loop
+stopped:
+
+- `clean_round` — the configured number of consecutive reviewer rounds reported
+  no findings or warnings.
+- `stalemate` — fixer rounds repeatedly left the working-tree fingerprint
+  unchanged for the configured patience.
+- `max_rounds` — the configured round cap was reached.
+- `reviewer_findings_unparsed` — the reviewer emitted finding-like output that
+  Pactum could not turn into accepted proposals.
+- `gate_failed` — a fixer round completed, the gate ran, and the gate report
+  status was `failed`. The loop stops cleanly and records the gate report
+  artifact for human escalation.
+- `error` — Pactum could not run or record part of the loop, such as a missing
+  or unreadable execution artifact. This remains an infrastructure/tooling
+  failure and returns a command error.
+
 ### Memory
 
 `pactum memory propose <run_id>` builds a deterministic memory candidate from a
