@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -228,6 +229,14 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 
 		gateReport, err := a.runReviewLoopGate(runID)
 		if err != nil {
+			var gateErr gateProcessError
+			if errors.As(err, &gateErr) {
+				roundSummary.GateStatus = gateReport.Status
+				roundSummary.GateReportArtifact = gateReportArtifact
+				summary.Rounds = append(summary.Rounds, roundSummary)
+				summary.TerminalReason = "gate_failed"
+				break
+			}
 			summary.Rounds = append(summary.Rounds, roundSummary)
 			loopErr = err
 			break
@@ -406,6 +415,14 @@ func (a App) runReviewLoopFixRound(liveOutput io.Writer, runID string, agent str
 func (a App) runReviewLoopGate(runID string) (gateReportDocument, error) {
 	var stdout bytes.Buffer
 	if err := a.GateRun(&stdout, runID, true, true); err != nil {
+		var gateErr gateProcessError
+		if errors.As(err, &gateErr) {
+			var report gateReportDocument
+			if unmarshalErr := json.Unmarshal(stdout.Bytes(), &report); unmarshalErr != nil {
+				return gateReportDocument{}, unmarshalErr
+			}
+			return report, err
+		}
 		return gateReportDocument{}, err
 	}
 	var report gateReportDocument
@@ -526,4 +543,12 @@ func writeReviewLoopSummary(stdout io.Writer, summary reviewLoopSummaryDocument)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Artifacts:")
 	fmt.Fprintf(stdout, "  summary: %s\n", runArtifactRepoRel(summary.RunID, reviewLoopSummaryArtifact))
+	if summary.TerminalReason == "gate_failed" {
+		for index := len(summary.Rounds) - 1; index >= 0; index-- {
+			if summary.Rounds[index].GateReportArtifact != "" {
+				fmt.Fprintf(stdout, "  gate report: %s\n", runArtifactRepoRel(summary.RunID, summary.Rounds[index].GateReportArtifact))
+				break
+			}
+		}
+	}
 }

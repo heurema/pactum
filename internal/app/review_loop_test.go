@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -411,6 +412,89 @@ func TestReviewLoopUnparsedFindingsIsNotCleanRound(t *testing.T) {
 	}
 	// Nothing was accepted, so the fixer must not have run.
 	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
+}
+
+func TestReviewLoopStopsWithGateFailedWhenFixerBreaksValidation(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	t.Setenv("PACTUM_GATE_HELPER_PROCESS", "1")
+	app, paths, runID := setupGatePreparedRun(t, root, []string{gateValidationCommandForTest()}, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID, "--allow-commands")
+	runReviewCommand(t, app, "review", "prepare", runID)
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+	t.Setenv("PACTUM_GATE_HELPER_EXIT", "7")
+
+	var stdout, stderr bytes.Buffer
+	err := app.ReviewLoop(&stdout, &stderr, runID, reviewLoopOptions{
+		Reviewer:   reviewLoopReviewerName,
+		Agent:      reviewLoopFixerName,
+		MaxRounds:  3,
+		Yes:        true,
+		JSONOutput: true,
+	})
+	if err != nil {
+		t.Fatalf("review loop should stop cleanly on failed gate, got error: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.TerminalReason != "gate_failed" || len(summary.Rounds) != 1 {
+		t.Fatalf("gate failure summary mismatch: %#v", summary)
+	}
+	round := summary.Rounds[0]
+	if round.GateStatus != "failed" || round.GateReportArtifact != gateReportArtifact || round.FixerAttemptID != "attempt_001" {
+		t.Fatalf("failed gate round summary mismatch: %#v", round)
+	}
+	artifact := readReviewLoopSummary(t, runPaths.ReviewLoopSummaryJSON)
+	if artifact.TerminalReason != "gate_failed" || len(artifact.Rounds) != 1 || artifact.Rounds[0].GateReportArtifact != gateReportArtifact {
+		t.Fatalf("failed gate summary artifact mismatch: %#v", artifact)
+	}
+	report := readGateReport(t, runPaths.GateReportJSON)
+	if report.Status != "failed" || len(report.Validation.Commands) != 1 || report.Validation.Commands[0].ExitCode != 7 {
+		t.Fatalf("failed gate report mismatch: %#v", report)
+	}
+	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_002").ResultJSON)
+}
+
+func TestReviewLoopGateInfrastructureErrorStillReturnsError(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	mustWriteFile(t, executionAttemptPaths(runPaths, "attempt_001").ResultJSON, "{")
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+
+	var stdout, stderr bytes.Buffer
+	err := app.ReviewLoop(&stdout, &stderr, runID, reviewLoopOptions{
+		Reviewer:   reviewLoopReviewerName,
+		Agent:      reviewLoopFixerName,
+		MaxRounds:  1,
+		Yes:        true,
+		JSONOutput: true,
+	})
+	if err == nil {
+		t.Fatalf("review loop should return gate infrastructure error")
+	}
+	var gateErr gateProcessError
+	if errors.As(err, &gateErr) {
+		t.Fatalf("infrastructure error should not be classified as gate process failure: %v", err)
+	}
+	summary := readReviewLoopSummary(t, runPaths.ReviewLoopSummaryJSON)
+	if summary.TerminalReason != "error" || len(summary.Rounds) != 1 {
+		t.Fatalf("infrastructure error summary mismatch: %#v", summary)
+	}
+	if got := summary.Rounds[0]; got.GateStatus != "" || got.GateReportArtifact != "" || got.FixerAttemptID != "attempt_001" {
+		t.Fatalf("infrastructure error should not record a gate report for the round: %#v", got)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("errored review loop should not emit summary JSON stdout:\n%s", stdout.String())
+	}
 }
 
 func TestReviewLoopStreamsSubRunOutputToStderrWithCleanStdout(t *testing.T) {
