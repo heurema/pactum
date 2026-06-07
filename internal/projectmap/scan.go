@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -85,16 +86,49 @@ var importantFiles = []string{
 
 func Scan(root string, options ...ScanOptions) (ScanResult, error) {
 	option := scanOption(options)
-	result := ScanResult{
-		Languages:     make(map[string]int),
-		CodeIndexMode: codeindex.NormalizeMode(option.CodeIndexMode),
-	}
-	topDirs := make(map[string]struct{})
-	important := make(map[string]struct{})
-	codeIndexLanguagesSeen := make(map[string]struct{})
-	codeIndexLanguagesIndexed := make(map[string]struct{})
+	scan := newScanBuilder(option)
 
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+	if paths, ok := gitCandidateFiles(root); ok {
+		sort.Strings(paths)
+		for _, rel := range paths {
+			if err := scan.scanGitFile(root, rel); err != nil {
+				return ScanResult{}, err
+			}
+		}
+		return scan.finish(), nil
+	}
+
+	if err := scan.walk(root); err != nil {
+		return ScanResult{}, err
+	}
+	return scan.finish(), nil
+}
+
+type scanBuilder struct {
+	option                    ScanOptions
+	result                    ScanResult
+	topDirs                   map[string]struct{}
+	important                 map[string]struct{}
+	codeIndexLanguagesSeen    map[string]struct{}
+	codeIndexLanguagesIndexed map[string]struct{}
+}
+
+func newScanBuilder(option ScanOptions) *scanBuilder {
+	return &scanBuilder{
+		option: option,
+		result: ScanResult{
+			Languages:     make(map[string]int),
+			CodeIndexMode: codeindex.NormalizeMode(option.CodeIndexMode),
+		},
+		topDirs:                   make(map[string]struct{}),
+		important:                 make(map[string]struct{}),
+		codeIndexLanguagesSeen:    make(map[string]struct{}),
+		codeIndexLanguagesIndexed: make(map[string]struct{}),
+	}
+}
+
+func (scan *scanBuilder) walk(root string) error {
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -105,7 +139,7 @@ func Scan(root string, options ...ScanOptions) (ScanResult, error) {
 		name := entry.Name()
 		if entry.IsDir() {
 			if _, ok := ignoredDirs[name]; ok {
-				result.FilesIgnored++
+				scan.result.FilesIgnored++
 				return filepath.SkipDir
 			}
 			return nil
@@ -117,8 +151,7 @@ func Scan(root string, options ...ScanOptions) (ScanResult, error) {
 		}
 		rel = filepath.ToSlash(rel)
 
-		if _, ok := ignoredBinaryExts[strings.ToLower(filepath.Ext(name))]; ok {
-			result.FilesIgnored++
+		if scan.ignoreBinaryExt(name) {
 			return nil
 		}
 
@@ -126,89 +159,160 @@ func Scan(root string, options ...ScanOptions) (ScanResult, error) {
 		if err != nil {
 			return err
 		}
-		if !info.Mode().IsRegular() {
-			result.FilesIgnored++
-			return nil
-		}
-		if option.MaxFileBytes > 0 && info.Size() > option.MaxFileBytes {
-			result.FilesIgnored++
-			result.FilesSkipped++
-			result.Warnings = append(result.Warnings, "skipped large file: "+rel+" exceeds project_map.max_file_bytes")
-			return nil
-		}
+		return scan.scanFileInfo(path, rel, info)
+	})
+}
 
-		hash, err := sha256File(path)
-		if err != nil {
-			return err
-		}
-
-		language := inferLanguage(rel)
-		record := FileRecord{
-			Path:      rel,
-			Kind:      inferKind(rel),
-			Language:  language,
-			SizeBytes: info.Size(),
-			SHA256:    hash,
-		}
-		result.Files = append(result.Files, record)
-		result.Hashes = append(result.Hashes, HashRecord{Path: rel, SHA256: hash})
-		if language != "Unknown" {
-			result.Languages[language]++
-		}
-
-		codeLanguage := codeindex.LanguageForPath(rel)
-		if codeindex.IsSupported(codeLanguage) {
-			codeIndexLanguagesSeen[codeLanguage] = struct{}{}
-		}
-		if codeindex.Enabled(result.CodeIndexMode) && codeindex.IsSupported(codeLanguage) {
-			source, err := os.ReadFile(path)
-			if err != nil {
-				result.Warnings = append(result.Warnings, "read code file failed: "+rel+": "+err.Error())
-			} else {
-				extracted := codeindex.Extract(rel, codeLanguage, source)
-				result.CodeItems = append(result.CodeItems, extracted.Items...)
-				result.Warnings = append(result.Warnings, extracted.Warnings...)
-				if len(extracted.Warnings) == 0 {
-					codeIndexLanguagesIndexed[codeLanguage] = struct{}{}
-				}
-			}
-		}
-
-		parts := strings.Split(rel, "/")
-		if len(parts) > 1 {
-			topDirs[parts[0]] = struct{}{}
-		}
-		for _, candidate := range importantFiles {
-			if rel == candidate {
-				important[candidate] = struct{}{}
-			}
-		}
-
+func (scan *scanBuilder) scanGitFile(root string, rel string) error {
+	rel = filepath.ToSlash(rel)
+	if isPactumWorkspacePath(rel) {
+		scan.result.FilesIgnored++
 		return nil
-	})
-	if err != nil {
-		return ScanResult{}, err
+	}
+	if scan.ignoreBinaryExt(filepath.Base(rel)) {
+		return nil
 	}
 
-	sort.Slice(result.Files, func(i, j int) bool {
-		return result.Files[i].Path < result.Files[j].Path
-	})
-	sort.Slice(result.Hashes, func(i, j int) bool {
-		return result.Hashes[i].Path < result.Hashes[j].Path
-	})
-	codeindex.SortItems(result.CodeItems)
-	sort.Strings(result.Warnings)
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return scan.scanFileInfo(path, rel, info)
+}
 
-	result.TopDirs = sortedKeys(topDirs)
-	result.CodeIndexLanguagesSeen = sortedKeys(codeIndexLanguagesSeen)
-	result.CodeIndexLanguagesIndexed = sortedKeys(codeIndexLanguagesIndexed)
-	for _, candidate := range importantFiles {
-		if _, ok := important[candidate]; ok {
-			result.Important = append(result.Important, candidate)
+func (scan *scanBuilder) scanFileInfo(path string, rel string, info fs.FileInfo) error {
+	if !info.Mode().IsRegular() {
+		scan.result.FilesIgnored++
+		return nil
+	}
+	if scan.option.MaxFileBytes > 0 && info.Size() > scan.option.MaxFileBytes {
+		scan.result.FilesIgnored++
+		scan.result.FilesSkipped++
+		scan.result.Warnings = append(scan.result.Warnings, "skipped large file: "+rel+" exceeds project_map.max_file_bytes")
+		return nil
+	}
+
+	hash, err := sha256File(path)
+	if err != nil {
+		return err
+	}
+
+	language := inferLanguage(rel)
+	record := FileRecord{
+		Path:      rel,
+		Kind:      inferKind(rel),
+		Language:  language,
+		SizeBytes: info.Size(),
+		SHA256:    hash,
+	}
+	scan.result.Files = append(scan.result.Files, record)
+	scan.result.Hashes = append(scan.result.Hashes, HashRecord{Path: rel, SHA256: hash})
+	if language != "Unknown" {
+		scan.result.Languages[language]++
+	}
+
+	codeLanguage := codeindex.LanguageForPath(rel)
+	if codeindex.IsSupported(codeLanguage) {
+		scan.codeIndexLanguagesSeen[codeLanguage] = struct{}{}
+	}
+	if codeindex.Enabled(scan.result.CodeIndexMode) && codeindex.IsSupported(codeLanguage) {
+		source, err := os.ReadFile(path)
+		if err != nil {
+			scan.result.Warnings = append(scan.result.Warnings, "read code file failed: "+rel+": "+err.Error())
+		} else {
+			extracted := codeindex.Extract(rel, codeLanguage, source)
+			scan.result.CodeItems = append(scan.result.CodeItems, extracted.Items...)
+			scan.result.Warnings = append(scan.result.Warnings, extracted.Warnings...)
+			if len(extracted.Warnings) == 0 {
+				scan.codeIndexLanguagesIndexed[codeLanguage] = struct{}{}
+			}
 		}
 	}
 
-	return result, nil
+	parts := strings.Split(rel, "/")
+	if len(parts) > 1 {
+		scan.topDirs[parts[0]] = struct{}{}
+	}
+	for _, candidate := range importantFiles {
+		if rel == candidate {
+			scan.important[candidate] = struct{}{}
+		}
+	}
+
+	return nil
+}
+
+func (scan *scanBuilder) ignoreBinaryExt(name string) bool {
+	if _, ok := ignoredBinaryExts[strings.ToLower(filepath.Ext(name))]; ok {
+		scan.result.FilesIgnored++
+		return true
+	}
+	return false
+}
+
+func (scan *scanBuilder) finish() ScanResult {
+	sort.Slice(scan.result.Files, func(i, j int) bool {
+		return scan.result.Files[i].Path < scan.result.Files[j].Path
+	})
+	sort.Slice(scan.result.Hashes, func(i, j int) bool {
+		return scan.result.Hashes[i].Path < scan.result.Hashes[j].Path
+	})
+	codeindex.SortItems(scan.result.CodeItems)
+	sort.Strings(scan.result.Warnings)
+
+	scan.result.TopDirs = sortedKeys(scan.topDirs)
+	scan.result.CodeIndexLanguagesSeen = sortedKeys(scan.codeIndexLanguagesSeen)
+	scan.result.CodeIndexLanguagesIndexed = sortedKeys(scan.codeIndexLanguagesIndexed)
+	for _, candidate := range importantFiles {
+		if _, ok := scan.important[candidate]; ok {
+			scan.result.Important = append(scan.result.Important, candidate)
+		}
+	}
+
+	return scan.result
+}
+
+func gitCandidateFiles(root string) ([]string, bool) {
+	command := exec.Command("git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	output, err := command.Output()
+	if err != nil {
+		return nil, false
+	}
+
+	seen := make(map[string]struct{})
+	paths := []string{}
+	for _, raw := range strings.Split(string(output), "\x00") {
+		rel, ok := normalizeGitPath(raw)
+		if !ok {
+			continue
+		}
+		if _, ok := seen[rel]; ok {
+			continue
+		}
+		seen[rel] = struct{}{}
+		paths = append(paths, rel)
+	}
+	return paths, true
+}
+
+func normalizeGitPath(path string) (string, bool) {
+	if path == "" {
+		return "", false
+	}
+	rel := filepath.ToSlash(path)
+	rel = strings.TrimPrefix(rel, "./")
+	if rel == "." || filepath.IsAbs(filepath.FromSlash(rel)) || strings.HasPrefix(rel, "../") || strings.Contains(rel, "/../") {
+		return "", false
+	}
+	return rel, true
+}
+
+func isPactumWorkspacePath(rel string) bool {
+	return rel == ".heurema" || strings.HasPrefix(rel, ".heurema/")
 }
 
 func scanOption(options []ScanOptions) ScanOptions {

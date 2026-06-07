@@ -48,8 +48,11 @@ deterministic facts (file inventory and manifests) and uses conservative,
 evidence-backed language (candidate entrypoint, detected config, likely role).
 Tree-sitter `code-items.jsonl` is kept only as best-effort symbol hints — it is
 incomplete by design, unsupported languages/framework files may have no code
-items, and source files remain the source of truth. `.git`, `.heurema`, and
-common vendor/build directories are skipped.
+items, and source files remain the source of truth. In a git repository the
+scan enumerates files via git, so the repo's `.gitignore` is honored (build
+artifacts like `__pycache__/` or `dist/` are not indexed); `.heurema` is always
+excluded, and non-git directories fall back to a filesystem walk that skips
+`.git`, `.heurema`, and common vendor/build directories.
 
 `pactum map refresh` rebuilds those artifacts, including the wiki. `pactum
 status` reports whether the map is fresh or stale (for example, when tracked
