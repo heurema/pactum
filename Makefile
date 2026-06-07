@@ -4,7 +4,7 @@
 # that building, testing, and installing Pactum from source is a single command.
 # There is no release, packaging, or Docker automation here.
 
-.PHONY: build test vet deadcode check install clean smoke
+.PHONY: build test vet deadcode test-race check install clean smoke
 
 # Version metadata stamped into the binary. Override on the command line, e.g.
 # `make build VERSION=0.1.0`.
@@ -25,6 +25,13 @@ test:
 # vet runs go vet across all packages.
 vet:
 	go vet ./...
+
+# test-race runs the suite under the race detector. It is ~20x slower on the app
+# package, so it is a CI / pre-merge gate rather than part of the fast `make
+# check`. It catches the data-race class the plain test run cannot — e.g. the
+# M10.2 live-output race that slipped through a non-race `make check`.
+test-race:
+	go test -race ./...
 
 # deadcode flags functions unreachable from any main entry point (golang.org/x/
 # tools, pinned via the go.mod tool directive). It catches what `go vet` cannot:
