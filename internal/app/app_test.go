@@ -80,7 +80,15 @@ func helper() {}
 	if config.ProjectMap.CodeIndex != codeindex.ModeAuto {
 		t.Fatalf("config project_map.code_index = %q, want auto", config.ProjectMap.CodeIndex)
 	}
+	if config.Gate.ScopeEnforcement != gateScopeEnforcementBlock {
+		t.Fatalf("config gate.scope_enforcement = %q, want block", config.Gate.ScopeEnforcement)
+	}
 	configYAML := mustReadFile(t, paths.Config)
+	for _, want := range []string{"gate:", "scope_enforcement: block"} {
+		if !strings.Contains(configYAML, want) {
+			t.Fatalf("config.yaml missing %q:\n%s", want, configYAML)
+		}
+	}
 	for _, forbidden := range []string{"agents:", "adapters:", "default_executor:", "default_reviewer:", "include_go_ast", "tree_sitter", "tree_sitter_languages", "entrypoints"} {
 		if strings.Contains(configYAML, forbidden) {
 			t.Fatalf("config.yaml should not contain %q:\n%s", forbidden, configYAML)
@@ -266,6 +274,76 @@ func helper() {}
 		if !strings.Contains(events[i], want) {
 			t.Fatalf("event %d = %s, want %s", i, events[i], want)
 		}
+	}
+}
+
+func TestReadConfigNormalizesGateScopeEnforcement(t *testing.T) {
+	root := t.TempDir()
+	paths := artifacts.New(root)
+	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
+
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "missing",
+			content: "schema: pactum.config.v1\n",
+			want:    gateScopeEnforcementBlock,
+		},
+		{
+			name: "empty",
+			content: `schema: pactum.config.v1
+gate:
+  scope_enforcement: ""
+`,
+			want: gateScopeEnforcementBlock,
+		},
+		{
+			name: "block",
+			content: `schema: pactum.config.v1
+gate:
+  scope_enforcement: block
+`,
+			want: gateScopeEnforcementBlock,
+		},
+		{
+			name: "warn",
+			content: `schema: pactum.config.v1
+gate:
+  scope_enforcement: warn
+`,
+			want: gateScopeEnforcementWarn,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mustWriteFile(t, paths.Config, tt.content)
+			config, err := readConfig(paths.Config)
+			assertNoError(t, err)
+			if config.Gate.ScopeEnforcement != tt.want {
+				t.Fatalf("gate.scope_enforcement = %q, want %q", config.Gate.ScopeEnforcement, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadConfigRejectsInvalidGateScopeEnforcement(t *testing.T) {
+	root := t.TempDir()
+	paths := artifacts.New(root)
+	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
+	mustWriteFile(t, paths.Config, `schema: pactum.config.v1
+gate:
+  scope_enforcement: advisory
+`)
+
+	_, err := readConfig(paths.Config)
+	if err == nil {
+		t.Fatalf("readConfig should reject invalid gate.scope_enforcement")
+	}
+	if !strings.Contains(err.Error(), "gate.scope_enforcement") {
+		t.Fatalf("invalid gate.scope_enforcement error mismatch: %v", err)
 	}
 }
 

@@ -77,6 +77,7 @@ type gateSummary struct {
 	ExecutionPassed   bool `json:"execution_passed"`
 	ValidationPassed  bool `json:"validation_passed"`
 	ChangesNeedReview bool `json:"changes_need_review"`
+	ScopeBlocked      bool `json:"scope_blocked"`
 }
 
 type validationCommandResultDocument struct {
@@ -126,6 +127,10 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 	if len(commands) > 0 && !allowCommands {
 		return errors.New("refusing to run validation commands without --allow-commands")
 	}
+	config, err := readConfig(context.Paths.Config)
+	if err != nil {
+		return err
+	}
 
 	startedAt := a.nowUTC()
 	if err := os.MkdirAll(context.RunPaths.GateDir, 0o755); err != nil {
@@ -153,12 +158,13 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 		}
 	}
 	changes := buildGateChangeReport(context.Root, context.Paths)
-	scope := buildGateScopeReport(context.Contract, changes)
+	scope := buildGateScopeReport(context.Contract, changes, config.Gate.ScopeEnforcement)
 
 	summary := gateSummary{
 		ExecutionPassed:   attempt.Result.ExitCode == 0 && !attempt.Result.TimedOut,
 		ValidationPassed:  gateValidationPassed(validation.Commands),
 		ChangesNeedReview: gateChangesNeedReview(changes),
+		ScopeBlocked:      gateScopeBlocked(scope),
 	}
 	status := gateStatus(summary)
 	report := gateReportDocument{
@@ -445,7 +451,7 @@ func gateChangeReasons(report gateChangeReport) []string {
 	return reasons
 }
 
-func buildGateScopeReport(contract draftContract, changes gateChangeReport) *gateScopeReport {
+func buildGateScopeReport(contract draftContract, changes gateChangeReport, enforcement string) *gateScopeReport {
 	pathsInScope := nonEmptyPathGlobs(contract.PathsInScope)
 	pathsOutOfScope := nonEmptyPathGlobs(contract.PathsOutOfScope)
 	if len(pathsInScope) == 0 && len(pathsOutOfScope) == 0 {
@@ -467,7 +473,11 @@ func buildGateScopeReport(contract draftContract, changes gateChangeReport) *gat
 		}
 	}
 	if len(report.Undeclared)+len(report.OutOfScope) > 0 {
-		report.Status = "warnings"
+		if enforcement == gateScopeEnforcementWarn {
+			report.Status = "warnings"
+		} else {
+			report.Status = "blocked"
+		}
 		report.Warnings = gateScopeWarnings(report)
 	}
 	return report
@@ -510,6 +520,10 @@ func gateScopeWarnings(report *gateScopeReport) []string {
 		warnings = append(warnings, "out-of-scope file: "+path)
 	}
 	return warnings
+}
+
+func gateScopeBlocked(scope *gateScopeReport) bool {
+	return scope != nil && scope.Status == "blocked"
 }
 
 func (a App) runGateValidationCommand(root string, runPaths contractRunPathSet, id string, commandText string, timeout time.Duration) (gateValidationCommandReport, error) {
@@ -615,7 +629,7 @@ func gateChangesNeedReview(changes gateChangeReport) bool {
 }
 
 func gateStatus(summary gateSummary) string {
-	if !summary.ExecutionPassed || !summary.ValidationPassed {
+	if !summary.ExecutionPassed || !summary.ValidationPassed || summary.ScopeBlocked {
 		return "failed"
 	}
 	if summary.ChangesNeedReview {
@@ -728,7 +742,11 @@ func writeGateScopeWarnings(stdout io.Writer, scope *gateScopeReport, indent str
 	if len(scope.Warnings) == 0 {
 		return
 	}
-	fmt.Fprintf(stdout, "%sWarnings:\n", indent)
+	label := "Warnings"
+	if scope.Status == "blocked" {
+		label = "Violations"
+	}
+	fmt.Fprintf(stdout, "%s%s:\n", indent, label)
 	for _, warning := range scope.Warnings {
 		fmt.Fprintf(stdout, "%s  - %s\n", indent, warning)
 	}

@@ -459,6 +459,49 @@ func TestReviewLoopStopsWithGateFailedWhenFixerBreaksValidation(t *testing.T) {
 	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_002").ResultJSON)
 }
 
+func TestReviewLoopStopsWithGateFailedWhenFixerViolatesPathScope(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-in-scope", "internal/app/**"}, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_MODE", "append_readme")
+
+	var stdout, stderr bytes.Buffer
+	err := app.ReviewLoop(&stdout, &stderr, runID, reviewLoopOptions{
+		Reviewer:   reviewLoopReviewerName,
+		Agent:      reviewLoopFixerName,
+		MaxRounds:  3,
+		Yes:        true,
+		JSONOutput: true,
+	})
+	if err != nil {
+		t.Fatalf("review loop should stop cleanly on blocked scope gate, got error: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.TerminalReason != "gate_failed" || len(summary.Rounds) != 1 {
+		t.Fatalf("scope gate failure summary mismatch: %#v", summary)
+	}
+	round := summary.Rounds[0]
+	if round.GateStatus != "failed" || round.GateReportArtifact != gateReportArtifact || round.FixerAttemptID != "attempt_001" {
+		t.Fatalf("blocked scope round summary mismatch: %#v", round)
+	}
+	report := readGateReport(t, runPaths.GateReportJSON)
+	if report.Status != "failed" || report.Scope == nil || report.Scope.Status != "blocked" || !report.Summary.ScopeBlocked {
+		t.Fatalf("blocked scope gate report mismatch: %#v", report)
+	}
+	if !containsString(report.Scope.Undeclared, "README.md") {
+		t.Fatalf("blocked scope should report fixer README change: %#v", report.Scope)
+	}
+	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_002").ResultJSON)
+}
+
 func TestReviewLoopGateInfrastructureErrorStillReturnsError(t *testing.T) {
 	root := t.TempDir()
 	stateDir := t.TempDir()

@@ -25,6 +25,9 @@ import (
 const (
 	workspaceSchema = "pactum.workspace.v1"
 	configSchema    = "pactum.config.v1"
+
+	gateScopeEnforcementBlock = "block"
+	gateScopeEnforcementWarn  = "warn"
 )
 
 type App struct {
@@ -399,6 +402,7 @@ type configFile struct {
 	Schema         string             `yaml:"schema"`
 	DefaultProfile string             `yaml:"default_profile"`
 	ProjectMap     projectMapConfig   `yaml:"project_map"`
+	Gate           gateConfig         `yaml:"gate"`
 	Agents         agents.AgentConfig `yaml:"agents,omitempty"`
 	Limits         limitsConfig       `yaml:"limits"`
 	Budget         budgetConfig       `yaml:"budget"`
@@ -409,6 +413,10 @@ type projectMapConfig struct {
 	Refresh      string `yaml:"refresh"`
 	MaxFileBytes int    `yaml:"max_file_bytes"`
 	CodeIndex    string `yaml:"code_index"`
+}
+
+type gateConfig struct {
+	ScopeEnforcement string `yaml:"scope_enforcement"`
 }
 
 type limitsConfig struct {
@@ -503,9 +511,14 @@ func (a App) Run(args []string, stdout, stderr io.Writer) (code int) {
 	}
 	if err := ctx.Run(&runner{App: a, Stdout: stdout, Stderr: stderr}); err != nil {
 		// Command errors exit 1. With --json, emit a machine-readable error
-		// envelope on stdout (stderr stays empty); otherwise a human line on
-		// stderr.
+		// envelope on stdout (stderr stays empty). Deterministic gate failures
+		// already wrote their gate report JSON, so leave that as the only payload.
+		// Otherwise use a human line on stderr.
 		if jsonRequested(args) {
+			var gateErr gateProcessError
+			if errors.As(err, &gateErr) {
+				return 1
+			}
 			if encErr := writeErrorEnvelope(stdout, err); encErr == nil {
 				return 1
 			}
@@ -1232,6 +1245,9 @@ func defaultConfigFile() configFile {
 			MaxFileBytes: 500000,
 			CodeIndex:    codeindex.ModeAuto,
 		},
+		Gate: gateConfig{
+			ScopeEnforcement: gateScopeEnforcementBlock,
+		},
 		Limits: limitsConfig{
 			Clarify: iterationLimits{
 				MaxIterations:        5,
@@ -1311,7 +1327,25 @@ func readConfig(path string) (configFile, error) {
 	if config.Schema == "" {
 		return configFile{}, errors.New("config is incomplete")
 	}
+	scopeEnforcement, err := normalizeGateScopeEnforcement(config.Gate.ScopeEnforcement)
+	if err != nil {
+		return configFile{}, err
+	}
+	config.Gate.ScopeEnforcement = scopeEnforcement
 	return config, nil
+}
+
+func normalizeGateScopeEnforcement(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return gateScopeEnforcementBlock, nil
+	}
+	switch value {
+	case gateScopeEnforcementBlock, gateScopeEnforcementWarn:
+		return value, nil
+	default:
+		return "", fmt.Errorf("config gate.scope_enforcement must be %q or %q, got %q", gateScopeEnforcementBlock, gateScopeEnforcementWarn, value)
+	}
 }
 
 func (a App) agentRegistry() agents.Registry {
