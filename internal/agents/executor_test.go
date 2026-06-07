@@ -53,32 +53,32 @@ func TestApplyModelSpecEmitsBuiltInAgentArgs(t *testing.T) {
 	}{
 		{
 			name:  "codex empty",
-			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
-			args:  []string{"exec", "--dangerously-bypass-approvals-and-sandbox"},
+			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
+			args:  []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"},
 		},
 		{
 			name:  "codex model only",
-			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
+			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
 			spec:  ModelSpec{Model: "gpt-5"},
-			args:  []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=\"gpt-5\""},
+			args:  []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=\"gpt-5\""},
 		},
 		{
 			name:  "codex effort only",
-			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
+			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
 			spec:  ModelSpec{Effort: "high"},
-			args:  []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=high"},
+			args:  []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=high"},
 		},
 		{
 			name:  "codex model and effort",
-			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
+			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
 			spec:  ModelSpec{Model: "gpt-5", Effort: "high"},
-			args:  []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"},
+			args:  []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"},
 		},
 		{
 			name:  "claude model and effort",
-			agent: AgentDescriptor{Name: BuiltinClaude, Command: "claude", Args: []string{"-p", "--dangerously-skip-permissions"}, Input: InputPromptFile},
+			agent: AgentDescriptor{Name: BuiltinClaude, Command: "claude", Args: []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"}, Input: InputPromptFile},
 			spec:  ModelSpec{Model: "claude-sonnet-4", Effort: "high"},
-			args:  []string{"-p", "--dangerously-skip-permissions", "--model", "claude-sonnet-4", "--effort", "high"},
+			args:  []string{"-p", "--output-format", "json", "--dangerously-skip-permissions", "--model", "claude-sonnet-4", "--effort", "high"},
 		},
 		{
 			name:  "codex reviewer keeps read-only sandbox",
@@ -121,22 +121,22 @@ func TestBuildCommandUsesStdinForBuiltInAgents(t *testing.T) {
 			agent: AgentDescriptor{
 				Name:    BuiltinCodex,
 				Command: "codex",
-				Args:    []string{"exec", "--dangerously-bypass-approvals-and-sandbox"},
+				Args:    []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"},
 				Input:   InputPromptFile,
 			},
 			command: "codex",
-			args:    []string{"exec", "--dangerously-bypass-approvals-and-sandbox"},
+			args:    []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"},
 		},
 		{
 			name: "claude",
 			agent: AgentDescriptor{
 				Name:    BuiltinClaude,
 				Command: "claude",
-				Args:    []string{"-p", "--dangerously-skip-permissions"},
+				Args:    []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"},
 				Input:   InputPromptFile,
 			},
 			command: "claude",
-			args:    []string{"-p", "--dangerously-skip-permissions"},
+			args:    []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"},
 		},
 	}
 
@@ -166,16 +166,16 @@ func TestRunSubprocessCodexUsesTypedRunnerStdinAndEnv(t *testing.T) {
 		RepoRoot:       root,
 		RunID:          "run_123",
 		AttemptID:      "attempt_001",
-		Agent:          AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
+		Agent:          AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
 		PromptRepoPath: promptRepoPath,
 	}, runner)
 	if err != nil {
 		t.Fatalf("RunSubprocess returned error: %v", err)
 	}
-	if result.Command != "codex" || !sameStringSlice(result.Args, []string{"exec", "--dangerously-bypass-approvals-and-sandbox"}) || result.ExitCode != 0 {
+	if result.Command != "codex" || !sameStringSlice(result.Args, []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}) || result.ExitCode != 0 {
 		t.Fatalf("unexpected result: %#v", result)
 	}
-	if runner.spec.Command != "codex" || !sameStringSlice(runner.spec.Args, []string{"exec", "--dangerously-bypass-approvals-and-sandbox"}) {
+	if runner.spec.Command != "codex" || !sameStringSlice(runner.spec.Args, []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}) {
 		t.Fatalf("unexpected process spec: %#v", runner.spec)
 	}
 	if runner.spec.Dir != root {
@@ -214,13 +214,13 @@ func TestRunSubprocessClaudeFiltersNestedAgentMarker(t *testing.T) {
 		RepoRoot:       root,
 		RunID:          "run_123",
 		AttemptID:      "attempt_001",
-		Agent:          AgentDescriptor{Name: BuiltinClaude, Command: "claude", Args: []string{"-p", "--dangerously-skip-permissions"}, Input: InputPromptFile},
+		Agent:          AgentDescriptor{Name: BuiltinClaude, Command: "claude", Args: []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"}, Input: InputPromptFile},
 		PromptRepoPath: promptRepoPath,
 	}, runner)
 	if err != nil {
 		t.Fatalf("RunSubprocess returned error: %v", err)
 	}
-	if runner.spec.Command != "claude" || !sameStringSlice(runner.spec.Args, []string{"-p", "--dangerously-skip-permissions"}) {
+	if runner.spec.Command != "claude" || !sameStringSlice(runner.spec.Args, []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"}) {
 		t.Fatalf("unexpected process spec: %#v", runner.spec)
 	}
 	if runner.stdin != "claude prompt" {

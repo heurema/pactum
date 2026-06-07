@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/heurema/pactum/internal/agents"
@@ -22,12 +23,14 @@ type agentAttemptLifecycle[Prepared any, Request any, Result any, Response any] 
 	Root        string
 	EventsJSONL string
 	RunID       string
+	Stage       string
 
 	AttemptsDir     string
 	AttemptIDPrefix string
 	LastResultJSON  string
 
 	Agent          agents.AgentDescriptor
+	RequestModel   string
 	PromptRepoPath string
 	ArtifactDir    string
 	Timeout        time.Duration
@@ -120,6 +123,7 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 	if err := writeJSON(cfg.LastResultJSON, result); err != nil {
 		return err
 	}
+	appendUsageRecordBestEffort(cfg, attemptID, runResult)
 	if err := ledger.Append(cfg.EventsJSONL, ledger.Event{Type: cfg.FinishedEvent, Timestamp: agentAttemptFinishedAt(cfg.ProcessResult(result), now), RunID: cfg.RunID, RepoRoot: cfg.Root}); err != nil {
 		return err
 	}
@@ -188,6 +192,16 @@ func agentAttemptFinishedAt(result processResult, fallback time.Time) time.Time 
 		return parsed
 	}
 	return fallback
+}
+
+func appendUsageRecordBestEffort[Prepared any, Request any, Result any, Response any](cfg agentAttemptLifecycle[Prepared, Request, Result, Response], attemptID string, runResult agents.RunResult) {
+	createdAt := runResult.FinishedAt
+	if strings.TrimSpace(createdAt) == "" {
+		createdAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	if err := appendUsageRecord(cfg.Root, cfg.RunID, attemptID, cfg.Stage, cfg.RequestModel, cfg.Agent, runResult.Usage, createdAt); err != nil && cfg.LiveOutput != nil {
+		_, _ = fmt.Fprintf(cfg.LiveOutput, "usage capture warning: append usage ledger: %v\n", err)
+	}
 }
 
 func agentDescriptorDocument(agent agents.AgentDescriptor) agents.AgentDescriptor {

@@ -161,6 +161,7 @@ func (a App) createContractOnlyRun(root string, task string) (contractRunState, 
 		runPaths.QuestionsJSONL:      nil,
 		runPaths.AnswersJSONL:        nil,
 		runPaths.DecisionsJSONL:      nil,
+		runPaths.UsageJSONL:          nil,
 		runPaths.ContractMD:          renderContractMDFromDraft(contract, report.ProjectMap.RunID, len(searchResults.Results)),
 		runPaths.PromptMD:            renderPromptMDFromDraft(contract),
 		runPaths.MemorySelectionJSON: mustMarshalJSON(memorySelection),
@@ -195,6 +196,7 @@ type contractRunPathSet struct {
 	ReviewDir   string
 	MemoryDir   string
 	LedgerDir   string
+	UsageJSONL  string
 
 	RunJSON string
 	TaskMD  string
@@ -274,6 +276,7 @@ func contractRunPaths(runDir string) contractRunPathSet {
 		ReviewDir:                     reviewDir,
 		MemoryDir:                     filepath.Join(runDir, "memory"),
 		LedgerDir:                     filepath.Join(runDir, "ledger"),
+		UsageJSONL:                    filepath.Join(runDir, "ledger", "usage.jsonl"),
 		RunJSON:                       filepath.Join(runDir, "run.json"),
 		TaskMD:                        filepath.Join(runDir, "task.md"),
 		RepoContext:                   filepath.Join(contextDir, "repo-context.md"),

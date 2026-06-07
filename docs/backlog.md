@@ -22,9 +22,14 @@ reviews across M8–M10. Rough priority in parentheses.
 ## Review→fix loop (L3b and beyond)
 
 - **Loop stop conditions.** Stalemate-by-fingerprint and K-consecutive-clean —
-  **done (M10.3)**. Remaining: **budget stop** (`budget.max_usd`) (med) — needs
-  token/cost accounting from the agent CLIs (parse usage + pricing), a separate
-  prerequisite slice.
+  **done (M10.3)**. Remaining: **token budget stop** — now specced as a slice of the
+  cost/budget roadmap in [`cost-budget-design.md`](cost-budget-design.md) (token
+  accounting → cost → `max_tokens` budget stop with a `budget_exceeded` terminal).
+- **Cost/budget remaining slices** (see [`cost-budget-design.md`](cost-budget-design.md)).
+  Slice 1 (write-stage token accounting) done (M12.0). Remaining: read-stage capture
+  (reviewer/clarify/draft), cost ($) overlay, budget stop, estimation. Also: harden the
+  claude usage parser to tolerate incidental leading/trailing stdout (today any
+  non-JSON stdout degrades claude capture to `captured=false`; safe but brittle).
 - **Rebuttal channel** (med). Feed the fixer's rebuttal of a false positive back to
   the reviewer on the next round so it re-judges instead of re-reporting.
 - **Semantic review-finding dedup** (low). The autonomous review loop now dedups
@@ -69,6 +74,13 @@ reviews across M8–M10. Rough priority in parentheses.
 
 ## Resolved (for reference)
 
+- Token accounting — slice 1 (M12.0) — write-stage (executor/fixer) agents now run
+  with `codex exec --json` / `claude -p --output-format json`; the runner parses token
+  usage per agent (best-effort, never fatal), normalized per
+  [`cost-budget-design.md`](cost-budget-design.md), recorded as a `UsageRecord` to the
+  per-run `ledger/usage.jsonl` via the shared lifecycle, and surfaced as tokens-per-task
+  in `status` and a new `pactum usage` command. Tokens are the unit; cost/budget/
+  estimation are later slices. (codex `--json` usage validated against real CLI output.)
 - Blocking path-scope enforcement (M11.11) — `gate.scope_enforcement` defaults to
   `block`, so changed/new files that are undeclared by `paths_in_scope` or matched
   by `paths_out_of_scope` now produce `scope.status: blocked` and an overall

@@ -51,8 +51,17 @@ type memoryStatus struct {
 }
 
 type usageStatus struct {
-	TotalTokens      int     `json:"total_tokens"`
-	EstimatedCostUSD float64 `json:"estimated_cost_usd"`
+	RunID               string  `json:"run_id,omitempty"`
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	TotalTokens         int64   `json:"total_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	ReasoningTokens     int64   `json:"reasoning_tokens"`
+	CapturedCalls       int     `json:"captured_calls"`
+	UncapturedCalls     int     `json:"uncaptured_calls"`
+	CacheReadRatio      float64 `json:"cache_read_ratio"`
+	EstimatedCostUSD    float64 `json:"estimated_cost_usd"`
 }
 
 func writeStatusNotInitialized(stdout io.Writer) error {
@@ -93,15 +102,18 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 	}
 
 	runs := runsStatus{Active: activeRuns}
+	usageRunID := ""
 	if latestID, hasLatest, err := latestRunID(paths); err != nil {
 		return statusResponse{}, err
 	} else if hasLatest {
 		runs.LatestRunID = latestID
 		runs.LatestStatus = deriveRunStatus(paths, latestID)
+		usageRunID = latestID
 		currentID, hasCurrent := readCurrentRun(paths)
 		currentValid := hasCurrent && runExists(paths, currentID)
 		if currentValid {
 			runs.CurrentRunID = currentID
+			usageRunID = currentID
 		}
 		active, err := activeRunIDs(paths)
 		if err != nil {
@@ -119,6 +131,10 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 			runs.NextCommand = "pactum task use " + latestID
 		}
 	}
+	usage, err := runUsageStatus(paths, usageRunID)
+	if err != nil {
+		return statusResponse{}, err
+	}
 
 	return statusResponse{
 		Schema:      statusSchema,
@@ -128,7 +144,30 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 		ProjectMap:  mapStatus,
 		Runs:        runs,
 		Memory:      memoryStatus{Items: memoryItems, Stale: 0},
-		Usage:       usageStatus{TotalTokens: 0, EstimatedCostUSD: 0},
+		Usage:       usage,
+	}, nil
+}
+
+func runUsageStatus(paths artifacts.Paths, runID string) (usageStatus, error) {
+	if strings.TrimSpace(runID) == "" {
+		return usageStatus{}, nil
+	}
+	summary, err := usageForRun(paths, runID)
+	if err != nil {
+		return usageStatus{}, err
+	}
+	return usageStatus{
+		RunID:               runID,
+		InputTokens:         summary.Total.InputTokens,
+		OutputTokens:        summary.Total.OutputTokens,
+		TotalTokens:         summary.Total.TotalTokens,
+		CacheReadTokens:     summary.Total.CacheReadTokens,
+		CacheCreationTokens: summary.Total.CacheCreationTokens,
+		ReasoningTokens:     summary.Total.ReasoningTokens,
+		CapturedCalls:       summary.CapturedCalls,
+		UncapturedCalls:     summary.UncapturedCalls,
+		CacheReadRatio:      summary.CacheReadRatio,
+		EstimatedCostUSD:    0,
 	}, nil
 }
 

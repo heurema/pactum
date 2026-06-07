@@ -1223,12 +1223,12 @@ func TestReviewFixDryRunArtifactsUseWriteEnabledExecutorAndPrompt(t *testing.T) 
 	}{
 		{
 			agent:    "codex",
-			wantArgs: `exec --dangerously-bypass-approvals-and-sandbox -c model="gpt-5" -c model_reasoning_effort=high`,
+			wantArgs: `exec --json --dangerously-bypass-approvals-and-sandbox -c model="gpt-5" -c model_reasoning_effort=high`,
 			forbid:   "--sandbox read-only",
 		},
 		{
 			agent:    "claude",
-			wantArgs: "-p --dangerously-skip-permissions --model gpt-5 --effort high",
+			wantArgs: "-p --output-format json --dangerously-skip-permissions --model gpt-5 --effort high",
 			forbid:   "--sandbox read-only",
 		},
 	} {
