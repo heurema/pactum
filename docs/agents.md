@@ -42,6 +42,25 @@ the default built-in reviewer (`codex`) — in that case cross-model review may
 not be achieved, so check the selected reviewer in the existing `Resolved` block
 for `clarify suggest`, `contract draft`, `review dry-run`, and `review run`.
 
+`review loop` can also run a configured reviewer panel. Set
+`agents.review_panel` to two or more reviewer names:
+
+```yaml
+agents:
+  review_panel:
+    - codex
+    - claude
+```
+
+When `pactum review loop` runs without `--reviewer`, each review round runs all
+panel reviewers concurrently against the same reviewer prompt, then parses their
+finding proposals in the configured order. Duplicate proposals still collapse
+through the normal finding fingerprint. If duplicate reviewers assign different
+severities, the stored open finding keeps the maximum severity. An explicit
+`--reviewer <name>` disables the panel for that loop invocation and runs only
+that reviewer. When `review_panel` is empty or absent, `review loop` uses the
+existing single-reviewer selection, including `cross_model_review` when enabled.
+
 To pin a per-stage model, set `agents.executor_model` for `pactum execute` or
 `agents.reviewer_model` for read-only reviewer-role commands (`clarify suggest`,
 `contract draft`, and `review`) in `.heurema/pactum/config.yaml` to

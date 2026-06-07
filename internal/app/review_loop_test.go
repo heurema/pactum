@@ -17,8 +17,10 @@ import (
 )
 
 const (
-	reviewLoopReviewerName = "loop-reviewer"
-	reviewLoopFixerName    = "loop-fixer"
+	reviewLoopReviewerName  = "loop-reviewer"
+	reviewLoopPanelLowName  = "loop-reviewer-low"
+	reviewLoopPanelHighName = "loop-reviewer-high"
+	reviewLoopFixerName     = "loop-fixer"
 )
 
 func TestReviewLoopRequiresYes(t *testing.T) {
@@ -451,6 +453,131 @@ func TestReviewLoopDedupsIdenticalProposalsWithinRound(t *testing.T) {
 	}
 }
 
+func TestReviewLoopPanelRunsReviewersAndUpgradesDuplicateSeverity(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	setReviewPanelConfig(t, paths, reviewLoopPanelLowName, reviewLoopPanelHighName)
+	app = configureReviewLoopPanelHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "panel_duplicate")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.Reviewer != reviewLoopPanelLowName+","+reviewLoopPanelHighName || !sameStringSlice(summary.Reviewers, []string{reviewLoopPanelLowName, reviewLoopPanelHighName}) {
+		t.Fatalf("summary should record full reviewer panel: %#v", summary)
+	}
+	if len(summary.Rounds) != 1 || len(summary.Rounds[0].ReviewerAttemptIDs) != 2 || summary.Rounds[0].ReviewerAttemptID == "" {
+		t.Fatalf("round should record both reviewer attempts: %#v", summary.Rounds)
+	}
+	if got := summary.Rounds[0]; got.ProposalsCreated != 2 || got.ProposalsAccepted != 1 || got.OpenFindings != 1 {
+		t.Fatalf("panel duplicate round mismatch: %#v", got)
+	}
+	for _, attemptID := range summary.Rounds[0].ReviewerAttemptIDs {
+		assertFile(t, reviewerAttemptPaths(runPaths, attemptID).ResultJSON)
+	}
+	findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL)
+	if len(findings) != 1 || findings[0].Severity != "critical" {
+		t.Fatalf("duplicate severity should upgrade stored finding to critical: %#v", findings)
+	}
+	decisions := readReviewProposalDecisions(t, runPaths.ReviewProposalDecisionsJSONL)
+	if len(decisions) != 2 || decisions[0].Decision != "accepted" || decisions[1].Decision != "duplicate" || decisions[1].FindingID != "f_001" {
+		t.Fatalf("panel duplicate decisions mismatch: %#v", decisions)
+	}
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "reviewer_attempt_started") != 2 || countEvents(eventTypes, "review_finding_severity_upgraded") != 1 {
+		t.Fatalf("panel ledger event counts mismatch:\n%v", eventTypes)
+	}
+	if got := stderr.String(); !strings.Contains(got, "panel_reviewer=low") || !strings.Contains(got, "panel_reviewer=high") {
+		t.Fatalf("panel live output missing from stderr:\n%s", got)
+	}
+}
+
+func TestReviewLoopExplicitReviewerDisablesConfiguredPanel(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	setReviewPanelConfig(t, paths, reviewLoopPanelLowName, reviewLoopPanelHighName)
+	app = configureReviewLoopPanelHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.Reviewer != reviewLoopReviewerName || len(summary.Reviewers) != 0 {
+		t.Fatalf("explicit reviewer should disable configured panel: %#v", summary)
+	}
+	if len(summary.Rounds) != 1 || summary.Rounds[0].ReviewerAttemptID == "" || len(summary.Rounds[0].ReviewerAttemptIDs) != 0 {
+		t.Fatalf("explicit reviewer should run one reviewer attempt: %#v", summary.Rounds)
+	}
+	assertFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_001").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_002").ResultJSON)
+}
+
+func TestReviewLoopCleanPanelRoundTerminates(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	setReviewPanelConfig(t, paths, reviewLoopPanelLowName, reviewLoopPanelHighName)
+	app = configureReviewLoopPanelHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "panel_clean")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--agent", reviewLoopFixerName, "--max-rounds", "4", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.TerminalReason != "clean_round" || len(summary.Rounds) != 1 {
+		t.Fatalf("clean panel should terminate after one round: %#v", summary)
+	}
+	if len(summary.Rounds[0].ReviewerAttemptIDs) != 2 || summary.Rounds[0].ProposalsCreated != 0 || summary.Rounds[0].ProposalsAccepted != 0 {
+		t.Fatalf("clean panel round mismatch: %#v", summary.Rounds[0])
+	}
+	assertFile(t, reviewerAttemptPaths(runPaths, summary.Rounds[0].ReviewerAttemptIDs[0]).ResultJSON)
+	assertFile(t, reviewerAttemptPaths(runPaths, summary.Rounds[0].ReviewerAttemptIDs[1]).ResultJSON)
+	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
+}
+
+func TestReviewLoopUnknownPanelReviewerFailsClearly(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	setReviewPanelConfig(t, paths, "missing-reviewer", reviewLoopPanelHighName)
+	app = configureReviewLoopPanelHelpers(app)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--yes"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("unknown panel reviewer exited %d, want 1", code)
+	}
+	if got := stderr.String(); !strings.Contains(got, `agents.review_panel reviewer "missing-reviewer"`) || !strings.Contains(got, "unsupported agent") {
+		t.Fatalf("unknown panel reviewer error mismatch:\n%s", got)
+	}
+}
+
 func TestReviewLoopReacceptsResolvedFindingWhenReproposed(t *testing.T) {
 	root := t.TempDir()
 	stateDir := t.TempDir()
@@ -783,11 +910,49 @@ func configureReviewLoopHelpers(app App) App {
 	return app
 }
 
+func configureReviewLoopPanelHelpers(app App) App {
+	app.AgentRegistry = testAgentRegistry(
+		agents.AgentDescriptor{
+			Name:    reviewLoopReviewerName,
+			Command: os.Args[0],
+			Args:    []string{"-test.run=TestReviewLoopReviewerHelperProcess"},
+			Input:   agents.InputPromptFile,
+		},
+		agents.AgentDescriptor{
+			Name:    reviewLoopPanelLowName,
+			Command: os.Args[0],
+			Args:    []string{"-test.run=TestReviewLoopPanelLowReviewerHelperProcess"},
+			Input:   agents.InputPromptFile,
+		},
+		agents.AgentDescriptor{
+			Name:    reviewLoopPanelHighName,
+			Command: os.Args[0],
+			Args:    []string{"-test.run=TestReviewLoopPanelHighReviewerHelperProcess"},
+			Input:   agents.InputPromptFile,
+		},
+		agents.AgentDescriptor{
+			Name:    reviewLoopFixerName,
+			Command: os.Args[0],
+			Args:    []string{"-test.run=TestReviewLoopFixerHelperProcess"},
+			Input:   agents.InputPromptFile,
+		},
+	)
+	return app
+}
+
 func setReviewLoopMaxRoundsConfig(t *testing.T, paths artifacts.Paths, maxRounds int) {
 	t.Helper()
 	config, err := readConfig(paths.Config)
 	assertNoError(t, err)
 	config.Limits.Review.MaxRounds = maxRounds
+	assertNoError(t, writeYAML(paths.Config, config))
+}
+
+func setReviewPanelConfig(t *testing.T, paths artifacts.Paths, reviewers ...string) {
+	t.Helper()
+	config, err := readConfig(paths.Config)
+	assertNoError(t, err)
+	config.Agents.ReviewPanel = append([]string{}, reviewers...)
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 
@@ -843,6 +1008,12 @@ func reviewLoopFixtureFinding(message string, line int) map[string]any {
 		"blocking": core.Blocking,
 		"evidence": "fixture reviewer sequence",
 	}
+}
+
+func reviewLoopFixtureFindingWithSeverity(message string, line int, severity string) map[string]any {
+	finding := reviewLoopFixtureFinding(message, line)
+	finding["severity"] = severity
+	return finding
 }
 
 func appendReviewLoopFindingForTest(t *testing.T, runPaths contractRunPathSet, runID string, findingID string, core findingCore) {
@@ -911,6 +1082,42 @@ func TestReviewLoopReviewerHelperProcess(t *testing.T) {
 		}
 	case attempt == 1:
 		fmt.Print(reviewerStructuredOutput(validFinding))
+	}
+	os.Exit(0)
+}
+
+func TestReviewLoopPanelLowReviewerHelperProcess(t *testing.T) {
+	runReviewLoopPanelReviewerHelper("low", "low")
+}
+
+func TestReviewLoopPanelHighReviewerHelperProcess(t *testing.T) {
+	runReviewLoopPanelReviewerHelper("high", "critical")
+}
+
+func runReviewLoopPanelReviewerHelper(label string, severity string) {
+	if os.Getenv("PACTUM_REVIEW_LOOP_REVIEWER_PROCESS") != "1" {
+		return
+	}
+	assertReviewLoopHelperCWD()
+	stdin, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stdin error: %v\n", err)
+		os.Exit(2)
+	}
+	for i := 0; i < 50; i++ {
+		fmt.Printf("panel_reviewer=%s line=%d stdin_has_reviewer_prompt=%t\n", label, i, strings.Contains(string(stdin), "# Reviewer Prompt"))
+	}
+	mode := os.Getenv("PACTUM_REVIEW_LOOP_REVIEWER_MODE")
+	switch mode {
+	case "panel_clean":
+	case "panel_duplicate":
+		fmt.Print(reviewerStructuredOutput([]map[string]any{
+			reviewLoopFixtureFindingWithSeverity("panel reviewers found a shared issue", 77, severity),
+		}))
+	default:
+		fmt.Print(reviewerStructuredOutput([]map[string]any{
+			reviewLoopFixtureFindingWithSeverity("panel reviewers found a shared issue", 77, severity),
+		}))
 	}
 	os.Exit(0)
 }

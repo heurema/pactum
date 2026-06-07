@@ -384,6 +384,21 @@ func appendJSONLine(path string, value any) error {
 	return encoder.Encode(value)
 }
 
+func writeJSONLines[T any](path string, values []T) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	encoder := json.NewEncoder(file)
+	for _, value := range values {
+		if err := encoder.Encode(value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func nextClarificationID(prefix string, index int) string {
 	return fmt.Sprintf("%s_%03d", prefix, index)
 }
