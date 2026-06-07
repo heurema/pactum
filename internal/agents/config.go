@@ -46,13 +46,13 @@ func (BuiltinRegistry) ListBuiltins() []AgentDescriptor {
 		{
 			Name:    BuiltinCodex,
 			Command: "codex",
-			Args:    []string{"exec", "--dangerously-bypass-approvals-and-sandbox"},
+			Args:    []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"},
 			Input:   InputPromptFile,
 		},
 		{
 			Name:    BuiltinClaude,
 			Command: "claude",
-			Args:    []string{"-p", "--dangerously-skip-permissions"},
+			Args:    []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"},
 			Input:   InputPromptFile,
 		},
 	}

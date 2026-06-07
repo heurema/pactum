@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"encoding/json"
 	"io"
 	"time"
 )
@@ -78,13 +79,30 @@ type RunRequest struct {
 }
 
 type RunResult struct {
-	Command        string   `json:"-"`
-	Args           []string `json:"-"`
-	ExitCode       int      `json:"exit_code"`
-	StartedAt      string   `json:"started_at"`
-	FinishedAt     string   `json:"finished_at"`
-	DurationMillis int64    `json:"duration_ms"`
-	TimedOut       bool     `json:"timed_out"`
-	StdoutPath     string   `json:"stdout"`
-	StderrPath     string   `json:"stderr"`
+	Command        string     `json:"-"`
+	Args           []string   `json:"-"`
+	ExitCode       int        `json:"exit_code"`
+	StartedAt      string     `json:"started_at"`
+	FinishedAt     string     `json:"finished_at"`
+	DurationMillis int64      `json:"duration_ms"`
+	TimedOut       bool       `json:"timed_out"`
+	StdoutPath     string     `json:"stdout"`
+	StderrPath     string     `json:"stderr"`
+	Usage          TokenUsage `json:"usage"`
+}
+
+// TokenUsage is a provider-normalized view of one agent subprocess call's
+// usage. Counts follow the OTel-inclusive convention: input includes cache, and
+// output includes reasoning.
+type TokenUsage struct {
+	InputTokens         int64           `json:"input_tokens"`
+	OutputTokens        int64           `json:"output_tokens"`
+	TotalTokens         int64           `json:"total_tokens"`
+	CacheReadTokens     int64           `json:"cache_read_tokens,omitempty"`
+	CacheCreationTokens int64           `json:"cache_creation_tokens,omitempty"`
+	ReasoningTokens     int64           `json:"reasoning_tokens,omitempty"`
+	Captured            bool            `json:"captured"`
+	Raw                 json.RawMessage `json:"raw,omitempty"`
+
+	CaptureWarning string `json:"-"`
 }

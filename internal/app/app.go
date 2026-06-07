@@ -50,6 +50,7 @@ type cli struct {
 	Search   searchCmd   `cmd:"" help:"Search the Pactum project map."`
 	Status   statusCmd   `cmd:"" help:"Print Pactum workspace status."`
 	Task     taskCmd     `cmd:"" help:"Create and manage contract-first runs."`
+	Usage    usageCmd    `cmd:"" help:"Print token usage for a run."`
 	Version  versionCmd  `cmd:"" help:"Print the Pactum version."`
 }
 
@@ -365,6 +366,11 @@ type statusCmd struct {
 	JSONOutput bool `name:"json" help:"Print machine-readable JSON output."`
 }
 
+type usageCmd struct {
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
 type versionCmd struct {
 	JSONOutput bool `name:"json" help:"Print machine-readable JSON output."`
 }
@@ -543,6 +549,14 @@ func (c *initCmd) Run(r *runner) error {
 
 func (c *statusCmd) Run(r *runner) error {
 	return r.App.Status(r.Stdout, c.JSONOutput)
+}
+
+func (c *usageCmd) Run(r *runner) error {
+	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
+	if err != nil || !ok {
+		return err
+	}
+	return r.App.Usage(r.Stdout, runID, c.JSONOutput)
 }
 
 func (c *versionCmd) Run(r *runner) error {
@@ -1073,7 +1087,13 @@ func writeWorkspaceStatus(stdout io.Writer, report statusResponse) {
 	fmt.Fprintf(stdout, "  stale: %d\n", report.Memory.Stale)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Usage:")
+	if report.Usage.RunID != "" {
+		fmt.Fprintf(stdout, "  run: %s\n", report.Usage.RunID)
+	}
 	fmt.Fprintf(stdout, "  total tokens: %d\n", report.Usage.TotalTokens)
+	fmt.Fprintf(stdout, "  captured calls: %d\n", report.Usage.CapturedCalls)
+	fmt.Fprintf(stdout, "  uncaptured calls: %d\n", report.Usage.UncapturedCalls)
+	fmt.Fprintf(stdout, "  cache read ratio: %.2f%%\n", report.Usage.CacheReadRatio*100)
 	fmt.Fprintf(stdout, "  estimated cost: $%.2f\n", report.Usage.EstimatedCostUSD)
 }
 

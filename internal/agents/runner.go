@@ -170,6 +170,8 @@ func runSubprocessWithRunner(request RunRequest, runner processRunner) (RunResul
 	if timedOut {
 		exitCode = -1
 	}
+	usage := captureUsageFromArtifacts(request.Agent, stdoutPath, stderrPath)
+	writeUsageWarning(usage, stderr, request.LiveOutput)
 
 	return RunResult{
 		Command:        command.Command,
@@ -181,7 +183,34 @@ func runSubprocessWithRunner(request RunRequest, runner processRunner) (RunResul
 		TimedOut:       timedOut,
 		StdoutPath:     stdoutArtifact,
 		StderrPath:     stderrArtifact,
+		Usage:          usage,
 	}, err
+}
+
+func captureUsageFromArtifacts(agent AgentDescriptor, stdoutPath string, stderrPath string) TokenUsage {
+	if !structuredUsageEnabled(agent) {
+		return TokenUsage{}
+	}
+	stdout, err := os.ReadFile(stdoutPath)
+	if err != nil {
+		return TokenUsage{CaptureWarning: fmt.Sprintf("usage capture failed: read stdout: %v", err)}
+	}
+	stderr, err := os.ReadFile(stderrPath)
+	if err != nil {
+		return TokenUsage{CaptureWarning: fmt.Sprintf("usage capture failed: read stderr: %v", err)}
+	}
+	return parseAgentUsage(agent, stdout, stderr)
+}
+
+func writeUsageWarning(usage TokenUsage, stderr io.Writer, live io.Writer) {
+	if strings.TrimSpace(usage.CaptureWarning) == "" {
+		return
+	}
+	line := "usage capture warning: " + usage.CaptureWarning + "\n"
+	_, _ = io.WriteString(stderr, line)
+	if live != nil {
+		_, _ = io.WriteString(live, line)
+	}
 }
 
 func startIdleTimeout(timeout time.Duration, activity <-chan struct{}, cancel context.CancelFunc, timedOut *atomic.Bool) func() {
