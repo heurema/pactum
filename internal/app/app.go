@@ -1187,14 +1187,18 @@ func writeStaticWorkspaceFiles(paths artifacts.Paths) error {
 	}
 	files := map[string][]byte{
 		paths.Gitignore: []byte(strings.TrimSpace(`
+# Regenerable artifacts derived from the repo, the project map, or memory.
 locks/
-map/
-ledger/
 cache/
 tmp/
-runs/*/ledger/
-runs/*/execute/
-runs/*/review/
+map/
+runs/*/context/
+
+# Raw command transcripts. The run outcome lives in git history and the durable
+# learnings are distilled into the committed memory records; the structured run
+# records (contracts, decisions, the ledger, gate verdicts, review findings) are
+# versioned, but these logs are not.
+*.log
 `) + "\n"),
 		paths.ProjectMemory: []byte("# Project Memory\n\nNo project memory has been extracted yet.\n"),
 		paths.MemoryItems:   nil,

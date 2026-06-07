@@ -90,20 +90,31 @@ func helper() {}
 		t.Fatalf("entries.jsonl should not be generated as a primary artifact")
 	}
 	gitignore := mustReadFile(t, paths.Gitignore)
+	// Ignore regenerable artifacts and raw command transcripts.
 	for _, want := range []string{
 		"map/",
-		"ledger/",
 		"cache/",
 		"tmp/",
-		"runs/*/ledger/",
-		"runs/*/execute/",
-		"runs/*/review/",
+		"locks/",
+		"runs/*/context/",
+		"*.log",
 	} {
 		if !strings.Contains(gitignore, want) {
 			t.Fatalf(".gitignore missing %q:\n%s", want, gitignore)
 		}
 	}
-	for _, forbidden := range []string{"runs/*/task.md", "runs/*/context/", "runs/*/contract/", "runs/*/memory/", "contract/*.md", "contract/*.json"} {
+	// The durable run record is versioned: the ledger (audit timeline), the
+	// decision/verdict records, and run inputs are NOT ignored. Only *.log
+	// transcripts under execute/review/gate are ignored, not the whole dirs.
+	for _, forbidden := range []string{
+		"ledger/",
+		"runs/*/execute/",
+		"runs/*/review/",
+		"runs/*/contract/",
+		"runs/*/clarify/",
+		"runs/*/task.md",
+		"contract/*.json",
+	} {
 		if strings.Contains(gitignore, forbidden) {
 			t.Fatalf(".gitignore should not ignore %q:\n%s", forbidden, gitignore)
 		}
