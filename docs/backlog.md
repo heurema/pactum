@@ -18,15 +18,6 @@ reviews across M8–M10. Rough priority in parentheses.
   persists across branches. An M10.2 `executor_model: claude-opus-4-8:xhigh` leaked
   into M10.3 and broke a codex run (pactum passes model flags blind; codex rejected a
   claude model). Consider warning on agent/model mismatch and/or scoping model pins.
-- **Project map should honor `.gitignore`** (med). The map scan uses a hardcoded
-  ignore list (`.heurema`, `node_modules`, a few binary exts) and does NOT read the
-  repo's `.gitignore`, so it indexes build artifacts (`__pycache__/*.pyc`, `dist/`,
-  `target/`, …). Regenerating those (any test/build run) changes the map hashes →
-  "project map is stale" → blocks `prompt build`/`execute` until `map refresh`.
-  Invisible on Go (no in-tree build artifacts), bites Python/Rust/Java/etc. — found by
-  the foreign-repo generality test (this is the real root cause of the "spurious
-  staleness" reports). Fix: enumerate files via git (respecting `.gitignore`) when the
-  repo is git-backed, falling back to the hardcoded list otherwise.
 
 ## Review→fix loop (L3b and beyond)
 
@@ -81,6 +72,13 @@ reviews across M8–M10. Rough priority in parentheses.
   approved (pre-existing; `clarify suggest` makes bulk creation easier).
 ## Resolved (for reference)
 
+- Project map honors `.gitignore` (M11.10) — in a git repo the scan enumerates files
+  via `git ls-files --cached --others --exclude-standard`, so the repo's ignore rules
+  are respected and build artifacts (`__pycache__/*.pyc`, `dist/`, …) are no longer
+  indexed or churning the map; `.heurema` is always excluded; non-git dirs fall back to
+  the filesystem walk. Fixes the real root cause of "spurious project-map staleness"
+  on non-Go repos (found by the foreign-repo generality test; verified end-to-end:
+  regenerating a `.pyc` no longer makes the map stale).
 - `.heurema` version-control policy (M11.9) — `init` now writes a `.gitignore` that
   versions the durable run record (contracts, decisions, the ledger/audit timeline,
   gate verdicts, review findings, memory) and ignores only regenerable artifacts
