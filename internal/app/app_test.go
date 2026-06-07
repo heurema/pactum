@@ -83,8 +83,11 @@ func helper() {}
 	if config.Gate.ScopeEnforcement != gateScopeEnforcementBlock {
 		t.Fatalf("config gate.scope_enforcement = %q, want block", config.Gate.ScopeEnforcement)
 	}
+	if config.Budget.Mode != budgetModeBlock || config.Budget.MaxTokens != nil {
+		t.Fatalf("config budget mismatch: %#v", config.Budget)
+	}
 	configYAML := mustReadFile(t, paths.Config)
-	for _, want := range []string{"gate:", "scope_enforcement: block"} {
+	for _, want := range []string{"gate:", "scope_enforcement: block", "budget:", "mode: block", "max_tokens:"} {
 		if !strings.Contains(configYAML, want) {
 			t.Fatalf("config.yaml missing %q:\n%s", want, configYAML)
 		}
@@ -344,6 +347,76 @@ gate:
 	}
 	if !strings.Contains(err.Error(), "gate.scope_enforcement") {
 		t.Fatalf("invalid gate.scope_enforcement error mismatch: %v", err)
+	}
+}
+
+func TestReadConfigNormalizesBudgetMode(t *testing.T) {
+	root := t.TempDir()
+	paths := artifacts.New(root)
+	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
+
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "missing",
+			content: "schema: pactum.config.v1\n",
+			want:    budgetModeBlock,
+		},
+		{
+			name: "empty",
+			content: `schema: pactum.config.v1
+budget:
+  mode: ""
+`,
+			want: budgetModeBlock,
+		},
+		{
+			name: "block",
+			content: `schema: pactum.config.v1
+budget:
+  mode: block
+`,
+			want: budgetModeBlock,
+		},
+		{
+			name: "warn",
+			content: `schema: pactum.config.v1
+budget:
+  mode: warn
+`,
+			want: budgetModeWarn,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mustWriteFile(t, paths.Config, tt.content)
+			config, err := readConfig(paths.Config)
+			assertNoError(t, err)
+			if config.Budget.Mode != tt.want {
+				t.Fatalf("budget.mode = %q, want %q", config.Budget.Mode, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadConfigRejectsInvalidBudgetMode(t *testing.T) {
+	root := t.TempDir()
+	paths := artifacts.New(root)
+	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
+	mustWriteFile(t, paths.Config, `schema: pactum.config.v1
+budget:
+  mode: advisory
+`)
+
+	_, err := readConfig(paths.Config)
+	if err == nil {
+		t.Fatalf("readConfig should reject invalid budget.mode")
+	}
+	if !strings.Contains(err.Error(), "budget.mode") {
+		t.Fatalf("invalid budget.mode error mismatch: %v", err)
 	}
 }
 

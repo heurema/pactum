@@ -22,14 +22,22 @@ reviews across M8–M10. Rough priority in parentheses.
 ## Review→fix loop (L3b and beyond)
 
 - **Loop stop conditions.** Stalemate-by-fingerprint and K-consecutive-clean —
-  **done (M10.3)**. Remaining: **token budget stop** — now specced as a slice of the
-  cost/budget roadmap in [`cost-budget-design.md`](cost-budget-design.md) (token
-  accounting → cost → `max_tokens` budget stop with a `budget_exceeded` terminal).
+  **done (M10.3)**. Token-native `max_tokens` budget stop is **done** with a
+  `budget_exceeded` terminal. Remaining cost-layer follow-ups live in
+  [`cost-budget-design.md`](cost-budget-design.md).
 - **Cost/budget remaining slices** (see [`cost-budget-design.md`](cost-budget-design.md)).
-  Slice 1 (write-stage token accounting) done (M12.0). Remaining: read-stage capture
-  (reviewer/clarify/draft), cost ($) overlay, budget stop, estimation. Also: harden the
-  claude usage parser to tolerate incidental leading/trailing stdout (today any
-  non-JSON stdout degrades claude capture to `captured=false`; safe but brittle).
+  Slices 1-2 (write- and read-stage token accounting) done (M12.0, M12.1);
+  Slice 4 (`max_tokens` budget stop) done. Remaining: cost ($) overlay and
+  estimation. Also: harden the claude usage parser to tolerate incidental
+  leading/trailing stdout (today any non-JSON stdout degrades claude capture to
+  `captured=false`; safe but brittle).
+- **Cross-run / workspace usage stats command** (med). Per-task stats exist
+  (`pactum usage <run_id>`). Add a workspace-wide aggregate — `pactum usage` with no
+  run id (or `--all`) — that scans all runs and reports total tokens, by-run / by-stage
+  / by-agent / by-model breakdowns, cache-hit ratios, and trend over time. This is the
+  cross-run rollup the design doc reserves and that no agentic CLI currently offers
+  (they're all per-task only). Reads the per-run `usage.jsonl` ledgers; derived, never
+  the source of truth.
 - **Rebuttal channel** (med). Feed the fixer's rebuttal of a false positive back to
   the reviewer on the next round so it re-judges instead of re-reporting.
 - **Semantic review-finding dedup** (low). The autonomous review loop now dedups

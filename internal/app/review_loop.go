@@ -19,6 +19,8 @@ import (
 const (
 	reviewLoopSummarySchema   = "pactum.review_loop.v1"
 	reviewLoopSummaryArtifact = "review/loop-summary.json"
+
+	reviewLoopTerminalBudgetExceeded = "budget_exceeded"
 )
 
 type reviewLoopOptions struct {
@@ -38,6 +40,16 @@ type reviewLoopLimits struct {
 	CleanRounds int
 }
 
+type reviewLoopSettings struct {
+	Limits reviewLoopLimits
+	Budget reviewLoopBudget
+}
+
+type reviewLoopBudget struct {
+	Mode      string
+	MaxTokens *int64
+}
+
 type reviewLoopSummaryDocument struct {
 	Schema              string                   `json:"schema"`
 	RunID               string                   `json:"run_id"`
@@ -49,8 +61,16 @@ type reviewLoopSummaryDocument struct {
 	StalematePatience   int                      `json:"stalemate_patience"`
 	CleanRoundsRequired int                      `json:"clean_rounds_required"`
 	TerminalReason      string                   `json:"terminal_reason"`
+	Budget              *reviewLoopBudgetSummary `json:"budget,omitempty"`
 	Rounds              []reviewLoopRoundSummary `json:"rounds"`
 	Artifacts           reviewLoopArtifacts      `json:"artifacts"`
+}
+
+type reviewLoopBudgetSummary struct {
+	Mode                string   `json:"mode"`
+	MaxTokens           int64    `json:"max_tokens"`
+	CapturedTotalTokens int64    `json:"captured_total_tokens"`
+	Warnings            []string `json:"warnings,omitempty"`
 }
 
 type reviewLoopArtifacts struct {
@@ -84,10 +104,11 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 	if _, err := requireReviewPrepared(context.RunPaths, runID); err != nil {
 		return err
 	}
-	limits, err := a.resolveReviewLoopLimits(context, options)
+	settings, err := a.resolveReviewLoopSettings(context, options)
 	if err != nil {
 		return err
 	}
+	limits := settings.Limits
 	maxRounds := limits.MaxRounds
 
 	startedAt := a.nowUTC()
@@ -103,6 +124,13 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 			Summary: reviewLoopSummaryArtifact,
 		},
 	}
+	if settings.Budget.MaxTokens != nil {
+		summary.Budget = &reviewLoopBudgetSummary{
+			Mode:      settings.Budget.Mode,
+			MaxTokens: *settings.Budget.MaxTokens,
+			Warnings:  []string{},
+		}
+	}
 	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_loop_started", Timestamp: startedAt, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
@@ -111,6 +139,18 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 	cleanStreak := 0
 	unchangedFingerprintStreak := 0
 	for round := 1; round <= maxRounds; round++ {
+		if round > 1 {
+			stop, err := reviewLoopBudgetExceeded(context.RunPaths, settings.Budget, summary.Budget)
+			if err != nil {
+				loopErr = err
+				break
+			}
+			if stop {
+				summary.TerminalReason = reviewLoopTerminalBudgetExceeded
+				break
+			}
+		}
+
 		reviewerResult, proposals, err := a.runReviewLoopReviewRound(liveOutput, runID, options.Reviewer, options.Timeout)
 		if err != nil {
 			loopErr = err
@@ -264,6 +304,13 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 			summary.TerminalReason = "max_rounds"
 		}
 	}
+	if summary.Budget != nil {
+		total, err := reviewLoopCapturedTokenTotal(context.RunPaths)
+		if err != nil && loopErr == nil {
+			loopErr = err
+		}
+		summary.Budget.CapturedTotalTokens = total
+	}
 	finishedAt := a.nowUTC()
 	summary.FinishedAt = finishedAt.Format(time.RFC3339)
 	if err := writeJSON(context.RunPaths.ReviewLoopSummaryJSON, summary); err != nil && loopErr == nil {
@@ -283,29 +330,45 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 	return nil
 }
 
-func (a App) resolveReviewLoopLimits(context reviewContext, options reviewLoopOptions) (reviewLoopLimits, error) {
+func (a App) resolveReviewLoopSettings(context reviewContext, options reviewLoopOptions) (reviewLoopSettings, error) {
 	config, err := readConfig(context.Paths.Config)
 	if err != nil {
-		return reviewLoopLimits{}, err
+		return reviewLoopSettings{}, err
 	}
 	defaults := defaultConfigFile().Limits.Review
 	maxRounds, err := resolveReviewLoopLimit("max rounds", options.MaxRounds, config.Limits.Review.MaxRounds, defaults.MaxRounds)
 	if err != nil {
-		return reviewLoopLimits{}, err
+		return reviewLoopSettings{}, err
 	}
 	patience, err := resolveReviewLoopLimit("patience", options.Patience, config.Limits.Review.Patience, defaults.Patience)
 	if err != nil {
-		return reviewLoopLimits{}, err
+		return reviewLoopSettings{}, err
 	}
 	cleanRounds, err := resolveReviewLoopLimit("clean rounds", options.CleanRounds, config.Limits.Review.CleanRounds, defaults.CleanRounds)
 	if err != nil {
-		return reviewLoopLimits{}, err
+		return reviewLoopSettings{}, err
 	}
-	return reviewLoopLimits{
-		MaxRounds:   maxRounds,
-		Patience:    patience,
-		CleanRounds: cleanRounds,
+	return reviewLoopSettings{
+		Limits: reviewLoopLimits{
+			MaxRounds:   maxRounds,
+			Patience:    patience,
+			CleanRounds: cleanRounds,
+		},
+		Budget: reviewLoopBudget{
+			Mode:      config.Budget.Mode,
+			MaxTokens: reviewLoopBudgetMaxTokens(config.Budget.MaxTokens),
+		},
 	}, nil
+}
+
+// reviewLoopBudgetMaxTokens treats a non-positive max_tokens as disabled (no
+// budget), consistent with pactum's "0 = off" convention, so a 0/negative value
+// can never stop the loop after a single round.
+func reviewLoopBudgetMaxTokens(value *int64) *int64 {
+	if value == nil || *value <= 0 {
+		return nil
+	}
+	return value
 }
 
 func resolveReviewLoopLimit(name string, override int, configured int, fallback int) (int, error) {
@@ -323,6 +386,43 @@ func resolveReviewLoopLimit(name string, override int, configured int, fallback 
 		return 0, fmt.Errorf("review %s must be positive", name)
 	}
 	return value, nil
+}
+
+func reviewLoopBudgetExceeded(runPaths contractRunPathSet, budget reviewLoopBudget, summary *reviewLoopBudgetSummary) (bool, error) {
+	if budget.MaxTokens == nil {
+		return false, nil
+	}
+	total, err := reviewLoopCapturedTokenTotal(runPaths)
+	if err != nil {
+		return false, err
+	}
+	if summary != nil {
+		summary.CapturedTotalTokens = total
+	}
+	if total < *budget.MaxTokens {
+		return false, nil
+	}
+	if budget.Mode == budgetModeWarn {
+		if summary != nil {
+			summary.Warnings = append(summary.Warnings, fmt.Sprintf("budget max_tokens reached: captured_total_tokens=%d max_tokens=%d mode=warn", total, *budget.MaxTokens))
+		}
+		return false, nil
+	}
+	return true, nil
+}
+
+func reviewLoopCapturedTokenTotal(runPaths contractRunPathSet) (int64, error) {
+	records, err := readUsageRecords(runPaths.UsageJSONL)
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, record := range records {
+		if record.Captured {
+			total += record.TotalTokens
+		}
+	}
+	return total, nil
 }
 
 func (a App) runReviewLoopReviewRound(liveOutput io.Writer, runID string, reviewer string, timeout time.Duration) (reviewerResultDocument, reviewProposeFindingsResponse, error) {
@@ -522,6 +622,11 @@ func writeReviewLoopSummary(stdout io.Writer, summary reviewLoopSummaryDocument)
 	fmt.Fprintf(stdout, "  rounds: %d/%d\n", len(summary.Rounds), summary.MaxRounds)
 	fmt.Fprintf(stdout, "  clean rounds: %d\n", summary.CleanRoundsRequired)
 	fmt.Fprintf(stdout, "  stalemate patience: %d\n", summary.StalematePatience)
+	if summary.Budget != nil {
+		fmt.Fprintf(stdout, "  budget mode: %s\n", summary.Budget.Mode)
+		fmt.Fprintf(stdout, "  budget max tokens: %d\n", summary.Budget.MaxTokens)
+		fmt.Fprintf(stdout, "  budget captured tokens: %d\n", summary.Budget.CapturedTotalTokens)
+	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Round results:")
 	for _, round := range summary.Rounds {
@@ -539,6 +644,13 @@ func writeReviewLoopSummary(stdout io.Writer, summary reviewLoopSummaryDocument)
 			fmt.Fprintf(stdout, ", unchanged streak %d", round.UnchangedFingerprintStreak)
 		}
 		fmt.Fprintln(stdout)
+	}
+	if summary.Budget != nil && len(summary.Budget.Warnings) > 0 {
+		fmt.Fprintln(stdout)
+		fmt.Fprintln(stdout, "Budget warnings:")
+		for _, warning := range summary.Budget.Warnings {
+			fmt.Fprintf(stdout, "  - %s\n", warning)
+		}
 	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Artifacts:")
