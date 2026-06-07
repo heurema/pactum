@@ -198,13 +198,15 @@ These read the same records; no schema change.
   block. Prefer an agent-reported cost where trustworthy; otherwise compute. (claude's
   headless `-p` becomes cleanly $-denominated once Anthropic's separate Agent-SDK
   credit takes effect.)
-- **Budget stop:** primitive is **`max_tokens` per run** (exact, no price table). Truth
-  = post-call accumulation of the run's records; optional pre-call gate (next-call
-  input via a token-count step + a historical output ratio). When the limit is set and
-  exceeded, terminate the loop with a distinct terminal reason **`budget_exceeded`** —
-  composing with the M11.8 gate-failure pattern (clean stop + escalate). Default
-  enforce-when-set (consistent with blocking scope); `mode: warn` for visibility-only.
-  `max_usd` remains available as a derived convenience once the cost layer exists.
+- **Budget stop (implemented for the review loop):** primitive is **`max_tokens` per
+  run** (exact, no price table). Truth = post-call accumulation of the run's
+  **captured** usage records; uncaptured records do not count toward the stop. At the
+  start of rounds after the first, when the captured total reaches the configured
+  ceiling, `mode: block` terminates the loop with **`budget_exceeded`** and records
+  the mode, `max_tokens`, and captured token total in `review/loop-summary.json`.
+  `mode: warn` records a budget warning and continues. A single round may overshoot
+  by its own calls because there is no pre-call estimation gate in this slice.
+  `max_usd` remains declared but unenforced until the cost layer exists.
 - **Estimation:** input is countable before a call (provider count-tokens endpoint /
   local tokenizer / `chars/4`); output is not (per-stage historical ratios from our own
   ledger + `max_tokens` ceiling); a loop total must model quadratic context growth and
@@ -212,6 +214,9 @@ These read the same records; no schema change.
   context-window gauge.
 
 ## Phased plan
+
+Slice 4 was implemented ahead of the cost slice because token-native enforcement
+does not need pricing data.
 
 1. **Slice 1 — token accounting + visibility (this milestone).** `UsageRecord` schema +
    per-agent parser in the runner (`--json` for write stages: execute, fix) +
@@ -223,8 +228,9 @@ These read the same records; no schema change.
    reading fenced JSON, so read-stage usage is captured in full-run totals.
 3. **Slice 3 — cost ($) overlay.** Versioned per-class price table → `Cost` block;
    `pactum usage` shows $ alongside tokens (flagged estimate under subscription).
-4. **Slice 4 — budget stop.** `max_tokens` per run; accumulate + terminal
-   `budget_exceeded`; `mode` warn/block; compose with the loop.
+4. **Slice 4 — budget stop (implemented).** `max_tokens` per run; accumulate
+   captured usage + terminal `budget_exceeded`; `mode` warn/block; compose with the
+   loop. Post-call only; no dollar enforcement.
 5. **Slice 5 — estimation.** Pre-call input count + historical output ratios →
    used/remaining/projected range; context-window gauge.
 

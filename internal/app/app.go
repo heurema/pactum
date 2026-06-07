@@ -28,6 +28,9 @@ const (
 
 	gateScopeEnforcementBlock = "block"
 	gateScopeEnforcementWarn  = "warn"
+
+	budgetModeBlock = "block"
+	budgetModeWarn  = "warn"
 )
 
 type App struct {
@@ -447,8 +450,9 @@ type reviewLimits struct {
 }
 
 type budgetConfig struct {
-	Mode   string   `yaml:"mode"`
-	MaxUSD *float64 `yaml:"max_usd"`
+	Mode      string   `yaml:"mode"`
+	MaxTokens *int64   `yaml:"max_tokens"`
+	MaxUSD    *float64 `yaml:"max_usd"`
 }
 
 type memoryConfig struct {
@@ -1283,8 +1287,9 @@ func defaultConfigFile() configFile {
 			},
 		},
 		Budget: budgetConfig{
-			Mode:   "warn",
-			MaxUSD: nil,
+			Mode:      budgetModeBlock,
+			MaxTokens: nil,
+			MaxUSD:    nil,
 		},
 		Memory: memoryConfig{
 			Enabled:      true,
@@ -1352,6 +1357,11 @@ func readConfig(path string) (configFile, error) {
 		return configFile{}, err
 	}
 	config.Gate.ScopeEnforcement = scopeEnforcement
+	budgetMode, err := normalizeBudgetMode(config.Budget.Mode)
+	if err != nil {
+		return configFile{}, err
+	}
+	config.Budget.Mode = budgetMode
 	return config, nil
 }
 
@@ -1365,6 +1375,19 @@ func normalizeGateScopeEnforcement(value string) (string, error) {
 		return value, nil
 	default:
 		return "", fmt.Errorf("config gate.scope_enforcement must be %q or %q, got %q", gateScopeEnforcementBlock, gateScopeEnforcementWarn, value)
+	}
+}
+
+func normalizeBudgetMode(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return budgetModeBlock, nil
+	}
+	switch value {
+	case budgetModeBlock, budgetModeWarn:
+		return value, nil
+	default:
+		return "", fmt.Errorf("config budget.mode must be %q or %q, got %q", budgetModeBlock, budgetModeWarn, value)
 	}
 }
 

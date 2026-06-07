@@ -133,6 +133,197 @@ func TestReviewLoopStopsAtMaxRounds(t *testing.T) {
 	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_002").ResultJSON)
 }
 
+func TestReviewLoopStopsWhenCapturedTokenBudgetExceeded(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	setReviewLoopBudgetConfig(t, paths, budgetModeBlock, reviewLoopInt64Ptr(100))
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		SchemaVersion: usageRecordSchemaVersion,
+		RecordID:      "usage_budget_001",
+		RunID:         runID,
+		AttemptID:     "attempt_budget_001",
+		Stage:         "review",
+		Provider:      "codex",
+		Agent:         "codex",
+		TotalTokens:   150,
+		Captured:      true,
+		CreatedAt:     "2026-06-07T18:00:00Z",
+	})
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3", "--yes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "terminal reason: budget_exceeded") || !strings.Contains(got, "budget max tokens: 100") || !strings.Contains(got, "budget captured tokens: 150") {
+		t.Fatalf("human budget stop output mismatch:\n%s", got)
+	}
+
+	summary := readReviewLoopSummary(t, runPaths.ReviewLoopSummaryJSON)
+	if summary.TerminalReason != reviewLoopTerminalBudgetExceeded || len(summary.Rounds) != 1 {
+		t.Fatalf("budget stop summary mismatch: %#v", summary)
+	}
+	if summary.Budget == nil || summary.Budget.Mode != budgetModeBlock || summary.Budget.MaxTokens != 100 || summary.Budget.CapturedTotalTokens != 150 {
+		t.Fatalf("budget summary mismatch: %#v", summary.Budget)
+	}
+	assertFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_001").ResultJSON)
+	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_002").ResultJSON)
+	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_002").ResultJSON)
+}
+
+func TestReviewLoopBudgetWarnContinuesToOtherTerminal(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	setReviewLoopBudgetConfig(t, paths, budgetModeWarn, reviewLoopInt64Ptr(100))
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		SchemaVersion: usageRecordSchemaVersion,
+		RecordID:      "usage_budget_001",
+		RunID:         runID,
+		AttemptID:     "attempt_budget_001",
+		Stage:         "review",
+		Provider:      "codex",
+		Agent:         "codex",
+		TotalTokens:   150,
+		Captured:      true,
+		CreatedAt:     "2026-06-07T18:00:00Z",
+	})
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.TerminalReason != "stalemate" || len(summary.Rounds) != 2 {
+		t.Fatalf("warn budget should continue to stalemate: %#v", summary)
+	}
+	if summary.Budget == nil || summary.Budget.Mode != budgetModeWarn || summary.Budget.CapturedTotalTokens != 150 || len(summary.Budget.Warnings) == 0 {
+		t.Fatalf("warn budget summary mismatch: %#v", summary.Budget)
+	}
+	if !strings.Contains(summary.Budget.Warnings[0], "captured_total_tokens=150") {
+		t.Fatalf("budget warning should record totals: %#v", summary.Budget.Warnings)
+	}
+}
+
+func TestReviewLoopNoMaxTokensIgnoresExistingUsage(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		SchemaVersion: usageRecordSchemaVersion,
+		RecordID:      "usage_budget_001",
+		RunID:         runID,
+		AttemptID:     "attempt_budget_001",
+		Stage:         "review",
+		Provider:      "codex",
+		Agent:         "codex",
+		TotalTokens:   999999,
+		Captured:      true,
+		CreatedAt:     "2026-06-07T18:00:00Z",
+	})
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "findings_then_clean")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "2", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.TerminalReason != "clean_round" || len(summary.Rounds) != 2 || summary.Budget != nil {
+		t.Fatalf("loop without max_tokens should be unaffected: %#v", summary)
+	}
+}
+
+func TestReviewLoopBudgetMaxTokensTreatsNonPositiveAsOff(t *testing.T) {
+	zero := int64(0)
+	negative := int64(-5)
+	positive := int64(100)
+	if reviewLoopBudgetMaxTokens(nil) != nil {
+		t.Fatal("nil max_tokens should stay disabled")
+	}
+	if reviewLoopBudgetMaxTokens(&zero) != nil {
+		t.Fatal("max_tokens 0 should be treated as off")
+	}
+	if reviewLoopBudgetMaxTokens(&negative) != nil {
+		t.Fatal("negative max_tokens should be treated as off")
+	}
+	if got := reviewLoopBudgetMaxTokens(&positive); got == nil || *got != 100 {
+		t.Fatalf("positive max_tokens should pass through, got %v", got)
+	}
+}
+
+func TestReviewLoopBudgetCountsOnlyCapturedUsage(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	setReviewLoopBudgetConfig(t, paths, budgetModeBlock, reviewLoopInt64Ptr(100))
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		SchemaVersion: usageRecordSchemaVersion,
+		RecordID:      "usage_budget_uncaptured",
+		RunID:         runID,
+		AttemptID:     "attempt_budget_uncaptured",
+		Stage:         "review",
+		Provider:      "codex",
+		Agent:         "codex",
+		TotalTokens:   10000,
+		Captured:      false,
+		CreatedAt:     "2026-06-07T18:00:00Z",
+	})
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		SchemaVersion: usageRecordSchemaVersion,
+		RecordID:      "usage_budget_captured",
+		RunID:         runID,
+		AttemptID:     "attempt_budget_captured",
+		Stage:         "review",
+		Provider:      "codex",
+		Agent:         "codex",
+		TotalTokens:   50,
+		Captured:      true,
+		CreatedAt:     "2026-06-07T18:01:00Z",
+	})
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.TerminalReason != "stalemate" || len(summary.Rounds) != 2 {
+		t.Fatalf("uncaptured usage must not trip budget: %#v", summary)
+	}
+	if summary.Budget == nil || summary.Budget.CapturedTotalTokens != 50 {
+		t.Fatalf("budget should report captured-only tokens: %#v", summary.Budget)
+	}
+}
+
 func TestReviewLoopDedupsReproposedOpenFindingAcrossRounds(t *testing.T) {
 	root := t.TempDir()
 	stateDir := t.TempDir()
@@ -598,6 +789,19 @@ func setReviewLoopMaxRoundsConfig(t *testing.T, paths artifacts.Paths, maxRounds
 	assertNoError(t, err)
 	config.Limits.Review.MaxRounds = maxRounds
 	assertNoError(t, writeYAML(paths.Config, config))
+}
+
+func setReviewLoopBudgetConfig(t *testing.T, paths artifacts.Paths, mode string, maxTokens *int64) {
+	t.Helper()
+	config, err := readConfig(paths.Config)
+	assertNoError(t, err)
+	config.Budget.Mode = mode
+	config.Budget.MaxTokens = maxTokens
+	assertNoError(t, writeYAML(paths.Config, config))
+}
+
+func reviewLoopInt64Ptr(value int64) *int64 {
+	return &value
 }
 
 func setReviewLoopHelperEnv(t *testing.T, root string, sequenceFile string, mode string) {
