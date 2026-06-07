@@ -61,17 +61,21 @@ reviews across M8–M10. Rough priority in parentheses.
 
 ## Hardening / cleanup
 
-- **Blocking path-scope enforcement** (med). The gate now emits advisory warnings
-  for changed/new files outside declared path globs, but it intentionally does not
-  hard-fail on those warnings. Decide whether and how to promote path-scope
-  violations to a blocking gate policy.
 - **Clarify commands reset approval silently** (med). `clarify ask` / `answer` /
   `suggest` add open questions via `refreshClarificationArtifacts`, which calls
   `resetApprovalIfApproved` — so running them on an already-approved/executed run
   silently regresses it to `clarifying`. Guard or warn when the run is already
   approved (pre-existing; `clarify suggest` makes bulk creation easier).
+
 ## Resolved (for reference)
 
+- Blocking path-scope enforcement (M11.11) — `gate.scope_enforcement` defaults to
+  `block`, so changed/new files that are undeclared by `paths_in_scope` or matched
+  by `paths_out_of_scope` now produce `scope.status: blocked` and an overall
+  failed gate. `gate.scope_enforcement: warn` preserves the M11.5 advisory warning
+  behavior. In the autonomous review loop this composes with M11.8: the failed
+  gate stops the loop with terminal reason `gate_failed` and records the gate
+  report artifact for escalation.
 - Project map honors `.gitignore` (M11.10) — in a git repo the scan enumerates files
   via `git ls-files --cached --others --exclude-standard`, so the repo's ignore rules
   are respected and build artifacts (`__pycache__/*.pyc`, `dist/`, …) are no longer

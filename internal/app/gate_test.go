@@ -176,7 +176,7 @@ func TestGateRunDetectsNewFile(t *testing.T) {
 	}
 }
 
-func TestGateRunReportsUndeclaredPathScopeWarnings(t *testing.T) {
+func TestGateRunBlocksUndeclaredPathScopeByDefault(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-in-scope", "internal/app/**"}, nil, true)
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
@@ -184,12 +184,12 @@ func TestGateRunReportsUndeclaredPathScopeWarnings(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("gate run with undeclared scope warnings exited %d, stderr: %s", code, stderr.String())
+	if code == 0 {
+		t.Fatalf("gate run with blocked scope should fail")
 	}
 	report := readGateReport(t, contractRunPaths(filepath.Join(paths.RunsDir, runID)).GateReportJSON)
-	if report.Status != "needs_review" || report.Scope == nil || report.Scope.Status != "warnings" {
-		t.Fatalf("scope warnings not reported: %#v", report)
+	if report.Status != "failed" || report.Scope == nil || report.Scope.Status != "blocked" || !report.Summary.ScopeBlocked {
+		t.Fatalf("blocked scope not reported: %#v", report)
 	}
 	if !containsString(report.Scope.Undeclared, "README.md") || !containsString(report.Scope.Undeclared, "notes.txt") {
 		t.Fatalf("undeclared files not reported: %#v", report.Scope)
@@ -197,10 +197,56 @@ func TestGateRunReportsUndeclaredPathScopeWarnings(t *testing.T) {
 	if len(report.Scope.OutOfScope) != 0 {
 		t.Fatalf("unexpected out-of-scope files: %#v", report.Scope.OutOfScope)
 	}
-	for _, want := range []string{"Scope:", "Warnings:", "undeclared file: README.md", "undeclared file: notes.txt"} {
+	for _, want := range []string{"Scope:", "status: blocked", "Violations:", "undeclared file: README.md", "undeclared file: notes.txt", "Gate:", "status: failed"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("gate run output missing %q:\n%s", want, stdout.String())
 		}
+	}
+	if got := stderr.String(); !strings.Contains(got, "gate status failed") {
+		t.Fatalf("blocked scope stderr mismatch:\n%s", got)
+	}
+}
+
+func TestGateRunBlockedScopeJSONOutputIsGateReport(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-in-scope", "internal/app/**"}, nil, true)
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"gate", "run", runID, "--json"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("gate run with blocked scope should fail")
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("gate run --json should keep stderr empty, got:\n%s", stderr.String())
+	}
+	var report gateReportDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &report))
+	if report.Schema != gateReportSchema || report.Status != "failed" || report.Scope == nil || report.Scope.Status != "blocked" {
+		t.Fatalf("blocked scope JSON report mismatch: %#v", report)
+	}
+}
+
+func TestGateRunWarnScopeEnforcementKeepsScopeAdvisory(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-in-scope", "internal/app/**", "--add-path-out-of-scope", "README.md"}, nil, true)
+	setGateScopeEnforcementConfig(t, paths, gateScopeEnforcementWarn)
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("gate run with warning scope enforcement exited %d, stderr: %s", code, stderr.String())
+	}
+	report := readGateReport(t, contractRunPaths(filepath.Join(paths.RunsDir, runID)).GateReportJSON)
+	if report.Status != "needs_review" || report.Scope == nil || report.Scope.Status != "warnings" || report.Summary.ScopeBlocked {
+		t.Fatalf("warning scope should not fail gate: %#v", report)
+	}
+	if !containsString(report.Scope.Undeclared, "README.md") || !containsString(report.Scope.OutOfScope, "README.md") {
+		t.Fatalf("warning scope files not reported: %#v", report.Scope)
+	}
+	if got := stdout.String(); !strings.Contains(got, "Warnings:") || strings.Contains(got, "Violations:") {
+		t.Fatalf("warning scope output mismatch:\n%s", got)
 	}
 }
 
@@ -226,18 +272,33 @@ func TestGateRunScopeCleanWhenFilesAreDeclared(t *testing.T) {
 	}
 }
 
-func TestGateRunReportsOutOfScopePathWarnings(t *testing.T) {
+func TestGateRunPassesWithPathGlobsAndNoChanges(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-in-scope", "internal/app/**"}, nil, true)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("gate run with clean path scope exited %d, stderr: %s", code, stderr.String())
+	}
+	report := readGateReport(t, contractRunPaths(filepath.Join(paths.RunsDir, runID)).GateReportJSON)
+	if report.Status != "passed" || report.Scope == nil || report.Scope.Status != "clean" || report.Summary.ScopeBlocked {
+		t.Fatalf("clean scoped gate should pass: %#v", report)
+	}
+}
+
+func TestGateRunBlocksOutOfScopePathByDefault(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-out-of-scope", "README.md"}, nil, true)
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("gate run with out-of-scope warning exited %d, stderr: %s", code, stderr.String())
+	if code == 0 {
+		t.Fatalf("gate run with out-of-scope path should fail")
 	}
 	report := readGateReport(t, contractRunPaths(filepath.Join(paths.RunsDir, runID)).GateReportJSON)
-	if report.Scope == nil || report.Scope.Status != "warnings" || !containsString(report.Scope.OutOfScope, "README.md") {
+	if report.Status != "failed" || report.Scope == nil || report.Scope.Status != "blocked" || !containsString(report.Scope.OutOfScope, "README.md") {
 		t.Fatalf("out-of-scope file not reported: %#v", report.Scope)
 	}
 	if len(report.Scope.Undeclared) != 0 {
@@ -250,7 +311,7 @@ func TestGateRunReportsOutOfScopePathWarnings(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("gate show exited %d, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "out-of-scope file: README.md") || !strings.Contains(got, "Warnings:") {
+	if got := stdout.String(); !strings.Contains(got, "out-of-scope file: README.md") || !strings.Contains(got, "Violations:") || !strings.Contains(got, "status: blocked") {
 		t.Fatalf("gate show scope output mismatch:\n%s", got)
 	}
 }
@@ -269,6 +330,9 @@ func TestGateRunOmitsScopeSectionWithoutPathGlobs(t *testing.T) {
 	report := readGateReport(t, runPaths.GateReportJSON)
 	if report.Status != "needs_review" || report.Scope != nil {
 		t.Fatalf("scope report should be omitted without path globs: %#v", report)
+	}
+	if report.Summary.ScopeBlocked {
+		t.Fatalf("scope_blocked should be false without path globs: %#v", report.Summary)
 	}
 	if strings.Contains(mustReadFile(t, runPaths.GateReportJSON), `"scope"`) {
 		t.Fatalf("gate report JSON should omit scope without path globs:\n%s", mustReadFile(t, runPaths.GateReportJSON))
@@ -541,6 +605,14 @@ func setupGatePreparedRunWithRevision(t *testing.T, root string, reviseFlags []s
 		}
 	}
 	return app, paths, runID
+}
+
+func setGateScopeEnforcementConfig(t *testing.T, paths artifacts.Paths, enforcement string) {
+	t.Helper()
+	config, err := readConfig(paths.Config)
+	assertNoError(t, err)
+	config.Gate.ScopeEnforcement = enforcement
+	assertNoError(t, writeYAML(paths.Config, config))
 }
 
 func gateValidationCommandForTest() string {
