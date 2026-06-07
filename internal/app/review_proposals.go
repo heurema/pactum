@@ -371,7 +371,7 @@ func resolveReviewerAttemptForProposals(runPaths contractRunPathSet, reviewerAtt
 }
 
 func parseReviewerFindingBlocks(output string) ([]reviewerFindingBlock, []string) {
-	jsonBlocks := extractFencedJSONBlocks(output)
+	jsonBlocks := extractFencedJSONBlocks(agentMessageText([]byte(output)))
 	blocks := make([]reviewerFindingBlock, 0, len(jsonBlocks))
 	warnings := []string{}
 	for _, raw := range jsonBlocks {

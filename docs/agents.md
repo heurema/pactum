@@ -50,7 +50,8 @@ is empty or omitted, Pactum does not pass model flags for that stage and the
 agent CLI inherits its own configured defaults. For `codex`, Pactum emits
 `-c model=...` and `-c model_reasoning_effort=...`; for `claude`, it emits
 `--model ...` and `--effort ...`. Reviewer model flags are appended to the
-read-only reviewer command (`codex exec --sandbox read-only`, or `claude -p`)
+read-only reviewer command (`codex exec --json --sandbox read-only`, or
+`claude -p --output-format json`)
 and do not add executor write-bypass flags.
 
 The human output for `clarify suggest`, `contract draft`, `execute dry-run`,

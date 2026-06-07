@@ -82,15 +82,15 @@ func TestApplyModelSpecEmitsBuiltInAgentArgs(t *testing.T) {
 		},
 		{
 			name:  "codex reviewer keeps read-only sandbox",
-			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--sandbox", "read-only"}, Input: InputPromptFile},
+			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--json", "--sandbox", "read-only"}, Input: InputPromptFile},
 			spec:  ModelSpec{Model: "gpt-5", Effort: "high"},
-			args:  []string{"exec", "--sandbox", "read-only", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"},
+			args:  []string{"exec", "--json", "--sandbox", "read-only", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"},
 		},
 		{
 			name:  "claude reviewer keeps reviewer mode",
-			agent: AgentDescriptor{Name: BuiltinClaude, Command: "claude", Args: []string{"-p"}, Input: InputPromptFile},
+			agent: AgentDescriptor{Name: BuiltinClaude, Command: "claude", Args: []string{"-p", "--output-format", "json"}, Input: InputPromptFile},
 			spec:  ModelSpec{Model: "claude-sonnet-4", Effort: "high"},
-			args:  []string{"-p", "--model", "claude-sonnet-4", "--effort", "high"},
+			args:  []string{"-p", "--output-format", "json", "--model", "claude-sonnet-4", "--effort", "high"},
 		},
 	}
 
@@ -361,11 +361,11 @@ func TestReviewerBuiltinsAreReadOnly(t *testing.T) {
 	}
 
 	codexReviewer, _ := BuiltinRegistry{}.ResolveReviewer(BuiltinCodex)
-	if got := strings.Join(codexReviewer.Args, " "); got != "exec --sandbox read-only" {
+	if got := strings.Join(codexReviewer.Args, " "); got != "exec --json --sandbox read-only" {
 		t.Fatalf("codex reviewer should run a read-only sandbox, got %q", got)
 	}
 	claudeReviewer, _ := BuiltinRegistry{}.ResolveReviewer(BuiltinClaude)
-	if got := strings.Join(claudeReviewer.Args, " "); got != "-p" {
+	if got := strings.Join(claudeReviewer.Args, " "); got != "-p --output-format json" {
 		t.Fatalf("claude reviewer should drop write-bypass, got %q", got)
 	}
 

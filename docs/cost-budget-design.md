@@ -218,8 +218,9 @@ These read the same records; no schema change.
    `RunResult.Usage` + record in the shared lifecycle → `usage.jsonl`; live per-run
    total + breakdown in `status` and a `pactum usage` command. Best-effort/non-fatal.
    No cost, no budget, no estimation.
-2. **Slice 2 — read-stage capture.** Adapt the reviewer / clarify / draft parsers to
-   `--output-format json` so their usage is captured too (full-run totals).
+2. **Slice 2 — read-stage capture (implemented).** Reviewer / clarify / draft run
+   with structured output too; their parsers unwrap the agent message text before
+   reading fenced JSON, so read-stage usage is captured in full-run totals.
 3. **Slice 3 — cost ($) overlay.** Versioned per-class price table → `Cost` block;
    `pactum usage` shows $ alongside tokens (flagged estimate under subscription).
 4. **Slice 4 — budget stop.** `max_tokens` per run; accumulate + terminal
