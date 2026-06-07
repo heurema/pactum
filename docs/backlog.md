@@ -77,13 +77,12 @@ reviews across M8–M10. Rough priority in parentheses.
   `resetApprovalIfApproved` — so running them on an already-approved/executed run
   silently regresses it to `clarifying`. Guard or warn when the run is already
   approved (pre-existing; `clarify suggest` makes bulk creation easier).
-- **`-race` in CI** (med). `make check` runs `go test ./...` without `-race`, so the
-  M10.2 live-output data race slipped through. The full suite is race-clean as of
-  M10.2, so enabling `-race` (a CI step or a `make check-race` target) is now safe and
-  would catch this class — at a notable test-time cost (~20× the app package). The
-  `tool` directive added for `deadcode` (M11.3) is the pattern to reuse here.
-
 ## Resolved (for reference)
+
+- `-race` in CI (M11.7) — a `make test-race` target (`go test -race ./...`) plus a
+  dedicated `race` CI job run the race detector on every PR, catching the data-race
+  class (e.g. the M10.2 live-output race) that a non-race `make check` misses. Local
+  `make check` stays fast; the race run is CI/pre-merge only.
 
 - Idle agent timeout (M11.6) — `--timeout` is now an idle (no-output) safety
   timeout: a subprocess is killed only after the window passes with no stdout/stderr
