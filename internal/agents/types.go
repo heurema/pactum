@@ -80,6 +80,13 @@ type RunRequest struct {
 	// the operator's stderr so multi-minute runs are not a silent black box.
 	// Leaving it nil preserves capture-only behavior.
 	LiveOutput io.Writer
+	// WritePathAllowed, when non-nil, is consulted by the ACP transport at the
+	// file-write boundary: it reports whether a write to the given repo-relative
+	// slash path is within the contract scope. The ACP transport denies (errors,
+	// no disk write) any write the predicate rejects, giving a real-time scope
+	// guard in addition to the post-hoc gate. The CLI transport ignores this
+	// field. Leaving it nil preserves allow-all behavior for every caller.
+	WritePathAllowed func(repoRelPath string) bool
 }
 
 type RunResult struct {

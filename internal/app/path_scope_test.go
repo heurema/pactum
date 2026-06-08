@@ -119,6 +119,68 @@ func TestPathGlobMatchesAny(t *testing.T) {
 	}
 }
 
+func TestContractWritePathAllowed(t *testing.T) {
+	tests := []struct {
+		name        string
+		inScope     []string
+		outOfScope  []string
+		repoRelPath string
+		want        bool
+	}{
+		{
+			name:        "in-scope allowed",
+			inScope:     []string{"internal/app/**", "docs/*.md"},
+			repoRelPath: "internal/app/gate.go",
+			want:        true,
+		},
+		{
+			name:        "not in declared scope denied",
+			inScope:     []string{"internal/app/**"},
+			repoRelPath: "internal/agents/acp_transport.go",
+			want:        false,
+		},
+		{
+			name:        "out-of-scope denied",
+			inScope:     []string{"internal/**"},
+			outOfScope:  []string{"internal/secret/**"},
+			repoRelPath: "internal/secret/key.go",
+			want:        false,
+		},
+		{
+			name:        "escape-repo denied",
+			inScope:     []string{"internal/app/**"},
+			repoRelPath: "../outside.go",
+			want:        false,
+		},
+		{
+			name:        "empty in-scope allows non-out-of-scope",
+			outOfScope:  []string{"docs/**"},
+			repoRelPath: "internal/app/gate.go",
+			want:        true,
+		},
+		{
+			name:        "empty in-scope still denies out-of-scope",
+			outOfScope:  []string{"docs/**"},
+			repoRelPath: "docs/agents.md",
+			want:        false,
+		},
+		{
+			name:        "no scope declared allows everything",
+			repoRelPath: "anything/at/all.go",
+			want:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allowed := contractWritePathAllowed(draftContract{PathsInScope: tt.inScope, PathsOutOfScope: tt.outOfScope})
+			if got := allowed(tt.repoRelPath); got != tt.want {
+				t.Fatalf("contractWritePathAllowed(%q) = %t, want %t", tt.repoRelPath, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNonEmptyPathGlobsDropsDegeneratePatterns(t *testing.T) {
 	// "/", "./", and whitespace normalize to nothing; keeping them would flag
 	// every file as undeclared, so they must be filtered out entirely.
