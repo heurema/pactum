@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/alecthomas/kong v1.15.0
+	github.com/coder/acp-go-sdk v0.13.5
 	github.com/mattn/go-isatty v0.0.20
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-c-sharp v0.23.5
