@@ -21,7 +21,9 @@ reviews across M8–M10. Rough priority in parentheses.
 
 ## Review→fix loop (L3b and beyond)
 
-- **Review-loop convergence** (high). The first real dogfood of the autonomous `review
+- **Review-loop convergence** (high). **Slice 1 (resolve-on-fix) shipped in M12.8** —
+  root cause (a) below is addressed; (b) severity-gate and (c) the anti-meta-churn reviewer
+  prompt remain. The first real dogfood of the autonomous `review
   loop` (cross-model panel on the M12.6 store-port) did NOT converge — it hit `max_rounds`
   with open findings accumulating monotonically (4→7→10→12, never a clean round). Root
   causes: (a) **findings are never resolved** — a fixed finding stays "open", so
@@ -109,6 +111,20 @@ reviews across M8–M10. Rough priority in parentheses.
 
 ## Resolved (for reference)
 
+- Review-loop convergence slice 1 — resolve-on-fix (M12.8) — the fixer now emits a
+  structured `pactum.review_fix_outcomes.v1` fenced-JSON block (one outcome per finding:
+  `fixed` / `rebutted` / `blocked`), parsed decoupled and best-effort (mirroring `review
+  propose-findings`) by the new `review apply-fix-outcomes [run_id] [fixer_attempt_id]`.
+  `fixed` and `rebutted` findings become resolved (with a new `outcome` field on the
+  resolution record); `blocked` stays open. The autonomous loop applies outcomes after
+  each fix round, so `open_findings` shrinks as work completes and the existing terminals
+  (`clean_round` / `stalemate`) finally fire — a fully-fixed round lets the next reviewer
+  round converge instead of churning to `max_rounds`. A finding resolved as `rebutted` (a
+  false positive) is suppressed if a later round re-proposes the same `(file, line,
+  message)`; `fixed`/manual resolutions stay re-acceptable (a re-raise may mean the fix
+  did not hold). Best-effort: a missing/malformed block warns and never errors, so the
+  loop still tolerates a fixer that emits no outcomes. Slices 2 (severity-gated
+  convergence) and 3 (anti-meta-churn reviewer prompt) remain.
 - Storage port (M12.6) — new leaf package `internal/store` (`Store` interface + an `FS`
   filesystem implementation byte-for-byte equivalent to the prior `os.*` calls). A
   package-level `activeStore` in `internal/app` routes the workspace durable-record I/O

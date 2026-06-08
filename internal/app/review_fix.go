@@ -20,6 +20,7 @@ const (
 	reviewFixDryRunSchema       = "pactum.review_fix_dry_run.v1"
 	reviewFixRequestSchema      = "pactum.review_fix_request.v1"
 	reviewFixResultSchema       = "pactum.review_fix_result.v1"
+	reviewFixOutcomesSchema     = "pactum.review_fix_outcomes.v1"
 )
 
 type reviewFixPreparation struct {
@@ -308,7 +309,7 @@ func renderReviewFixPrompt(prep reviewFixPreparation) string {
 	fmt.Fprintln(&b, "# Review Fix Prompt")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "This prompt is prepared for a write-enabled executor agent subprocess.")
-	fmt.Fprintln(&b, "Pactum captures the fix attempt artifacts, but it does not mark review findings resolved automatically.")
+	fmt.Fprintln(&b, "Pactum captures the fix attempt artifacts and may parse the required structured outcome block.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Objective")
 	fmt.Fprintln(&b, "Address the current run's review findings against the approved Pactum contract.")
@@ -331,10 +332,27 @@ func renderReviewFixPrompt(prep reviewFixPreparation) string {
 	fmt.Fprintln(&b, "- Do not run `pactum review approve`, `pactum review resolve`, or any review loop command.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Output shape")
-	fmt.Fprintln(&b, "In your final output, list each finding id with one of:")
-	fmt.Fprintln(&b, "- fixed: what changed and where")
-	fmt.Fprintln(&b, "- rebutted: why the finding is a false positive")
-	fmt.Fprintln(&b, "- blocked: what concrete information or state is missing")
+	fmt.Fprintln(&b, "Your final output MUST include exactly one fenced `json` block with this shape:")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "```json")
+	fmt.Fprintln(&b, "{")
+	fmt.Fprintf(&b, "  \"schema\": %q,\n", reviewFixOutcomesSchema)
+	fmt.Fprintln(&b, `  "outcomes": [`)
+	fmt.Fprintln(&b, "    {")
+	fmt.Fprintln(&b, `      "finding_id": "f_001",`)
+	fmt.Fprintln(&b, `      "outcome": "fixed",`)
+	fmt.Fprintln(&b, `      "note": "What changed and where, or the concrete rebuttal/blocker."`)
+	fmt.Fprintln(&b, "    }")
+	fmt.Fprintln(&b, "  ]")
+	fmt.Fprintln(&b, "}")
+	fmt.Fprintln(&b, "```")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "Rules:")
+	fmt.Fprintln(&b, "- Include exactly one outcome entry for every finding listed above with status=open.")
+	fmt.Fprintln(&b, "- Use outcome fixed when you changed code to address a valid finding.")
+	fmt.Fprintln(&b, "- Use outcome rebutted when the finding is a false positive; note must contain the concrete rebuttal.")
+	fmt.Fprintln(&b, "- Use outcome blocked when concrete missing information or state prevents a fix.")
+	fmt.Fprintln(&b, "- Do not include resolved findings in the outcomes list.")
 	return b.String()
 }
 

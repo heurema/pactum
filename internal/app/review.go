@@ -125,6 +125,7 @@ type reviewResolutionRecord struct {
 	ID        string `json:"id"`
 	RunID     string `json:"run_id"`
 	FindingID string `json:"finding_id"`
+	Outcome   string `json:"outcome,omitempty"`
 	Note      string `json:"note,omitempty"`
 	CreatedAt string `json:"created_at"`
 	Source    string `json:"source"`

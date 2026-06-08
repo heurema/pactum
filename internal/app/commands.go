@@ -344,6 +344,22 @@ func (c *reviewProposeFindingsCmd) Run(r *runner) error {
 	return r.App.ReviewProposeFindings(r.Stdout, runID, attemptID, c.JSONOutput)
 }
 
+func (c *reviewApplyFixOutcomesCmd) Run(r *runner) error {
+	explicitRun, rest := splitLeadingRunID(c.Args)
+	if len(rest) > 1 {
+		return errors.New("usage: pactum review apply-fix-outcomes [run_id] [fixer_attempt_id]")
+	}
+	attemptID := ""
+	if len(rest) == 1 {
+		attemptID = rest[0]
+	}
+	runID, err := r.App.resolveRunArgMutating(explicitRun, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ReviewApplyFixOutcomes(r.Stdout, runID, attemptID, c.JSONOutput)
+}
+
 func (c *reviewAcceptProposalCmd) Run(r *runner) error {
 	explicitRun, rest := splitLeadingRunID(c.Args)
 	if len(rest) != 1 {

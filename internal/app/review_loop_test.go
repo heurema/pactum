@@ -109,6 +109,40 @@ func TestReviewLoopFindingsThenCleanUsesConfigMaxRounds(t *testing.T) {
 	}
 }
 
+func TestReviewLoopAppliesFixOutcomesAndShrinksOpenFindings(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "findings_then_clean")
+	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_MODE", "fix_f001")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "2", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.TerminalReason != "clean_round" || len(summary.Rounds) != 2 {
+		t.Fatalf("fix outcome loop summary mismatch: %#v", summary)
+	}
+	if got := summary.Rounds[0]; got.OpenFindings != 0 || got.FixOutcomesResolved != 1 || got.FixOutcomesRebutted != 0 || got.FixOutcomesBlocked != 0 {
+		t.Fatalf("round 1 should reflect fixed outcome and shrunken open set: %#v", got)
+	}
+	if got := summary.Rounds[1]; got.OpenFindings != 0 || got.ProposalsAccepted != 0 || got.FixerAttemptID != "" {
+		t.Fatalf("round 2 should stay clean after fix outcome: %#v", got)
+	}
+	resolutions := readReviewResolutions(t, runPaths.ReviewResolutionsJSONL)
+	if len(resolutions) != 1 || resolutions[0].Outcome != "fixed" || resolutions[0].Source != "review_fix" {
+		t.Fatalf("fix outcome resolution mismatch: %#v", resolutions)
+	}
+}
+
 func TestReviewLoopStopsAtMaxRounds(t *testing.T) {
 	root := t.TempDir()
 	stateDir := t.TempDir()
@@ -615,6 +649,43 @@ func TestReviewLoopReacceptsResolvedFindingWhenReproposed(t *testing.T) {
 	}
 }
 
+func TestReviewLoopSuppressesRebuttedResolvedFindingWhenReproposed(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	appendReviewLoopFindingForTest(t, runPaths, runID, "f_001", reviewLoopFixtureFindingCore("loop reviewer found a fixable issue", 42))
+	appendReviewLoopResolutionWithOutcomeForTest(t, runPaths, runID, "r_001", "f_001", "rebutted")
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if len(summary.Rounds) != 1 || summary.Rounds[0].ProposalsAccepted != 0 || summary.Rounds[0].OpenFindings != 0 {
+		t.Fatalf("rebutted reproposal summary mismatch: %#v", summary)
+	}
+	findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL)
+	if len(findings) != 1 {
+		t.Fatalf("rebutted finding should suppress reproposal: %#v", findings)
+	}
+	decisions := readReviewProposalDecisions(t, runPaths.ReviewProposalDecisionsJSONL)
+	if len(decisions) != 1 || decisions[0].Decision != "duplicate" || decisions[0].FindingID != "f_001" || decisions[0].Reason != "matches rebutted finding" {
+		t.Fatalf("rebutted reproposal decision mismatch: %#v", decisions)
+	}
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "review_proposal_duplicate") != 1 || countEvents(eventTypes, "review_finding_added") != 0 {
+		t.Fatalf("rebutted reproposal ledger event counts mismatch:\n%v", eventTypes)
+	}
+}
+
 func TestReviewLoopResetsStalemateStreakWhenFixerChangesWorkingTree(t *testing.T) {
 	root := t.TempDir()
 	stateDir := t.TempDir()
@@ -1032,11 +1103,17 @@ func appendReviewLoopFindingForTest(t *testing.T, runPaths contractRunPathSet, r
 
 func appendReviewLoopResolutionForTest(t *testing.T, runPaths contractRunPathSet, runID string, resolutionID string, findingID string) {
 	t.Helper()
+	appendReviewLoopResolutionWithOutcomeForTest(t, runPaths, runID, resolutionID, findingID, "")
+}
+
+func appendReviewLoopResolutionWithOutcomeForTest(t *testing.T, runPaths contractRunPathSet, runID string, resolutionID string, findingID string, outcome string) {
+	t.Helper()
 	record := reviewResolutionRecord{
 		Schema:    reviewResolutionSchema,
 		ID:        resolutionID,
 		RunID:     runID,
 		FindingID: findingID,
+		Outcome:   outcome,
 		Note:      "fixture resolved finding",
 		CreatedAt: "2026-06-01T22:01:00Z",
 		Source:    "manual",
@@ -1133,7 +1210,8 @@ func TestReviewLoopFixerHelperProcess(t *testing.T) {
 		os.Exit(2)
 	}
 	fmt.Printf("stdin_has_review_fix_prompt=%t\n", strings.Contains(string(stdin), "# Review Fix Prompt"))
-	if os.Getenv("PACTUM_REVIEW_LOOP_FIXER_MODE") == "append_readme" {
+	switch os.Getenv("PACTUM_REVIEW_LOOP_FIXER_MODE") {
+	case "append_readme":
 		attempt := nextReviewLoopHelperAttempt("PACTUM_REVIEW_LOOP_FIXER_SEQUENCE_FILE")
 		file, err := os.OpenFile("README.md", os.O_APPEND|os.O_WRONLY, 0)
 		if err != nil {
@@ -1149,6 +1227,14 @@ func TestReviewLoopFixerHelperProcess(t *testing.T) {
 			fmt.Fprintf(os.Stderr, "fixer close error: %v\n", err)
 			os.Exit(2)
 		}
+	case "fix_f001":
+		fmt.Print(reviewFixStructuredOutput([]map[string]any{
+			{"finding_id": "f_001", "outcome": "fixed", "note": "fixed by loop fixer"},
+		}))
+	case "rebut_f001":
+		fmt.Print(reviewFixStructuredOutput([]map[string]any{
+			{"finding_id": "f_001", "outcome": "rebutted", "note": "fixture false positive"},
+		}))
 	}
 	os.Exit(0)
 }

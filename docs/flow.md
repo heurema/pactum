@@ -169,6 +169,16 @@ reviewer's captured stdout into **pending proposals**. A human then runs
 `pactum review reject-proposal <run_id> p_001 --reason "..."`. Pending proposals
 must be decided before memory can be proposed.
 
+The fixer reports a structured outcome per finding: `pactum review
+apply-fix-outcomes <run_id>` parses a `pactum.review_fix_outcomes.v1` fenced-JSON
+block from the fixer's captured stdout (best-effort — a missing or malformed
+block warns, never errors) and **resolves** findings accordingly: `fixed` and
+`rebutted` findings become resolved, `blocked` findings stay open. In the
+autonomous loop this runs automatically after each fix round, so `open_findings`
+shrinks as work completes; a finding the fixer resolved as `rebutted` (a false
+positive) is suppressed if a later round re-proposes the same `(file, line,
+message)`.
+
 ### Review loop terminal reasons
 
 `pactum review loop` writes `review/loop-summary.json` with a
