@@ -1181,6 +1181,8 @@ func renderReviewerPrompt(runID string) string {
 	fmt.Fprintln(&b, "- Do not include absolute paths.")
 	fmt.Fprintf(&b, "- Use severity: %s.\n", strings.Join(reviewSeverities, ", "))
 	fmt.Fprintf(&b, "- Use category: %s.\n", strings.Join(reviewCategories, ", "))
+	fmt.Fprintln(&b, "- Set blocking=true for findings that must block a merge: correctness or security bugs, or high/critical severity.")
+	fmt.Fprintln(&b, "- Set blocking=false for advisory, style, or low-severity findings; they are still recorded but do not block convergence.")
 	fmt.Fprintln(&b, "- If uncertain, set blocking=true and explain uncertainty in evidence.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "Important: Pactum does not trust this output automatically. A human must accept proposals.")

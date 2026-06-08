@@ -87,6 +87,7 @@ type reviewLoopRoundSummary struct {
 	ProposalsCreated           int      `json:"proposals_created"`
 	ProposalsAccepted          int      `json:"proposals_accepted"`
 	OpenFindings               int      `json:"open_findings"`
+	OpenBlockingFindings       int      `json:"open_blocking_findings"`
 	Warnings                   []string `json:"warnings,omitempty"`
 	CleanStreak                int      `json:"clean_streak"`
 	UnchangedFingerprintStreak int      `json:"unchanged_fingerprint_streak"`
@@ -245,19 +246,20 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 		if loopErr != nil {
 			break
 		}
-		totalOpen, err := reviewLoopTotalOpenFindings(context.RunPaths)
+		reviewSummaryAfterAccept, err := reviewLoopReviewSummary(context.RunPaths)
 		if err != nil {
 			loopErr = err
 			break
 		}
 
 		roundSummary := reviewLoopRoundSummary{
-			Round:             round,
-			ReviewerAttemptID: firstString(reviewerResult.AttemptIDs),
-			ProposalsCreated:  len(proposals.Created),
-			ProposalsAccepted: accepted,
-			OpenFindings:      totalOpen,
-			Warnings:          append([]string{}, proposals.Warnings...),
+			Round:                round,
+			ReviewerAttemptID:    firstString(reviewerResult.AttemptIDs),
+			ProposalsCreated:     len(proposals.Created),
+			ProposalsAccepted:    accepted,
+			OpenFindings:         reviewSummaryAfterAccept.Open,
+			OpenBlockingFindings: reviewSummaryAfterAccept.BlockingOpen,
+			Warnings:             append([]string{}, proposals.Warnings...),
 		}
 		if len(reviewerResult.AttemptIDs) > 1 {
 			roundSummary.ReviewerAttemptIDs = append([]string{}, reviewerResult.AttemptIDs...)
@@ -296,6 +298,24 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 
 		cleanStreak = 0
 		roundSummary.CleanStreak = cleanStreak
+
+		// Fixer gate: only OPEN BLOCKING findings drive the fixer. A round whose
+		// accepted proposals are all advisory (non-blocking) leaves no blocking
+		// work, so the loop converges resolved without invoking the fixer.
+		if reviewSummaryAfterAccept.BlockingOpen == 0 {
+			roundSummary.UnchangedFingerprintStreak = unchangedFingerprintStreak
+			fingerprint, err := reviewLoopWorkingTreeFingerprint(context)
+			if err != nil {
+				summary.Rounds = append(summary.Rounds, roundSummary)
+				loopErr = err
+				break
+			}
+			roundSummary.WorkingTreeFingerprint = fingerprint
+			summary.Rounds = append(summary.Rounds, roundSummary)
+			summary.TerminalReason = "resolved"
+			break
+		}
+
 		fingerprintBefore, err := reviewLoopWorkingTreeFingerprint(context)
 		if err != nil {
 			summary.Rounds = append(summary.Rounds, roundSummary)
@@ -323,13 +343,14 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 		roundSummary.FixOutcomesRebutted = fixOutcomes.Rebutted
 		roundSummary.FixOutcomesBlocked = fixOutcomes.Blocked
 		roundSummary.Warnings = append(roundSummary.Warnings, fixOutcomes.Warnings...)
-		totalOpen, err = reviewLoopTotalOpenFindings(context.RunPaths)
+		reviewSummaryAfterFix, err := reviewLoopReviewSummary(context.RunPaths)
 		if err != nil {
 			summary.Rounds = append(summary.Rounds, roundSummary)
 			loopErr = err
 			break
 		}
-		roundSummary.OpenFindings = totalOpen
+		roundSummary.OpenFindings = reviewSummaryAfterFix.Open
+		roundSummary.OpenBlockingFindings = reviewSummaryAfterFix.BlockingOpen
 		fingerprintAfter, err := reviewLoopWorkingTreeFingerprint(context)
 		if err != nil {
 			summary.Rounds = append(summary.Rounds, roundSummary)
@@ -362,6 +383,13 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 		roundSummary.GateReportArtifact = gateReportArtifact
 		summary.Rounds = append(summary.Rounds, roundSummary)
 
+		// Primary success terminal: no open blocking findings remain after the
+		// fixer applied its outcomes — the same condition that makes a review
+		// approvable. Non-blocking findings may still be open (advisory).
+		if reviewSummaryAfterFix.BlockingOpen == 0 {
+			summary.TerminalReason = "resolved"
+			break
+		}
 		if unchangedFingerprintStreak >= limits.Patience {
 			summary.TerminalReason = "stalemate"
 			break
@@ -823,12 +851,17 @@ func (a App) runReviewLoopGate(runID string) (gateReportDocument, error) {
 	return report, nil
 }
 
-func reviewLoopTotalOpenFindings(runPaths contractRunPathSet) (int, error) {
+// reviewLoopReviewSummary recomputes the live review summary (open and open
+// blocking finding counts) from the durable findings/resolutions. The loop reads
+// Open for the round summary and BlockingOpen for both the convergence gate and
+// the fixer gate — BlockingOpen is the same condition that makes a review
+// approvable.
+func reviewLoopReviewSummary(runPaths contractRunPathSet) (reviewSummary, error) {
 	findings, resolutions, err := readReviewRecords(runPaths)
 	if err != nil {
-		return 0, err
+		return reviewSummary{}, err
 	}
-	return summarizeReview(findings, resolutions).Open, nil
+	return summarizeReview(findings, resolutions), nil
 }
 
 func reviewLoopDedupFindingFingerprints(runPaths contractRunPathSet) (map[reviewFindingFingerprint]reviewFindingRecord, map[reviewFindingFingerprint]reviewFindingRecord, error) {
@@ -932,7 +965,7 @@ func writeReviewLoopSummary(stdout io.Writer, summary reviewLoopSummaryDocument)
 		if len(round.ReviewerAttemptIDs) > 0 {
 			reviewerAttempts = strings.Join(round.ReviewerAttemptIDs, ",")
 		}
-		fmt.Fprintf(stdout, "  - round %d: open findings %d, proposals accepted %d, reviewer %s", round.Round, round.OpenFindings, round.ProposalsAccepted, reviewerAttempts)
+		fmt.Fprintf(stdout, "  - round %d: open findings %d (blocking %d), proposals accepted %d, reviewer %s", round.Round, round.OpenFindings, round.OpenBlockingFindings, round.ProposalsAccepted, reviewerAttempts)
 		if round.FixerAttemptID != "" {
 			fmt.Fprintf(stdout, ", fixer %s", round.FixerAttemptID)
 		}

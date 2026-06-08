@@ -183,8 +183,21 @@ message)`.
 
 `pactum review loop` writes `review/loop-summary.json` with a
 `terminal_reason` so operators can tell why the autonomous reviewer/fixer loop
-stopped:
+stopped.
 
+Convergence is gated on **blocking** findings. Each round records
+`open_blocking_findings` (open findings with `blocking: true`, the same
+`blocking_open` count that gates review approval) alongside `open_findings`. The
+fixer runs only while open blocking findings remain, and is scoped to them:
+non-blocking findings are still accepted and recorded as advisory, but they never
+drive the fixer or keep the loop running. This is what stops low/subjective
+finding churn from running the loop to `max_rounds` without converging.
+
+- `resolved` — the primary success terminal: after a round accepted its
+  proposals (and, when a fixer ran, applied its fix outcomes), no open blocking
+  findings remain (`open_blocking_findings == 0`). Advisory (non-blocking)
+  findings may still be open and recorded. A round whose accepted proposals are
+  all non-blocking converges `resolved` without invoking the fixer.
 - `clean_round` — the configured number of consecutive reviewer rounds reported
   no findings or warnings.
 - `stalemate` — fixer rounds repeatedly left the working-tree fingerprint
