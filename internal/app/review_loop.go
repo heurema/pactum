@@ -92,6 +92,9 @@ type reviewLoopRoundSummary struct {
 	UnchangedFingerprintStreak int      `json:"unchanged_fingerprint_streak"`
 	WorkingTreeFingerprint     string   `json:"working_tree_fingerprint,omitempty"`
 	FixerAttemptID             string   `json:"fixer_attempt_id,omitempty"`
+	FixOutcomesResolved        int      `json:"fix_outcomes_resolved,omitempty"`
+	FixOutcomesRebutted        int      `json:"fix_outcomes_rebutted,omitempty"`
+	FixOutcomesBlocked         int      `json:"fix_outcomes_blocked,omitempty"`
 	GateStatus                 string   `json:"gate_status,omitempty"`
 	GateReportArtifact         string   `json:"gate_report_artifact,omitempty"`
 }
@@ -198,7 +201,7 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 		}
 		proposals := reviewerResult.Proposals
 
-		openFindings, err := reviewLoopOpenFindingFingerprints(context.RunPaths)
+		openFindings, rebuttedFindings, err := reviewLoopDedupFindingFingerprints(context.RunPaths)
 		if err != nil {
 			loopErr = err
 			break
@@ -208,7 +211,7 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 		for _, proposal := range proposals.Created {
 			fingerprint := fingerprintReviewFinding(proposal.findingCore)
 			if existingFinding, ok := openFindings[fingerprint]; ok {
-				if err := a.recordDuplicateReviewLoopProposal(context, proposal.ID, existingFinding.ID); err != nil {
+				if err := a.recordDuplicateReviewLoopProposal(context, proposal.ID, existingFinding.ID, "matches currently open finding"); err != nil {
 					loopErr = err
 					break
 				}
@@ -219,6 +222,14 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 				}
 				if upgraded {
 					openFindings[fingerprint] = upgradedFinding
+				}
+				duplicates++
+				continue
+			}
+			if existingFinding, ok := rebuttedFindings[fingerprint]; ok {
+				if err := a.recordDuplicateReviewLoopProposal(context, proposal.ID, existingFinding.ID, "matches rebutted finding"); err != nil {
+					loopErr = err
+					break
 				}
 				duplicates++
 				continue
@@ -302,6 +313,23 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 			summary.Agent = fixResult.Fixer
 		}
 		roundSummary.FixerAttemptID = fixResult.AttemptID
+		fixOutcomes, err := a.applyReviewLoopFixOutcomes(runID, fixResult.AttemptID)
+		if err != nil {
+			summary.Rounds = append(summary.Rounds, roundSummary)
+			loopErr = err
+			break
+		}
+		roundSummary.FixOutcomesResolved = fixOutcomes.Fixed
+		roundSummary.FixOutcomesRebutted = fixOutcomes.Rebutted
+		roundSummary.FixOutcomesBlocked = fixOutcomes.Blocked
+		roundSummary.Warnings = append(roundSummary.Warnings, fixOutcomes.Warnings...)
+		totalOpen, err = reviewLoopTotalOpenFindings(context.RunPaths)
+		if err != nil {
+			summary.Rounds = append(summary.Rounds, roundSummary)
+			loopErr = err
+			break
+		}
+		roundSummary.OpenFindings = totalOpen
 		fingerprintAfter, err := reviewLoopWorkingTreeFingerprint(context)
 		if err != nil {
 			summary.Rounds = append(summary.Rounds, roundSummary)
@@ -677,7 +705,7 @@ func (a App) acceptReviewLoopProposal(runID string, proposalID string) (reviewFi
 	return response.Finding, nil
 }
 
-func (a App) recordDuplicateReviewLoopProposal(context reviewContext, proposalID string, findingID string) error {
+func (a App) recordDuplicateReviewLoopProposal(context reviewContext, proposalID string, findingID string, reason string) error {
 	_, decisions, err := readReviewProposalRecords(context.RunPaths)
 	if err != nil {
 		return err
@@ -694,7 +722,7 @@ func (a App) recordDuplicateReviewLoopProposal(context reviewContext, proposalID
 		ProposalID: proposalID,
 		Decision:   "duplicate",
 		FindingID:  findingID,
-		Reason:     "matches currently open finding",
+		Reason:     reason,
 		CreatedAt:  now.Format(time.RFC3339),
 		Source:     "review_loop",
 	}
@@ -763,6 +791,18 @@ func (a App) runReviewLoopFixRound(liveOutput io.Writer, runID string, agent str
 	return result, nil
 }
 
+func (a App) applyReviewLoopFixOutcomes(runID string, fixerAttemptID string) (reviewApplyFixOutcomesResponse, error) {
+	var stdout bytes.Buffer
+	if err := a.ReviewApplyFixOutcomes(&stdout, runID, fixerAttemptID, true); err != nil {
+		return reviewApplyFixOutcomesResponse{}, err
+	}
+	var response reviewApplyFixOutcomesResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		return reviewApplyFixOutcomesResponse{}, err
+	}
+	return response, nil
+}
+
 func (a App) runReviewLoopGate(runID string) (gateReportDocument, error) {
 	var stdout bytes.Buffer
 	if err := a.GateRun(&stdout, runID, true, true); err != nil {
@@ -791,15 +831,22 @@ func reviewLoopTotalOpenFindings(runPaths contractRunPathSet) (int, error) {
 	return summarizeReview(findings, resolutions).Open, nil
 }
 
-func reviewLoopOpenFindingFingerprints(runPaths contractRunPathSet) (map[reviewFindingFingerprint]reviewFindingRecord, error) {
+func reviewLoopDedupFindingFingerprints(runPaths contractRunPathSet) (map[reviewFindingFingerprint]reviewFindingRecord, map[reviewFindingFingerprint]reviewFindingRecord, error) {
 	findings, resolutions, err := readReviewRecords(runPaths)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	resolved := latestReviewResolutions(resolutions)
 	open := make(map[reviewFindingFingerprint]reviewFindingRecord)
+	rebutted := make(map[reviewFindingFingerprint]reviewFindingRecord)
 	for _, finding := range findings {
-		if _, ok := resolved[finding.ID]; ok {
+		if resolution, ok := resolved[finding.ID]; ok {
+			if resolution.Outcome == "rebutted" {
+				fingerprint := fingerprintReviewFinding(finding.findingCore)
+				if _, exists := rebutted[fingerprint]; !exists {
+					rebutted[fingerprint] = finding
+				}
+			}
 			continue
 		}
 		// Autonomous-loop dedup is deliberately exact: only the stored
@@ -810,7 +857,7 @@ func reviewLoopOpenFindingFingerprints(runPaths contractRunPathSet) (map[reviewF
 			open[fingerprint] = finding
 		}
 	}
-	return open, nil
+	return open, rebutted, nil
 }
 
 func reviewLoopWorkingTreeFingerprint(context reviewContext) (string, error) {
@@ -888,6 +935,9 @@ func writeReviewLoopSummary(stdout io.Writer, summary reviewLoopSummaryDocument)
 		fmt.Fprintf(stdout, "  - round %d: open findings %d, proposals accepted %d, reviewer %s", round.Round, round.OpenFindings, round.ProposalsAccepted, reviewerAttempts)
 		if round.FixerAttemptID != "" {
 			fmt.Fprintf(stdout, ", fixer %s", round.FixerAttemptID)
+		}
+		if round.FixOutcomesResolved > 0 || round.FixOutcomesRebutted > 0 || round.FixOutcomesBlocked > 0 {
+			fmt.Fprintf(stdout, ", outcomes resolved=%d rebutted=%d blocked=%d", round.FixOutcomesResolved, round.FixOutcomesRebutted, round.FixOutcomesBlocked)
 		}
 		if round.GateStatus != "" {
 			fmt.Fprintf(stdout, ", gate %s", round.GateStatus)

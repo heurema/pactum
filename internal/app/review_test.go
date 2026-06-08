@@ -1273,6 +1273,9 @@ func TestReviewFixDryRunArtifactsUseWriteEnabledExecutorAndPrompt(t *testing.T) 
 				"f_001 severity=medium category=correctness blocking=true status=open",
 				"Trace each finding to the relevant code before acting.",
 				"For false positives, explain a concrete rebuttal instead of changing code.",
+				"## Output shape",
+				`"schema": "pactum.review_fix_outcomes.v1"`,
+				"Include exactly one outcome entry for every finding listed above with status=open.",
 			} {
 				if !strings.Contains(prompt, want) {
 					t.Fatalf("review fix prompt missing %q:\n%s", want, prompt)
@@ -1486,6 +1489,101 @@ func TestReviewFixJSONOutput(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "Review fix attempt finished") || strings.Contains(stdout.String(), "Resolved:") {
 		t.Fatalf("json output should not include human output:\n%s", stdout.String())
+	}
+}
+
+func TestReviewApplyFixOutcomesResolvesFixedAndRebuttedOnly(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupPreparedReview(t, root, "passed")
+	runReviewCommand(t, app, "review", "add-finding", runID, "fixed finding", "--blocking", "--category", "quality")
+	runReviewCommand(t, app, "review", "add-finding", runID, "rebutted finding", "--blocking", "--category", "quality")
+	runReviewCommand(t, app, "review", "add-finding", runID, "blocked finding", "--blocking", "--category", "quality")
+	writeReviewFixAttemptForTest(t, runPaths, runID, "attempt_001", reviewFixStructuredOutput([]map[string]any{
+		{"finding_id": "f_001", "outcome": "fixed", "note": "changed internal/app/review.go"},
+		{"finding_id": "f_002", "outcome": "rebutted", "note": "not applicable in " + root},
+		{"finding_id": "f_003", "outcome": "blocked", "note": "needs product decision"},
+	}), true)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "apply-fix-outcomes", runID, "attempt_001", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review apply-fix-outcomes exited %d, stderr: %s", code, stderr.String())
+	}
+	var response reviewApplyFixOutcomesResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.Fixed != 1 || response.Rebutted != 1 || response.Blocked != 1 || len(response.Warnings) != 0 {
+		t.Fatalf("unexpected apply response: %#v", response)
+	}
+
+	resolutions := readReviewResolutions(t, runPaths.ReviewResolutionsJSONL)
+	if len(resolutions) != 2 || resolutions[0].Outcome != "fixed" || resolutions[1].Outcome != "rebutted" || resolutions[0].Source != "review_fix" || resolutions[1].Source != "review_fix" {
+		t.Fatalf("unexpected resolutions: %#v", resolutions)
+	}
+	assertDoesNotContainRoot(t, "review/resolutions.jsonl", mustReadFile(t, runPaths.ReviewResolutionsJSONL), root)
+	review := readReviewDoc(t, runPaths.ReviewJSON)
+	if review.Summary.Open != 1 || review.Summary.Resolved != 2 || review.Summary.BlockingOpen != 1 {
+		t.Fatalf("review summary should reflect applied outcomes: %#v", review.Summary)
+	}
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if indexOfEvent(eventTypes, "review_fix_outcomes_applied") == -1 {
+		t.Fatalf("events missing review_fix_outcomes_applied:\n%v", eventTypes)
+	}
+}
+
+func TestReviewApplyFixOutcomesMissingOrMalformedBlockWarnsWithoutWriting(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	runReviewCommand(t, app, "review", "add-finding", runID, "open finding", "--blocking", "--category", "quality")
+	writeReviewFixAttemptForTest(t, runPaths, runID, "attempt_001", "plain prose only\n", true)
+	writeReviewFixAttemptForTest(t, runPaths, runID, "attempt_002", "```json\n{malformed\n```\n", true)
+
+	for _, attemptID := range []string{"attempt_001", "attempt_002"} {
+		var stdout, stderr bytes.Buffer
+		code := app.Run([]string{"review", "apply-fix-outcomes", runID, attemptID, "--json"}, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("review apply-fix-outcomes %s exited %d, stderr: %s", attemptID, code, stderr.String())
+		}
+		var response reviewApplyFixOutcomesResponse
+		assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+		if response.Fixed != 0 || response.Rebutted != 0 || response.Blocked != 0 || len(response.Warnings) == 0 {
+			t.Fatalf("expected warning-only response for %s: %#v", attemptID, response)
+		}
+	}
+	if got := mustReadFile(t, runPaths.ReviewResolutionsJSONL); got != "" {
+		t.Fatalf("warning-only apply should not append resolutions:\n%s", got)
+	}
+	review := readReviewDoc(t, runPaths.ReviewJSON)
+	if review.Summary.Open != 1 || review.Summary.Resolved != 0 {
+		t.Fatalf("warning-only apply should not mutate review summary: %#v", review.Summary)
+	}
+}
+
+func TestReviewApplyFixOutcomesSkipsUnknownAndAlreadyResolvedFindings(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	runReviewCommand(t, app, "review", "add-finding", runID, "already fixed", "--blocking", "--category", "quality")
+	runReviewCommand(t, app, "review", "resolve", runID, "f_001", "--note", "manual")
+	writeReviewFixAttemptForTest(t, runPaths, runID, "attempt_001", reviewFixStructuredOutput([]map[string]any{
+		{"finding_id": "f_001", "outcome": "fixed", "note": "duplicate"},
+		{"finding_id": "f_404", "outcome": "fixed", "note": "unknown"},
+	}), true)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "apply-fix-outcomes", runID, "attempt_001", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review apply-fix-outcomes exited %d, stderr: %s", code, stderr.String())
+	}
+	var response reviewApplyFixOutcomesResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	warnings := strings.Join(response.Warnings, "\n")
+	for _, want := range []string{"finding already resolved: f_001", "finding not found: f_404"} {
+		if !strings.Contains(warnings, want) {
+			t.Fatalf("warnings missing %q: %#v", want, response.Warnings)
+		}
+	}
+	resolutions := readReviewResolutions(t, runPaths.ReviewResolutionsJSONL)
+	if len(resolutions) != 1 || resolutions[0].Source != "manual" || resolutions[0].Outcome != "" {
+		t.Fatalf("skipped outcomes should not append resolutions: %#v", resolutions)
 	}
 }
 
@@ -2110,6 +2208,33 @@ func writeReviewerAttemptForTest(t *testing.T, runPaths contractRunPathSet, runI
 	assertNoError(t, writeJSON(attemptPaths.ResultJSON, result))
 }
 
+func writeReviewFixAttemptForTest(t *testing.T, runPaths contractRunPathSet, runID string, attemptID string, stdout string, completed bool) {
+	t.Helper()
+	attemptPaths := reviewFixAttemptPaths(runPaths, attemptID)
+	assertNoError(t, os.MkdirAll(attemptPaths.Dir, 0o755))
+	mustWriteFile(t, attemptPaths.StdoutLog, stdout)
+	mustWriteFile(t, attemptPaths.StderrLog, "")
+	if !completed {
+		return
+	}
+	result := reviewFixResultDocument{
+		Schema:    reviewFixResultSchema,
+		RunID:     runID,
+		AttemptID: attemptID,
+		Fixer:     "fixture",
+		processResult: processResult{
+			StartedAt:      "2026-06-01T22:00:00Z",
+			FinishedAt:     "2026-06-01T22:00:01Z",
+			DurationMillis: 1000,
+			ExitCode:       0,
+			TimedOut:       false,
+			Stdout:         filepath.ToSlash(filepath.Join(reviewFixAttemptsArtifact, attemptID, "stdout.log")),
+			Stderr:         filepath.ToSlash(filepath.Join(reviewFixAttemptsArtifact, attemptID, "stderr.log")),
+		},
+	}
+	assertNoError(t, writeJSON(attemptPaths.ResultJSON, result))
+}
+
 func reviewerStructuredOutput(findings []map[string]any) string {
 	block := map[string]any{
 		"schema":   reviewerFindingsSchema,
@@ -2120,6 +2245,18 @@ func reviewerStructuredOutput(findings []map[string]any) string {
 		panic(err)
 	}
 	return "reviewer notes\n```json\n" + string(data) + "\n```\n"
+}
+
+func reviewFixStructuredOutput(outcomes []map[string]any) string {
+	block := map[string]any{
+		"schema":   reviewFixOutcomesSchema,
+		"outcomes": outcomes,
+	}
+	data, err := json.MarshalIndent(block, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	return "fixer notes\n```json\n" + string(data) + "\n```\n"
 }
 
 func appendReviewProposalForTest(t *testing.T, runPaths contractRunPathSet, runID string, proposalID string, message string, blocking bool) {

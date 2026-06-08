@@ -86,19 +86,20 @@ type gateCmd struct {
 }
 
 type reviewCmd struct {
-	Prepare         reviewPrepareCmd         `cmd:"" help:"Prepare manual review artifacts."`
-	Status          reviewStatusCmd          `cmd:"" help:"Show manual review status."`
-	Show            reviewShowCmd            `cmd:"" help:"Show manual review findings."`
-	AddFinding      reviewAddFindingCmd      `cmd:"add-finding" help:"Append a manual review finding."`
-	Resolve         reviewResolveCmd         `cmd:"" help:"Resolve a manual review finding."`
-	Approve         reviewApproveCmd         `cmd:"" help:"Approve a manual review."`
-	DryRun          reviewDryRunCmd          `cmd:"dry-run" help:"Prepare reviewer artifacts without running a reviewer."`
-	Run             reviewRunCmd             `cmd:"run" help:"Run a built-in reviewer and capture attempt artifacts."`
-	Fix             reviewFixCmd             `cmd:"fix" help:"Run a write-enabled fixer against current review findings."`
-	Loop            reviewLoopCmd            `cmd:"loop" help:"Run reviewer/fixer rounds until a clean review round or max rounds."`
-	ProposeFindings reviewProposeFindingsCmd `cmd:"propose-findings" help:"Parse reviewer output into pending finding proposals."`
-	AcceptProposal  reviewAcceptProposalCmd  `cmd:"accept-proposal" help:"Accept a pending review finding proposal."`
-	RejectProposal  reviewRejectProposalCmd  `cmd:"reject-proposal" help:"Reject a pending review finding proposal."`
+	Prepare          reviewPrepareCmd          `cmd:"" help:"Prepare manual review artifacts."`
+	Status           reviewStatusCmd           `cmd:"" help:"Show manual review status."`
+	Show             reviewShowCmd             `cmd:"" help:"Show manual review findings."`
+	AddFinding       reviewAddFindingCmd       `cmd:"add-finding" help:"Append a manual review finding."`
+	Resolve          reviewResolveCmd          `cmd:"" help:"Resolve a manual review finding."`
+	Approve          reviewApproveCmd          `cmd:"" help:"Approve a manual review."`
+	DryRun           reviewDryRunCmd           `cmd:"dry-run" help:"Prepare reviewer artifacts without running a reviewer."`
+	Run              reviewRunCmd              `cmd:"run" help:"Run a built-in reviewer and capture attempt artifacts."`
+	Fix              reviewFixCmd              `cmd:"fix" help:"Run a write-enabled fixer against current review findings."`
+	Loop             reviewLoopCmd             `cmd:"loop" help:"Run reviewer/fixer rounds until a clean review round or max rounds."`
+	ProposeFindings  reviewProposeFindingsCmd  `cmd:"propose-findings" help:"Parse reviewer output into pending finding proposals."`
+	ApplyFixOutcomes reviewApplyFixOutcomesCmd `cmd:"apply-fix-outcomes" help:"Parse fixer output into review resolutions."`
+	AcceptProposal   reviewAcceptProposalCmd   `cmd:"accept-proposal" help:"Accept a pending review finding proposal."`
+	RejectProposal   reviewRejectProposalCmd   `cmd:"reject-proposal" help:"Reject a pending review finding proposal."`
 }
 
 type agentsCmd struct {
@@ -275,6 +276,11 @@ type reviewLoopCmd struct {
 
 type reviewProposeFindingsCmd struct {
 	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] [reviewer_attempt_id]"`
+	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type reviewApplyFixOutcomesCmd struct {
+	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] [fixer_attempt_id]"`
 	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
