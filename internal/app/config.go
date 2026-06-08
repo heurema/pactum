@@ -106,7 +106,7 @@ func defaultConfigFile() configFile {
 				MaxIterations: 10,
 			},
 			Review: reviewLimits{
-				MaxRounds:   4,
+				MaxRounds:   10,
 				Patience:    2,
 				CleanRounds: 1,
 			},
