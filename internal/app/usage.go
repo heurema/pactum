@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	usageRecordSchemaVersion = 1
-	usageResponseSchema      = "pactum.usage.v1"
+	usageRecordSchemaVersion     = 1
+	usageResponseSchema          = "pactum.usage.v1"
+	usageWorkspaceResponseSchema = "pactum.usage.workspace.v1"
 )
 
 type UsageRecord struct {
@@ -56,8 +57,10 @@ type usageCounts struct {
 }
 
 type usageBreakdown struct {
+	Run             string  `json:"run,omitempty"`
 	Stage           string  `json:"stage,omitempty"`
 	Agent           string  `json:"agent,omitempty"`
+	Model           string  `json:"model,omitempty"`
 	Provider        string  `json:"provider,omitempty"`
 	Calls           int     `json:"calls"`
 	CapturedCalls   int     `json:"captured_calls"`
@@ -78,6 +81,24 @@ type usageResponse struct {
 	ByAgent         []usageBreakdown `json:"by_agent"`
 }
 
+// usageWorkspaceResponse is the cross-run aggregate produced by `pactum usage
+// --all`: a derived view recomputed on demand from the per-run usage.jsonl
+// ledgers, never an authoritative store. Runs counts only the run ledgers that
+// contributed at least one usage record.
+type usageWorkspaceResponse struct {
+	Schema          string           `json:"schema"`
+	Runs            int              `json:"runs"`
+	Calls           int              `json:"calls"`
+	CapturedCalls   int              `json:"captured_calls"`
+	UncapturedCalls int              `json:"uncaptured_calls"`
+	CacheReadRatio  float64          `json:"cache_read_ratio"`
+	Total           usageCounts      `json:"total"`
+	ByRun           []usageBreakdown `json:"by_run"`
+	ByStage         []usageBreakdown `json:"by_stage"`
+	ByAgent         []usageBreakdown `json:"by_agent"`
+	ByModel         []usageBreakdown `json:"by_model"`
+}
+
 func (a App) Usage(stdout io.Writer, runID string, jsonOutput bool) error {
 	_, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
 	if err != nil || !ok {
@@ -95,6 +116,26 @@ func (a App) Usage(stdout io.Writer, runID string, jsonOutput bool) error {
 		return writeJSONResponse(stdout, response)
 	}
 	writeUsage(stdout, response)
+	return nil
+}
+
+// UsageAll reports the workspace-wide cross-run token aggregate. It reads the
+// per-run usage ledgers as a derived view and is best-effort: a missing or
+// corrupt ledger contributes nothing and is skipped, never fatal. An empty
+// workspace reports a clean zero result.
+func (a App) UsageAll(stdout io.Writer, jsonOutput bool) error {
+	_, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
+	if err != nil || !ok {
+		return err
+	}
+	response, err := workspaceUsage(paths)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return writeJSONResponse(stdout, response)
+	}
+	writeWorkspaceUsage(stdout, response)
 	return nil
 }
 
@@ -181,6 +222,49 @@ func usageForRun(paths artifacts.Paths, runID string) (usageResponse, error) {
 	return summarizeUsage(runID, records), nil
 }
 
+// workspaceUsage folds every run's usage ledger into one cross-run aggregate.
+// Each run's ledger is read best-effort (readUsageRecords swallows missing and
+// corrupt input), so a degraded run simply contributes nothing. Runs with no
+// usage records are skipped and do not count toward the run total.
+func workspaceUsage(paths artifacts.Paths) (usageWorkspaceResponse, error) {
+	runIDs, err := listRunIDs(paths)
+	if err != nil {
+		return usageWorkspaceResponse{}, err
+	}
+	response := usageWorkspaceResponse{
+		Schema:  usageWorkspaceResponseSchema,
+		ByRun:   []usageBreakdown{},
+		ByStage: []usageBreakdown{},
+		ByAgent: []usageBreakdown{},
+		ByModel: []usageBreakdown{},
+	}
+	byRun := map[string]*usageBreakdown{}
+	byStage := map[string]*usageBreakdown{}
+	byAgent := map[string]*usageBreakdown{}
+	byModel := map[string]*usageBreakdown{}
+	for _, runID := range runIDs {
+		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+		records, _ := readUsageRecords(runPaths.UsageJSONL)
+		if len(records) == 0 {
+			continue
+		}
+		response.Runs++
+		for _, record := range records {
+			addRecordToUsageTotals(&response.Calls, &response.CapturedCalls, &response.UncapturedCalls, &response.Total, record)
+			accumulateUsageByRun(byRun, runID, record)
+			accumulateUsageByStage(byStage, record)
+			accumulateUsageByAgent(byAgent, record)
+			accumulateUsageByModel(byModel, record)
+		}
+	}
+	response.CacheReadRatio = cacheReadRatio(response.Total)
+	response.ByRun = sortedUsageBreakdowns(byRun)
+	response.ByStage = sortedUsageBreakdowns(byStage)
+	response.ByAgent = sortedUsageBreakdowns(byAgent)
+	response.ByModel = sortedUsageBreakdowns(byModel)
+	return response, nil
+}
+
 // readUsageRecords is best-effort: usage accounting must never fail status or
 // `pactum usage`. An absent or unreadable ledger yields no records, a corrupt or
 // oversized line is skipped, and a scan error degrades to the records read so
@@ -220,32 +304,72 @@ func summarizeUsage(runID string, records []UsageRecord) usageResponse {
 	byAgent := map[string]*usageBreakdown{}
 	for _, record := range records {
 		addRecordToUsageTotals(&response.Calls, &response.CapturedCalls, &response.UncapturedCalls, &response.Total, record)
-		stageKey := normalizeUsageStage(record.Stage)
-		stage := byStage[stageKey]
-		if stage == nil {
-			stage = &usageBreakdown{Stage: stageKey}
-			byStage[stageKey] = stage
-		}
-		addRecordToUsageBreakdown(stage, record)
-
-		agentKey := record.Agent
-		if agentKey == "" {
-			agentKey = "unknown"
-		}
-		agent := byAgent[agentKey]
-		if agent == nil {
-			agent = &usageBreakdown{Agent: agentKey, Provider: record.Provider}
-			byAgent[agentKey] = agent
-		}
-		addRecordToUsageBreakdown(agent, record)
-		if agent.Provider == "" {
-			agent.Provider = record.Provider
-		}
+		accumulateUsageByStage(byStage, record)
+		accumulateUsageByAgent(byAgent, record)
 	}
 	response.CacheReadRatio = cacheReadRatio(response.Total)
 	response.ByStage = sortedUsageBreakdowns(byStage)
 	response.ByAgent = sortedUsageBreakdowns(byAgent)
 	return response
+}
+
+func accumulateUsageByStage(byStage map[string]*usageBreakdown, record UsageRecord) {
+	key := normalizeUsageStage(record.Stage)
+	stage := byStage[key]
+	if stage == nil {
+		stage = &usageBreakdown{Stage: key}
+		byStage[key] = stage
+	}
+	addRecordToUsageBreakdown(stage, record)
+}
+
+func accumulateUsageByAgent(byAgent map[string]*usageBreakdown, record UsageRecord) {
+	key := record.Agent
+	if key == "" {
+		key = "unknown"
+	}
+	agent := byAgent[key]
+	if agent == nil {
+		agent = &usageBreakdown{Agent: key, Provider: record.Provider}
+		byAgent[key] = agent
+	}
+	addRecordToUsageBreakdown(agent, record)
+	if agent.Provider == "" {
+		agent.Provider = record.Provider
+	}
+}
+
+func accumulateUsageByRun(byRun map[string]*usageBreakdown, runID string, record UsageRecord) {
+	run := byRun[runID]
+	if run == nil {
+		run = &usageBreakdown{Run: runID}
+		byRun[runID] = run
+	}
+	addRecordToUsageBreakdown(run, record)
+}
+
+func accumulateUsageByModel(byModel map[string]*usageBreakdown, record UsageRecord) {
+	key := usageRecordModel(record)
+	model := byModel[key]
+	if model == nil {
+		model = &usageBreakdown{Model: key}
+		byModel[key] = model
+	}
+	addRecordToUsageBreakdown(model, record)
+}
+
+// usageRecordModel resolves the model dimension for a record: the response
+// model when set (reserved for future use — the current recording path does
+// not populate ResponseModel, so this keys on the requested model today), else
+// the requested model, else "unknown".
+func usageRecordModel(record UsageRecord) string {
+	if model := strings.TrimSpace(record.ResponseModel); model != "" {
+		return model
+	}
+	if model := strings.TrimSpace(record.RequestModel); model != "" {
+		return model
+	}
+	return "unknown"
 }
 
 func addRecordToUsageTotals(calls *int, capturedCalls *int, uncapturedCalls *int, counts *usageCounts, record UsageRecord) {
@@ -333,4 +457,34 @@ func writeUsageCounts(stdout io.Writer, indent string, counts usageCounts) {
 	fmt.Fprintf(stdout, "%scache read tokens: %d\n", indent, counts.CacheReadTokens)
 	fmt.Fprintf(stdout, "%scache creation tokens: %d\n", indent, counts.CacheCreationTokens)
 	fmt.Fprintf(stdout, "%sreasoning tokens: %d\n", indent, counts.ReasoningTokens)
+}
+
+func writeWorkspaceUsage(stdout io.Writer, response usageWorkspaceResponse) {
+	fmt.Fprintln(stdout, "Pactum usage (workspace)")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Workspace:")
+	fmt.Fprintf(stdout, "  runs: %d\n", response.Runs)
+	fmt.Fprintf(stdout, "  calls: %d\n", response.Calls)
+	fmt.Fprintf(stdout, "  captured calls: %d\n", response.CapturedCalls)
+	fmt.Fprintf(stdout, "  uncaptured calls: %d\n", response.UncapturedCalls)
+	writeUsageCounts(stdout, "  ", response.Total)
+	fmt.Fprintf(stdout, "  cache read ratio: %.2f%%\n", response.CacheReadRatio*100)
+	writeWorkspaceUsageGroup(stdout, "By run:", response.ByRun, func(item usageBreakdown) string { return item.Run })
+	writeWorkspaceUsageGroup(stdout, "By stage:", response.ByStage, func(item usageBreakdown) string { return item.Stage })
+	writeWorkspaceUsageGroup(stdout, "By agent:", response.ByAgent, func(item usageBreakdown) string {
+		return fmt.Sprintf("%s (provider=%s)", item.Agent, item.Provider)
+	})
+	writeWorkspaceUsageGroup(stdout, "By model:", response.ByModel, func(item usageBreakdown) string { return item.Model })
+}
+
+func writeWorkspaceUsageGroup(stdout io.Writer, heading string, items []usageBreakdown, label func(usageBreakdown) string) {
+	if len(items) == 0 {
+		return
+	}
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, heading)
+	for _, item := range items {
+		fmt.Fprintf(stdout, "  %s: calls=%d captured=%d total_tokens=%d input_tokens=%d output_tokens=%d cache_read_tokens=%d\n",
+			label(item), item.Calls, item.CapturedCalls, item.TotalTokens, item.InputTokens, item.OutputTokens, item.CacheReadTokens)
+	}
 }
