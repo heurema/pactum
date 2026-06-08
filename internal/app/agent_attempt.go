@@ -38,6 +38,12 @@ type agentAttemptLifecycle[Prepared any, Request any, Result any, Response any] 
 	ArtifactDir    string
 	Timeout        time.Duration
 
+	// WritePathAllowed, when non-nil, is passed through to the RunRequest so the
+	// ACP transport can enforce the contract path-scope at the file-write
+	// boundary. Write stages (execute, review fix) populate it; read-only stages
+	// leave it nil. The CLI transport ignores it.
+	WritePathAllowed func(repoRelPath string) bool
+
 	StartedEvent  string
 	FinishedEvent string
 
@@ -114,14 +120,15 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 	}
 
 	runResult, runErr := a.agentTransport().Run(agents.RunRequest{
-		RepoRoot:       cfg.Root,
-		RunID:          cfg.RunID,
-		AttemptID:      attemptID,
-		Agent:          cfg.Agent,
-		PromptRepoPath: cfg.PromptRepoPath,
-		ArtifactDir:    cfg.ArtifactDir,
-		Timeout:        cfg.Timeout,
-		LiveOutput:     cfg.LiveOutput,
+		RepoRoot:         cfg.Root,
+		RunID:            cfg.RunID,
+		AttemptID:        attemptID,
+		Agent:            cfg.Agent,
+		PromptRepoPath:   cfg.PromptRepoPath,
+		ArtifactDir:      cfg.ArtifactDir,
+		Timeout:          cfg.Timeout,
+		LiveOutput:       cfg.LiveOutput,
+		WritePathAllowed: cfg.WritePathAllowed,
 	})
 	if runErr != nil && runResult.StartedAt == "" {
 		return runErr

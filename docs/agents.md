@@ -137,6 +137,27 @@ agents:
 The ACP adapters are external npm packages and inherit the agent's auth from the
 environment. `cli` remains the default.
 
+#### Real-time write scope guard (ACP only)
+
+Because the ACP transport services the agent's file writes itself, it can enforce
+the contract path-scope *in real time*, at the file-write boundary. On the write
+stages (`execute run` and `review fix`), each `WriteTextFile` is checked against
+the approved contract's `paths_in_scope` / `paths_out_of_scope`: a write whose
+repo-relative path is out of scope (or escapes the repo) is denied — the agent
+receives a write failure and nothing touches disk. This is the architectural
+payoff of ACP: a live guard, instead of relying only on the post-hoc gate to
+catch out-of-scope changes after the fact.
+
+The guard has two deliberate limits:
+
+- It gates **only the file-write boundary** (`WriteTextFile`). An agent that
+  writes through a *shell command* it runs bypasses the guard; such changes are
+  still caught only by the post-hoc gate.
+- It applies **only to the ACP transport**. The CLI transport is unchanged and
+  continues to rely entirely on the gate. Read-only stages (reviewer, clarify
+  suggest, contract draft) are not scope-restricted, and when a contract
+  declares no path-scope every in-repo write is allowed.
+
 ## Live output
 
 `clarify suggest`, `contract draft`, `execute run`, `review run`, and

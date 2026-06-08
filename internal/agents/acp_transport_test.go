@@ -1,6 +1,9 @@
 package agents
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -46,5 +49,53 @@ func TestACPClientTokenUsage(t *testing.T) {
 	}
 	if c.stopReasonValue() != acp.StopReasonEndTurn {
 		t.Fatalf("stop reason not recorded: %v", c.stopReasonValue())
+	}
+}
+
+func TestACPClientWriteTextFileScopeGuard(t *testing.T) {
+	repoRoot := t.TempDir()
+	write := func(c *acpClient, abs, content string) error {
+		_, err := c.WriteTextFile(context.Background(), acp.WriteTextFileRequest{Path: abs, Content: content})
+		return err
+	}
+
+	// A nil predicate preserves allow-all behavior: the write lands on disk.
+	nilGuard := &acpClient{repoRoot: repoRoot}
+	nilTarget := filepath.Join(repoRoot, "internal", "app", "nil.go")
+	if err := write(nilGuard, nilTarget, "nil"); err != nil {
+		t.Fatalf("nil predicate should allow write: %v", err)
+	}
+	if got, err := os.ReadFile(nilTarget); err != nil || string(got) != "nil" {
+		t.Fatalf("nil predicate write missing: got=%q err=%v", got, err)
+	}
+
+	// An allowing predicate writes as before.
+	allow := &acpClient{repoRoot: repoRoot, writePathAllowed: func(string) bool { return true }}
+	allowTarget := filepath.Join(repoRoot, "internal", "app", "allow.go")
+	if err := write(allow, allowTarget, "allow"); err != nil {
+		t.Fatalf("allow predicate should write: %v", err)
+	}
+	if _, err := os.Stat(allowTarget); err != nil {
+		t.Fatalf("allowed write missing: %v", err)
+	}
+
+	// A rejecting predicate denies the write and does not touch disk.
+	deny := &acpClient{repoRoot: repoRoot, writePathAllowed: func(string) bool { return false }}
+	denyTarget := filepath.Join(repoRoot, "docs", "denied.md")
+	if err := write(deny, denyTarget, "deny"); err == nil {
+		t.Fatal("rejecting predicate should deny write")
+	}
+	if _, err := os.Stat(denyTarget); !os.IsNotExist(err) {
+		t.Fatalf("denied write must not touch disk: %v", err)
+	}
+
+	// A path that escapes the repo is denied even when the predicate allows.
+	escape := &acpClient{repoRoot: repoRoot, writePathAllowed: func(string) bool { return true }}
+	escapeTarget := filepath.Join(filepath.Dir(repoRoot), "escape.go")
+	if err := write(escape, escapeTarget, "escape"); err == nil {
+		t.Fatal("escape path should be denied")
+	}
+	if _, err := os.Stat(escapeTarget); !os.IsNotExist(err) {
+		t.Fatalf("escape write must not touch disk: %v", err)
 	}
 }

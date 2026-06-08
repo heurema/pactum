@@ -20,6 +20,26 @@ func pathGlobMatchesAny(patterns []string, repoPath string) bool {
 	return false
 }
 
+// contractWritePathAllowed builds the predicate the ACP transport consults at
+// the file-write boundary. A write to repoRelPath is allowed when it is in the
+// contract's path-scope: paths_in_scope is empty (no restriction) or the path
+// matches one of its globs, AND the path does not match any paths_out_of_scope
+// glob. This mirrors the post-hoc gate's scope matching, so the live guard and
+// the gate agree on what is in scope.
+func contractWritePathAllowed(contract draftContract) func(repoRelPath string) bool {
+	pathsInScope := nonEmptyPathGlobs(contract.PathsInScope)
+	pathsOutOfScope := nonEmptyPathGlobs(contract.PathsOutOfScope)
+	return func(repoRelPath string) bool {
+		if len(pathsInScope) > 0 && !pathGlobMatchesAny(pathsInScope, repoRelPath) {
+			return false
+		}
+		if len(pathsOutOfScope) > 0 && pathGlobMatchesAny(pathsOutOfScope, repoRelPath) {
+			return false
+		}
+		return true
+	}
+}
+
 func normalizePathGlob(pattern string) string {
 	pattern = strings.TrimSpace(filepathSlash(pattern))
 	pattern = strings.TrimPrefix(pattern, "./")

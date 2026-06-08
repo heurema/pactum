@@ -109,7 +109,7 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 		return RunResult{}, err
 	}
 
-	client := &acpClient{out: stdoutWriter}
+	client := &acpClient{out: stdoutWriter, repoRoot: request.RepoRoot, writePathAllowed: request.WritePathAllowed}
 	conn := acp.NewClientSideConnection(client, adapterIn, adapterOut)
 	runErr := driveACPSession(ctx, conn, request.RepoRoot, string(prompt), client)
 
@@ -192,12 +192,20 @@ func acpAdapterCommand(agentName string) (string, []string, error) {
 	}
 }
 
-// acpClient implements acp.Client: it auto-approves permission requests (scope is
-// still enforced post-hoc by the gate), services the agent's file reads/writes
-// against the working tree, streams the agent's text to the attempt log, and
-// records the turn's token usage.
+// acpClient implements acp.Client: it auto-approves permission requests (shell
+// commands are still only enforced post-hoc by the gate), services the agent's
+// file reads/writes against the working tree, streams the agent's text to the
+// attempt log, and records the turn's token usage. When writePathAllowed is set
+// it also enforces the contract path-scope at the WriteTextFile boundary.
 type acpClient struct {
 	out io.Writer
+
+	// repoRoot and writePathAllowed implement the real-time write scope guard.
+	// repoRoot anchors the conversion of an absolute ACP path to a repo-relative
+	// path; writePathAllowed (nil = allow all) reports whether that path is in
+	// the contract scope. See WriteTextFile.
+	repoRoot         string
+	writePathAllowed func(repoRelPath string) bool
 
 	mu         sync.Mutex
 	stopReason acp.StopReason
@@ -270,10 +278,41 @@ func (c *acpClient) WriteTextFile(ctx context.Context, p acp.WriteTextFileReques
 	if !filepath.IsAbs(p.Path) {
 		return acp.WriteTextFileResponse{}, fmt.Errorf("acp write: path must be absolute: %s", p.Path)
 	}
+	if err := c.checkWriteScope(p.Path); err != nil {
+		return acp.WriteTextFileResponse{}, err
+	}
 	if err := os.MkdirAll(filepath.Dir(p.Path), 0o755); err != nil {
 		return acp.WriteTextFileResponse{}, err
 	}
 	return acp.WriteTextFileResponse{}, os.WriteFile(p.Path, []byte(p.Content), 0o644)
+}
+
+// checkWriteScope enforces the contract path-scope at the file-write boundary.
+// The absolute ACP path is converted to a repo-relative slash path against
+// repoRoot; a path that escapes the repo (relative starts with "..") or that
+// writePathAllowed rejects is denied — the agent receives a write failure and
+// disk is not touched. A nil writePathAllowed predicate skips the scope check
+// (allow all), preserving the pre-guard behavior for every existing caller and
+// the CLI transport, which never builds an acpClient at all.
+func (c *acpClient) checkWriteScope(absPath string) error {
+	if c.writePathAllowed == nil {
+		return nil
+	}
+	if strings.TrimSpace(c.repoRoot) == "" {
+		return fmt.Errorf("acp write denied: repo root unknown for scope check: %s", absPath)
+	}
+	rel, err := filepath.Rel(c.repoRoot, absPath)
+	if err != nil {
+		return fmt.Errorf("acp write denied: cannot resolve %s against repo root: %w", absPath, err)
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == ".." || strings.HasPrefix(rel, "../") {
+		return fmt.Errorf("acp write denied: path escapes repo scope: %s", absPath)
+	}
+	if !c.writePathAllowed(rel) {
+		return fmt.Errorf("acp write denied: path out of contract scope: %s", rel)
+	}
+	return nil
 }
 
 func (c *acpClient) ReadTextFile(ctx context.Context, p acp.ReadTextFileRequest) (acp.ReadTextFileResponse, error) {

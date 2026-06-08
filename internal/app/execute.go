@@ -57,25 +57,26 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 
 	promptRepoPath := executionPromptRepoPath(runID)
 	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[agents.DryRunPlan, executionRequestDocument, executionResultDocument, struct{}]{
-		Stdout:          stdout,
-		LiveOutput:      liveOutput,
-		JSONOutput:      jsonOutput,
-		Confirm:         confirm,
-		CancelMessage:   "execution cancelled",
-		Root:            root,
-		EventsJSONL:     prep.Paths.EventsJSONL,
-		RunID:           runID,
-		Stage:           "execute",
-		AttemptsDir:     prep.RunPaths.AttemptsDir,
-		AttemptIDPrefix: "attempt",
-		LastResultJSON:  prep.RunPaths.LastResultJSON,
-		Agent:           prep.Agent,
-		RequestModel:    prep.ModelSpec.Model,
-		PromptRepoPath:  promptRepoPath,
-		Timeout:         timeout,
-		StartedEvent:    "execution_attempt_started",
-		FinishedEvent:   "execution_attempt_finished",
-		ExitKind:        "agent",
+		Stdout:           stdout,
+		LiveOutput:       liveOutput,
+		JSONOutput:       jsonOutput,
+		Confirm:          confirm,
+		CancelMessage:    "execution cancelled",
+		Root:             root,
+		EventsJSONL:      prep.Paths.EventsJSONL,
+		RunID:            runID,
+		Stage:            "execute",
+		AttemptsDir:      prep.RunPaths.AttemptsDir,
+		AttemptIDPrefix:  "attempt",
+		LastResultJSON:   prep.RunPaths.LastResultJSON,
+		Agent:            prep.Agent,
+		RequestModel:     prep.ModelSpec.Model,
+		PromptRepoPath:   promptRepoPath,
+		Timeout:          timeout,
+		WritePathAllowed: contractWritePathAllowed(prep.Contract),
+		StartedEvent:     "execution_attempt_started",
+		FinishedEvent:    "execution_attempt_finished",
+		ExitKind:         "agent",
 		TimeoutMessage: func(timeout time.Duration) string {
 			return fmt.Sprintf("agent process produced no output for %s", timeout)
 		},
@@ -120,6 +121,7 @@ type executionPreparation struct {
 	Paths          artifacts.Paths
 	RunPaths       contractRunPathSet
 	State          contractRunState
+	Contract       draftContract
 	ContractSHA256 string
 	Agent          agents.AgentDescriptor
 	ModelSpec      agents.ModelSpec
@@ -210,6 +212,7 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 		Paths:          paths,
 		RunPaths:       runPaths,
 		State:          state,
+		Contract:       contract,
 		ContractSHA256: hash,
 		Agent:          agent,
 		ModelSpec:      modelSpec,
