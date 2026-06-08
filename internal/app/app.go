@@ -24,9 +24,10 @@ const (
 )
 
 type App struct {
-	WorkingDir    string
-	Now           func() time.Time
-	AgentRegistry agents.Registry
+	WorkingDir     string
+	Now            func() time.Time
+	AgentRegistry  agents.Registry
+	AgentTransport agents.Transport
 }
 
 type runner struct {
@@ -228,6 +229,13 @@ func (a App) agentRegistry() agents.Registry {
 		return a.AgentRegistry
 	}
 	return agents.BuiltinRegistry{}
+}
+
+func (a App) agentTransport() agents.Transport {
+	if a.AgentTransport != nil {
+		return a.AgentTransport
+	}
+	return agents.CLITransport{}
 }
 
 func writeSearchResults(stdout io.Writer, response searchpkg.Response) {

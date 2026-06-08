@@ -113,7 +113,7 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 		return err
 	}
 
-	runResult, runErr := agents.RunSubprocess(agents.RunRequest{
+	runResult, runErr := a.agentTransport().Run(agents.RunRequest{
 		RepoRoot:       cfg.Root,
 		RunID:          cfg.RunID,
 		AttemptID:      attemptID,
