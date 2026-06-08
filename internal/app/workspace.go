@@ -38,7 +38,7 @@ func (a App) Init(root string) error {
 	now := a.nowUTC()
 	runID := "map_" + now.Format("20060102_150405")
 
-	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "init_started", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "init_started", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
 		return err
 	}
 	if err := writeStaticWorkspaceFiles(paths); err != nil {
@@ -60,7 +60,7 @@ func (a App) Init(root string) error {
 	if err != nil {
 		return err
 	}
-	return ledger.Append(paths.EventsJSONL, ledger.Event{Type: "init_finished", Timestamp: result.FinishedAt, RunID: result.RunID, RepoRoot: root})
+	return ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "init_finished", Timestamp: result.FinishedAt, RunID: result.RunID, RepoRoot: root})
 }
 
 func (a App) resolveInitRoot(target string) (string, error) {
@@ -146,7 +146,7 @@ func findUp(start, marker string) (string, bool) {
 
 func ensureDirs(paths []string) error {
 	for _, path := range paths {
-		if err := os.MkdirAll(path, 0o755); err != nil {
+		if err := activeStore.MkdirAll(path); err != nil {
 			return err
 		}
 	}
@@ -179,7 +179,7 @@ runs/*/context/
 		paths.CostJSON:      []byte("{\"total_tokens\":0,\"estimated_cost_usd\":0}\n"),
 	}
 	for path, content := range files {
-		if err := os.WriteFile(path, content, 0o644); err != nil {
+		if err := activeStore.WriteBytes(path, content, 0o644); err != nil {
 			return err
 		}
 	}

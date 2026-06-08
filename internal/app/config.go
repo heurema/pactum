@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -80,10 +79,8 @@ type memoryConfig struct {
 }
 
 func writeDefaultConfigIfMissing(path string) error {
-	if _, err := os.Stat(path); err == nil {
+	if activeStore.Exists(path) {
 		return nil
-	} else if !os.IsNotExist(err) {
-		return err
 	}
 	return writeYAML(path, defaultConfigFile())
 }
@@ -137,7 +134,7 @@ func writeYAML(path string, value any) error {
 	if err := encoder.Close(); err != nil {
 		return err
 	}
-	return os.WriteFile(path, buffer.Bytes(), 0o644)
+	return activeStore.WriteBytes(path, buffer.Bytes(), 0o644)
 }
 
 func readWorkspaceManifest(path string) (workspaceManifest, error) {
@@ -153,7 +150,7 @@ func readWorkspaceManifest(path string) (workspaceManifest, error) {
 
 func readConfig(path string) (configFile, error) {
 	var config configFile
-	data, err := os.ReadFile(path)
+	data, err := activeStore.ReadBytes(path)
 	if err != nil {
 		return configFile{}, err
 	}

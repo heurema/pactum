@@ -21,6 +21,35 @@ reviews across M8–M10. Rough priority in parentheses.
 
 ## Review→fix loop (L3b and beyond)
 
+- **Review-loop convergence** (high). The first real dogfood of the autonomous `review
+  loop` (cross-model panel on the M12.6 store-port) did NOT converge — it hit `max_rounds`
+  with open findings accumulating monotonically (4→7→10→12, never a clean round). Root
+  causes: (a) **findings are never resolved** — a fixed finding stays "open", so
+  `open_findings` only grows and a 0-new-proposals clean round is the only path to
+  convergence; a successful fix should mark its finding resolved (or a re-review should).
+  (b) **No severity gate** — most findings were `low` design-observations; low/subjective
+  findings drive fixer churn. Converge on blocking/critical+major only (the L2 pass) and
+  defer low. (c) **Meta-churn** — by rounds 3-4 the panel began critiquing the FIXER'S OWN
+  changes (a method it added, "the working tree changed", "validation wasn't re-run"),
+  which never clears; the reviewer prompt should judge the contract's diff, not process
+  meta-commentary, and avoid re-reviewing already-accepted unchanged regions. (d) The
+  cross-model panel itself worked (disjoint real findings — it caught real mis-routing the
+  manual pass missed — 0 bad merges) but doubled finding volume and amplified churn. Net:
+  the loop is strong at FINDING but cannot yet CONVERGE on a refactor; today its output is
+  a draft to curate, not an auto-merge.
+- **Strengthen the executor + reviewer prompts with house style + best practices** (med).
+  The built-in prompt templates carry only generic guidance — the executor prompt
+  (`renderApprovedPromptMD`) says "follow the contract / no out-of-scope / search before
+  creating", and the reviewer prompt (`renderReviewerPrompt`) gives the findings schema +
+  "do not apply patches". Neither encodes the project's minimal style guide or engineering
+  best practices. Bake them into both: for the executor — match surrounding idiom, naming,
+  and comment density; prefer existing helpers; small focused diffs; conventional error
+  handling; no dead code; behavior-preserving where asked. For the reviewer — also flag
+  style / best-practice / readability violations against the same ruleset, not only
+  correctness. Decide sourcing: a short minimal ruleset baked into the templates vs.
+  referencing `AGENTS.md` / `CLAUDE.md` (already read by the agents). Applies to BOTH the
+  write and review stages. (Relates to the dropped custom review-guidelines knob — this is
+  the built-in-prompt version.)
 - **Loop stop conditions.** Stalemate-by-fingerprint and K-consecutive-clean —
   **done (M10.3)**. Token-native `max_tokens` budget stop is **done** with a
   `budget_exceeded` terminal. Remaining cost-layer follow-ups live in
@@ -80,6 +109,24 @@ reviews across M8–M10. Rough priority in parentheses.
 
 ## Resolved (for reference)
 
+- Storage port (M12.6) — new leaf package `internal/store` (`Store` interface + an `FS`
+  filesystem implementation byte-for-byte equivalent to the prior `os.*` calls). A
+  package-level `activeStore` in `internal/app` routes the workspace durable-record I/O
+  through the port: the JSON/JSONL/YAML primitives, the workspace `os.*` calls, the
+  prompt-manifest removal (`store.Remove`), the run-dir reservation (`store.Mkdir`, kept
+  non-recursive/fail-if-exists for the atomic claim), and all `ledger.Append` sites
+  (`ledger.Append` gained a `store.Store` parameter). A map-backed in-memory `Store`
+  swapped in a test proves the backend is swappable. Direct `os.*` is intentionally kept
+  for non-record I/O: workspace discovery (`findUp`, `os.Getwd`, `filepath.Abs`), repo-tree
+  reads, temp files, the project-map files (`search.sqlite`, `map/`), and transcript `*.log`
+  (agent + gate-validation stdout/stderr, which stream live). Surfaced by review: the first
+  manual adversarial pass + the dogfooded `gate` → cross-model `review loop` together caught
+  inconsistent routing (run-local memory hashes → `storeFileSHA256`, attempt-dir checks →
+  `storeDirExists`, prompt-manifest delete → `store.Remove`, map-file existence → direct
+  `filesystemRegularFile`, run reservation → store) — all fixed. Opens the door (per the
+  storage research) to a future regenerable, gitignored SQLite index for cross-run queries;
+  no binary DB in git, no API server (YAGNI). Not ported: `internal/agents` transcripts and
+  `internal/projectmap` (regenerable/transcript, out of scope).
 - Cross-model review panel (M12.4) — `agents.review_panel` lists two or more reviewer
   agents; each autonomous review-loop round runs them CONCURRENTLY against the same
   diff/contract (goroutine fan-out, sequential per-attempt proposal parsing in panel

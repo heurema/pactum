@@ -106,7 +106,7 @@ func (a App) ReviewProposeFindings(stdout io.Writer, runID string, reviewerAttem
 	if err != nil {
 		return err
 	}
-	stdoutBytes, err := os.ReadFile(attemptPaths.StdoutLog)
+	stdoutBytes, err := activeStore.ReadBytes(attemptPaths.StdoutLog)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("reviewer attempt stdout not found: %s", attemptID)
@@ -156,7 +156,7 @@ func (a App) ReviewProposeFindings(stdout io.Writer, runID string, reviewerAttem
 			return err
 		}
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_findings_proposed", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_findings_proposed", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -241,14 +241,14 @@ func (a App) ReviewAcceptProposal(stdout io.Writer, runID string, proposalID str
 		return err
 	}
 	if resetApproval {
-		if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_approval_reset", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+		if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_approval_reset", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 			return err
 		}
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_proposal_accepted", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_proposal_accepted", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_finding_added", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_finding_added", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -297,7 +297,7 @@ func (a App) ReviewRejectProposal(stdout io.Writer, runID string, proposalID str
 		return err
 	}
 	decisions = append(decisions, decision)
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_proposal_rejected", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_proposal_rejected", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -331,7 +331,11 @@ func resolveReviewerAttemptForProposals(runPaths contractRunPathSet, reviewerAtt
 	if strings.TrimSpace(reviewerAttemptID) != "" {
 		attemptID := strings.TrimSpace(reviewerAttemptID)
 		paths := reviewerAttemptPaths(runPaths, attemptID)
-		if !isDir(paths.Dir) {
+		dirExists, err := storeDirExists(paths.Dir)
+		if err != nil {
+			return "", attemptPathSet{}, err
+		}
+		if !dirExists {
 			return "", attemptPathSet{}, fmt.Errorf("reviewer attempt not found: %s", attemptID)
 		}
 		if !isRegularFile(paths.ResultJSON) {
@@ -340,7 +344,7 @@ func resolveReviewerAttemptForProposals(runPaths contractRunPathSet, reviewerAtt
 		return attemptID, paths, nil
 	}
 
-	entries, err := os.ReadDir(runPaths.ReviewAttemptsDir)
+	entries, err := activeStore.ReadDir(runPaths.ReviewAttemptsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", attemptPathSet{}, fmt.Errorf("no completed reviewer attempts found")

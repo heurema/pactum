@@ -3,7 +3,6 @@ package app
 import (
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -226,7 +225,7 @@ func (a App) ReviewPrepare(stdout io.Writer, runID string, jsonOutput bool) erro
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(context.RunPaths.ReviewDir, 0o755); err != nil {
+	if err := activeStore.MkdirAll(context.RunPaths.ReviewDir); err != nil {
 		return err
 	}
 	if err := ensureAppendOnlyFile(context.RunPaths.ReviewFindingsJSONL); err != nil {
@@ -257,7 +256,7 @@ func (a App) ReviewPrepare(stdout io.Writer, runID string, jsonOutput bool) erro
 	if err := writeJSON(context.RunPaths.ReviewJSON, review); err != nil {
 		return err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_prepared", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_prepared", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -348,11 +347,11 @@ func (a App) ReviewAddFinding(stdout io.Writer, runID string, input reviewFindin
 		return err
 	}
 	if resetApproval {
-		if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_approval_reset", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+		if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_approval_reset", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 			return err
 		}
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_finding_added", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_finding_added", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -404,7 +403,7 @@ func (a App) ReviewResolve(stdout io.Writer, runID string, findingID string, not
 	if err := writeJSON(context.RunPaths.ReviewJSON, review); err != nil {
 		return err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_finding_resolved", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_finding_resolved", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -458,7 +457,7 @@ func (a App) ReviewApprove(stdout io.Writer, runID string, approvedBy string, js
 	if err := writeJSON(context.RunPaths.ReviewJSON, review); err != nil {
 		return err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_approved", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_approved", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -489,7 +488,7 @@ func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, j
 	if err := writeReviewerDryRunArtifacts(prep, plan); err != nil {
 		return err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_dry_run_prepared", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_dry_run_prepared", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -548,14 +547,11 @@ func (a App) loadReviewContext(stdout io.Writer, runID string) (reviewContext, b
 	}
 
 	runDir := filepath.Join(paths.RunsDir, runID)
-	info, err := os.Stat(runDir)
+	runDirExists, err := storeDirExists(runDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return reviewContext{}, false, fmt.Errorf("run not found: %s", runID)
-		}
 		return reviewContext{}, false, err
 	}
-	if !info.IsDir() {
+	if !runDirExists {
 		return reviewContext{}, false, fmt.Errorf("run not found: %s", runID)
 	}
 
@@ -727,13 +723,13 @@ func writeReviewerDryRunArtifacts(prep reviewerDryRunPreparation, plan reviewerD
 }
 
 func writeReviewerPromptAndContext(prep reviewerDryRunPreparation) error {
-	if err := os.MkdirAll(prep.Context.RunPaths.ReviewDir, 0o755); err != nil {
+	if err := activeStore.MkdirAll(prep.Context.RunPaths.ReviewDir); err != nil {
 		return err
 	}
-	if err := os.WriteFile(prep.Context.RunPaths.ReviewContextMD, []byte(renderReviewerContext(prep)), 0o644); err != nil {
+	if err := activeStore.WriteBytes(prep.Context.RunPaths.ReviewContextMD, []byte(renderReviewerContext(prep)), 0o644); err != nil {
 		return err
 	}
-	return os.WriteFile(prep.Context.RunPaths.ReviewPromptMD, []byte(renderReviewerPrompt(prep.Context.State.RunID)), 0o644)
+	return activeStore.WriteBytes(prep.Context.RunPaths.ReviewPromptMD, []byte(renderReviewerPrompt(prep.Context.State.RunID)), 0o644)
 }
 
 func ensureReviewerDryRunArtifacts(prep reviewerDryRunPreparation, createdAt string) (reviewerDryRunDocument, error) {
@@ -805,11 +801,7 @@ func readReviewRecords(runPaths contractRunPathSet) ([]reviewFindingRecord, []re
 }
 
 func ensureAppendOnlyFile(path string) error {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	return file.Close()
+	return activeStore.AppendBytes(path, nil)
 }
 
 func newReviewDocument(runID string, gateStatus string, now string) reviewDocument {

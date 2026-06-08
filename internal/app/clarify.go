@@ -117,7 +117,7 @@ func (a App) ClarifyAsk(stdout io.Writer, runID string, question string, blockin
 	if err != nil {
 		return err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "clarification_question_added", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "clarification_question_added", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -180,10 +180,10 @@ func (a App) ClarifyAnswer(stdout io.Writer, runID string, questionID string, an
 	if err != nil {
 		return err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "clarification_answer_recorded", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "clarification_answer_recorded", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "clarification_decision_recorded", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "clarification_decision_recorded", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -228,14 +228,11 @@ func (a App) loadClarifyContext(stdout io.Writer, runID string, jsonOutput bool)
 	}
 
 	runDir := filepath.Join(paths.RunsDir, runID)
-	info, err := os.Stat(runDir)
+	runDirExists, err := storeDirExists(runDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return clarifyContext{}, false, fmt.Errorf("run not found: %s", runID)
-		}
 		return clarifyContext{}, false, err
 	}
-	if !info.IsDir() {
+	if !runDirExists {
 		return clarifyContext{}, false, fmt.Errorf("run not found: %s", runID)
 	}
 	runPaths := contractRunPaths(runDir)
@@ -346,7 +343,7 @@ func readClarificationDecisions(path string) ([]clarificationDecisionRecord, err
 }
 
 func readJSONLines[T any](path string) ([]T, error) {
-	file, err := os.Open(path)
+	file, err := activeStore.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []T{}, nil
@@ -375,28 +372,23 @@ func readJSONLines[T any](path string) ([]T, error) {
 }
 
 func appendJSONLine(path string, value any) error {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	data, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	encoder := json.NewEncoder(file)
-	return encoder.Encode(value)
+	data = append(data, '\n')
+	return activeStore.AppendBytes(path, data)
 }
 
 func writeJSONLines[T any](path string, values []T) error {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	encoder := json.NewEncoder(file)
+	var buffer strings.Builder
+	encoder := json.NewEncoder(&buffer)
 	for _, value := range values {
 		if err := encoder.Encode(value); err != nil {
 			return err
 		}
 	}
-	return nil
+	return activeStore.WriteBytes(path, []byte(buffer.String()), 0o644)
 }
 
 func nextClarificationID(prefix string, index int) string {

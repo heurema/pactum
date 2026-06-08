@@ -153,13 +153,13 @@ func (a App) MemoryPropose(stdout io.Writer, runID string, jsonOutput bool) erro
 		return fmt.Errorf("cannot update accepted memory candidate")
 	}
 
-	if err := os.MkdirAll(context.RunPaths.MemoryDir, 0o755); err != nil {
+	if err := activeStore.MkdirAll(context.RunPaths.MemoryDir); err != nil {
 		return err
 	}
 	if err := writeJSON(context.RunPaths.MemoryCandidateJSON, prepared.Candidate); err != nil {
 		return err
 	}
-	if err := os.WriteFile(context.RunPaths.MemoryCandidateMD, []byte(renderMemoryCandidateMD(prepared.Candidate)), 0o644); err != nil {
+	if err := activeStore.WriteBytes(context.RunPaths.MemoryCandidateMD, []byte(renderMemoryCandidateMD(prepared.Candidate)), 0o644); err != nil {
 		return err
 	}
 	acceptance := prepared.Acceptance
@@ -170,7 +170,7 @@ func (a App) MemoryPropose(stdout io.Writer, runID string, jsonOutput bool) erro
 		}
 	}
 	now := a.nowUTC()
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "memory_candidate_proposed", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "memory_candidate_proposed", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -203,7 +203,7 @@ func (a App) MemoryShow(stdout io.Writer, runID string, jsonOutput bool) error {
 		return writeJSONResponse(stdout, memoryShowResponse{Candidate: candidate, Acceptance: acceptance})
 	}
 	if isRegularFile(context.RunPaths.MemoryCandidateMD) {
-		data, err := os.ReadFile(context.RunPaths.MemoryCandidateMD)
+		data, err := activeStore.ReadBytes(context.RunPaths.MemoryCandidateMD)
 		if err != nil {
 			return err
 		}
@@ -255,7 +255,7 @@ func (a App) MemoryAccept(stdout io.Writer, runID string, acceptedBy string, jso
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(context.Paths.ProjectMemory, []byte(renderProjectMemoryMD(context.Root, items, freshnessByID)), 0o644); err != nil {
+	if err := activeStore.WriteBytes(context.Paths.ProjectMemory, []byte(renderProjectMemoryMD(context.Root, items, freshnessByID)), 0o644); err != nil {
 		return err
 	}
 
@@ -269,7 +269,7 @@ func (a App) MemoryAccept(stdout io.Writer, runID string, acceptedBy string, jso
 	if err := writeJSON(context.RunPaths.MemoryAcceptanceJSON, acceptance); err != nil {
 		return err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "memory_item_accepted", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "memory_item_accepted", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -288,14 +288,11 @@ func (a App) loadMemoryContext(stdout io.Writer, runID string, jsonOutput bool) 
 	}
 
 	runDir := filepath.Join(paths.RunsDir, runID)
-	info, err := os.Stat(runDir)
+	runDirExists, err := storeDirExists(runDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return runContext{}, false, fmt.Errorf("run not found: %s", runID)
-		}
 		return runContext{}, false, err
 	}
-	if !info.IsDir() {
+	if !runDirExists {
 		return runContext{}, false, fmt.Errorf("run not found: %s", runID)
 	}
 
@@ -357,7 +354,7 @@ func (a App) prepareMemoryCandidate(context runContext) (preparedMemoryCandidate
 	}
 
 	createdAt := a.nowUTC().Format(time.RFC3339)
-	existingBytes, existingErr := os.ReadFile(context.RunPaths.MemoryCandidateJSON)
+	existingBytes, existingErr := activeStore.ReadBytes(context.RunPaths.MemoryCandidateJSON)
 	existingExists := existingErr == nil
 	if existingErr != nil && !os.IsNotExist(existingErr) {
 		return preparedMemoryCandidate{}, existingErr

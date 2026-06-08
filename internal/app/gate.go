@@ -133,10 +133,10 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 	}
 
 	startedAt := a.nowUTC()
-	if err := os.MkdirAll(context.RunPaths.GateDir, 0o755); err != nil {
+	if err := activeStore.MkdirAll(context.RunPaths.GateDir); err != nil {
 		return err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "gate_run_started", Timestamp: startedAt, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "gate_run_started", Timestamp: startedAt, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -145,7 +145,7 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 		Commands:        []gateValidationCommandReport{},
 	}
 	if allowCommands && len(commands) > 0 {
-		if err := os.MkdirAll(context.RunPaths.GateValidationDir, 0o755); err != nil {
+		if err := activeStore.MkdirAll(context.RunPaths.GateValidationDir); err != nil {
 			return err
 		}
 		for index, command := range commands {
@@ -186,7 +186,7 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 	if err := writeJSON(context.RunPaths.GateReportJSON, report); err != nil {
 		return err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "gate_run_finished", Timestamp: a.nowUTC(), RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "gate_run_finished", Timestamp: a.nowUTC(), RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -231,14 +231,11 @@ func (a App) loadGateContext(stdout io.Writer, runID string) (runContext, bool, 
 	}
 
 	runDir := filepath.Join(paths.RunsDir, runID)
-	info, err := os.Stat(runDir)
+	runDirExists, err := storeDirExists(runDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return runContext{}, false, fmt.Errorf("run not found: %s", runID)
-		}
 		return runContext{}, false, err
 	}
-	if !info.IsDir() {
+	if !runDirExists {
 		return runContext{}, false, fmt.Errorf("run not found: %s", runID)
 	}
 
@@ -375,8 +372,10 @@ func buildGateChangeReport(root string, paths artifacts.Paths) gateChangeReport 
 		Reasons:      []string{},
 	}
 
-	expected, err := readJSONLines[projectmap.HashRecord](paths.HashesJSONL)
-	if err != nil {
+	expected, err := readHashRecords(paths.HashesJSONL)
+	if os.IsNotExist(err) {
+		expected = []projectmap.HashRecord{}
+	} else if err != nil {
 		report.Status = "unknown"
 		report.Reasons = append(report.Reasons, "cannot read project map hashes: "+err.Error())
 		return report
@@ -404,7 +403,7 @@ func buildGateChangeReport(root string, paths artifacts.Paths) gateChangeReport 
 		}
 		expectedByPath[record.Path] = record.SHA256
 		fullPath := filepath.Join(root, filepath.FromSlash(record.Path))
-		if !isRegularFile(fullPath) {
+		if !filesystemRegularFile(fullPath) {
 			report.MissingFiles = append(report.MissingFiles, record.Path)
 			continue
 		}

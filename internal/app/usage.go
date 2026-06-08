@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -102,7 +101,7 @@ func (a App) Usage(stdout io.Writer, runID string, jsonOutput bool) error {
 func appendUsageRecord(root string, runID string, attemptID string, stage string, requestModel string, agent agents.AgentDescriptor, usage agents.TokenUsage, createdAt string) error {
 	paths := artifacts.New(root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-	if err := os.MkdirAll(runPaths.LedgerDir, 0o755); err != nil {
+	if err := activeStore.MkdirAll(runPaths.LedgerDir); err != nil {
 		return err
 	}
 	record := usageRecordFromRunResult(runID, attemptID, stage, requestModel, agent, usage, createdAt)
@@ -187,7 +186,7 @@ func usageForRun(paths artifacts.Paths, runID string) (usageResponse, error) {
 // oversized line is skipped, and a scan error degrades to the records read so
 // far — none of these ever propagates an error to the caller.
 func readUsageRecords(path string) ([]UsageRecord, error) {
-	file, err := os.Open(path)
+	file, err := activeStore.Open(path)
 	if err != nil {
 		return []UsageRecord{}, nil
 	}

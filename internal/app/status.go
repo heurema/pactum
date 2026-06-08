@@ -80,7 +80,7 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 	if err != nil {
 		return statusResponse{}, err
 	}
-	configHash, err := fileSHA256(paths.Config)
+	configHash, err := storeFileSHA256(paths.Config)
 	if err != nil {
 		return statusResponse{}, err
 	}
@@ -180,7 +180,7 @@ func countMemoryItems(paths artifacts.Paths) (int, error) {
 }
 
 func countActiveRuns(paths artifacts.Paths) (int, error) {
-	entries, err := os.ReadDir(paths.RunsDir)
+	entries, err := activeStore.ReadDir(paths.RunsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return 0, nil
@@ -194,7 +194,7 @@ func countActiveRuns(paths artifacts.Paths) (int, error) {
 			continue
 		}
 		runPath := filepath.Join(paths.RunsDir, entry.Name(), "run.json")
-		data, err := os.ReadFile(runPath)
+		data, err := activeStore.ReadBytes(runPath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -234,7 +234,7 @@ func inspectProjectMap(root string, paths artifacts.Paths, config configFile, co
 	}
 
 	for _, artifact := range requiredMapArtifacts(paths) {
-		if isRegularFile(artifact.path) {
+		if filesystemRegularFile(artifact.path) {
 			continue
 		}
 		status.StaleReasons = append(status.StaleReasons, "missing artifact: "+artifact.rel)
@@ -243,7 +243,7 @@ func inspectProjectMap(root string, paths artifacts.Paths, config configFile, co
 		}
 	}
 
-	if isRegularFile(paths.MapManifest) {
+	if filesystemRegularFile(paths.MapManifest) {
 		mapManifest, err := readMapManifest(paths.MapManifest)
 		if err != nil {
 			status.StaleReasons = append(status.StaleReasons, "invalid artifact: map/manifest.json")
@@ -257,7 +257,7 @@ func inspectProjectMap(root string, paths artifacts.Paths, config configFile, co
 		}
 	}
 
-	if isRegularFile(paths.HashesJSONL) {
+	if filesystemRegularFile(paths.HashesJSONL) {
 		reasons, err := hashStaleReasons(root, paths.HashesJSONL, config)
 		if err != nil {
 			return projectMapStatus{}, err
@@ -375,6 +375,5 @@ func readHashRecords(path string) ([]projectmap.HashRecord, error) {
 }
 
 func isRegularFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular()
+	return activeStore.Exists(path)
 }

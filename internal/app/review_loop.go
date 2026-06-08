@@ -171,7 +171,7 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 			Warnings:  []string{},
 		}
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_loop_started", Timestamp: startedAt, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_loop_started", Timestamp: startedAt, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -365,7 +365,7 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 	if err := writeJSON(context.RunPaths.ReviewLoopSummaryJSON, summary); err != nil && loopErr == nil {
 		loopErr = err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_loop_finished", Timestamp: finishedAt, RunID: runID, RepoRoot: context.Root}); err != nil && loopErr == nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_loop_finished", Timestamp: finishedAt, RunID: runID, RepoRoot: context.Root}); err != nil && loopErr == nil {
 		loopErr = err
 	}
 	if loopErr != nil {
@@ -701,7 +701,7 @@ func (a App) recordDuplicateReviewLoopProposal(context reviewContext, proposalID
 	if err := appendJSONLine(context.RunPaths.ReviewProposalDecisionsJSONL, decision); err != nil {
 		return err
 	}
-	return ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_proposal_duplicate", Timestamp: now, RunID: context.State.RunID, RepoRoot: context.Root})
+	return ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_proposal_duplicate", Timestamp: now, RunID: context.State.RunID, RepoRoot: context.Root})
 }
 
 func (a App) upgradeDuplicateReviewFindingSeverity(context reviewContext, existing reviewFindingRecord, proposal reviewProposalRecord) (reviewFindingRecord, bool, error) {
@@ -730,7 +730,7 @@ func (a App) upgradeDuplicateReviewFindingSeverity(context reviewContext, existi
 		return reviewFindingRecord{}, false, err
 	}
 	now := a.nowUTC()
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "review_finding_severity_upgraded", Timestamp: now, RunID: context.State.RunID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_finding_severity_upgraded", Timestamp: now, RunID: context.State.RunID, RepoRoot: context.Root}); err != nil {
 		return reviewFindingRecord{}, false, err
 	}
 	return updated, true, nil
@@ -839,7 +839,7 @@ func reviewLoopWorkingTreeFingerprint(context reviewContext) (string, error) {
 
 func reviewLoopHashFingerprintFile(hasher io.Writer, root string, kind string, repoPath string) error {
 	fullPath := filepath.Join(root, filepath.FromSlash(repoPath))
-	if !isRegularFile(fullPath) {
+	if !filesystemRegularFile(fullPath) {
 		fmt.Fprintf(hasher, "%s\x00%s\x00missing\x00", kind, repoPath)
 		return nil
 	}

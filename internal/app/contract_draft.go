@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -225,7 +224,7 @@ func (a App) ContractShowDraft(stdout io.Writer, runID string, jsonOutput bool) 
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
-	proposalMD, err := os.ReadFile(context.RunPaths.ContractDraftProposalMD)
+	proposalMD, err := activeStore.ReadBytes(context.RunPaths.ContractDraftProposalMD)
 	if err != nil {
 		proposalMD = []byte(renderContractDraftProposalMD(proposal))
 	}
@@ -271,7 +270,7 @@ func (a App) ContractAcceptDraft(stdout io.Writer, runID string, jsonOutput bool
 	if err := writeContractDraftProposalArtifacts(context.RunPaths, proposal); err != nil {
 		return err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "contract_draft_accepted", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_draft_accepted", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -332,17 +331,17 @@ func (a App) prepareContractDrafter(context runContext, reviewerName string) (co
 }
 
 func writeContractDrafterPromptArtifacts(prep contractDraftPreparation) error {
-	if err := os.MkdirAll(prep.Context.RunPaths.ContractDir, 0o755); err != nil {
+	if err := activeStore.MkdirAll(prep.Context.RunPaths.ContractDir); err != nil {
 		return err
 	}
-	if err := os.WriteFile(prep.Context.RunPaths.ContractDrafterContextMD, []byte(renderContractDrafterContext(prep)), 0o644); err != nil {
+	if err := activeStore.WriteBytes(prep.Context.RunPaths.ContractDrafterContextMD, []byte(renderContractDrafterContext(prep)), 0o644); err != nil {
 		return err
 	}
-	return os.WriteFile(prep.Context.RunPaths.ContractDrafterPromptMD, []byte(renderContractDrafterPrompt(prep.Context.State.RunID)), 0o644)
+	return activeStore.WriteBytes(prep.Context.RunPaths.ContractDrafterPromptMD, []byte(renderContractDrafterPrompt(prep.Context.State.RunID)), 0o644)
 }
 
 func (a App) recordContractDraftProposal(context runContext, attemptID string, drafter string, stdoutPath string, now time.Time) (contractDraftProposalDocument, []string, error) {
-	stdoutBytes, err := os.ReadFile(stdoutPath)
+	stdoutBytes, err := activeStore.ReadBytes(stdoutPath)
 	if err != nil {
 		return contractDraftProposalDocument{}, nil, err
 	}
@@ -357,7 +356,7 @@ func (a App) recordContractDraftProposal(context runContext, attemptID string, d
 	if err := writeContractDraftProposalArtifacts(context.RunPaths, proposal); err != nil {
 		return contractDraftProposalDocument{}, nil, err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "contract_draft_proposed", Timestamp: now, RunID: context.State.RunID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_draft_proposed", Timestamp: now, RunID: context.State.RunID, RepoRoot: context.Root}); err != nil {
 		return contractDraftProposalDocument{}, nil, err
 	}
 	return proposal, warnings, nil
@@ -439,7 +438,7 @@ func writeContractDraftProposalArtifacts(runPaths contractRunPathSet, proposal c
 	if err := writeJSON(runPaths.ContractDraftProposalJSON, proposal); err != nil {
 		return err
 	}
-	return os.WriteFile(runPaths.ContractDraftProposalMD, []byte(renderContractDraftProposalMD(proposal)), 0o644)
+	return activeStore.WriteBytes(runPaths.ContractDraftProposalMD, []byte(renderContractDraftProposalMD(proposal)), 0o644)
 }
 
 func defaultContractDraftArtifacts() contractDraftArtifacts {

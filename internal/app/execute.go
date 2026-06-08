@@ -3,7 +3,6 @@ package app
 import (
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -28,13 +27,13 @@ func (a App) ExecuteDryRun(stdout io.Writer, runID string, agentName string, jso
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(prep.RunPaths.ExecuteDir, 0o755); err != nil {
+	if err := activeStore.MkdirAll(prep.RunPaths.ExecuteDir); err != nil {
 		return err
 	}
 	if err := writeJSON(prep.RunPaths.DryRunJSON, plan); err != nil {
 		return err
 	}
-	if err := ledger.Append(prep.Paths.EventsJSONL, ledger.Event{Type: "execution_dry_run_prepared", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, prep.Paths.EventsJSONL, ledger.Event{Type: "execution_dry_run_prepared", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
 		return err
 	}
 
@@ -129,14 +128,11 @@ type executionPreparation struct {
 func (a App) prepareExecution(root string, runID string, agentName string) (executionPreparation, error) {
 	paths := artifacts.New(root)
 	runDir := filepath.Join(paths.RunsDir, runID)
-	info, err := os.Stat(runDir)
+	runDirExists, err := storeDirExists(runDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return executionPreparation{}, fmt.Errorf("run not found: %s", runID)
-		}
 		return executionPreparation{}, err
 	}
-	if !info.IsDir() {
+	if !runDirExists {
 		return executionPreparation{}, fmt.Errorf("run not found: %s", runID)
 	}
 
@@ -183,10 +179,10 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 		return executionPreparation{}, fmt.Errorf("cannot prepare execution: executor prompt was built for a different project map")
 	}
 
-	if _, err := os.ReadFile(runPaths.PromptMD); err != nil {
+	if _, err := activeStore.ReadBytes(runPaths.PromptMD); err != nil {
 		return executionPreparation{}, err
 	}
-	if _, err := os.ReadFile(runPaths.ExecutorContext); err != nil {
+	if _, err := activeStore.ReadBytes(runPaths.ExecutorContext); err != nil {
 		return executionPreparation{}, err
 	}
 	if err := verifyExecutionMemoryBoundary(paths, runPaths, manifest); err != nil {
@@ -231,11 +227,11 @@ func verifyExecutionMemoryBoundary(paths artifacts.Paths, runPaths contractRunPa
 	if !isRegularFile(runPaths.MemoryContextMD) || !isRegularFile(runPaths.MemorySelectionJSON) {
 		return fmt.Errorf("cannot prepare execution: memory context changed after prompt build")
 	}
-	contextHash, err := fileSHA256(runPaths.MemoryContextMD)
+	contextHash, err := storeFileSHA256(runPaths.MemoryContextMD)
 	if err != nil {
 		return err
 	}
-	selectionHash, err := fileSHA256(runPaths.MemorySelectionJSON)
+	selectionHash, err := storeFileSHA256(runPaths.MemorySelectionJSON)
 	if err != nil {
 		return err
 	}
@@ -349,7 +345,7 @@ func ensureDryRunPlan(prep executionPreparation, createdAt string) (agents.DryRu
 			return existing, nil
 		}
 	}
-	if err := os.MkdirAll(prep.RunPaths.ExecuteDir, 0o755); err != nil {
+	if err := activeStore.MkdirAll(prep.RunPaths.ExecuteDir); err != nil {
 		return agents.DryRunPlan{}, err
 	}
 	if err := writeJSON(prep.RunPaths.DryRunJSON, expected); err != nil {

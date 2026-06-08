@@ -86,7 +86,7 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 		return err
 	}
 	attemptPaths := newAttemptPaths(filepath.Join(cfg.AttemptsDir, attemptID))
-	if err := os.MkdirAll(attemptPaths.Dir, 0o755); err != nil {
+	if err := activeStore.MkdirAll(attemptPaths.Dir); err != nil {
 		agentAttemptLifecycleMu.Unlock()
 		return err
 	}
@@ -107,7 +107,7 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 		return err
 	}
 	agentAttemptLifecycleMu.Lock()
-	err = ledger.Append(cfg.EventsJSONL, ledger.Event{Type: cfg.StartedEvent, Timestamp: now, RunID: cfg.RunID, RepoRoot: cfg.Root})
+	err = ledger.Append(activeStore, cfg.EventsJSONL, ledger.Event{Type: cfg.StartedEvent, Timestamp: now, RunID: cfg.RunID, RepoRoot: cfg.Root})
 	agentAttemptLifecycleMu.Unlock()
 	if err != nil {
 		return err
@@ -134,7 +134,7 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 	err = writeJSON(cfg.LastResultJSON, result)
 	if err == nil {
 		appendUsageRecordBestEffort(cfg, attemptID, runResult)
-		err = ledger.Append(cfg.EventsJSONL, ledger.Event{Type: cfg.FinishedEvent, Timestamp: agentAttemptFinishedAt(cfg.ProcessResult(result), now), RunID: cfg.RunID, RepoRoot: cfg.Root})
+		err = ledger.Append(activeStore, cfg.EventsJSONL, ledger.Event{Type: cfg.FinishedEvent, Timestamp: agentAttemptFinishedAt(cfg.ProcessResult(result), now), RunID: cfg.RunID, RepoRoot: cfg.Root})
 	}
 	agentAttemptLifecycleMu.Unlock()
 	if err != nil {
@@ -175,7 +175,7 @@ func writeAgentAttemptRunOnly[Prepared any, Request any, Result any, Response an
 }
 
 func nextAgentAttemptID(attemptsDir string, prefix string) (string, error) {
-	entries, err := os.ReadDir(attemptsDir)
+	entries, err := activeStore.ReadDir(attemptsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Sprintf("%s_%03d", prefix, 1), nil

@@ -133,14 +133,11 @@ func (a App) loadExecuteReportContext(stdout io.Writer, runID string) (executeRe
 	}
 
 	runDir := filepath.Join(paths.RunsDir, runID)
-	info, err := os.Stat(runDir)
+	runDirExists, err := storeDirExists(runDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return executeReportContext{}, false, fmt.Errorf("run not found: %s", runID)
-		}
 		return executeReportContext{}, false, err
 	}
-	if !info.IsDir() {
+	if !runDirExists {
 		return executeReportContext{}, false, fmt.Errorf("run not found: %s", runID)
 	}
 
@@ -214,7 +211,7 @@ func executionPromptReady(path string) bool {
 }
 
 func listExecutionAttemptIDs(attemptsDir string) ([]string, error) {
-	entries, err := os.ReadDir(attemptsDir)
+	entries, err := activeStore.ReadDir(attemptsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -272,7 +269,11 @@ func loadExecutionAttempt(context executeReportContext, attemptID string) (execu
 	}
 
 	attemptPaths := executionAttemptPaths(context.RunPaths, attemptID)
-	if !isDir(attemptPaths.Dir) {
+	dirExists, err := storeDirExists(attemptPaths.Dir)
+	if err != nil {
+		return executionAttemptSummary{}, false, err
+	}
+	if !dirExists {
 		return executionAttemptSummary{}, false, fmt.Errorf("execution attempt not found: %s", attemptID)
 	}
 	if !isRegularFile(attemptPaths.ResultJSON) {
@@ -324,7 +325,7 @@ func buildExecuteShowResponse(attempt executionAttemptSummary, logs bool) (execu
 }
 
 func readJSONMap(path string) (map[string]any, error) {
-	data, err := os.ReadFile(path)
+	data, err := activeStore.ReadBytes(path)
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +337,7 @@ func readJSONMap(path string) (map[string]any, error) {
 }
 
 func readExecutionLogExcerpt(path string) (logExcerpt, error) {
-	data, err := os.ReadFile(path)
+	data, err := activeStore.ReadBytes(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return logExcerpt{}, nil
