@@ -124,7 +124,12 @@ gate, and attempt lifecycle are unaware of it:
   (`claude-agent-acp` / `codex-acp`, launched with `npx`) using a JSON-RPC client.
   The agent edits the working tree through client-serviced file writes, its text
   streams to the attempt log as it works, and the turn's token usage comes from
-  the protocol. The same `RunResult` and attempt artifacts are produced either way.
+  the protocol. The protocol's `Usage` is normalized to the same OTel-inclusive
+  convention the CLI parsers use (`InputTokens` includes cache read+write,
+  `OutputTokens` includes reasoning; see
+  [`cost-budget-design.md`](cost-budget-design.md)), so ACP and CLI usage records
+  are directly comparable. The same `RunResult` and attempt artifacts are
+  produced either way.
 
 Select it with `agents.transport` (or the `PACTUM_AGENT_TRANSPORT` env var, which
 overrides the config):
