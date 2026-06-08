@@ -42,8 +42,12 @@ func TestACPClientTokenUsage(t *testing.T) {
 			ThoughtTokens:     &thought,
 		},
 	})
+	// OTel-inclusive parity with the CLI parsers (docs/cost-budget-design.md):
+	// InputTokens folds in cache read+write (100+30+10=140), OutputTokens folds
+	// in reasoning (50+5=55), TotalTokens is the provider-reported sum (150), and
+	// the cache/reasoning sub-counts are preserved.
 	u := c.tokenUsage()
-	if !u.Captured || u.InputTokens != 100 || u.OutputTokens != 50 || u.TotalTokens != 150 ||
+	if !u.Captured || u.InputTokens != 140 || u.OutputTokens != 55 || u.TotalTokens != 150 ||
 		u.CacheReadTokens != 30 || u.CacheCreationTokens != 10 || u.ReasoningTokens != 5 {
 		t.Fatalf("usage mapping wrong: %+v", u)
 	}

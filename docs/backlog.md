@@ -111,6 +111,20 @@ reviews across M8–M10. Rough priority in parentheses.
 
 ## Hardening / cleanup
 
+- **ACP shell-command / tool-call scope gating** (med). The M13.5 real-time write
+  scope guard enforces the contract path-scope only at the `WriteTextFile`
+  boundary (see [`agents.md`](agents.md)); an agent that writes through a *shell
+  command* or other tool call it runs bypasses the guard, and such changes are
+  still caught only by the post-hoc gate. Closing this is deeper — it means
+  intercepting/gating the adapter's command and tool-call requests, not just file
+  writes — so it stays a documented limitation for now rather than a fix in the
+  M13.6 hardening slice.
+- **Consolidated ACP design note** (low, optional). The ACP transport, its
+  real-time write scope guard, usage normalization, and cross-platform
+  process-group reaping are currently described across `agents.md` and the M13.x
+  milestone history; a single `docs/acp-transport-design.md` could collect the
+  rationale and the known limitations (shell-command writes, no isolation) in one
+  place. Nice-to-have, not blocking.
 - **Clarify commands reset approval silently** (med). `clarify ask` / `answer` /
   `suggest` add open questions via `refreshClarificationArtifacts`, which calls
   `resetApprovalIfApproved` — so running them on an already-approved/executed run

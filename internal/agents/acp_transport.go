@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -93,8 +92,9 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 	cmd.Env = os.Environ()
 	cmd.Stderr = stderrFile
 	// Run the adapter in its own process group so the whole tree (the npx wrapper,
-	// the adapter, and the agent child it launches) can be reaped together.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// the adapter, and the agent child it launches) can be reaped together. On
+	// non-Unix platforms this is a no-op (see acp_transport_other.go).
+	setProcessGroup(cmd)
 	adapterIn, err := cmd.StdinPipe()
 	if err != nil {
 		return RunResult{}, err
@@ -168,16 +168,6 @@ func driveACPSession(ctx context.Context, conn *acp.ClientSideConnection, cwd st
 	return nil
 }
 
-// killProcessGroup reaps the adapter and the whole process tree it launched
-// (npx wrapper, adapter, agent child) via the process group set with Setpgid.
-func killProcessGroup(cmd *exec.Cmd) {
-	if cmd.Process == nil {
-		return
-	}
-	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	_, _ = cmd.Process.Wait()
-}
-
 // acpAdapterCommand maps a built-in agent name to the command that launches its
 // ACP server adapter. The adapters are external npm packages run via npx; they
 // inherit the process environment (and thus the agent's auth) from the parent.
@@ -234,13 +224,21 @@ func (c *acpClient) tokenUsage() TokenUsage {
 		return TokenUsage{Captured: false, CaptureWarning: "acp prompt returned no usage"}
 	}
 	u := c.usage
+	// Normalize to the OTel-inclusive convention used by the CLI parsers
+	// (parseClaudeUsage/parseCodexUsage, see docs/cost-budget-design.md):
+	// InputTokens includes cache (read+write); OutputTokens includes reasoning.
+	// The cache/reasoning sub-counts are kept separately for the cost layer, and
+	// TotalTokens is the provider-reported sum across all token classes.
+	cacheRead := derefIntToInt64(u.CachedReadTokens)
+	cacheWrite := derefIntToInt64(u.CachedWriteTokens)
+	reasoning := derefIntToInt64(u.ThoughtTokens)
 	return TokenUsage{
-		InputTokens:         int64(u.InputTokens),
-		OutputTokens:        int64(u.OutputTokens),
+		InputTokens:         int64(u.InputTokens) + cacheRead + cacheWrite,
+		OutputTokens:        int64(u.OutputTokens) + reasoning,
 		TotalTokens:         int64(u.TotalTokens),
-		CacheReadTokens:     derefIntToInt64(u.CachedReadTokens),
-		CacheCreationTokens: derefIntToInt64(u.CachedWriteTokens),
-		ReasoningTokens:     derefIntToInt64(u.ThoughtTokens),
+		CacheReadTokens:     cacheRead,
+		CacheCreationTokens: cacheWrite,
+		ReasoningTokens:     reasoning,
 		Captured:            true,
 	}
 }
