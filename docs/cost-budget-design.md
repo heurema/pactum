@@ -183,7 +183,10 @@ Getting the rich, structured split requires `--json` (codex) / `--output-format 
 - **Per-run, append-only:** `runs/<id>/ledger/usage.jsonl` (one record per agent call).
   This is already in the committed set under the M11.9 VCS policy (the durable record).
 - **Global rollup (derived, rebuildable):** scan run files to aggregate by
-  run / stage / agent / model / day. Never the source of truth.
+  run / stage / agent / model / day. Never the source of truth. The static
+  cross-run aggregate (by run / stage / agent / model + cache-read ratio) is
+  implemented as `pactum usage --all` (M13.0); the per-day trend series is a
+  deferred follow-up.
 - **"Tokens for this task"** = fold the run's `usage.jsonl` (sum each class, count
   calls). Replace the hardcoded zeros in `status` with the live per-run total + a
   by-stage / by-agent breakdown, and add a `pactum usage [run_id]` command. Show the

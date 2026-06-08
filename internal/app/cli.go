@@ -340,6 +340,7 @@ type statusCmd struct {
 
 type usageCmd struct {
 	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
+	All        bool   `name:"all" help:"Aggregate token usage across every run in the workspace."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 

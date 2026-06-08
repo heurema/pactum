@@ -70,13 +70,13 @@ reviews across M8–M10. Rough priority in parentheses.
   estimation. Also: harden the claude usage parser to tolerate incidental
   leading/trailing stdout (today any non-JSON stdout degrades claude capture to
   `captured=false`; safe but brittle).
-- **Cross-run / workspace usage stats command** (med). Per-task stats exist
-  (`pactum usage <run_id>`). Add a workspace-wide aggregate — `pactum usage` with no
-  run id (or `--all`) — that scans all runs and reports total tokens, by-run / by-stage
-  / by-agent / by-model breakdowns, cache-hit ratios, and trend over time. This is the
-  cross-run rollup the design doc reserves and that no agentic CLI currently offers
-  (they're all per-task only). Reads the per-run `usage.jsonl` ledgers; derived, never
-  the source of truth.
+- **Cross-run / workspace usage stats command** — static aggregate **done (M13.0)**.
+  `pactum usage --all` scans every run's `usage.jsonl` and reports workspace total
+  tokens with by-run / by-stage / by-agent / by-model breakdowns and the cache-read
+  ratio, in human and `--json` form. Best-effort: a missing or corrupt ledger is
+  skipped, an empty workspace reports zero. Derived view, never the source of truth.
+  Remaining: trend-over-time series / charts (a separate slice; the static aggregate
+  deliberately excludes it).
 - **Rebuttal channel** (med). Feed the fixer's rebuttal of a false positive back to
   the reviewer on the next round so it re-judges instead of re-reporting.
 - **Semantic review-finding dedup** (low). The autonomous review loop now dedups

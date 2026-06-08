@@ -26,6 +26,12 @@ func (c *statusCmd) Run(r *runner) error {
 }
 
 func (c *usageCmd) Run(r *runner) error {
+	if c.All {
+		if strings.TrimSpace(c.RunID) != "" {
+			return errors.New("usage: pass either a run_id or --all, not both")
+		}
+		return r.App.UsageAll(r.Stdout, c.JSONOutput)
+	}
 	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
 	if err != nil || !ok {
 		return err
