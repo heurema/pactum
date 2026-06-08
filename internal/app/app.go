@@ -235,6 +235,9 @@ func (a App) agentTransport() agents.Transport {
 	if a.AgentTransport != nil {
 		return a.AgentTransport
 	}
+	if os.Getenv("PACTUM_AGENT_TRANSPORT") == "acp" {
+		return agents.ACPTransport{}
+	}
 	return agents.CLITransport{}
 }
 
