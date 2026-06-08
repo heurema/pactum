@@ -128,19 +128,90 @@ func TestReviewLoopAppliesFixOutcomesAndShrinksOpenFindings(t *testing.T) {
 
 	var summary reviewLoopSummaryDocument
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
-	if summary.TerminalReason != "clean_round" || len(summary.Rounds) != 2 {
+	// The only finding is blocking; once the fixer resolves it the loop has no
+	// open blocking findings left and converges resolved in the same round.
+	if summary.TerminalReason != "resolved" || len(summary.Rounds) != 1 {
 		t.Fatalf("fix outcome loop summary mismatch: %#v", summary)
 	}
-	if got := summary.Rounds[0]; got.OpenFindings != 0 || got.FixOutcomesResolved != 1 || got.FixOutcomesRebutted != 0 || got.FixOutcomesBlocked != 0 {
-		t.Fatalf("round 1 should reflect fixed outcome and shrunken open set: %#v", got)
-	}
-	if got := summary.Rounds[1]; got.OpenFindings != 0 || got.ProposalsAccepted != 0 || got.FixerAttemptID != "" {
-		t.Fatalf("round 2 should stay clean after fix outcome: %#v", got)
+	if got := summary.Rounds[0]; got.OpenFindings != 0 || got.OpenBlockingFindings != 0 || got.FixerAttemptID != "attempt_001" || got.FixOutcomesResolved != 1 || got.FixOutcomesRebutted != 0 || got.FixOutcomesBlocked != 0 {
+		t.Fatalf("round 1 should reflect fixed outcome, no open blocking findings, and resolve: %#v", got)
 	}
 	resolutions := readReviewResolutions(t, runPaths.ReviewResolutionsJSONL)
 	if len(resolutions) != 1 || resolutions[0].Outcome != "fixed" || resolutions[0].Source != "review_fix" {
 		t.Fatalf("fix outcome resolution mismatch: %#v", resolutions)
 	}
+	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_002").ResultJSON)
+}
+
+func TestReviewLoopResolvesWhenBlockingFindingRebutted(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_MODE", "rebut_f001")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "5", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	// A single blocking finding the fixer rebuts (false positive) clears the only
+	// open blocking finding, so the loop resolves immediately instead of churning
+	// to max_rounds.
+	if summary.TerminalReason != "resolved" || len(summary.Rounds) != 1 {
+		t.Fatalf("rebutted blocking finding should resolve in one round, not max_rounds: %#v", summary)
+	}
+	if got := summary.Rounds[0]; got.ProposalsAccepted != 1 || got.FixOutcomesRebutted != 1 || got.OpenFindings != 0 || got.OpenBlockingFindings != 0 {
+		t.Fatalf("rebut round summary mismatch: %#v", got)
+	}
+	resolutions := readReviewResolutions(t, runPaths.ReviewResolutionsJSONL)
+	if len(resolutions) != 1 || resolutions[0].Outcome != "rebutted" || resolutions[0].Source != "review_fix" {
+		t.Fatalf("rebut resolution mismatch: %#v", resolutions)
+	}
+	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
+	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_002").ResultJSON)
+}
+
+func TestReviewLoopResolvesNonBlockingFindingsWithoutFixer(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	runReviewCommand(t, app, "review", "prepare", runID)
+	app = configureReviewLoopHelpers(app)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "non_blocking_finding")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3", "--yes", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	// The accepted finding is advisory (non-blocking): it is recorded and stays
+	// open, but it leaves no blocking work, so the loop resolves without ever
+	// invoking the fixer.
+	if summary.TerminalReason != "resolved" || len(summary.Rounds) != 1 {
+		t.Fatalf("non-blocking finding should resolve without a fixer round: %#v", summary)
+	}
+	if got := summary.Rounds[0]; got.ProposalsAccepted != 1 || got.OpenFindings != 1 || got.OpenBlockingFindings != 0 || got.FixerAttemptID != "" {
+		t.Fatalf("non-blocking resolved round summary mismatch: %#v", got)
+	}
+	findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL)
+	if len(findings) != 1 || findings[0].Blocking || findings[0].Status != "open" {
+		t.Fatalf("advisory finding should be recorded and stay open: %#v", findings)
+	}
+	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 }
 
 func TestReviewLoopStopsAtMaxRounds(t *testing.T) {
@@ -1087,6 +1158,13 @@ func reviewLoopFixtureFindingWithSeverity(message string, line int, severity str
 	return finding
 }
 
+func reviewLoopFixtureNonBlockingFinding(message string, line int) map[string]any {
+	finding := reviewLoopFixtureFinding(message, line)
+	finding["blocking"] = false
+	finding["severity"] = "low"
+	return finding
+}
+
 func appendReviewLoopFindingForTest(t *testing.T, runPaths contractRunPathSet, runID string, findingID string, core findingCore) {
 	t.Helper()
 	record := reviewFindingRecord{
@@ -1144,6 +1222,8 @@ func TestReviewLoopReviewerHelperProcess(t *testing.T) {
 		}))
 	case mode == "always_findings":
 		fmt.Print(reviewerStructuredOutput(validFinding))
+	case mode == "non_blocking_finding":
+		fmt.Print(reviewerStructuredOutput([]map[string]any{reviewLoopFixtureNonBlockingFinding("loop reviewer found an advisory issue", 55)}))
 	case mode == "always_new_findings":
 		fmt.Print(reviewerStructuredOutput([]map[string]any{
 			reviewLoopFixtureFinding(fmt.Sprintf("loop reviewer found fixable issue %d", attempt), 42+attempt),

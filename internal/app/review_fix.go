@@ -348,11 +348,12 @@ func renderReviewFixPrompt(prep reviewFixPreparation) string {
 	fmt.Fprintln(&b, "```")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "Rules:")
-	fmt.Fprintln(&b, "- Include exactly one outcome entry for every finding listed above with status=open.")
-	fmt.Fprintln(&b, "- Use outcome fixed when you changed code to address a valid finding.")
-	fmt.Fprintln(&b, "- Use outcome rebutted when the finding is a false positive; note must contain the concrete rebuttal.")
+	fmt.Fprintln(&b, "- Include exactly one outcome entry for every blocking finding listed above with status open.")
+	fmt.Fprintln(&b, "- Do NOT edit code for advisory (non-blocking) findings, and do NOT emit outcomes for them; they are context only.")
+	fmt.Fprintln(&b, "- Use outcome fixed when you changed code to address a valid blocking finding.")
+	fmt.Fprintln(&b, "- Use outcome rebutted when the blocking finding is a false positive; note must contain the concrete rebuttal.")
 	fmt.Fprintln(&b, "- Use outcome blocked when concrete missing information or state prevents a fix.")
-	fmt.Fprintln(&b, "- Do not include resolved findings in the outcomes list.")
+	fmt.Fprintln(&b, "- Do not include advisory or resolved findings in the outcomes list.")
 	return b.String()
 }
 
@@ -368,12 +369,38 @@ func writeReviewFixContractSection(b *strings.Builder, contract draftContract) {
 func writeReviewFixFindingsSection(b *strings.Builder, state reviewStateResponse) {
 	fmt.Fprintln(b, "## Current review findings")
 	fmt.Fprintf(b, "- Summary: findings=%d open=%d resolved=%d blocking_open=%d\n", state.Review.Summary.Findings, state.Review.Summary.Open, state.Review.Summary.Resolved, state.Review.Summary.BlockingOpen)
-	if len(state.Findings) == 0 {
-		fmt.Fprintln(b, "- Findings: none")
+
+	// Partition open findings so the fixer acts only on blocking work. Blocking
+	// findings must each get a fix-outcome; advisory (non-blocking) findings are
+	// context only and must never be edited or carry an outcome.
+	var blocking, advisory, resolved []reviewFindingView
+	for _, finding := range state.Findings {
+		switch {
+		case finding.Status == "resolved":
+			resolved = append(resolved, finding)
+		case finding.Blocking:
+			blocking = append(blocking, finding)
+		default:
+			advisory = append(advisory, finding)
+		}
+	}
+
+	fmt.Fprintln(b, "- Blocking findings (fix or rebut these — emit exactly one fix-outcome for each):")
+	writeReviewFixFindingList(b, blocking)
+	fmt.Fprintln(b, "- Advisory (non-blocking) findings (context only — do NOT edit code and do NOT emit outcomes for them):")
+	writeReviewFixFindingList(b, advisory)
+	if len(resolved) > 0 {
+		fmt.Fprintln(b, "- Resolved findings (already addressed — context only):")
+		writeReviewFixFindingList(b, resolved)
+	}
+}
+
+func writeReviewFixFindingList(b *strings.Builder, findings []reviewFindingView) {
+	if len(findings) == 0 {
+		fmt.Fprintln(b, "  - none")
 		return
 	}
-	fmt.Fprintln(b, "- Findings:")
-	for _, finding := range state.Findings {
+	for _, finding := range findings {
 		fmt.Fprintf(b, "  - %s severity=%s category=%s blocking=%t status=%s: %s\n", finding.ID, finding.Severity, finding.Category, finding.Blocking, finding.Status, finding.Message)
 		if finding.File != "" {
 			location := finding.File

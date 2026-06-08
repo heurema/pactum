@@ -1270,12 +1270,14 @@ func TestReviewFixDryRunArtifactsUseWriteEnabledExecutorAndPrompt(t *testing.T) 
 				"# Review Fix Prompt",
 				"Goal: add deterministic prompt boundary",
 				"Fix prompt should include accepted review finding",
+				"Blocking findings (fix or rebut these — emit exactly one fix-outcome for each):",
 				"f_001 severity=medium category=correctness blocking=true status=open",
+				"Advisory (non-blocking) findings (context only — do NOT edit code and do NOT emit outcomes for them):",
 				"Trace each finding to the relevant code before acting.",
 				"For false positives, explain a concrete rebuttal instead of changing code.",
 				"## Output shape",
 				`"schema": "pactum.review_fix_outcomes.v1"`,
-				"Include exactly one outcome entry for every finding listed above with status=open.",
+				"Include exactly one outcome entry for every blocking finding listed above with status open.",
 			} {
 				if !strings.Contains(prompt, want) {
 					t.Fatalf("review fix prompt missing %q:\n%s", want, prompt)

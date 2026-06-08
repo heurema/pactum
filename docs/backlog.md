@@ -12,7 +12,14 @@ reviews across M8–M10. Rough priority in parentheses.
   (b) an optional **absolute total cap** (off by default) as a CI backstop for an
   agent that keeps emitting output yet never finishes (the idle timer never fires);
   (c) **per-project config defaults** for the idle window (and any cap) so a project
-  sets it once instead of passing `--timeout` on every run.
+  sets it once instead of passing `--timeout` on every run;
+  (d) **silent-agent idle-timeout gap** — the claude executor (`claude -p --output-format
+  json`) emits nothing to stdout/stderr until its final result, so the idle watchdog
+  (which appears to arm on first output) never fires: a claude run is silent for its whole
+  duration and is neither idle-killed mid-work (good here) nor protected against a real
+  hang (bad). Surfaced in the M12.9 dogfood (claude silent ~30 min, finished cleanly, never
+  killed). Fix: run the claude executor with `--output-format stream-json` (streams events
+  → resets the idle timer, like codex), and/or arm the idle watchdog from process start.
 - **Workspace config leaks across runs/branches** (med). `executor_model` (and other
   `agents.*` config) lives in the gitignored `.heurema/pactum/config.yaml`, which
   persists across branches. An M10.2 `executor_model: claude-opus-4-8:xhigh` leaked
@@ -21,9 +28,10 @@ reviews across M8–M10. Rough priority in parentheses.
 
 ## Review→fix loop (L3b and beyond)
 
-- **Review-loop convergence** (high). **Slice 1 (resolve-on-fix) shipped in M12.8** —
-  root cause (a) below is addressed; (b) severity-gate and (c) the anti-meta-churn reviewer
-  prompt remain. The first real dogfood of the autonomous `review
+- **Review-loop convergence** (high). **Slices 1-2 shipped (M12.8 resolve-on-fix,
+  M12.9 severity-gated convergence)** — root causes (a) and (b) below are addressed; (c)
+  the anti-meta-churn reviewer prompt remains (overlaps the prompt-quality item below).
+  The first real dogfood of the autonomous `review
   loop` (cross-model panel on the M12.6 store-port) did NOT converge — it hit `max_rounds`
   with open findings accumulating monotonically (4→7→10→12, never a clean round). Root
   causes: (a) **findings are never resolved** — a fixed finding stays "open", so
@@ -111,6 +119,22 @@ reviews across M8–M10. Rough priority in parentheses.
 
 ## Resolved (for reference)
 
+- Review-loop convergence slice 2 — severity-gated convergence (M12.9) — the loop now
+  terminates with a new `resolved` terminal reason when no open **blocking** findings
+  remain (`BlockingOpen == 0` — the same condition that makes a review approvable). The
+  fixer is gated to run only when open blocking findings exist and its prompt partitions
+  the findings into blocking (fix/rebut, emit an outcome) vs advisory (context only).
+  Non-blocking findings are still accepted, deduped, and recorded but stay open as advisory
+  — they never drive the fixer or keep the loop running, which kills the low/subjective
+  churn from the M12.6 dogfood (a round whose proposals are all non-blocking converges
+  `resolved` without invoking the fixer). The round summary gains `open_blocking_findings`;
+  the reviewer prompt now instructs setting `blocking` meaningfully. Existing terminals
+  (`clean_round`, `stalemate`, `max_rounds`, `gate_failed`, `budget_exceeded`,
+  `reviewer_findings_unparsed`) are intact (verified: stub-finding tests still drive their
+  terminals, not silently resolving). First dogfood executed with the **claude** executor.
+  Slice 3 (anti-meta-churn reviewer prompt) remains. Open seam: the M12.4 panel severity
+  upgrade bumps `severity` but not `blocking`, so a finding upgraded low→critical stays
+  advisory — revisit whether high/critical severity should imply blocking.
 - Review-loop convergence slice 1 — resolve-on-fix (M12.8) — the fixer now emits a
   structured `pactum.review_fix_outcomes.v1` fenced-JSON block (one outcome per finding:
   `fixed` / `rebutted` / `blocked`), parsed decoupled and best-effort (mirroring `review
