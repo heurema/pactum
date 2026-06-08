@@ -112,6 +112,31 @@ repository**:
 - The prepared prompt is piped to the agent's standard input.
 - The agent's stdout and stderr are captured to attempt artifacts.
 
+### Transport: CLI (default) or ACP
+
+How the agent is *reached* is a swappable transport behind one seam, so the loop,
+gate, and attempt lifecycle are unaware of it:
+
+- **`cli`** (default) — the one-shot agent CLI described above (`codex exec`,
+  `claude -p`), with the prompt piped to stdin.
+- **`acp`** — the agent is driven over the [Agent Client
+  Protocol](https://agentclientprotocol.com) via its server adapter
+  (`claude-agent-acp` / `codex-acp`, launched with `npx`) using a JSON-RPC client.
+  The agent edits the working tree through client-serviced file writes, its text
+  streams to the attempt log as it works, and the turn's token usage comes from
+  the protocol. The same `RunResult` and attempt artifacts are produced either way.
+
+Select it with `agents.transport` (or the `PACTUM_AGENT_TRANSPORT` env var, which
+overrides the config):
+
+```yaml
+agents:
+  transport: acp
+```
+
+The ACP adapters are external npm packages and inherit the agent's auth from the
+environment. `cli` remains the default.
+
 ## Live output
 
 `clarify suggest`, `contract draft`, `execute run`, `review run`, and
