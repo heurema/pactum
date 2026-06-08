@@ -97,7 +97,7 @@ func currentRunPointerPath(paths artifacts.Paths) string {
 
 // readCurrentRun reads the local-only current-run pointer.
 func readCurrentRun(paths artifacts.Paths) (string, bool) {
-	data, err := os.ReadFile(currentRunPointerPath(paths))
+	data, err := activeStore.ReadBytes(currentRunPointerPath(paths))
 	if err != nil {
 		return "", false
 	}
@@ -111,20 +111,21 @@ func readCurrentRun(paths artifacts.Paths) (string, bool) {
 // writeCurrentRun records the current-run pointer under the (gitignored) cache
 // directory. It is local convenience state, never durable/committable.
 func writeCurrentRun(paths artifacts.Paths, runID string) error {
-	if err := os.MkdirAll(paths.CacheDir, 0o755); err != nil {
+	if err := activeStore.MkdirAll(paths.CacheDir); err != nil {
 		return err
 	}
-	return os.WriteFile(currentRunPointerPath(paths), []byte(runID+"\n"), 0o644)
+	return activeStore.WriteBytes(currentRunPointerPath(paths), []byte(runID+"\n"), 0o644)
 }
 
 func runExists(paths artifacts.Paths, runID string) bool {
-	return isDir(filepath.Join(paths.RunsDir, runID))
+	exists, err := storeDirExists(filepath.Join(paths.RunsDir, runID))
+	return err == nil && exists
 }
 
 // listRunIDs returns every run id under the runs directory in chronological
 // (ascending) order. The id format sorts lexicographically by time.
 func listRunIDs(paths artifacts.Paths) ([]string, error) {
-	entries, err := os.ReadDir(paths.RunsDir)
+	entries, err := activeStore.ReadDir(paths.RunsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

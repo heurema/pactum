@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -233,17 +232,17 @@ func resolveClarifierName(context clarifyContext, reviewerName string, crossMode
 }
 
 func writeClarifierPromptArtifacts(prep clarifierPreparation) error {
-	if err := os.MkdirAll(prep.Context.RunPaths.ClarifyDir, 0o755); err != nil {
+	if err := activeStore.MkdirAll(prep.Context.RunPaths.ClarifyDir); err != nil {
 		return err
 	}
-	if err := os.WriteFile(prep.Context.RunPaths.ClarifierContextMD, []byte(renderClarifierContext(prep)), 0o644); err != nil {
+	if err := activeStore.WriteBytes(prep.Context.RunPaths.ClarifierContextMD, []byte(renderClarifierContext(prep)), 0o644); err != nil {
 		return err
 	}
-	return os.WriteFile(prep.Context.RunPaths.ClarifierPromptMD, []byte(renderClarifierPrompt(prep.Context.State.RunID)), 0o644)
+	return activeStore.WriteBytes(prep.Context.RunPaths.ClarifierPromptMD, []byte(renderClarifierPrompt(prep.Context.State.RunID)), 0o644)
 }
 
 func (a App) recordClarifierSuggestions(context clarifyContext, attemptID string, stdoutPath string, now time.Time) ([]clarificationQuestionRecord, []string, clarifyStatusResponse, error) {
-	stdoutBytes, err := os.ReadFile(stdoutPath)
+	stdoutBytes, err := activeStore.ReadBytes(stdoutPath)
 	if err != nil {
 		return nil, nil, clarifyStatusResponse{}, err
 	}
@@ -286,7 +285,7 @@ func (a App) recordClarifierSuggestions(context clarifyContext, attemptID string
 	if err != nil {
 		return nil, nil, clarifyStatusResponse{}, err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "clarification_questions_suggested", Timestamp: now, RunID: context.State.RunID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "clarification_questions_suggested", Timestamp: now, RunID: context.State.RunID, RepoRoot: context.Root}); err != nil {
 		return nil, nil, clarifyStatusResponse{}, err
 	}
 	return created, warnings, status, nil
@@ -404,12 +403,13 @@ func renderClarifierContext(prep clarifierPreparation) string {
 }
 
 func writeFileExcerpt(b *strings.Builder, path string) {
-	data, err := os.ReadFile(path)
+	data, err := activeStore.ReadBytes(path)
 	if err != nil {
 		fmt.Fprintf(b, "Unavailable: %v\n", err)
 		return
 	}
 	const maxBytes = 32 * 1024
+	truncated := len(data) > maxBytes
 	if len(data) > maxBytes {
 		data = data[:maxBytes]
 	}
@@ -417,7 +417,7 @@ func writeFileExcerpt(b *strings.Builder, path string) {
 	if !strings.HasSuffix(string(data), "\n") {
 		fmt.Fprintln(b)
 	}
-	if info, err := os.Stat(path); err == nil && info.Size() > maxBytes {
+	if truncated {
 		fmt.Fprintf(b, "\n[Truncated to %d bytes]\n", maxBytes)
 	}
 }

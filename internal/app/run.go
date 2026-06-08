@@ -172,15 +172,15 @@ func (a App) createContractOnlyRun(root string, task string) (contractRunState, 
 	files[runPaths.RunJSON] = mustMarshalJSON(state)
 
 	for _, path := range sortedKeys(files) {
-		if err := os.WriteFile(path, files[path], 0o644); err != nil {
+		if err := activeStore.WriteBytes(path, files[path], 0o644); err != nil {
 			return contractRunState{}, err
 		}
 	}
 
-	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "run_created", Timestamp: createdAt, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "run_created", Timestamp: createdAt, RunID: runID, RepoRoot: root}); err != nil {
 		return contractRunState{}, err
 	}
-	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "contract_draft_created", Timestamp: createdAt, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "contract_draft_created", Timestamp: createdAt, RunID: runID, RepoRoot: root}); err != nil {
 		return contractRunState{}, err
 	}
 
@@ -331,7 +331,7 @@ func contractRunPaths(runDir string) contractRunPathSet {
 }
 
 func reserveContractRunDir(createdAt time.Time, runsDir string) (string, string, error) {
-	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+	if err := activeStore.MkdirAll(runsDir); err != nil {
 		return "", "", err
 	}
 
@@ -342,7 +342,7 @@ func reserveContractRunDir(createdAt time.Time, runsDir string) (string, string,
 			candidate = fmt.Sprintf("%s_%02d", base, suffix)
 		}
 		path := filepath.Join(runsDir, candidate)
-		if err := os.Mkdir(path, 0o755); err == nil {
+		if err := activeStore.Mkdir(path); err == nil {
 			return candidate, path, nil
 		} else if os.IsExist(err) {
 			continue

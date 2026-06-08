@@ -15,7 +15,7 @@ func writeJSON(path string, value any) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o644)
+	return activeStore.WriteBytes(path, data, 0o644)
 }
 
 // writeJSONResponse encodes value as indented JSON to stdout. It is the shared
@@ -38,7 +38,7 @@ func readMapManifest(path string) (projectmap.Manifest, error) {
 }
 
 func readJSON(path string, value any) error {
-	data, err := os.ReadFile(path)
+	data, err := activeStore.ReadBytes(path)
 	if err != nil {
 		return err
 	}

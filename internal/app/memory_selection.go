@@ -128,7 +128,7 @@ func writeAcceptedMemoryContext(paths artifacts.Paths, runPaths contractRunPathS
 	if err := writeJSON(runPaths.MemorySelectionJSON, selection); err != nil {
 		return memorySelectionDocument{}, err
 	}
-	if err := os.WriteFile(runPaths.MemoryContextMD, []byte(renderMemoryContextMD(selection)), 0o644); err != nil {
+	if err := activeStore.WriteBytes(runPaths.MemoryContextMD, []byte(renderMemoryContextMD(selection)), 0o644); err != nil {
 		return memorySelectionDocument{}, err
 	}
 	return selection, nil
@@ -162,7 +162,7 @@ func memorySourceSHA256(paths artifacts.Paths) (string, error) {
 		{label: "items.jsonl", path: paths.MemoryItems},
 		{label: "refreshes.jsonl", path: paths.MemoryRefreshes},
 	} {
-		data, err := os.ReadFile(source.path)
+		data, err := activeStore.ReadBytes(source.path)
 		if err != nil {
 			if os.IsNotExist(err) {
 				fmt.Fprintf(hasher, "%s\x00missing\x00", source.label)

@@ -3,7 +3,6 @@ package app
 import (
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -72,7 +71,7 @@ func (a App) ContractShow(stdout io.Writer, runID string, jsonOutput bool) error
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
-	contractMD, err := os.ReadFile(context.RunPaths.ContractMD)
+	contractMD, err := activeStore.ReadBytes(context.RunPaths.ContractMD)
 	if err != nil {
 		return err
 	}
@@ -115,7 +114,7 @@ func (a App) ContractRevise(stdout io.Writer, runID string, revision contractRev
 	if err != nil {
 		return err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "contract_revised", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_revised", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -159,7 +158,7 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 	if err := removePromptReadinessArtifacts(context.RunPaths); err != nil {
 		return err
 	}
-	hash, err := fileSHA256(context.RunPaths.ContractJSON)
+	hash, err := storeFileSHA256(context.RunPaths.ContractJSON)
 	if err != nil {
 		return err
 	}
@@ -174,7 +173,7 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 	if err := writeJSON(context.RunPaths.RunJSON, state); err != nil {
 		return err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "contract_approved", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_approved", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -193,14 +192,11 @@ func (a App) loadContractContext(stdout io.Writer, runID string, jsonOutput bool
 	}
 
 	runDir := filepath.Join(paths.RunsDir, runID)
-	info, err := os.Stat(runDir)
+	runDirExists, err := storeDirExists(runDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return runContext{}, false, fmt.Errorf("run not found: %s", runID)
-		}
 		return runContext{}, false, err
 	}
-	if !info.IsDir() {
+	if !runDirExists {
 		return runContext{}, false, fmt.Errorf("run not found: %s", runID)
 	}
 
@@ -256,10 +252,10 @@ func writeContractArtifacts(runPaths contractRunPathSet, contract draftContract,
 		return err
 	}
 	searchCount := readRunSearchResultCount(runPaths.SearchResults)
-	if err := os.WriteFile(runPaths.ContractMD, renderContractMDFromDraft(contract, mapRunID, searchCount), 0o644); err != nil {
+	if err := activeStore.WriteBytes(runPaths.ContractMD, renderContractMDFromDraft(contract, mapRunID, searchCount), 0o644); err != nil {
 		return err
 	}
-	return os.WriteFile(runPaths.PromptMD, renderPromptMDFromDraft(contract), 0o644)
+	return activeStore.WriteBytes(runPaths.PromptMD, renderPromptMDFromDraft(contract), 0o644)
 }
 
 func applyClarificationStatusToContract(contract *draftContract, status clarifyStatusResponse) {
@@ -285,7 +281,7 @@ func verifyApprovedContract(runPaths contractRunPathSet, contract draftContract,
 	if contract.Status != "approved" || approval.Status != "approved" || approval.ContractSHA256 == nil {
 		return "", fmt.Errorf("cannot %s: contract is not approved", action)
 	}
-	hash, err := fileSHA256(runPaths.ContractJSON)
+	hash, err := storeFileSHA256(runPaths.ContractJSON)
 	if err != nil {
 		return "", err
 	}
@@ -334,7 +330,7 @@ func resetApprovalIfApproved(paths artifacts.Paths, runPaths contractRunPathSet,
 	if err := removePromptReadinessArtifacts(runPaths); err != nil {
 		return approvalState{}, false, err
 	}
-	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "contract_approval_reset", Timestamp: resetAt, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "contract_approval_reset", Timestamp: resetAt, RunID: runID, RepoRoot: root}); err != nil {
 		return approvalState{}, false, err
 	}
 	return pending, true, nil

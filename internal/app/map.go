@@ -57,7 +57,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 	if err != nil {
 		return MapRefreshResult{}, err
 	}
-	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "map_refresh_started", Timestamp: startedAt, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "map_refresh_started", Timestamp: startedAt, RunID: runID, RepoRoot: root}); err != nil {
 		return MapRefreshResult{}, err
 	}
 
@@ -65,7 +65,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 	if err != nil {
 		return MapRefreshResult{}, err
 	}
-	configHash, err := fileSHA256(paths.Config)
+	configHash, err := storeFileSHA256(paths.Config)
 	if err != nil {
 		return MapRefreshResult{}, err
 	}
@@ -105,7 +105,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 	}
 
 	searchStartedAt := a.nowUTC()
-	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "search_index_started", Timestamp: searchStartedAt, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "search_index_started", Timestamp: searchStartedAt, RunID: runID, RepoRoot: root}); err != nil {
 		return MapRefreshResult{}, err
 	}
 	if err := searchpkg.Rebuild(paths.SearchSQLite, searchpkg.IndexInput{
@@ -119,7 +119,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 		return MapRefreshResult{}, err
 	}
 	searchFinishedAt := a.nowUTC()
-	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "search_index_finished", Timestamp: searchFinishedAt, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "search_index_finished", Timestamp: searchFinishedAt, RunID: runID, RepoRoot: root}); err != nil {
 		return MapRefreshResult{}, err
 	}
 
@@ -182,7 +182,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 	if err := updateWorkspaceMapRun(paths.Manifest, runID, finishedAt); err != nil {
 		return MapRefreshResult{}, err
 	}
-	if err := ledger.Append(paths.EventsJSONL, ledger.Event{Type: "map_refresh_finished", Timestamp: finishedAt, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "map_refresh_finished", Timestamp: finishedAt, RunID: runID, RepoRoot: root}); err != nil {
 		return MapRefreshResult{}, err
 	}
 
@@ -263,4 +263,9 @@ func fileSHA256(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func filesystemRegularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }

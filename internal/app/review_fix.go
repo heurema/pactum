@@ -3,7 +3,6 @@ package app
 import (
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -213,13 +212,13 @@ func ensureReviewFixDryRunArtifacts(prep reviewFixPreparation, createdAt string)
 }
 
 func writeReviewFixDryRunArtifacts(prep reviewFixPreparation, plan reviewFixDryRunDocument) error {
-	if err := os.MkdirAll(prep.Context.RunPaths.ReviewFixDir, 0o755); err != nil {
+	if err := activeStore.MkdirAll(prep.Context.RunPaths.ReviewFixDir); err != nil {
 		return err
 	}
-	if err := os.WriteFile(prep.Context.RunPaths.ReviewFixContextMD, []byte(renderReviewFixContext(prep)), 0o644); err != nil {
+	if err := activeStore.WriteBytes(prep.Context.RunPaths.ReviewFixContextMD, []byte(renderReviewFixContext(prep)), 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(prep.Context.RunPaths.ReviewFixPromptMD, []byte(renderReviewFixPrompt(prep)), 0o644); err != nil {
+	if err := activeStore.WriteBytes(prep.Context.RunPaths.ReviewFixPromptMD, []byte(renderReviewFixPrompt(prep)), 0o644); err != nil {
 		return err
 	}
 	return writeJSON(prep.Context.RunPaths.ReviewFixDryRunJSON, plan)

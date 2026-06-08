@@ -136,7 +136,7 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 	// and revision usually make the work more precise than the initial task
 	// sentence, so re-derive targeted queries from goal/scope/acceptance/validation.
 	searchResults := buildRunSearchResults(context.Paths, report.ProjectMap, "contract", memoryQueryFromContract(context.Contract))
-	if err := os.WriteFile(context.RunPaths.SearchResults, mustMarshalJSON(searchResults), 0o644); err != nil {
+	if err := activeStore.WriteBytes(context.RunPaths.SearchResults, mustMarshalJSON(searchResults), 0o644); err != nil {
 		return err
 	}
 	decisions, err := readClarificationDecisions(context.RunPaths.DecisionsJSONL)
@@ -144,10 +144,10 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 		return err
 	}
 
-	if err := os.WriteFile(context.RunPaths.ExecutorContext, renderExecutorContext(context.State, report.ProjectMap.RunID, hash, searchResults, decisions, memory.Selected), 0o644); err != nil {
+	if err := activeStore.WriteBytes(context.RunPaths.ExecutorContext, renderExecutorContext(context.State, report.ProjectMap.RunID, hash, searchResults, decisions, memory.Selected), 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(context.RunPaths.PromptMD, renderApprovedPromptMD(context.Contract, context.State.RunID, hash, selection), 0o644); err != nil {
+	if err := activeStore.WriteBytes(context.RunPaths.PromptMD, renderApprovedPromptMD(context.Contract, context.State.RunID, hash, selection), 0o644); err != nil {
 		return err
 	}
 	if err := writeJSON(context.RunPaths.PromptManifest, manifest); err != nil {
@@ -156,7 +156,7 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 	if err := ensurePromptArtifactRefs(context.RunPaths, context.State); err != nil {
 		return err
 	}
-	if err := ledger.Append(context.Paths.EventsJSONL, ledger.Event{Type: "executor_prompt_built", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "executor_prompt_built", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
 		return err
 	}
 
@@ -192,7 +192,7 @@ func (a App) PromptShow(stdout io.Writer, runID string, jsonOutput bool) error {
 	if err != nil {
 		return err
 	}
-	prompt, err := os.ReadFile(context.RunPaths.PromptMD)
+	prompt, err := activeStore.ReadBytes(context.RunPaths.PromptMD)
 	if err != nil {
 		return err
 	}
@@ -253,11 +253,11 @@ func buildPromptManifest(context runContext, contractSHA256 string, mapRunID str
 // the prompt manifest. It hashes the run-local memory artifacts and the global
 // accepted-memory source files so execution can detect drift after prompt build.
 func buildPromptManifestMemory(paths artifacts.Paths, runPaths contractRunPathSet, selection memorySelectionDocument) (promptManifestMemory, error) {
-	contextHash, err := fileSHA256(runPaths.MemoryContextMD)
+	contextHash, err := storeFileSHA256(runPaths.MemoryContextMD)
 	if err != nil {
 		return promptManifestMemory{}, err
 	}
-	selectionHash, err := fileSHA256(runPaths.MemorySelectionJSON)
+	selectionHash, err := storeFileSHA256(runPaths.MemorySelectionJSON)
 	if err != nil {
 		return promptManifestMemory{}, err
 	}
@@ -305,7 +305,7 @@ func ensurePromptArtifactRefs(runPaths contractRunPathSet, state contractRunStat
 }
 
 func removePromptReadinessArtifacts(runPaths contractRunPathSet) error {
-	if err := os.Remove(runPaths.PromptManifest); err != nil && !os.IsNotExist(err) {
+	if err := activeStore.Remove(runPaths.PromptManifest); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
