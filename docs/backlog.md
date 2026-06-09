@@ -140,8 +140,20 @@ reviews across M8–M10. Rough priority in parentheses.
     the ambiguous term and its candidate meanings live in the question text and
     recommended answer (only the kind tag is structured). The kind field is the
     structural basis for the remaining slices.
-  - **Slice 4 — edge-case probing** (todo). Systematically surface boundary
-    conditions, failure modes, and "what about X" cases the requester left implicit.
+  - **Slice 4 — edge-case probing** (M15.4, shipped). The clarifier prompt gains a
+    dedicated "Probe edge cases" section: rather than abstractly "consider edge
+    cases", it now instructs the clarifier to invent CONCRETE boundary and failure
+    scenarios for each in-scope behavior and acceptance criterion — empty/missing/
+    zero/duplicate/extreme inputs, error and failure paths, partial or interrupted
+    operations, concurrency and ordering, resource/size limits, and other "what
+    about X" cases the contract is silent on — name the specific scenario in the
+    question text, recommend how the contract should behave there, and tag the
+    question `kind=edge_case` (the category from slice 3). The clarifier is told to
+    prefer the scenarios most likely to change scope, acceptance, or implementation
+    and to skip what the contract or repository already settles. Prompt-quality
+    change only — no schema, validation, or enum change; a prompt-content test
+    asserts the section and its `kind=edge_case` tagging instruction cannot be
+    silently dropped.
   - **Slice 5 — coverage / convergence signal** (todo). Emit a signal of how well
     the contract is pinned down (coverage / remaining ambiguity) so the clarify loop
     knows when to stop interrogating.

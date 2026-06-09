@@ -245,6 +245,21 @@ func TestClarificationQuestionFromSuggestionRequiresRecommendedAnswerAndConfiden
 	})
 }
 
+func TestRenderClarifierPromptProbesEdgeCases(t *testing.T) {
+	prompt := renderClarifierPrompt("run_20260101_000000")
+	// The dedicated edge-case probing section and its kind=edge_case tagging
+	// instruction must survive, so the prompt keeps inventing concrete boundary
+	// and failure scenarios rather than abstractly "considering edge cases".
+	for _, want := range []string{
+		"## Probe edge cases",
+		"kind=edge_case",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("clarifier prompt missing edge-case probing guidance %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestResolveClarifierDependsOn(t *testing.T) {
 	positionToID := map[int]string{
 		1: "q_001",
