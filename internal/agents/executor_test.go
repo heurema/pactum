@@ -172,7 +172,7 @@ func TestRunSubprocessCodexUsesTypedRunnerStdinAndEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunSubprocess returned error: %v", err)
 	}
-	if result.Command != "codex" || !sameStringSlice(result.Args, []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}) || result.ExitCode != 0 {
+	if result.ExitCode != 0 {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 	if runner.spec.Command != "codex" || !sameStringSlice(runner.spec.Args, []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}) {

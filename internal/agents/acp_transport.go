@@ -110,8 +110,6 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 	}
 
 	return RunResult{
-		Command:        adapterCmd,
-		Args:           append([]string{}, adapterArgs...),
 		ExitCode:       exitCode,
 		StartedAt:      started.Format(time.RFC3339Nano),
 		FinishedAt:     finished.Format(time.RFC3339Nano),

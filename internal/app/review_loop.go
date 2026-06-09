@@ -36,14 +36,8 @@ type reviewLoopOptions struct {
 	JSONOutput  bool
 }
 
-type reviewLoopLimits struct {
-	MaxRounds   int
-	Patience    int
-	CleanRounds int
-}
-
 type reviewLoopSettings struct {
-	Limits reviewLoopLimits
+	Limits reviewLimits
 	Budget reviewLoopBudget
 }
 
@@ -454,7 +448,7 @@ func (a App) resolveReviewLoopSettings(context reviewContext, options reviewLoop
 		return reviewLoopSettings{}, err
 	}
 	return reviewLoopSettings{
-		Limits: reviewLoopLimits{
+		Limits: reviewLimits{
 			MaxRounds:   maxRounds,
 			Patience:    patience,
 			CleanRounds: cleanRounds,
