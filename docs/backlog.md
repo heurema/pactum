@@ -20,11 +20,12 @@ reviews across M8–M10. Rough priority in parentheses.
   hang (bad). Surfaced in the M12.9 dogfood (claude silent ~30 min, finished cleanly, never
   killed). Fix: run the claude executor with `--output-format stream-json` (streams events
   → resets the idle timer, like codex), and/or arm the idle watchdog from process start.
-- **Workspace config leaks across runs/branches** (med). `executor_model` (and other
-  `agents.*` config) lives in the gitignored `.heurema/pactum/config.yaml`, which
-  persists across branches. An M10.2 `executor_model: claude-opus-4-8:xhigh` leaked
-  into M10.3 and broke a codex run (pactum passes model flags blind; codex rejected a
-  claude model). Consider warning on agent/model mismatch and/or scoping model pins.
+- **Workspace config leaks across runs/branches** — structurally resolved by the
+  M16.0 config redesign: model pins are per-agent entries (`execute.models` /
+  `review.panel`), so a pin can no longer reach a different agent (the M10.2
+  failure mode — a leaked claude pin breaking a codex run — is impossible by
+  construction), and `config.yaml` is version-controlled since M12.3 so it no
+  longer silently persists across branches.
 
 ## Review→fix loop (L3b and beyond)
 
@@ -282,8 +283,9 @@ reviews across M8–M10. Rough priority in parentheses.
   last-result write) so the agent subprocess still runs lock-free; concurrent reviewers
   share a synchronized live-output writer. Validated under `go test -race`. The N×
   per-round token cost is already bounded by the M12.2 budget stop. Deferred: an
-  agreement-count field and severity-threshold gating (require K reviewers); per-panel-
-  member model pins (all members share `agents.reviewer_model` today).
+  agreement-count field and severity-threshold gating (require K reviewers). Per-panel-
+  member model pins shipped later with the M16.0 config redesign (`review.panel`
+  entries carry their own `model`/`effort`).
 - Token accounting — slices 1-2 (M12.0, M12.1) — executor/fixer agents and read-stage
   reviewer/clarifier/drafter agents now run with structured output (`codex exec --json`
   / `claude -p --output-format json`, with read-stage Codex kept read-only); the

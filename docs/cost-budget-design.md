@@ -209,7 +209,9 @@ These read the same records; no schema change.
   the mode, `max_tokens`, and captured token total in `review/loop-summary.json`.
   `mode: warn` records a budget warning and continues. A single round may overshoot
   by its own calls because there is no pre-call estimation gate in this slice.
-  `max_usd` remains declared but unenforced until the cost layer exists.
+  (`max_usd` was later removed from the config as dead — the M16.0 config redesign
+  keeps only the enforced `review.budget.{mode, max_tokens}`; a USD ceiling can
+  return with the cost layer.)
 - **Estimation:** input is countable before a call (provider count-tokens endpoint /
   local tokenizer / `chars/4`); output is not (per-stage historical ratios from our own
   ledger + `max_tokens` ceiling); a loop total must model quadratic context growth and

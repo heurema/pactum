@@ -200,14 +200,13 @@ func (a App) prepareClarifier(context clarifyContext, reviewerName string) (clar
 	if err != nil {
 		return clarifierPreparation{}, err
 	}
-	clarifier, err := a.agentRegistry().ResolveReviewer(resolveClarifierName(context, reviewerName, config.Agents.CrossModelReview))
+	clarifier, err := a.agentRegistry().ResolveReviewer(resolveClarifierName(context, reviewerName))
 	if err != nil {
 		return clarifierPreparation{}, err
 	}
-	modelSpec, err := agents.ParseModelSpec(config.Agents.ReviewerModel)
-	if err != nil {
-		return clarifierPreparation{}, err
-	}
+	// The clarifier is a reviewer-role agent: it takes pins from its
+	// review.panel entry when present; an agent without an entry runs unpinned.
+	modelSpec := modelSpecFor(config.Review.Panel, clarifier.Name)
 	clarifier, err = agents.ApplyModelSpec(clarifier, modelSpec)
 	if err != nil {
 		return clarifierPreparation{}, err
@@ -224,8 +223,11 @@ func (a App) prepareClarifier(context clarifyContext, reviewerName string) (clar
 	}, nil
 }
 
-func resolveClarifierName(context clarifyContext, reviewerName string, crossModelReview bool) string {
-	if strings.TrimSpace(reviewerName) != "" || !crossModelReview {
+// resolveClarifierName picks the clarifier: an explicit name wins; otherwise
+// the cross-model default — the agent other than the run's executor — applies.
+// An empty result falls through to the registry default.
+func resolveClarifierName(context clarifyContext, reviewerName string) string {
+	if strings.TrimSpace(reviewerName) != "" {
 		return reviewerName
 	}
 	executorName, ok := latestExecutionExecutorName(reviewContext{

@@ -560,8 +560,7 @@ func TestReviewDryRunCrossModelReviewSelectsOppositeBuiltIn(t *testing.T) {
 	} {
 		t.Run(tc.executor, func(t *testing.T) {
 			root := t.TempDir()
-			app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-			setCrossModelReviewConfig(t, paths, true)
+			app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 			writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", mustResolveExecutorForTest(t, tc.executor))
 
 			var stdout, stderr bytes.Buffer
@@ -580,8 +579,7 @@ func TestReviewDryRunCrossModelReviewSelectsOppositeBuiltIn(t *testing.T) {
 
 func TestReviewDryRunCrossModelReviewExplicitReviewerWins(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	setCrossModelReviewConfig(t, paths, true)
+	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", mustResolveExecutorForTest(t, agents.BuiltinCodex))
 
 	var stdout, stderr bytes.Buffer
@@ -600,7 +598,6 @@ func TestReviewDryRunCrossModelReviewFallsBackWhenExecutorUnknown(t *testing.T) 
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	app = configureHelperReviewers(t, app, paths, "helper", "helper")
-	setCrossModelReviewConfig(t, paths, true)
 
 	runReviewCommand(t, app, "review", "dry-run", runID)
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
@@ -613,7 +610,6 @@ func TestReviewDryRunCrossModelReviewFallsBackForNonBuiltInExecutor(t *testing.T
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	app = configureHelperReviewers(t, app, paths, "helper", "helper")
-	setCrossModelReviewConfig(t, paths, true)
 	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", helperAgentDescriptor("helper"))
 
 	runReviewCommand(t, app, "review", "dry-run", runID)
@@ -648,10 +644,13 @@ func TestReviewDryRunExplicitReviewers(t *testing.T) {
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, reviewerPromptArtifact, runArtifactRepoRel(runID, reviewerPromptArtifact))
 }
 
-func TestReviewDryRunAppliesReviewerModelConfigToCodex(t *testing.T) {
+func TestReviewDryRunAppliesPanelEntryPinToCodex(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	setReviewerModelConfig(t, paths, "gpt-5:high")
+	setReviewPanelPinsConfig(t, paths,
+		agentModelEntry{Agent: "codex", Model: "gpt-5", Effort: "high"},
+		agentModelEntry{Agent: "claude"},
+	)
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"review", "dry-run", runID, "--reviewer", "codex"}, &stdout, &stderr)
@@ -667,12 +666,27 @@ func TestReviewDryRunAppliesReviewerModelConfigToCodex(t *testing.T) {
 		t.Fatalf("codex reviewer stdin = %q", plan.WouldRun.Stdin)
 	}
 	assertResolvedBlock(t, stdout.String(), "codex", "gpt-5", "high", "pinned")
+
+	// The pin is per panel member: the other member has no model/effort in its
+	// entry, so it runs unpinned.
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"review", "dry-run", runID, "--reviewer", "claude"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review dry-run claude exited %d, stderr: %s", code, stderr.String())
+	}
+	plan = readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
+	wantArgs = []string{"-p", "--output-format", "json"}
+	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
+		t.Fatalf("claude reviewer would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
+	}
+	assertResolvedBlock(t, stdout.String(), "claude", "inherit", "inherit", "inherit")
 }
 
-func TestReviewDryRunAppliesReviewerModelConfigToClaude(t *testing.T) {
+func TestReviewDryRunAppliesPanelEntryPinToClaude(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	setReviewerModelConfig(t, paths, "claude-sonnet-4:high")
+	setReviewPanelPinsConfig(t, paths, agentModelEntry{Agent: "claude", Model: "claude-sonnet-4", Effort: "high"})
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"review", "dry-run", runID, "--reviewer", "claude"}, &stdout, &stderr)
@@ -1235,7 +1249,7 @@ func TestReviewFixDryRunArtifactsUseWriteEnabledExecutorAndPrompt(t *testing.T) 
 		t.Run(tc.agent, func(t *testing.T) {
 			root := t.TempDir()
 			app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-			setExecutorModelConfig(t, paths, "gpt-5:high")
+			setExecutorModelsConfig(t, paths, agentModelEntry{Agent: tc.agent, Model: "gpt-5", Effort: "high"})
 			runReviewCommand(t, app, "review", "add-finding", runID, "Fix prompt should include accepted review finding", "--file", "internal/app/review.go", "--line", "42", "--blocking", "--category", "correctness")
 
 			var stdout bytes.Buffer
@@ -1440,7 +1454,7 @@ func TestReviewFixStreamsLiveOutputToStderr(t *testing.T) {
 func TestReviewFixResolvedBlockShowsExecutorModel(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	setExecutorModelConfig(t, paths, "gpt-5:high")
+	setExecutorModelsConfig(t, paths, agentModelEntry{Agent: "codex", Model: "gpt-5", Effort: "high"})
 	runReviewCommand(t, app, "review", "add-finding", runID, "model pinning should be visible")
 	t.Setenv("PACTUM_FIXER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_FIXER_EXPECTED_CWD", root)
@@ -2085,27 +2099,19 @@ func setupApprovedPreparedReview(t *testing.T, root string, gateStatus string) (
 	return app, paths, runID, runPaths
 }
 
-func setReviewerModelConfig(t *testing.T, paths artifacts.Paths, modelSpec string) {
+func setReviewPanelPinsConfig(t *testing.T, paths artifacts.Paths, entries ...agentModelEntry) {
 	t.Helper()
 	config, err := readConfig(paths.Config)
 	assertNoError(t, err)
-	config.Agents.ReviewerModel = modelSpec
+	config.Review.Panel = append([]agentModelEntry{}, entries...)
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 
-func setExecutorModelConfig(t *testing.T, paths artifacts.Paths, modelSpec string) {
+func setExecutorModelsConfig(t *testing.T, paths artifacts.Paths, entries ...agentModelEntry) {
 	t.Helper()
 	config, err := readConfig(paths.Config)
 	assertNoError(t, err)
-	config.Agents.ExecutorModel = modelSpec
-	assertNoError(t, writeYAML(paths.Config, config))
-}
-
-func setCrossModelReviewConfig(t *testing.T, paths artifacts.Paths, enabled bool) {
-	t.Helper()
-	config, err := readConfig(paths.Config)
-	assertNoError(t, err)
-	config.Agents.CrossModelReview = enabled
+	config.Execute.Models = append([]agentModelEntry{}, entries...)
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 

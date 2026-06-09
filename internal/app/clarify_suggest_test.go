@@ -39,7 +39,6 @@ func TestClarifySuggestRunsClarifierAndRecordsOpenQuestions(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	readmeBefore := mustReadFile(t, filepath.Join(root, "README.md"))
 
-	setCrossModelReviewConfig(t, paths, true)
 	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", mustResolveExecutorForTest(t, agents.BuiltinCodex))
 	app = configureHelperClarifiers(app, agents.BuiltinCodex, agents.BuiltinClaude)
 

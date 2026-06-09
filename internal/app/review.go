@@ -591,14 +591,13 @@ func (a App) prepareReviewer(context reviewContext, reviewerName string, action 
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
-	reviewer, err := a.agentRegistry().ResolveReviewer(resolveReviewerNameForReview(context, reviewerName, config.Agents.CrossModelReview))
+	reviewer, err := a.agentRegistry().ResolveReviewer(resolveReviewerNameForReview(context, reviewerName))
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
-	modelSpec, err := agents.ParseModelSpec(config.Agents.ReviewerModel)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
+	// The resolved reviewer takes pins from its review.panel entry when
+	// present; an agent without an entry runs unpinned.
+	modelSpec := modelSpecFor(config.Review.Panel, reviewer.Name)
 	reviewer, err = agents.ApplyModelSpec(reviewer, modelSpec)
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
@@ -667,8 +666,11 @@ func (a App) prepareReviewerForAgent(context reviewContext, reviewer agents.Agen
 	}, nil
 }
 
-func resolveReviewerNameForReview(context reviewContext, reviewerName string, crossModelReview bool) string {
-	if strings.TrimSpace(reviewerName) != "" || !crossModelReview {
+// resolveReviewerNameForReview picks the reviewer for a run: an explicit name
+// wins; otherwise the cross-model default — the agent other than the run's
+// executor — applies. An empty result falls through to the registry default.
+func resolveReviewerNameForReview(context reviewContext, reviewerName string) string {
+	if strings.TrimSpace(reviewerName) != "" {
 		return reviewerName
 	}
 	executorName, ok := latestExecutionExecutorName(context)

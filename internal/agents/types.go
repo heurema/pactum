@@ -6,18 +6,6 @@ import (
 	"time"
 )
 
-type AgentConfig struct {
-	CrossModelReview bool     `json:"cross_model_review,omitempty" yaml:"cross_model_review,omitempty"`
-	ReviewPanel      []string `json:"review_panel,omitempty" yaml:"review_panel,omitempty"`
-	// ExecutorModel and ReviewerModel pin the per-stage model[:effort] (empty =
-	// inherit the agent CLI's own config).
-	ExecutorModel string `json:"executor_model,omitempty" yaml:"executor_model,omitempty"`
-	ReviewerModel string `json:"reviewer_model,omitempty" yaml:"reviewer_model,omitempty"`
-	// Transport selects how agents are executed: "" or "cli" runs the one-shot
-	// agent CLI (default); "acp" drives the agent over the Agent Client Protocol.
-	Transport string `json:"transport,omitempty" yaml:"transport,omitempty"`
-}
-
 type AgentDescriptor struct {
 	Name    string   `json:"name"`
 	Command string   `json:"command"`

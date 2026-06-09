@@ -74,25 +74,25 @@ func helper() {}
 	if config.Schema != "pactum.config.v1" {
 		t.Fatalf("config schema = %q, want pactum.config.v1", config.Schema)
 	}
-	if config.ProjectMap.MaxFileBytes != 500000 {
-		t.Fatalf("config project_map.max_file_bytes = %d, want 500000", config.ProjectMap.MaxFileBytes)
+	if config.Map.MaxFileBytes != 500000 {
+		t.Fatalf("config map.max_file_bytes = %d, want 500000", config.Map.MaxFileBytes)
 	}
-	if config.ProjectMap.CodeIndex != codeindex.ModeAuto {
-		t.Fatalf("config project_map.code_index = %q, want auto", config.ProjectMap.CodeIndex)
+	if config.Map.CodeIndex != codeindex.ModeAuto {
+		t.Fatalf("config map.code_index = %q, want auto", config.Map.CodeIndex)
 	}
 	if config.Gate.ScopeEnforcement != gateScopeEnforcementBlock {
 		t.Fatalf("config gate.scope_enforcement = %q, want block", config.Gate.ScopeEnforcement)
 	}
-	if config.Budget.Mode != budgetModeBlock || config.Budget.MaxTokens != nil {
-		t.Fatalf("config budget mismatch: %#v", config.Budget)
+	if config.Review.Budget.Mode != budgetModeBlock || config.Review.Budget.MaxTokens != nil {
+		t.Fatalf("config review.budget mismatch: %#v", config.Review.Budget)
 	}
 	configYAML := mustReadFile(t, paths.Config)
-	for _, want := range []string{"gate:", "scope_enforcement: block", "budget:", "mode: block", "max_tokens:"} {
+	for _, want := range []string{"map:", "gate:", "scope_enforcement: block", "execute:", "models: []", "review:", "budget:", "mode: block", "max_tokens:", "panel: []"} {
 		if !strings.Contains(configYAML, want) {
 			t.Fatalf("config.yaml missing %q:\n%s", want, configYAML)
 		}
 	}
-	for _, forbidden := range []string{"agents:", "adapters:", "default_executor:", "default_reviewer:", "include_go_ast", "tree_sitter", "tree_sitter_languages", "entrypoints"} {
+	for _, forbidden := range []string{"agents:", "adapters:", "default_executor:", "default_reviewer:", "include_go_ast", "tree_sitter", "tree_sitter_languages", "entrypoints", "default_profile:", "project_map:", "limits:", "memory:", "max_usd"} {
 		if strings.Contains(configYAML, forbidden) {
 			t.Fatalf("config.yaml should not contain %q:\n%s", forbidden, configYAML)
 		}
@@ -368,24 +368,27 @@ func TestReadConfigNormalizesBudgetMode(t *testing.T) {
 		{
 			name: "empty",
 			content: `schema: pactum.config.v1
-budget:
-  mode: ""
+review:
+  budget:
+    mode: ""
 `,
 			want: budgetModeBlock,
 		},
 		{
 			name: "block",
 			content: `schema: pactum.config.v1
-budget:
-  mode: block
+review:
+  budget:
+    mode: block
 `,
 			want: budgetModeBlock,
 		},
 		{
 			name: "warn",
 			content: `schema: pactum.config.v1
-budget:
-  mode: warn
+review:
+  budget:
+    mode: warn
 `,
 			want: budgetModeWarn,
 		},
@@ -395,8 +398,8 @@ budget:
 			mustWriteFile(t, paths.Config, tt.content)
 			config, err := readConfig(paths.Config)
 			assertNoError(t, err)
-			if config.Budget.Mode != tt.want {
-				t.Fatalf("budget.mode = %q, want %q", config.Budget.Mode, tt.want)
+			if config.Review.Budget.Mode != tt.want {
+				t.Fatalf("review.budget.mode = %q, want %q", config.Review.Budget.Mode, tt.want)
 			}
 		})
 	}
@@ -407,16 +410,17 @@ func TestReadConfigRejectsInvalidBudgetMode(t *testing.T) {
 	paths := artifacts.New(root)
 	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
 	mustWriteFile(t, paths.Config, `schema: pactum.config.v1
-budget:
-  mode: advisory
+review:
+  budget:
+    mode: advisory
 `)
 
 	_, err := readConfig(paths.Config)
 	if err == nil {
-		t.Fatalf("readConfig should reject invalid budget.mode")
+		t.Fatalf("readConfig should reject invalid review.budget.mode")
 	}
-	if !strings.Contains(err.Error(), "budget.mode") {
-		t.Fatalf("invalid budget.mode error mismatch: %v", err)
+	if !strings.Contains(err.Error(), "review.budget.mode") {
+		t.Fatalf("invalid review.budget.mode error mismatch: %v", err)
 	}
 }
 
@@ -425,7 +429,7 @@ func TestInitUsesConfigMaxFileBytesAndManifestWarnings(t *testing.T) {
 	paths := artifacts.New(root)
 	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
 	config := defaultConfigFile()
-	config.ProjectMap.MaxFileBytes = 64
+	config.Map.MaxFileBytes = 64
 	assertNoError(t, writeYAML(paths.Config, config))
 	mustWriteFile(t, filepath.Join(root, "small.go"), "package small\n")
 	mustWriteFile(t, filepath.Join(root, "large.go"), "package large\n"+strings.Repeat("x", 128))
@@ -466,7 +470,7 @@ func TestInitCodeIndexOffDisablesCodeItemExtraction(t *testing.T) {
 	paths := artifacts.New(root)
 	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
 	config := defaultConfigFile()
-	config.ProjectMap.CodeIndex = codeindex.ModeOff
+	config.Map.CodeIndex = codeindex.ModeOff
 	assertNoError(t, writeYAML(paths.Config, config))
 	mustWriteFile(t, filepath.Join(root, "main.go"), `package main
 
@@ -626,7 +630,7 @@ func TestStatusReportsMissingArtifactAndConfigChange(t *testing.T) {
 	assertNoError(t, os.Remove(paths.SearchSQLite))
 	config, err := readConfig(paths.Config)
 	assertNoError(t, err)
-	config.ProjectMap.MaxFileBytes = 123
+	config.Map.MaxFileBytes = 123
 	assertNoError(t, writeYAML(paths.Config, config))
 
 	stdout.Reset()
@@ -2121,7 +2125,7 @@ func TestMapRefreshRunIDsAreCollisionSafe(t *testing.T) {
 	paths := artifacts.New(root)
 	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
 	config := defaultConfigFile()
-	config.ProjectMap.MaxFileBytes = 64
+	config.Map.MaxFileBytes = 64
 	assertNoError(t, writeYAML(paths.Config, config))
 	mustWriteFile(t, filepath.Join(root, "small.go"), "package small\n")
 	mustWriteFile(t, filepath.Join(root, "large.go"), "package large\n"+strings.Repeat("x", 128))

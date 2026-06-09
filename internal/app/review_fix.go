@@ -174,10 +174,9 @@ func (a App) prepareReviewFixer(context reviewContext, agentName string) (review
 	if err != nil {
 		return reviewFixPreparation{}, err
 	}
-	modelSpec, err := agents.ParseModelSpec(config.Agents.ExecutorModel)
-	if err != nil {
-		return reviewFixPreparation{}, err
-	}
+	// The fixer is an executor-stage agent: its pin comes from its
+	// execute.models entry; an agent without an entry runs unpinned.
+	modelSpec := modelSpecFor(config.Execute.Models, fixer.Name)
 	fixer, err = agents.ApplyModelSpec(fixer, modelSpec)
 	if err != nil {
 		return reviewFixPreparation{}, err

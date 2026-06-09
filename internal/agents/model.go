@@ -2,30 +2,11 @@ package agents
 
 import (
 	"fmt"
-	"strings"
 )
 
 type ModelSpec struct {
 	Model  string
 	Effort string
-}
-
-func ParseModelSpec(raw string) (ModelSpec, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ModelSpec{}, nil
-	}
-
-	parts := strings.Split(raw, ":")
-	if len(parts) > 2 {
-		return ModelSpec{}, fmt.Errorf("invalid model spec %q: expected model[:effort]", raw)
-	}
-
-	spec := ModelSpec{Model: strings.TrimSpace(parts[0])}
-	if len(parts) == 2 {
-		spec.Effort = strings.TrimSpace(parts[1])
-	}
-	return spec, nil
 }
 
 func ApplyModelSpec(agent AgentDescriptor, spec ModelSpec) (AgentDescriptor, error) {
