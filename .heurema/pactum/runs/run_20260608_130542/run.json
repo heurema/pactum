@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260608_130542",
+  "status": "contract_approved",
+  "task": "Review-loop convergence slice 2: severity-gated convergence (terminal resolved when no open blocking findings; non-blocking are advisory)",
+  "created_at": "2026-06-08T13:05:42.797565Z",
+  "updated_at": "2026-06-08T13:06:45.223938Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260608_130542",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

@@ -1,0 +1,12 @@
+{"schema":"pactum.review_proposal_decision.v1","id":"pd_001","run_id":"run_20260608_031816","proposal_id":"p_001","decision":"accepted","finding_id":"f_001","created_at":"2026-06-08T04:24:27Z","source":"manual"}
+{"schema":"pactum.review_proposal_decision.v1","id":"pd_002","run_id":"run_20260608_031816","proposal_id":"p_002","decision":"accepted","finding_id":"f_002","created_at":"2026-06-08T04:24:27Z","source":"manual"}
+{"schema":"pactum.review_proposal_decision.v1","id":"pd_003","run_id":"run_20260608_031816","proposal_id":"p_003","decision":"accepted","finding_id":"f_003","created_at":"2026-06-08T04:24:27Z","source":"manual"}
+{"schema":"pactum.review_proposal_decision.v1","id":"pd_004","run_id":"run_20260608_031816","proposal_id":"p_004","decision":"accepted","finding_id":"f_004","created_at":"2026-06-08T04:24:27Z","source":"manual"}
+{"schema":"pactum.review_proposal_decision.v1","id":"pd_005","run_id":"run_20260608_031816","proposal_id":"p_005","decision":"accepted","finding_id":"f_005","created_at":"2026-06-08T04:39:41Z","source":"manual"}
+{"schema":"pactum.review_proposal_decision.v1","id":"pd_006","run_id":"run_20260608_031816","proposal_id":"p_006","decision":"accepted","finding_id":"f_006","created_at":"2026-06-08T04:39:41Z","source":"manual"}
+{"schema":"pactum.review_proposal_decision.v1","id":"pd_007","run_id":"run_20260608_031816","proposal_id":"p_007","decision":"accepted","finding_id":"f_007","created_at":"2026-06-08T04:39:41Z","source":"manual"}
+{"schema":"pactum.review_proposal_decision.v1","id":"pd_008","run_id":"run_20260608_031816","proposal_id":"p_008","decision":"accepted","finding_id":"f_008","created_at":"2026-06-08T04:58:18Z","source":"manual"}
+{"schema":"pactum.review_proposal_decision.v1","id":"pd_009","run_id":"run_20260608_031816","proposal_id":"p_009","decision":"accepted","finding_id":"f_009","created_at":"2026-06-08T04:58:18Z","source":"manual"}
+{"schema":"pactum.review_proposal_decision.v1","id":"pd_010","run_id":"run_20260608_031816","proposal_id":"p_010","decision":"accepted","finding_id":"f_010","created_at":"2026-06-08T04:58:18Z","source":"manual"}
+{"schema":"pactum.review_proposal_decision.v1","id":"pd_011","run_id":"run_20260608_031816","proposal_id":"p_011","decision":"accepted","finding_id":"f_011","created_at":"2026-06-08T05:13:55Z","source":"manual"}
+{"schema":"pactum.review_proposal_decision.v1","id":"pd_012","run_id":"run_20260608_031816","proposal_id":"p_012","decision":"accepted","finding_id":"f_012","created_at":"2026-06-08T05:13:55Z","source":"manual"}

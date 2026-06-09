@@ -1,0 +1,49 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260608_121654",
+  "status": "approved",
+  "goal": "Make the fixer report a structured, parsed per-finding outcome so the autonomous review loop can RESOLVE findings (resolve-on-fix). Today reviewFixResultDocument is only exit-code/timing, so the loop never knows which findings were fixed and open_findings only grows. After this slice the fixer emits a fenced JSON outcomes block, pactum parses it (decoupled and best-effort, mirroring review propose-findings), and applies resolutions: fixed and rebutted findings become resolved (open set shrinks), blocked stays open. This is the foundation for severity-gated convergence (a later slice); loop TERMINAL conditions are NOT changed here.",
+  "scope": {
+    "in": [
+      "Fixer output schema + prompt: extend renderReviewFixPrompt (internal/app/review_fix.go) to REQUIRE the fixer to emit exactly one fenced ```json block of shape {\"schema\":\"pactum.review_fix_outcomes.v1\",\"outcomes\":[{\"finding_id\":\"f3\",\"outcome\":\"fixed|rebutted|blocked\",\"note\":\"...\"}]}, one entry per open finding it was given. Keep the existing fix instructions (fix valid findings, rebut false positives with a concrete rebuttal, do not edit .heurema, etc.).",
+      "Resolution record: add an Outcome string field to reviewResolutionRecord (values \"fixed\" or \"rebutted\"; empty for the existing manual review resolve path) so rebutted (false-positive) resolutions are distinguishable for dedup. Additive, no other schema change.",
+      "Parser + apply command: add review apply-fix-outcomes [run_id] [fixer_attempt_id] mirroring review propose-findings — read the fixer attempt stdout.log, parse the fenced outcomes block with a parseReviewFixOutcomes helper built on the existing extractFencedJSONBlocks/agentMessageText, and for each outcome on a currently-OPEN finding: fixed -\u003e append a resolution (Outcome fixed, Source review_fix); rebutted -\u003e append a resolution (Outcome rebutted, Note=the rebuttal, Source review_fix); blocked -\u003e no resolution (stays open). Best-effort: an unparseable or missing block yields warnings and NEVER errors; outcomes referencing unknown or already-resolved finding ids are skipped with a warning. Support --json.",
+      "Loop integration: after runReviewLoopFixRound, call a new applyReviewLoopFixOutcomes(runID, fixResult.AttemptID) (mirroring runReviewLoopProposeFindings) and record per-round resolved/rebutted/blocked counts on the round summary; the round open_findings reflects the post-resolution live open count. The loop must tolerate a fixer that emits no parseable outcomes (no resolutions, a warning, loop continues) — existing stub-fixer loop tests keep passing unchanged.",
+      "Dedup vs resolved-rebutted: in the loop proposal-accept dedup, a re-proposal whose (file,line,message) fingerprint matches a finding that was resolved with Outcome rebutted records a duplicate proposal-decision and is NOT re-accepted (suppress re-raised false positives). Re-proposals matching a fixed-resolved or manually-resolved finding keep the current behavior (re-accepted, since a re-raise may mean the fix did not hold)."
+    ],
+    "out": [
+      "Severity-gated convergence, new terminal reasons (resolved), fixer-only-on-blocking, treating low findings as advisory — all the NEXT slice. Do not change existing loop terminal conditions (clean_round, stalemate, max_rounds, gate_failed, budget_exceeded) or their thresholds.",
+      "The reviewer prompt / meta-churn (a later slice); changing the fixer agent/model/least-privilege; the reviewer panel; gate logic; native LLM API.",
+      "Feeding the rebuttal back to the reviewer (the rebuttal-channel backlog item) — here a rebutted finding is just resolved+suppressed, not re-sent to the reviewer."
+    ]
+  },
+  "paths_in_scope": [
+    "internal/app/*.go",
+    "docs/*.md"
+  ],
+  "acceptance_criteria": [
+    "The fixer emits and pactum parses the outcomes block; review apply-fix-outcomes resolves fixed and rebutted findings and leaves blocked open; a malformed or absent block produces a warning and no error (run still succeeds).",
+    "In the loop, open_findings shrinks as the fixer resolves findings: a round where every accepted finding is fixed leads to a subsequent reviewer round that converges via the EXISTING terminals (clean_round or stalemate), not max_rounds.",
+    "A re-proposed finding that was resolved as rebutted is suppressed (duplicate decision, no new finding); a re-proposed finding that was resolved as fixed is re-accepted.",
+    "make check (incl. deadcode + git diff --check) and make test-race pass; pre-existing review-loop tests (whose stub fixer emits no outcomes) pass unchanged because parsing is best-effort and additive."
+  ],
+  "validation": {
+    "commands": [
+      "make build",
+      "make check",
+      "make test-race"
+    ]
+  },
+  "assumptions": [
+    "Mirror the existing reviewer propose-findings decouple: parse the agent stdout best-effort via extractFencedJSONBlocks/agentMessageText; never fuse run+parse so a non-zero exit cannot discard valid output.",
+    "The resolution mechanism (resolutions.jsonl, finding status derived as resolved when a resolution exists) already exists and is reused; the new Outcome field is additive.",
+    "No backward-compatibility constraints; additive schema/summary fields are free."
+  ],
+  "open_questions": [],
+  "clarifications": {
+    "questions": []
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}

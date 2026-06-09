@@ -1,0 +1,37 @@
+{
+  "schema": "pactum.reviewer_request.v1",
+  "run_id": "run_20260608_031816",
+  "attempt_id": "reviewer_attempt_005",
+  "created_at": "2026-06-08T04:50:53Z",
+  "reviewer": {
+    "name": "codex",
+    "command": "codex",
+    "args": [
+      "exec",
+      "--json",
+      "--sandbox",
+      "read-only"
+    ],
+    "input": "prompt_file"
+  },
+  "artifacts": {
+    "reviewer_prompt": "review/reviewer-prompt.md",
+    "reviewer_context": "review/reviewer-context.md",
+    "review": "review/review.json",
+    "findings": "review/findings.jsonl",
+    "resolutions": "review/resolutions.jsonl",
+    "proposals": "review/proposals.jsonl",
+    "proposal_decisions": "review/proposal-decisions.jsonl",
+    "gate_report": "gate/gate-report.json"
+  },
+  "would_run": {
+    "command": "codex",
+    "args": [
+      "exec",
+      "--json",
+      "--sandbox",
+      "read-only"
+    ],
+    "stdin": ".heurema/pactum/runs/run_20260608_031816/review/reviewer-prompt.md"
+  }
+}

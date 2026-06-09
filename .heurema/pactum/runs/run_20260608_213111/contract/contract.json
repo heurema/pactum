@@ -1,0 +1,29 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260608_213111",
+  "status": "approved",
+  "goal": "Create a new file docs/acp-smoke.md containing exactly one line of text: ACP transport smoke test ok. Do not modify any other files.",
+  "scope": {
+    "in": [
+      "Create docs/acp-smoke.md with the single specified line."
+    ],
+    "out": []
+  },
+  "paths_in_scope": [
+    "docs/*.md"
+  ],
+  "acceptance_criteria": [
+    "docs/acp-smoke.md exists with the one specified line."
+  ],
+  "validation": {
+    "commands": []
+  },
+  "assumptions": [],
+  "open_questions": [],
+  "clarifications": {
+    "questions": []
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}

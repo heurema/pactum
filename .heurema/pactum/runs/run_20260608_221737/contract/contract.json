@@ -1,0 +1,29 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260608_221737",
+  "status": "approved",
+  "goal": "Create two files. First, docs/acp-gate-inscope.md with one line: in scope ok. Second, internal/acp-gate-denied.txt with one line: should be denied. Create both files; report which succeeded.",
+  "scope": {
+    "in": [
+      "docs/acp-gate-inscope.md"
+    ],
+    "out": []
+  },
+  "paths_in_scope": [
+    "docs/*.md"
+  ],
+  "acceptance_criteria": [
+    "docs/acp-gate-inscope.md created."
+  ],
+  "validation": {
+    "commands": []
+  },
+  "assumptions": [],
+  "open_questions": [],
+  "clarifications": {
+    "questions": []
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "schema": "pactum.review_loop.v1",
+  "run_id": "run_20260608_031816",
+  "started_at": "2026-06-08T04:16:45Z",
+  "finished_at": "2026-06-08T05:19:18Z",
+  "reviewer": "codex,claude",
+  "reviewers": [
+    "codex",
+    "claude"
+  ],
+  "agent": "codex",
+  "max_rounds": 4,
+  "stalemate_patience": 2,
+  "clean_rounds_required": 1,
+  "terminal_reason": "max_rounds",
+  "rounds": [
+    {
+      "round": 1,
+      "reviewer_attempt_id": "reviewer_attempt_002",
+      "reviewer_attempt_ids": [
+        "reviewer_attempt_002",
+        "reviewer_attempt_001"
+      ],
+      "proposals_created": 4,
+      "proposals_accepted": 4,
+      "open_findings": 4,
+      "clean_streak": 0,
+      "unchanged_fingerprint_streak": 0,
+      "working_tree_fingerprint": "2f6b0129d93b5f93e775341a3795534b907e6a2b60ae43158a8d4274f7712f71",
+      "fixer_attempt_id": "attempt_001",
+      "gate_status": "needs_review",
+      "gate_report_artifact": "gate/gate-report.json"
+    },
+    {
+      "round": 2,
+      "reviewer_attempt_id": "reviewer_attempt_003",
+      "reviewer_attempt_ids": [
+        "reviewer_attempt_003",
+        "reviewer_attempt_004"
+      ],
+      "proposals_created": 3,
+      "proposals_accepted": 3,
+      "open_findings": 7,
+      "clean_streak": 0,
+      "unchanged_fingerprint_streak": 0,
+      "working_tree_fingerprint": "096439f255b6bc2c9f048cfd4c0c5a8a04bd5256f84ce33b7a68fc71b14ed55a",
+      "fixer_attempt_id": "attempt_002",
+      "gate_status": "needs_review",
+      "gate_report_artifact": "gate/gate-report.json"
+    },
+    {
+      "round": 3,
+      "reviewer_attempt_id": "reviewer_attempt_005",
+      "reviewer_attempt_ids": [
+        "reviewer_attempt_005",
+        "reviewer_attempt_006"
+      ],
+      "proposals_created": 3,
+      "proposals_accepted": 3,
+      "open_findings": 10,
+      "clean_streak": 0,
+      "unchanged_fingerprint_streak": 0,
+      "working_tree_fingerprint": "fb45dd8a7762f7cdf421413210f6735131a5592d3d7857e62099249b45b1da0e",
+      "fixer_attempt_id": "attempt_003",
+      "gate_status": "needs_review",
+      "gate_report_artifact": "gate/gate-report.json"
+    },
+    {
+      "round": 4,
+      "reviewer_attempt_id": "reviewer_attempt_008",
+      "reviewer_attempt_ids": [
+        "reviewer_attempt_008",
+        "reviewer_attempt_007"
+      ],
+      "proposals_created": 2,
+      "proposals_accepted": 2,
+      "open_findings": 12,
+      "clean_streak": 0,
+      "unchanged_fingerprint_streak": 1,
+      "working_tree_fingerprint": "fb45dd8a7762f7cdf421413210f6735131a5592d3d7857e62099249b45b1da0e",
+      "fixer_attempt_id": "attempt_004",
+      "gate_status": "needs_review",
+      "gate_report_artifact": "gate/gate-report.json"
+    }
+  ],
+  "artifacts": {
+    "summary": "review/loop-summary.json"
+  }
+}
