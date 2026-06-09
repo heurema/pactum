@@ -102,12 +102,27 @@ reviews across M8–M10. Rough priority in parentheses.
   (dead-end — report "no additions" instead); re-running `contract draft` after accept
   clobbers the accepted proposal's audit fields; `accept-draft` hardcodes
   `accepted_by:"manual"` (no `--by`).
-- **Sharper clarify questioning** (med). The `clarify suggest` prompt currently
-  produces soft, surface-level questions. Strengthen it to interrogate the
-  requester adversarially — probe hidden assumptions, force concrete acceptance
-  criteria, surface edge cases, and push back on vague answers — so the resulting
-  contract is precise rather than agreeable. A "grill the requester" questioning
-  style, not a polite checklist.
+- **Sharper clarify questioning** (med). Strengthen `clarify suggest` from a soft,
+  surface-level checklist into a "grill the requester" interrogation, sliced after
+  the grill-me principles so the resulting contract is precise rather than agreeable.
+  - **Slice 1 — recommended answers + explore-first** (M15.0, shipped). Every
+    proposed question now carries a concrete `recommended_answer` plus a
+    `confidence` (high|medium|low), so the human confirms/adjusts a recommendation
+    instead of authoring an answer from scratch; the prompt enforces explore-first
+    discipline — resolve each candidate from the contract/repo/search first and fold
+    repo-answerable findings into the rationale and recommended answer, escalating
+    only questions that genuinely need a human decision. (Recommendation is captured
+    and displayed only; confidence-gated auto-resolve is a later slice.)
+  - **Slice 2 — dependency-ordered questioning** (todo). Let the clarifier express
+    `depends_on` between questions and order/gate them so foundational decisions are
+    settled before the questions they constrain.
+  - **Slice 3 — terminology / domain challenge** (todo). Push back on vague or
+    overloaded domain terms, forcing the requester to pin down concrete meanings.
+  - **Slice 4 — edge-case probing** (todo). Systematically surface boundary
+    conditions, failure modes, and "what about X" cases the requester left implicit.
+  - **Slice 5 — coverage / convergence signal** (todo). Emit a signal of how well
+    the contract is pinned down (coverage / remaining ambiguity) so the clarify loop
+    knows when to stop interrogating.
 
 ## Hardening / cleanup
 

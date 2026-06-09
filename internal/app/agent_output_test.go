@@ -55,7 +55,7 @@ func TestReadStageParsersExtractFromJSONWrappedAgentOutput(t *testing.T) {
 	}
 
 	clarifierBlocks, clarifierWarnings := parseClarifierSuggestionBlocks(claudeResultOutputForTest(t, clarifierStructuredOutput([]map[string]any{
-		{"text": "Wrapped question?", "blocking": true, "rationale": "Wrapped rationale."},
+		{"text": "Wrapped question?", "blocking": true, "rationale": "Wrapped rationale.", "recommended_answer": "Wrapped recommendation.", "confidence": "low"},
 	})))
 	if len(clarifierWarnings) != 0 || len(clarifierBlocks) != 1 || len(clarifierBlocks[0].Questions) != 1 {
 		t.Fatalf("wrapped clarifier parse mismatch: blocks=%#v warnings=%#v", clarifierBlocks, clarifierWarnings)

@@ -26,6 +26,8 @@ type clarificationQuestionRecord struct {
 	Question           string    `json:"question"`
 	Blocking           bool      `json:"blocking"`
 	Rationale          string    `json:"rationale,omitempty"`
+	RecommendedAnswer  string    `json:"recommended_answer,omitempty"`
+	Confidence         string    `json:"confidence,omitempty"`
 	Status             string    `json:"status"`
 	CreatedAt          time.Time `json:"created_at"`
 	Source             string    `json:"source"`
@@ -57,12 +59,14 @@ type contractClarifySet struct {
 }
 
 type clarifyQuestionStatus struct {
-	ID        string `json:"id"`
-	Question  string `json:"question"`
-	Blocking  bool   `json:"blocking"`
-	Rationale string `json:"rationale,omitempty"`
-	Status    string `json:"status"`
-	Answer    string `json:"answer,omitempty"`
+	ID                string `json:"id"`
+	Question          string `json:"question"`
+	Blocking          bool   `json:"blocking"`
+	Rationale         string `json:"rationale,omitempty"`
+	RecommendedAnswer string `json:"recommended_answer,omitempty"`
+	Confidence        string `json:"confidence,omitempty"`
+	Status            string `json:"status"`
+	Answer            string `json:"answer,omitempty"`
 }
 
 type clarifyStatusResponse struct {
@@ -288,12 +292,14 @@ func buildClarificationStatus(runPaths contractRunPathSet, state contractRunStat
 			}
 		}
 		response.Questions = append(response.Questions, clarifyQuestionStatus{
-			ID:        question.ID,
-			Question:  question.Question,
-			Blocking:  question.Blocking,
-			Rationale: question.Rationale,
-			Status:    questionStatus,
-			Answer:    answerText,
+			ID:                question.ID,
+			Question:          question.Question,
+			Blocking:          question.Blocking,
+			Rationale:         question.Rationale,
+			RecommendedAnswer: question.RecommendedAnswer,
+			Confidence:        question.Confidence,
+			Status:            questionStatus,
+			Answer:            answerText,
 		})
 	}
 	response.Total = len(response.Questions)
@@ -465,6 +471,13 @@ func writeClarifyStatus(stdout io.Writer, status clarifyStatusResponse) {
 				blocking = " [blocking]"
 			}
 			fmt.Fprintf(stdout, "  - %s%s %s\n", question.ID, blocking, question.Question)
+			if question.RecommendedAnswer != "" {
+				confidence := question.Confidence
+				if confidence == "" {
+					confidence = "unknown"
+				}
+				fmt.Fprintf(stdout, "    recommended answer (confidence %s): %s\n", confidence, question.RecommendedAnswer)
+			}
 		}
 	}
 }
