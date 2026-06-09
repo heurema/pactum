@@ -202,8 +202,22 @@ func TestClarificationQuestionFromSuggestionRequiresRecommendedAnswerAndConfiden
 		}
 	})
 
-	t.Run("missing or invalid kind is rejected", func(t *testing.T) {
-		for _, kind := range []string{"", "  ", "Terminology", "domain", "unknown"} {
+	t.Run("missing or whitespace kind defaults to other", func(t *testing.T) {
+		for _, kind := range []string{"", "  ", "\t"} {
+			input := base()
+			input.Kind = kind
+			record, warning := clarificationQuestionFromSuggestion("/repo", "run", "attempt_001", 1, input, now)
+			if warning != "" {
+				t.Fatalf("kind %q should default to other, got warning %q", kind, warning)
+			}
+			if record.Kind != "other" {
+				t.Fatalf("kind %q should record kind=other, got %q", kind, record.Kind)
+			}
+		}
+	})
+
+	t.Run("non-empty invalid kind is rejected", func(t *testing.T) {
+		for _, kind := range []string{"Terminology", "domain", "unknown"} {
 			input := base()
 			input.Kind = kind
 			_, warning := clarificationQuestionFromSuggestion("/repo", "run", "attempt_001", 1, input, now)
@@ -459,6 +473,70 @@ func TestRecordClarifierSuggestionsResolvesDependsOnAndBlocks(t *testing.T) {
 	}
 	if got := clarifyQuestionStatusByID(t, afterStatus, "q_002"); got.Status != "open" {
 		t.Fatalf("q_002 should remain open after the prerequisite is answered: %#v", got)
+	}
+}
+
+func TestRecordClarifierSuggestionsNumbersDependsOnPerBlock(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	state := readRunState(t, runPaths.RunJSON)
+	context := clarifyContext{Root: root, Paths: paths, RunPaths: runPaths, State: state}
+
+	now := time.Unix(0, 0).UTC()
+	// Two separate fenced suggestion blocks. depends_on positions are 1-based
+	// WITHIN each block, so block 2's depends_on:[1] must resolve to block 2's
+	// own first question — never block 1's first question.
+	block1 := clarifierStructuredOutput([]map[string]any{
+		{ // q_001 — block 1, position 1
+			"text":               "Which storage backend should the cache use?",
+			"blocking":           true,
+			"kind":               "scope",
+			"rationale":          "The backend choice constrains the schema.",
+			"recommended_answer": "SQLite.",
+			"confidence":         "high",
+		},
+	})
+	block2 := clarifierStructuredOutput([]map[string]any{
+		{ // q_002 — block 2, position 1 (foundational within its block)
+			"text":               "What eviction policy is acceptable?",
+			"blocking":           true,
+			"kind":               "edge_case",
+			"rationale":          "Eviction is scoped to this block.",
+			"recommended_answer": "LRU.",
+			"confidence":         "medium",
+		},
+		{ // q_003 — block 2, position 2, depends_on:[1] → block 2's first question
+			"text":               "What eviction batch size is acceptable?",
+			"blocking":           false,
+			"kind":               "edge_case",
+			"rationale":          "Batch size follows from the eviction policy.",
+			"recommended_answer": "100 entries.",
+			"confidence":         "low",
+			"depends_on":         []int{1},
+		},
+	})
+	stdoutPath := filepath.Join(root, "clarifier-stdout.log")
+	mustWriteFile(t, stdoutPath, block1+block2)
+
+	created, warnings, _, err := app.recordClarifierSuggestions(context, "clarifier_attempt_001", stdoutPath, now)
+	assertNoError(t, err)
+	if len(created) != 3 {
+		t.Fatalf("created = %d, want 3: %#v", len(created), created)
+	}
+	if created[0].ID != "q_001" || created[1].ID != "q_002" || created[2].ID != "q_003" {
+		t.Fatalf("unexpected ids: %q, %q, %q", created[0].ID, created[1].ID, created[2].ID)
+	}
+	if len(created[1].DependsOn) != 0 {
+		t.Fatalf("block 2's first question must be foundational: %#v", created[1].DependsOn)
+	}
+	// The crux: block 2's depends_on:[1] resolves to block 2's first question
+	// (q_002), not block 1's first question (q_001).
+	if len(created[2].DependsOn) != 1 || created[2].DependsOn[0] != "q_002" {
+		t.Fatalf("q_003 depends_on = %#v, want [q_002] (block-local, not [q_001])", created[2].DependsOn)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %#v", warnings)
 	}
 }
 
