@@ -190,10 +190,10 @@ stops:
   (`computeGateChanges`) and is robust precisely because it ignores finding *text* —
   if no bytes changed and the reviewer still objects, the loop is stuck.
 - **`review.max_rounds`** — hard cap on rounds.
-- **Budget stop** — `budget.mode` / `budget.max_usd`, a distinct ceiling independent
-  of round count (review at high reasoning effort is expensive). This is the stop a
-  pure iteration-count model lacks; for unattended runs on metered models it is the
-  real backstop.
+- **Budget stop** — `review.budget.mode` / `review.budget.max_tokens`, a distinct
+  ceiling independent of round count (review at high reasoning effort is expensive).
+  This is the stop a pure iteration-count model lacks; for unattended runs on
+  metered models it is the real backstop.
 - **Final human gate** — `review approve --by manual` even after the loop converges.
 
 ---
@@ -258,9 +258,9 @@ unenforced. Wiring them is the implementation — not new config surface.
 
 | Config (today) | Used by |
 |----------------|---------|
-| `clarify.max_iterations`, `clarify.max_questions_per_round` | Phase 1 caps |
+| clarify iteration caps (removed as dead in M16.0; return with Phase 1) | Phase 1 caps |
 | `review.max_rounds` | Phase 3 round cap |
-| `budget.mode`, `budget.max_usd` | Phase 3 budget stop |
+| `review.budget.mode`, `review.budget.max_tokens` | Phase 3 budget stop |
 | `clarify --blocking`, review `blocking` findings | severity gate (critical ⇄ blocking) |
 
 ## Supporting principles

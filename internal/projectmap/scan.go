@@ -192,7 +192,7 @@ func (scan *scanBuilder) scanFileInfo(path string, rel string, info fs.FileInfo)
 	if scan.option.MaxFileBytes > 0 && info.Size() > scan.option.MaxFileBytes {
 		scan.result.FilesIgnored++
 		scan.result.FilesSkipped++
-		scan.result.Warnings = append(scan.result.Warnings, "skipped large file: "+rel+" exceeds project_map.max_file_bytes")
+		scan.result.Warnings = append(scan.result.Warnings, "skipped large file: "+rel+" exceeds map.max_file_bytes")
 		return nil
 	}
 

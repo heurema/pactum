@@ -294,7 +294,7 @@ func hashStaleReasons(root string, hashesPath string, config configFile) ([]stri
 		return nil, fmt.Errorf("read hashes: %w", err)
 	}
 	scan, err := projectmap.Scan(root, projectmap.ScanOptions{
-		MaxFileBytes:  int64(config.ProjectMap.MaxFileBytes),
+		MaxFileBytes:  int64(config.Map.MaxFileBytes),
 		CodeIndexMode: codeindex.ModeOff,
 	})
 	if err != nil {

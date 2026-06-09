@@ -41,6 +41,12 @@ type reviewLoopSettings struct {
 	Budget reviewLoopBudget
 }
 
+type reviewLimits struct {
+	MaxRounds   int
+	Patience    int
+	CleanRounds int
+}
+
 type reviewLoopBudget struct {
 	Mode      string
 	MaxTokens *int64
@@ -434,16 +440,16 @@ func (a App) resolveReviewLoopSettings(context reviewContext, options reviewLoop
 	if err != nil {
 		return reviewLoopSettings{}, err
 	}
-	defaults := defaultConfigFile().Limits.Review
-	maxRounds, err := resolveReviewLoopLimit("max rounds", options.MaxRounds, config.Limits.Review.MaxRounds, defaults.MaxRounds)
+	defaults := defaultConfigFile().Review
+	maxRounds, err := resolveReviewLoopLimit("max rounds", options.MaxRounds, config.Review.MaxRounds, defaults.MaxRounds)
 	if err != nil {
 		return reviewLoopSettings{}, err
 	}
-	patience, err := resolveReviewLoopLimit("patience", options.Patience, config.Limits.Review.Patience, defaults.Patience)
+	patience, err := resolveReviewLoopLimit("patience", options.Patience, config.Review.Patience, defaults.Patience)
 	if err != nil {
 		return reviewLoopSettings{}, err
 	}
-	cleanRounds, err := resolveReviewLoopLimit("clean rounds", options.CleanRounds, config.Limits.Review.CleanRounds, defaults.CleanRounds)
+	cleanRounds, err := resolveReviewLoopLimit("clean rounds", options.CleanRounds, config.Review.CleanRounds, defaults.CleanRounds)
 	if err != nil {
 		return reviewLoopSettings{}, err
 	}
@@ -454,8 +460,8 @@ func (a App) resolveReviewLoopSettings(context reviewContext, options reviewLoop
 			CleanRounds: cleanRounds,
 		},
 		Budget: reviewLoopBudget{
-			Mode:      config.Budget.Mode,
-			MaxTokens: reviewLoopBudgetMaxTokens(config.Budget.MaxTokens),
+			Mode:      config.Review.Budget.Mode,
+			MaxTokens: reviewLoopBudgetMaxTokens(config.Review.Budget.MaxTokens),
 		},
 	}, nil
 }
@@ -529,34 +535,30 @@ func (a App) resolveReviewLoopReviewers(context reviewContext, reviewerName stri
 	if err != nil {
 		return nil, err
 	}
-	modelSpec, err := agents.ParseModelSpec(config.Agents.ReviewerModel)
-	if err != nil {
-		return nil, err
-	}
-	names := []string{}
+	var roster []agentModelEntry
 	if explicit := strings.TrimSpace(reviewerName); explicit != "" {
-		names = append(names, explicit)
-	} else if len(config.Agents.ReviewPanel) > 0 {
-		for _, name := range config.Agents.ReviewPanel {
-			name = strings.TrimSpace(name)
-			if name == "" {
-				return nil, fmt.Errorf("agents.review_panel contains an empty reviewer name")
-			}
-			names = append(names, name)
+		// An explicit --reviewer overrides the roster; it takes pins from its
+		// review.panel entry when present and runs unpinned otherwise.
+		entry, ok := findAgentModelEntry(config.Review.Panel, explicit)
+		if !ok {
+			entry = agentModelEntry{Agent: explicit}
 		}
+		roster = []agentModelEntry{entry}
+	} else if len(config.Review.Panel) > 0 {
+		roster = config.Review.Panel
 	} else {
-		names = append(names, resolveReviewerNameForReview(context, "", config.Agents.CrossModelReview))
+		// Empty panel: cross-model default — a single reviewer, the agent other
+		// than the run's executor.
+		roster = []agentModelEntry{{Agent: resolveReviewerNameForReview(context, "")}}
 	}
 
-	reviewers := make([]reviewLoopReviewer, 0, len(names))
-	for _, name := range names {
-		reviewer, err := a.agentRegistry().ResolveReviewer(name)
+	reviewers := make([]reviewLoopReviewer, 0, len(roster))
+	for _, entry := range roster {
+		reviewer, err := a.agentRegistry().ResolveReviewer(entry.Agent)
 		if err != nil {
-			if len(config.Agents.ReviewPanel) > 0 && strings.TrimSpace(reviewerName) == "" {
-				return nil, fmt.Errorf("agents.review_panel reviewer %q: %w", name, err)
-			}
 			return nil, err
 		}
+		modelSpec := entry.modelSpec()
 		reviewer, err = agents.ApplyModelSpec(reviewer, modelSpec)
 		if err != nil {
 			return nil, err

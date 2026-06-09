@@ -199,10 +199,9 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 	if err != nil {
 		return executionPreparation{}, err
 	}
-	modelSpec, err := agents.ParseModelSpec(config.Agents.ExecutorModel)
-	if err != nil {
-		return executionPreparation{}, err
-	}
+	// The invoked agent's pin comes from its execute.models entry; an agent
+	// without an entry runs unpinned.
+	modelSpec := modelSpecFor(config.Execute.Models, agent.Name)
 	agent, err = agents.ApplyModelSpec(agent, modelSpec)
 	if err != nil {
 		return executionPreparation{}, err

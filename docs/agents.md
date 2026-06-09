@@ -20,58 +20,62 @@ the contract drafter prompt for `contract draft`, or the reviewer prompt for
 review); Pactum feeds that file to the agent process on standard input. Pick the
 executor with `--agent <name>` on the execute commands and the
 reviewer/clarifier/drafter with `--reviewer <name>` on the clarify, contract
-draft, and review commands. When omitted, both default to `codex` unless
-cross-model review is enabled for reviewer selection.
+draft, and review commands.
 
-To opt into cross-model review, set `agents.cross_model_review: true` in
-`.heurema/pactum/config.yaml`:
+Reviewer selection is cross-model by default: when `--reviewer` is omitted,
+Pactum reads the latest execution attempt and chooses the other built-in agent
+(`codex` execution -> `claude` review, `claude` execution -> `codex` review).
+The same rule is used by `clarify suggest` and `contract draft`; before any
+execution attempt exists they fall back to the default built-in reviewer. An
+explicit `--reviewer` always wins. If the executor cannot be determined or is
+not one of the two built-ins, Pactum falls back to the default built-in reviewer
+(`codex`) — in that case cross-model review may not be achieved, so check the
+selected reviewer in the `Resolved` block for `clarify suggest`,
+`contract draft`, `review dry-run`, and `review run`.
 
-```yaml
-agents:
-  cross_model_review: true
-```
-
-The default is `false`, which preserves the existing reviewer selection. When
-enabled and `--reviewer` is omitted, Pactum reads the latest execution attempt
-and chooses the other built-in reviewer (`codex` execution -> `claude` review,
-`claude` execution -> `codex` review). The same reviewer-selection rule is used
-by `clarify suggest`; before any execution attempt exists it falls back to the
-default built-in reviewer. An explicit `--reviewer` always wins. If the executor
-cannot be determined or is not one of the two built-ins, Pactum falls back to
-the default built-in reviewer (`codex`) — in that case cross-model review may
-not be achieved, so check the selected reviewer in the existing `Resolved` block
-for `clarify suggest`, `contract draft`, `review dry-run`, and `review run`.
-
-`review loop` can also run a configured reviewer panel. Set
-`agents.review_panel` to two or more reviewer names:
+Agents and their models are configured per stage in
+`.heurema/pactum/config.yaml`. Both `execute.models` and `review.panel` are
+lists of the same entry shape — `agent` (required, a built-in name), `model`
+and `effort` (optional pins):
 
 ```yaml
-agents:
-  review_panel:
-    - codex
-    - claude
+execute:
+  models:               # pins for whichever agent --agent invokes
+    - agent: claude
+      model: claude-opus-4-8
+      effort: high
+
+review:
+  panel:                # review roster + reviewer-role model registry
+    - agent: claude
+      model: claude-fable-5
+    - agent: codex
 ```
 
-When `pactum review loop` runs without `--reviewer`, each review round runs all
-panel reviewers concurrently against the same reviewer prompt, then parses their
-finding proposals in the configured order. Duplicate proposals still collapse
-through the normal finding fingerprint. If duplicate reviewers assign different
-severities, the stored open finding keeps the maximum severity. An explicit
-`--reviewer <name>` disables the panel for that loop invocation and runs only
-that reviewer. When `review_panel` is empty or absent, `review loop` uses the
-existing single-reviewer selection, including `cross_model_review` when enabled.
+`execute.models` is a pure lookup: when `pactum execute run --agent <name>`
+invokes an agent that has an entry, its `model`/`effort` are applied; an agent
+without an entry inherits the agent CLI's own defaults. A model pin can never
+reach a different agent. The fixer (`review fix`) writes code like the executor
+and uses the same `execute.models` lookup.
 
-To pin a per-stage model, set `agents.executor_model` for `pactum execute` or
-`agents.reviewer_model` for read-only reviewer-role commands (`clarify suggest`,
-`contract draft`, and `review`) in `.heurema/pactum/config.yaml` to
-`model[:effort]`, for example `gpt-5:high`, `gpt-5`, or `:high`. When a field
-is empty or omitted, Pactum does not pass model flags for that stage and the
-agent CLI inherits its own configured defaults. For `codex`, Pactum emits
-`-c model=...` and `-c model_reasoning_effort=...`; for `claude`, it emits
-`--model ...` and `--effort ...`. Reviewer model flags are appended to the
-read-only reviewer command (`codex exec --json --sandbox read-only`, or
-`claude -p --output-format json`)
-and do not add executor write-bypass flags.
+`review.panel` is both the review-loop roster and the reviewer-role model
+registry. When `pactum review loop` runs without `--reviewer`, each review round
+runs all panel entries concurrently against the same reviewer prompt, then
+parses their finding proposals in the configured order; each member runs with
+its own entry's `model`/`effort`. Duplicate proposals still collapse through the
+normal finding fingerprint, and duplicate findings keep the maximum severity. An
+explicit `--reviewer <name>` disables the roster for that invocation and runs
+only that reviewer, taking pins from its panel entry when one exists. When the
+panel is empty or absent, review falls back to the cross-model single-reviewer
+selection above. `clarify suggest` and `contract draft` resolve their reviewer
+the same way and take pins from that agent's panel entry when present.
+
+Entry validation is strict: an unknown agent name, a duplicate agent within one
+list, or a `model` containing `:` (use the separate `effort` key) are
+configuration errors. For `codex`, pins emit `-c model=...` and
+`-c model_reasoning_effort=...`; for `claude`, `--model ...` and `--effort ...`.
+Reviewer pins are appended to the read-only reviewer command and do not add
+executor write-bypass flags.
 
 The human output for `clarify suggest`, `contract draft`, `execute dry-run`,
 `execute run`, `review dry-run`, and `review run` includes a `Resolved` block
@@ -131,13 +135,11 @@ gate, and attempt lifecycle are unaware of it:
   are directly comparable. The same `RunResult` and attempt artifacts are
   produced either way.
 
-Select it with `agents.transport` (or the `PACTUM_AGENT_TRANSPORT` env var, which
-overrides the config):
-
-```yaml
-agents:
-  transport: acp
-```
+Select it with the `PACTUM_AGENT_TRANSPORT` env var (`acp` or `cli`; the default
+is `cli`). The transport is intentionally not a config key — it is an execution
+mechanism, not workspace state, and ACP is planned to become the hardwired
+default once its remaining gaps (model pins over ACP, a write guard for
+read-only stages) are closed, leaving the env var as a debug escape hatch.
 
 The ACP adapters are external npm packages and inherit the agent's auth from the
 environment. `cli` remains the default.
@@ -315,7 +317,7 @@ code, fix valid findings in place, and explain a rebuttal for false positives.
 This is write-enabled agent execution, not reviewer execution: `codex` uses
 `codex exec --dangerously-bypass-approvals-and-sandbox`, and `claude` uses the
 executor command with `--dangerously-skip-permissions`. The command honors the
-executor model pin (`agents.executor_model`), prints the same `Resolved` block
+executor model pin (the fixer's agent entry in `execute.models`), prints the same `Resolved` block
 as execution, captures request/result/stdout/stderr artifacts under
 `review/fix/attempts/`, and writes `review/fix/fixer-prompt.md`,
 `review/fix/fixer-context.md`, `review/fix/fixer-dry-run.json`, and
@@ -335,8 +337,8 @@ commands, then starts another reviewer round.
 
 The loop stops after the configured number of consecutive clean reviewer rounds,
 after repeated no-change fixer rounds, or when `--max-rounds` is reached. If
-the flags are omitted, Pactum reads `limits.review.max_rounds`,
-`limits.review.clean_rounds`, and `limits.review.patience` from the workspace
+the flags are omitted, Pactum reads `review.max_rounds`,
+`review.clean_rounds`, and `review.patience` from the workspace
 config. The default clean-round requirement is 1, preserving the original "first
 clean round converges" behavior. The default no-change patience is 2: when a
 fixer runs but the source fingerprint is unchanged for two consecutive fixer

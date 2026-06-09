@@ -197,7 +197,7 @@ func TestExecuteDryRunExplicitClaude(t *testing.T) {
 
 func TestExecuteDryRunAppliesExecutorModelConfigToCodex(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID := setupApprovedAndBuiltPromptWithExecutorModel(t, root, "gpt-5:high")
+	app, paths, runID := setupApprovedAndBuiltPromptWithExecutorModels(t, root, agentModelEntry{Agent: "codex", Model: "gpt-5", Effort: "high"})
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "codex"}, &stdout, &stderr)
@@ -215,7 +215,7 @@ func TestExecuteDryRunAppliesExecutorModelConfigToCodex(t *testing.T) {
 
 func TestExecuteDryRunAppliesExecutorModelConfigToClaude(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID := setupApprovedAndBuiltPromptWithExecutorModel(t, root, "claude-sonnet-4:high")
+	app, paths, runID := setupApprovedAndBuiltPromptWithExecutorModels(t, root, agentModelEntry{Agent: "claude", Model: "claude-sonnet-4", Effort: "high"})
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "claude"}, &stdout, &stderr)
@@ -233,7 +233,7 @@ func TestExecuteDryRunAppliesExecutorModelConfigToClaude(t *testing.T) {
 
 func TestExecuteDryRunResolvedPartialPin(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID := setupApprovedAndBuiltPromptWithExecutorModel(t, root, ":high")
+	app, _, runID := setupApprovedAndBuiltPromptWithExecutorModels(t, root, agentModelEntry{Agent: "codex", Effort: "high"})
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "codex"}, &stdout, &stderr)
@@ -242,6 +242,25 @@ func TestExecuteDryRunResolvedPartialPin(t *testing.T) {
 	}
 	// Effort-only pin: the model still inherits, so pinning is "partial", not "pinned".
 	assertResolvedBlock(t, stdout.String(), "codex", "inherit", "high", "partial")
+}
+
+func TestExecuteDryRunPinAppliesOnlyToMatchingAgent(t *testing.T) {
+	root := t.TempDir()
+	// Only claude is pinned; invoking codex must run unpinned.
+	app, paths, runID := setupApprovedAndBuiltPromptWithExecutorModels(t, root, agentModelEntry{Agent: "claude", Model: "claude-sonnet-4", Effort: "high"})
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "codex"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute dry-run codex exited %d, stderr: %s", code, stderr.String())
+	}
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	plan := readDryRunPlan(t, runPaths.DryRunJSON)
+	wantArgs := []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}
+	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
+		t.Fatalf("codex would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
+	}
+	assertResolvedBlock(t, stdout.String(), "codex", "inherit", "inherit", "inherit")
 }
 
 func TestExecuteDryRunHashMismatchFails(t *testing.T) {
@@ -753,12 +772,12 @@ func setupApprovedBuiltPromptWithHelperAgent(t *testing.T, root string, name str
 	return app, paths, runID
 }
 
-func setupApprovedAndBuiltPromptWithExecutorModel(t *testing.T, root string, modelSpec string) (App, artifacts.Paths, string) {
+func setupApprovedAndBuiltPromptWithExecutorModels(t *testing.T, root string, entries ...agentModelEntry) (App, artifacts.Paths, string) {
 	t.Helper()
 	app, paths, runID := setupApprovedPromptContract(t, root)
 	config, err := readConfig(paths.Config)
 	assertNoError(t, err)
-	config.Agents.ExecutorModel = modelSpec
+	config.Execute.Models = append([]agentModelEntry{}, entries...)
 	assertNoError(t, writeYAML(paths.Config, config))
 
 	var stdout, stderr bytes.Buffer

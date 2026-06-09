@@ -12,38 +12,6 @@ import (
 	"time"
 )
 
-func TestParseModelSpec(t *testing.T) {
-	tests := []struct {
-		name   string
-		raw    string
-		model  string
-		effort string
-	}{
-		{name: "empty", raw: ""},
-		{name: "model only", raw: "gpt-5", model: "gpt-5"},
-		{name: "effort only", raw: ":high", effort: "high"},
-		{name: "model and effort", raw: "gpt-5:high", model: "gpt-5", effort: "high"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			spec, err := ParseModelSpec(tt.raw)
-			if err != nil {
-				t.Fatalf("ParseModelSpec returned error: %v", err)
-			}
-			if spec.Model != tt.model || spec.Effort != tt.effort {
-				t.Fatalf("ParseModelSpec(%q) = %#v, want model %q effort %q", tt.raw, spec, tt.model, tt.effort)
-			}
-		})
-	}
-}
-
-func TestParseModelSpecRejectsMultipleColons(t *testing.T) {
-	if _, err := ParseModelSpec("gpt-5:high:extra"); err == nil {
-		t.Fatalf("ParseModelSpec should reject multiple colons")
-	}
-}
-
 func TestApplyModelSpecEmitsBuiltInAgentArgs(t *testing.T) {
 	tests := []struct {
 		name  string

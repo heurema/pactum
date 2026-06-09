@@ -10,7 +10,6 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/heurema/pactum/internal/agents"
-	"github.com/heurema/pactum/internal/artifacts"
 	searchpkg "github.com/heurema/pactum/internal/search"
 )
 
@@ -244,21 +243,10 @@ func (a App) agentTransport() agents.Transport {
 }
 
 // acpTransportEnabled reports whether the ACP transport is selected. The
-// PACTUM_AGENT_TRANSPORT env var overrides the agents.transport config field;
-// resolution is best-effort and falls back to the default CLI transport.
+// PACTUM_AGENT_TRANSPORT env var is the only switch; anything but "acp"
+// (including unset) keeps the default CLI transport.
 func (a App) acpTransportEnabled() bool {
-	if env := strings.TrimSpace(os.Getenv("PACTUM_AGENT_TRANSPORT")); env != "" {
-		return strings.EqualFold(env, "acp")
-	}
-	root, _, err := a.resolveStatusRoot()
-	if err != nil {
-		return false
-	}
-	config, err := readConfig(artifacts.New(root).Config)
-	if err != nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(config.Agents.Transport), "acp")
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("PACTUM_AGENT_TRANSPORT")), "acp")
 }
 
 func writeSearchResults(stdout io.Writer, response searchpkg.Response) {

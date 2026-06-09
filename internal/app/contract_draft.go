@@ -307,14 +307,13 @@ func (a App) prepareContractDrafter(context runContext, reviewerName string) (co
 		RunPaths: context.RunPaths,
 		State:    context.State,
 	}
-	drafter, err := a.agentRegistry().ResolveReviewer(resolveReviewerNameForReview(reviewContext, reviewerName, config.Agents.CrossModelReview))
+	drafter, err := a.agentRegistry().ResolveReviewer(resolveReviewerNameForReview(reviewContext, reviewerName))
 	if err != nil {
 		return contractDraftPreparation{}, err
 	}
-	modelSpec, err := agents.ParseModelSpec(config.Agents.ReviewerModel)
-	if err != nil {
-		return contractDraftPreparation{}, err
-	}
+	// The drafter is a reviewer-role agent: it takes pins from its
+	// review.panel entry when present; an agent without an entry runs unpinned.
+	modelSpec := modelSpecFor(config.Review.Panel, drafter.Name)
 	drafter, err = agents.ApplyModelSpec(drafter, modelSpec)
 	if err != nil {
 		return contractDraftPreparation{}, err

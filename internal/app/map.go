@@ -71,8 +71,8 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 	}
 
 	scan, err := projectmap.Scan(root, projectmap.ScanOptions{
-		MaxFileBytes:  int64(config.ProjectMap.MaxFileBytes),
-		CodeIndexMode: config.ProjectMap.CodeIndex,
+		MaxFileBytes:  int64(config.Map.MaxFileBytes),
+		CodeIndexMode: config.Map.CodeIndex,
 	})
 	if err != nil {
 		return MapRefreshResult{}, err

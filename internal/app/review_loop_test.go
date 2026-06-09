@@ -17,9 +17,11 @@ import (
 )
 
 const (
-	reviewLoopReviewerName  = "loop-reviewer"
-	reviewLoopPanelLowName  = "loop-reviewer-low"
-	reviewLoopPanelHighName = "loop-reviewer-high"
+	reviewLoopReviewerName = "loop-reviewer"
+	// Panel members must be resolvable built-in agent names (config validation);
+	// the test registry overrides their descriptors with helper processes.
+	reviewLoopPanelLowName  = "codex"
+	reviewLoopPanelHighName = "claude"
 	reviewLoopFixerName     = "loop-fixer"
 )
 
@@ -678,7 +680,7 @@ func TestReviewLoopUnknownPanelReviewerFailsClearly(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("unknown panel reviewer exited %d, want 1", code)
 	}
-	if got := stderr.String(); !strings.Contains(got, `agents.review_panel reviewer "missing-reviewer"`) || !strings.Contains(got, "unsupported agent") {
+	if got := stderr.String(); !strings.Contains(got, `config review.panel: unknown agent "missing-reviewer"`) {
 		t.Fatalf("unknown panel reviewer error mismatch:\n%s", got)
 	}
 }
@@ -1086,7 +1088,7 @@ func setReviewLoopMaxRoundsConfig(t *testing.T, paths artifacts.Paths, maxRounds
 	t.Helper()
 	config, err := readConfig(paths.Config)
 	assertNoError(t, err)
-	config.Limits.Review.MaxRounds = maxRounds
+	config.Review.MaxRounds = maxRounds
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 
@@ -1094,7 +1096,10 @@ func setReviewPanelConfig(t *testing.T, paths artifacts.Paths, reviewers ...stri
 	t.Helper()
 	config, err := readConfig(paths.Config)
 	assertNoError(t, err)
-	config.Agents.ReviewPanel = append([]string{}, reviewers...)
+	config.Review.Panel = nil
+	for _, reviewer := range reviewers {
+		config.Review.Panel = append(config.Review.Panel, agentModelEntry{Agent: reviewer})
+	}
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 
@@ -1102,8 +1107,8 @@ func setReviewLoopBudgetConfig(t *testing.T, paths artifacts.Paths, mode string,
 	t.Helper()
 	config, err := readConfig(paths.Config)
 	assertNoError(t, err)
-	config.Budget.Mode = mode
-	config.Budget.MaxTokens = maxTokens
+	config.Review.Budget.Mode = mode
+	config.Review.Budget.MaxTokens = maxTokens
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 

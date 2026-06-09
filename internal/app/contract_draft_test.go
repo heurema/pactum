@@ -53,7 +53,6 @@ func TestContractDraftRecordsProposalWithoutApplying(t *testing.T) {
 	answersBefore := mustReadFile(t, runPaths.AnswersJSONL)
 	decisionsBefore := mustReadFile(t, runPaths.DecisionsJSONL)
 
-	setCrossModelReviewConfig(t, paths, true)
 	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", mustResolveExecutorForTest(t, agents.BuiltinCodex))
 	app = configureHelperContractDrafters(app, agents.BuiltinCodex, agents.BuiltinCodex, agents.BuiltinClaude)
 
