@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260609_121417",
+  "status": "contract_approved",
+  "task": "Fix codexAgentMessageText gluing successive codex agent_message events together: a fenced JSON block that begins a later agent_message gets concatenated onto the prior progress message and is no longer recognized as a fence start, so codex clarifier/structured output records zero blocks",
+  "created_at": "2026-06-09T12:14:17.157714Z",
+  "updated_at": "2026-06-09T12:14:34.922352Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260609_121416",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

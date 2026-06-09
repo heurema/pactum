@@ -1,0 +1,56 @@
+# Contract Draft
+
+## Goal
+Strengthen Pactum's clarification along two grill-me principles. (1) Every proposed clarification question must carry a concrete recommended answer plus a confidence — so the human fills the gap by confirming/adjusting a recommendation rather than authoring an answer from scratch. (2) Explore-first discipline: the clarifier escalates only questions that genuinely need a human decision and folds repo-answerable findings into the rationale/recommendation instead of asking. Implement across the clarifier output schema, validation, prompt instruction, and the human-facing display. Additive and behavior-compatible (no schema-version bump).
+
+## Current status
+Contract status: approved
+Manual clarification, contract approval, prompt build, and agent execution are available through staged Pactum commands.
+
+## Relevant repository context
+- Map run: map_20260609_111238
+- Repo map: .heurema/pactum/map/repo-map.md
+- Search results: context/search-results.json (2 result(s))
+
+## Clarifications
+- None
+
+## In scope
+- Add two fields — recommended_answer (string) and confidence (string, one of: high, medium, low) — to: the clarifier suggestion input (clarifierSuggestionInput in clarify_suggest.go), the persisted clarificationQuestionRecord (clarify.go), and the human-facing clarifyQuestionStatus view (clarify.go).
+- In clarificationQuestionFromSuggestion (clarify_suggest.go): require a non-empty recommended_answer (reject with a 'question skipped: recommended answer is required' style reason, mirroring the existing rationale check) and require confidence to be one of high|medium|low (reject otherwise); sanitize recommended_answer via sanitizeRepoRootInText; populate the new record fields.
+- Map recommended_answer + confidence from the record through the clarifyStatusResponse builder into clarifyQuestionStatus, and display them to the human in writeClarifyStatus (under each open question) and in renderClarifierContext's existing-clarifications list.
+- Update renderClarifierPrompt (clarify_suggest.go): (a) the example fenced JSON block must include recommended_answer and confidence fields; (b) instruct that EVERY question requires a specific recommended answer (best-guess resolution, phrased so it is directly usable as the contract change) and a confidence of high|medium|low; (c) strengthen the explore-first boundary — try to resolve each candidate from the repository context / search / contract first, escalate only questions needing a human decision (product intent, priorities, trade-offs, external constraints, genuinely ambiguous requirements), and fold anything answerable from the repo into the rationale and recommended answer rather than asking it.
+- Update the clarify tests (e.g. clarify_suggest_test.go, agent_output_test.go) that construct clarifier suggestions or assert on question records so they supply and verify the new required recommended_answer + confidence fields; add coverage that a missing recommended_answer or an invalid confidence is rejected.
+- Update docs/backlog.md: reframe the 'Sharper clarify questioning' item around the grill-me-inspired slices and mark slice 1 (recommended_answer + explore-first) as shipped, listing the remaining slices (dependency-ordered questioning, terminology/domain challenge, edge-case probing, coverage/convergence signal).
+
+## Out of scope
+- Do NOT auto-apply or pre-fill the human's answer from the recommendation — the recommendation is captured and displayed only (auto-resolve is a later slice).
+- Do NOT implement the other grill-me slices (dependency ordering / depends_on, terminology challenge, edge-case probing, coverage-based convergence).
+- Do not bump the clarification schema version constants (the new fields are additive); do not change files outside internal/app/clarify.go, internal/app/clarify_suggest.go (and their _test.go), and docs/backlog.md.
+
+## Paths in scope
+- internal/app/clarify.go
+- internal/app/clarify_suggest.go
+- internal/app/clarify_suggest_test.go
+- internal/app/agent_output_test.go
+- docs/backlog.md
+
+
+## Acceptance criteria
+- A clarifier suggestion missing recommended_answer, or with a confidence not in {high,medium,low}, is rejected with a clear skip reason; a valid suggestion persists recommended_answer + confidence on the question record.
+- clarify status and the clarifier-context existing-questions list display each question's recommended answer and confidence.
+- renderClarifierPrompt's example JSON includes recommended_answer + confidence, and the prompt text instructs explore-first plus a recommended-answer-with-confidence per question.
+- go build ./..., go vet ./..., and the deadcode gate are clean; go test -race ./... passes with the clarify tests updated for the new required fields; docs/backlog.md reflects the grill-me clarify slices with slice 1 marked shipped.
+
+## Validation commands
+- go build ./...
+- go test ./internal/app/...
+- go vet ./...
+- go test -race ./...
+
+## Assumptions
+- The clarification schema is additive and has no external consumers, so new fields need no version bump.
+- confidence is constrained to high|medium|low to enable a future confidence-gated auto-resolve; recommended_answer is required to enforce the grill-me 'fill the gap' discipline.
+
+## Open questions
+- None
