@@ -15,8 +15,30 @@ func TestAgentMessageTextExtractsCodexAgentMessages(t *testing.T) {
 		`{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":2}}`,
 	}, "\n")
 
-	if got := agentMessageText([]byte(output)); got != "first\nsecond" {
+	if got := agentMessageText([]byte(output)); got != "first\n\nsecond" {
 		t.Fatalf("codex message text = %q", got)
+	}
+}
+
+func TestAgentMessageTextSeparatesGluedFenceFromProgressMessage(t *testing.T) {
+	// Codex emits progress narration as one agent_message (no trailing newline)
+	// immediately followed by a final agent_message whose text starts with a
+	// fenced ```json block. Without a separator the fence is glued onto the
+	// progress text ("...narration```json"), so extractFencedJSONBlocks never
+	// sees the fence at the start of a line and recovers zero blocks.
+	output := strings.Join([]string{
+		`{"type":"session.started"}`,
+		codexMessageLineForTest(t, "Analyzing the contract"),
+		codexMessageLineForTest(t, "```json\n{\"ok\":true}\n```"),
+		`{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":2}}`,
+	}, "\n")
+
+	blocks := extractFencedJSONBlocks(agentMessageText([]byte(output)))
+	if len(blocks) != 1 {
+		t.Fatalf("extractFencedJSONBlocks recovered %d blocks, want 1: %#v", len(blocks), blocks)
+	}
+	if got := strings.TrimSpace(blocks[0]); got != `{"ok":true}` {
+		t.Fatalf("recovered JSON block = %q", got)
 	}
 }
 
