@@ -107,6 +107,11 @@ type clarifyAskResponse struct {
 	RunID     string                      `json:"run_id"`
 	RunStatus string                      `json:"run_status"`
 	Question  clarificationQuestionRecord `json:"question"`
+	// ApprovalReset reports that recording this question regressed an
+	// already-approved run back to clarifying (approval reset to pending). It is
+	// omitted (false) when the run was not approved. The reset itself is allowed;
+	// the field only makes the otherwise-silent regression visible.
+	ApprovalReset bool `json:"approval_reset,omitempty"`
 }
 
 type clarifyAnswerResponse struct {
@@ -114,6 +119,10 @@ type clarifyAnswerResponse struct {
 	RunStatus string                      `json:"run_status"`
 	Answer    clarificationAnswerRecord   `json:"answer"`
 	Decision  clarificationDecisionRecord `json:"decision"`
+	// ApprovalReset reports that recording this answer regressed an
+	// already-approved run back to clarifying (approval reset to pending). It is
+	// omitted (false) when the run was not approved.
+	ApprovalReset bool `json:"approval_reset,omitempty"`
 }
 
 func (a App) ClarifyAsk(stdout io.Writer, runID string, question string, blocking bool, jsonOutput bool) error {
@@ -140,7 +149,7 @@ func (a App) ClarifyAsk(stdout io.Writer, runID string, question string, blockin
 	if err := appendJSONLine(context.RunPaths.QuestionsJSONL, record); err != nil {
 		return err
 	}
-	status, err := a.refreshClarificationArtifacts(context, now)
+	status, approvalReset, err := a.refreshClarificationArtifacts(context, now)
 	if err != nil {
 		return err
 	}
@@ -148,7 +157,7 @@ func (a App) ClarifyAsk(stdout io.Writer, runID string, question string, blockin
 		return err
 	}
 
-	response := clarifyAskResponse{RunID: runID, RunStatus: status.RunStatus, Question: record}
+	response := clarifyAskResponse{RunID: runID, RunStatus: status.RunStatus, Question: record, ApprovalReset: approvalReset}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
@@ -203,7 +212,7 @@ func (a App) ClarifyAnswer(stdout io.Writer, runID string, questionID string, an
 	if err := appendJSONLine(context.RunPaths.DecisionsJSONL, decisionRecord); err != nil {
 		return err
 	}
-	status, err := a.refreshClarificationArtifacts(context, now)
+	status, approvalReset, err := a.refreshClarificationArtifacts(context, now)
 	if err != nil {
 		return err
 	}
@@ -214,7 +223,7 @@ func (a App) ClarifyAnswer(stdout io.Writer, runID string, questionID string, an
 		return err
 	}
 
-	response := clarifyAnswerResponse{RunID: runID, RunStatus: status.RunStatus, Answer: answerRecord, Decision: decisionRecord}
+	response := clarifyAnswerResponse{RunID: runID, RunStatus: status.RunStatus, Answer: answerRecord, Decision: decisionRecord, ApprovalReset: approvalReset}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
@@ -256,33 +265,40 @@ func (a App) loadClarifyContext(stdout io.Writer, runID string, jsonOutput bool)
 	return clarifyContext{Root: base.Root, Paths: base.Paths, RunPaths: base.RunPaths, State: base.State}, true, nil
 }
 
-func (a App) refreshClarificationArtifacts(context clarifyContext, updatedAt time.Time) (clarifyStatusResponse, error) {
+// refreshClarificationArtifacts recomputes the clarification status, rewrites the
+// run state and contract artifacts, and resets approval when the run was already
+// approved. It returns the refreshed status and the approvalReset bool from
+// resetApprovalIfApproved so callers can surface the otherwise-silent regression
+// (approved -> clarifying) to the user; approvalReset is false when the run was
+// not approved.
+func (a App) refreshClarificationArtifacts(context clarifyContext, updatedAt time.Time) (clarifyStatusResponse, bool, error) {
 	status, err := buildClarificationStatus(context.RunPaths, context.State)
 	if err != nil {
-		return clarifyStatusResponse{}, err
+		return clarifyStatusResponse{}, false, err
 	}
 
 	state := context.State
 	state.Status = status.RunStatus
 	state.UpdatedAt = updatedAt
-	if _, _, err := resetApprovalIfApproved(context.Paths, context.RunPaths, context.Root, context.State.RunID, updatedAt); err != nil {
-		return clarifyStatusResponse{}, err
+	_, approvalReset, err := resetApprovalIfApproved(context.Paths, context.RunPaths, context.Root, context.State.RunID, updatedAt)
+	if err != nil {
+		return clarifyStatusResponse{}, false, err
 	}
 	if err := writeJSON(context.RunPaths.RunJSON, state); err != nil {
-		return clarifyStatusResponse{}, err
+		return clarifyStatusResponse{}, false, err
 	}
 
 	contract, err := readDraftContract(context.RunPaths.ContractJSON)
 	if err != nil {
-		return clarifyStatusResponse{}, err
+		return clarifyStatusResponse{}, false, err
 	}
 	applyClarificationStatusToContract(&contract, status)
 	contract.Status = "draft"
 	if err := writeContractArtifacts(context.RunPaths, contract, state.MapRunID); err != nil {
-		return clarifyStatusResponse{}, err
+		return clarifyStatusResponse{}, false, err
 	}
 	status.RunStatus = state.Status
-	return status, nil
+	return status, approvalReset, nil
 }
 
 func buildClarificationStatus(runPaths contractRunPathSet, state contractRunState) (clarifyStatusResponse, error) {
@@ -495,12 +511,28 @@ func readRunSearchResultCount(path string) int {
 	return len(results.Results)
 }
 
+// writeApprovalResetWarning surfaces that a just-recorded clarification regressed
+// an already-approved run back to the clarification stage (approval reset to
+// pending). Re-clarifying an approved run is a legitimate operation, so this warns
+// rather than blocks; it exists only because the reset (and its
+// contract_approval_reset ledger event) were otherwise silent. runStatus is the
+// run's status after the reset ("clarifying" when blocking questions remain open,
+// otherwise "contract_draft") so the prose never contradicts the printed status.
+func writeApprovalResetWarning(stdout io.Writer, runID string, runStatus string) {
+	fmt.Fprintln(stdout)
+	fmt.Fprintf(stdout, "Warning: this run was approved; recording this clarification reset approval to pending and moved it back to the clarification stage (status now %q).\n", runStatus)
+	fmt.Fprintf(stdout, "Re-approve with 'pactum contract approve %s' once the clarifications are resolved.\n", runID)
+}
+
 func writeClarifyAskResponse(stdout io.Writer, response clarifyAskResponse) {
 	fmt.Fprintln(stdout, "Clarification question added")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", response.RunID)
 	fmt.Fprintf(stdout, "  status: %s\n", response.RunStatus)
+	if response.ApprovalReset {
+		writeApprovalResetWarning(stdout, response.RunID, response.RunStatus)
+	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Question:")
 	fmt.Fprintf(stdout, "  id: %s\n", response.Question.ID)
@@ -515,6 +547,9 @@ func writeClarifyAnswerResponse(stdout io.Writer, response clarifyAnswerResponse
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", response.RunID)
 	fmt.Fprintf(stdout, "  status: %s\n", response.RunStatus)
+	if response.ApprovalReset {
+		writeApprovalResetWarning(stdout, response.RunID, response.RunStatus)
+	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Answer:")
 	fmt.Fprintf(stdout, "  id: %s\n", response.Answer.ID)

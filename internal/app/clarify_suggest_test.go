@@ -65,6 +65,11 @@ func TestClarifySuggestRunsClarifierAndRecordsOpenQuestions(t *testing.T) {
 	if strings.Contains(got, "stdin_has_clarifier_prompt=") || strings.Contains(got, "clarifier-stderr-line") {
 		t.Fatalf("agent output leaked into stdout:\n%s", got)
 	}
+	// The run was never approved, so recording suggestions must not warn about an
+	// approval reset.
+	if strings.Contains(got, "this run was approved") {
+		t.Fatalf("non-approved run should not warn about approval reset:\n%s", got)
+	}
 	if got := stderr.String(); !strings.Contains(got, "cwd_is_repo=true") || !strings.Contains(got, "stdin_has_clarifier_prompt=true") || !strings.Contains(got, "clarifier-stderr-line") {
 		t.Fatalf("live clarifier output missing from stderr:\n%s", got)
 	}
@@ -170,8 +175,68 @@ func TestClarifySuggestJSONOutput(t *testing.T) {
 	if response.AttemptID != "clarifier_attempt_001" || response.Clarifier != "helper" || len(response.Created) != 2 {
 		t.Fatalf("unexpected clarify suggest json: %#v", response)
 	}
+	// The run was never approved, so approval_reset stays false and is omitted.
+	if response.ApprovalReset {
+		t.Fatalf("non-approved run should report approval_reset=false: %#v", response)
+	}
+	if strings.Contains(stdout.String(), "approval_reset") {
+		t.Fatalf("non-approved run should omit approval_reset from JSON:\n%s", stdout.String())
+	}
 	if strings.Contains(stdout.String(), "Clarification suggestions recorded") || strings.Contains(stdout.String(), "Resolved:") {
 		t.Fatalf("json output should not include human output:\n%s", stdout.String())
+	}
+}
+
+func TestClarifySuggestSurfacesApprovalResetOnApprovedRun(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	app = configureHelperClarifiers(app, "helper", "helper")
+	approveRunForTest(t, app, runID)
+
+	t.Setenv("PACTUM_CLARIFIER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", root)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "helper", "--yes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify suggest exited %d, stderr: %s", code, stderr.String())
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"this run was approved",
+		"reset approval to pending",
+		// The helper emits a blocking question, so the run lands in clarifying.
+		`status now "clarifying"`,
+		"pactum contract approve " + runID,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("clarify suggest output missing approval-reset warning %q:\n%s", want, got)
+		}
+	}
+	if approval := readApproval(t, runPaths.ApprovalJSON); approval.Status != "pending" || approval.ContractSHA256 != nil {
+		t.Fatalf("approval not reset to pending: %#v", approval)
+	}
+	if eventTypes := ledgerEventTypes(t, paths.EventsJSONL); indexOfEvent(eventTypes, "contract_approval_reset") == -1 {
+		t.Fatalf("events missing contract_approval_reset:\n%v", eventTypes)
+	}
+
+	// JSON output reports approval_reset=true (a fresh approved run, since the run
+	// above is no longer approved after the reset).
+	jsonRoot := t.TempDir()
+	jsonApp, _, jsonRunID := setupContractRun(t, jsonRoot)
+	jsonApp = configureHelperClarifiers(jsonApp, "helper", "helper")
+	approveRunForTest(t, jsonApp, jsonRunID)
+	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", jsonRoot)
+
+	var jsonOut, jsonErr bytes.Buffer
+	if code := jsonApp.Run([]string{"clarify", "suggest", jsonRunID, "--reviewer", "helper", "--yes", "--json"}, &jsonOut, &jsonErr); code != 0 {
+		t.Fatalf("clarify suggest --json exited %d, stderr: %s", code, jsonErr.String())
+	}
+	var response clarifySuggestResponse
+	assertNoError(t, json.Unmarshal(jsonOut.Bytes(), &response))
+	if !response.ApprovalReset {
+		t.Fatalf("approved run should report approval_reset=true: %#v", response)
 	}
 }
 
@@ -404,8 +469,11 @@ func TestRecordClarifierSuggestionsResolvesDependsOnAndBlocks(t *testing.T) {
 	stdoutPath := filepath.Join(root, "clarifier-stdout.log")
 	mustWriteFile(t, stdoutPath, output)
 
-	created, warnings, status, err := app.recordClarifierSuggestions(context, "clarifier_attempt_001", stdoutPath, now)
+	created, warnings, status, approvalReset, err := app.recordClarifierSuggestions(context, "clarifier_attempt_001", stdoutPath, now)
 	assertNoError(t, err)
+	if approvalReset {
+		t.Fatalf("approvalReset should be false on a non-approved run")
+	}
 	if len(created) != 3 {
 		t.Fatalf("created = %d, want 3: %#v", len(created), created)
 	}
@@ -519,7 +587,7 @@ func TestRecordClarifierSuggestionsNumbersDependsOnPerBlock(t *testing.T) {
 	stdoutPath := filepath.Join(root, "clarifier-stdout.log")
 	mustWriteFile(t, stdoutPath, block1+block2)
 
-	created, warnings, _, err := app.recordClarifierSuggestions(context, "clarifier_attempt_001", stdoutPath, now)
+	created, warnings, _, _, err := app.recordClarifierSuggestions(context, "clarifier_attempt_001", stdoutPath, now)
 	assertNoError(t, err)
 	if len(created) != 3 {
 		t.Fatalf("created = %d, want 3: %#v", len(created), created)
