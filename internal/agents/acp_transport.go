@@ -2,7 +2,6 @@ package agents
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,7 +13,6 @@ import (
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
-	"github.com/heurema/pactum/internal/artifacts"
 )
 
 // ACPTransport drives an agent over the Agent Client Protocol via an adapter
@@ -24,17 +22,8 @@ import (
 type ACPTransport struct{}
 
 func (ACPTransport) Run(request RunRequest) (RunResult, error) {
-	if strings.TrimSpace(request.RepoRoot) == "" {
-		return RunResult{}, errors.New("repo root is required")
-	}
-	if strings.TrimSpace(request.RunID) == "" {
-		return RunResult{}, errors.New("run id is required")
-	}
-	if strings.TrimSpace(request.AttemptID) == "" {
-		return RunResult{}, errors.New("attempt id is required")
-	}
-	if strings.TrimSpace(request.PromptRepoPath) == "" {
-		return RunResult{}, errors.New("prompt path is required")
+	if err := validateRunRequest(request); err != nil {
+		return RunResult{}, err
 	}
 	adapterCmd, adapterArgs, err := acpAdapterCommand(request.Agent.Name)
 	if err != nil {
@@ -47,25 +36,15 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 		return RunResult{}, err
 	}
 
-	artifactDir := strings.Trim(strings.TrimSpace(request.ArtifactDir), "/")
-	if artifactDir == "" {
-		artifactDir = filepath.ToSlash(filepath.Join("execute", "attempts"))
-	}
-	attemptDir := filepath.Join(request.RepoRoot, artifacts.WorkspaceRel, "runs", request.RunID, filepath.FromSlash(artifactDir), request.AttemptID)
-	if err := os.MkdirAll(attemptDir, 0o755); err != nil {
+	layout, err := attemptArtifactLayout(request)
+	if err != nil {
 		return RunResult{}, err
 	}
-	stdoutArtifact := filepath.ToSlash(filepath.Join(artifactDir, request.AttemptID, "stdout.log"))
-	stderrArtifact := filepath.ToSlash(filepath.Join(artifactDir, request.AttemptID, "stderr.log"))
-	stdoutFile, err := os.Create(filepath.Join(attemptDir, "stdout.log"))
+	stdoutFile, stderrFile, err := createAttemptLogs(layout)
 	if err != nil {
 		return RunResult{}, err
 	}
 	defer stdoutFile.Close()
-	stderrFile, err := os.Create(filepath.Join(attemptDir, "stderr.log"))
-	if err != nil {
-		return RunResult{}, err
-	}
 	defer stderrFile.Close()
 
 	// The agent's streamed text goes to the attempt stdout.log, teed to the live
@@ -138,8 +117,8 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 		FinishedAt:     finished.Format(time.RFC3339Nano),
 		DurationMillis: finished.Sub(started).Milliseconds(),
 		TimedOut:       timedOut,
-		StdoutPath:     stdoutArtifact,
-		StderrPath:     stderrArtifact,
+		StdoutPath:     layout.stdoutArtifact,
+		StderrPath:     layout.stderrArtifact,
 		Usage:          client.tokenUsage(),
 	}, runErr
 }

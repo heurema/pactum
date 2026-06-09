@@ -13,8 +13,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/heurema/pactum/internal/artifacts"
 )
 
 func RunSubprocess(request RunRequest) (RunResult, error) {
@@ -68,25 +66,12 @@ func runSubprocessWithRunner(request RunRequest, runner processRunner) (RunResul
 	if runner == nil {
 		runner = osProcessRunner{}
 	}
-	if strings.TrimSpace(request.RepoRoot) == "" {
-		return RunResult{}, errors.New("repo root is required")
-	}
-	if strings.TrimSpace(request.RunID) == "" {
-		return RunResult{}, errors.New("run id is required")
-	}
-	if strings.TrimSpace(request.AttemptID) == "" {
-		return RunResult{}, errors.New("attempt id is required")
+	if err := validateRunRequest(request); err != nil {
+		return RunResult{}, err
 	}
 	executor, err := newPromptExecutor(request.Agent)
 	if err != nil {
 		return RunResult{}, err
-	}
-	if strings.TrimSpace(request.PromptRepoPath) == "" {
-		return RunResult{}, errors.New("prompt path is required")
-	}
-	artifactDir := strings.Trim(strings.TrimSpace(request.ArtifactDir), "/")
-	if artifactDir == "" {
-		artifactDir = filepath.ToSlash(filepath.Join("execute", "attempts"))
 	}
 
 	command := executor.command(request.PromptRepoPath)
@@ -96,26 +81,18 @@ func runSubprocessWithRunner(request RunRequest, runner processRunner) (RunResul
 		return RunResult{}, err
 	}
 
-	attemptDir := filepath.Join(request.RepoRoot, artifacts.WorkspaceRel, "runs", request.RunID, filepath.FromSlash(artifactDir), request.AttemptID)
-	if err := os.MkdirAll(attemptDir, 0o755); err != nil {
+	layout, err := attemptArtifactLayout(request)
+	if err != nil {
 		return RunResult{}, err
 	}
+	stdoutPath := layout.stdoutPath
+	stderrPath := layout.stderrPath
 
-	stdoutArtifact := filepath.ToSlash(filepath.Join(artifactDir, request.AttemptID, "stdout.log"))
-	stderrArtifact := filepath.ToSlash(filepath.Join(artifactDir, request.AttemptID, "stderr.log"))
-	stdoutPath := filepath.Join(attemptDir, "stdout.log")
-	stderrPath := filepath.Join(attemptDir, "stderr.log")
-
-	stdout, err := os.Create(stdoutPath)
+	stdout, stderr, err := createAttemptLogs(layout)
 	if err != nil {
 		return RunResult{}, err
 	}
 	defer stdout.Close()
-
-	stderr, err := os.Create(stderrPath)
-	if err != nil {
-		return RunResult{}, err
-	}
 	defer stderr.Close()
 
 	// Capture to the per-attempt log files always; when a live writer is set,
@@ -181,8 +158,8 @@ func runSubprocessWithRunner(request RunRequest, runner processRunner) (RunResul
 		FinishedAt:     finished.Format(time.RFC3339Nano),
 		DurationMillis: finished.Sub(started).Milliseconds(),
 		TimedOut:       timedOut,
-		StdoutPath:     stdoutArtifact,
-		StderrPath:     stderrArtifact,
+		StdoutPath:     layout.stdoutArtifact,
+		StderrPath:     layout.stderrArtifact,
 		Usage:          usage,
 	}, err
 }
