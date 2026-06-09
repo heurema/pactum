@@ -57,7 +57,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 	if err != nil {
 		return MapRefreshResult{}, err
 	}
-	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "map_refresh_started", Timestamp: startedAt, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "map_refresh_started", Timestamp: startedAt, RunID: runID}); err != nil {
 		return MapRefreshResult{}, err
 	}
 
@@ -105,7 +105,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 	}
 
 	searchStartedAt := a.nowUTC()
-	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "search_index_started", Timestamp: searchStartedAt, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "search_index_started", Timestamp: searchStartedAt, RunID: runID}); err != nil {
 		return MapRefreshResult{}, err
 	}
 	if err := searchpkg.Rebuild(paths.SearchSQLite, searchpkg.IndexInput{
@@ -119,7 +119,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 		return MapRefreshResult{}, err
 	}
 	searchFinishedAt := a.nowUTC()
-	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "search_index_finished", Timestamp: searchFinishedAt, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "search_index_finished", Timestamp: searchFinishedAt, RunID: runID}); err != nil {
 		return MapRefreshResult{}, err
 	}
 
@@ -182,7 +182,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 	if err := updateWorkspaceMapRun(paths.Manifest, runID, finishedAt); err != nil {
 		return MapRefreshResult{}, err
 	}
-	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "map_refresh_finished", Timestamp: finishedAt, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "map_refresh_finished", Timestamp: finishedAt, RunID: runID}); err != nil {
 		return MapRefreshResult{}, err
 	}
 

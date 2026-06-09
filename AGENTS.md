@@ -13,8 +13,14 @@ Instructions for coding agents working in this repository.
 - Do not run real agents (`pactum execute run`, `pactum review run`) without
   explicit approval — agent execution is unsandboxed.
 - The default stop point for the Pactum workflow is `pactum execute dry-run`.
-- Do not commit `.heurema/`; it is generated, machine-specific workspace state.
-- Keep generated artifacts out of commits.
+- The durable `.heurema/pactum/` run record (config, ledger, contracts,
+  decisions, gate verdicts, review findings, memory) is version-controlled; the
+  selective `.heurema/pactum/.gitignore` keeps the regenerable/machine-specific
+  parts out (`map/`, `cache/`, `tmp/`, `locks/`, `runs/*/context/`, and `*.log`
+  transcripts).
+- Never commit absolute local paths.
+- Feature PRs stay code-only; the run-record churn is committed separately in
+  periodic `audit: record runs` batches.
 
 ## Before reporting code changes
 

@@ -38,7 +38,7 @@ func (a App) Init(root string) error {
 	now := a.nowUTC()
 	runID := "map_" + now.Format("20060102_150405")
 
-	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "init_started", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "init_started", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 	if err := writeStaticWorkspaceFiles(paths); err != nil {
@@ -60,7 +60,7 @@ func (a App) Init(root string) error {
 	if err != nil {
 		return err
 	}
-	return ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "init_finished", Timestamp: result.FinishedAt, RunID: result.RunID, RepoRoot: root})
+	return ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "init_finished", Timestamp: result.FinishedAt, RunID: result.RunID})
 }
 
 func (a App) resolveInitRoot(target string) (string, error) {

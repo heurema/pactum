@@ -285,7 +285,7 @@ func (a App) recordClarifierSuggestions(context clarifyContext, attemptID string
 	if err != nil {
 		return nil, nil, clarifyStatusResponse{}, err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "clarification_questions_suggested", Timestamp: now, RunID: context.State.RunID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "clarification_questions_suggested", Timestamp: now, RunID: context.State.RunID}); err != nil {
 		return nil, nil, clarifyStatusResponse{}, err
 	}
 	return created, warnings, status, nil

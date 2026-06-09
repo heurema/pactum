@@ -870,8 +870,8 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 	}
 	for i, want := range []string{"run_created", "contract_draft_created"} {
 		event := events[len(events)-2+i]
-		if !strings.Contains(event, want) || !strings.Contains(event, "run_20260531_184012") || !strings.Contains(event, root) {
-			t.Fatalf("event %d = %s, want %s with run/root", len(events)-2+i, event, want)
+		if !strings.Contains(event, want) || !strings.Contains(event, "run_20260531_184012") {
+			t.Fatalf("event %d = %s, want %s with run", len(events)-2+i, event, want)
 		}
 	}
 }

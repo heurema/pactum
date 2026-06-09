@@ -126,7 +126,7 @@ func (a App) ContractRevise(stdout io.Writer, runID string, revision contractRev
 	if err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_revised", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_revised", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 
@@ -185,7 +185,7 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 	if err := writeJSON(context.RunPaths.RunJSON, state); err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_approved", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_approved", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 
@@ -363,7 +363,7 @@ func resetApprovalIfApproved(paths artifacts.Paths, runPaths contractRunPathSet,
 	if err := removePromptReadinessArtifacts(runPaths); err != nil {
 		return approvalState{}, false, err
 	}
-	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "contract_approval_reset", Timestamp: resetAt, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "contract_approval_reset", Timestamp: resetAt, RunID: runID}); err != nil {
 		return approvalState{}, false, err
 	}
 	return pending, true, nil

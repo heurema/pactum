@@ -114,7 +114,7 @@ func (a App) MemoryRefresh(stdout io.Writer, jsonOutput bool) error {
 	if err := activeStore.WriteBytes(paths.ProjectMemory, []byte(renderProjectMemoryMD(root, items, effectiveMemoryFreshnessFromRefresh(refresh))), 0o644); err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "memory_refresh_completed", Timestamp: now, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "memory_refresh_completed", Timestamp: now}); err != nil {
 		return err
 	}
 	if jsonOutput {

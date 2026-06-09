@@ -156,7 +156,7 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 	if err := ensurePromptArtifactRefs(context.RunPaths, context.State); err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "executor_prompt_built", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "executor_prompt_built", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 

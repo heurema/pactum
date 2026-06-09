@@ -257,7 +257,7 @@ func (a App) ReviewPrepare(stdout io.Writer, runID string, jsonOutput bool) erro
 	if err := writeJSON(context.RunPaths.ReviewJSON, review); err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_prepared", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_prepared", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 
@@ -348,11 +348,11 @@ func (a App) ReviewAddFinding(stdout io.Writer, runID string, input reviewFindin
 		return err
 	}
 	if resetApproval {
-		if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_approval_reset", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+		if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_approval_reset", Timestamp: now, RunID: runID}); err != nil {
 			return err
 		}
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_finding_added", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_finding_added", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 
@@ -404,7 +404,7 @@ func (a App) ReviewResolve(stdout io.Writer, runID string, findingID string, not
 	if err := writeJSON(context.RunPaths.ReviewJSON, review); err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_finding_resolved", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_finding_resolved", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 
@@ -458,7 +458,7 @@ func (a App) ReviewApprove(stdout io.Writer, runID string, approvedBy string, js
 	if err := writeJSON(context.RunPaths.ReviewJSON, review); err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_approved", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_approved", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 
@@ -489,7 +489,7 @@ func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, j
 	if err := writeReviewerDryRunArtifacts(prep, plan); err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_dry_run_prepared", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_dry_run_prepared", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 
