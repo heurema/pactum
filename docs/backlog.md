@@ -145,6 +145,24 @@ reviews across M8–M10. Rough priority in parentheses.
   `resetApprovalIfApproved` — so running them on an already-approved/executed run
   silently regresses it to `clarifying`. Guard or warn when the run is already
   approved (pre-existing; `clarify suggest` makes bulk creation easier).
+- **Committed `.heurema` run-record growth** (low, investigate). The durable run
+  record is versioned and grows linearly with the number of dogfood runs. Not a
+  problem today, but worth a proper look before it does. Baseline measured
+  2026-06-09: tracked `.heurema` ≈ 774 KB for 36 runs (~18 KB/run, 15 files);
+  the append-only ledger `events.jsonl` adds ~1.75 KB/run; the whole repo
+  (89 PRs of code + 36 runs) packs to **1.0 MiB** because the near-identical JSON
+  records delta-compress extremely well. Key finding: ~⅔ of a run is the contract
+  stored three times — `contract.json` + `contract.md` + `prompt.md` (~12 of ~18
+  KB), and `contract.md`/`prompt.md` are regenerable from `contract.json`.
+  Mitigations to evaluate, by leverage: (A) stop committing the regenerable
+  `contract.md` + `prompt.md` (selective `.gitignore`), cutting ~⅔ per run with
+  no real loss; (B) prune old `runs/` dirs while keeping the ledger + memory as
+  the live queryable summary (history retains the detail); (C) ledger-only (don't
+  commit run dirs); (D) move the durable record to an external store (the
+  SQLite/REST idea). Verdict: revisit when tracked `.heurema` crosses ~5 MB or a
+  few hundred runs; (A) is the cheap proactive win if we want it sooner. Relates
+  to the run-record batching policy (feature PRs stay code-only; run-records are
+  committed in periodic `audit:` batches).
 
 ## Resolved (for reference)
 
