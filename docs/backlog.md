@@ -190,11 +190,15 @@ reviews across M8–M10. Rough priority in parentheses.
   milestone history; a single `docs/acp-transport-design.md` could collect the
   rationale and the known limitations (shell-command writes, no isolation) in one
   place. Nice-to-have, not blocking.
-- **Clarify commands reset approval silently** (med). `clarify ask` / `answer` /
-  `suggest` add open questions via `refreshClarificationArtifacts`, which calls
-  `resetApprovalIfApproved` — so running them on an already-approved/executed run
-  silently regresses it to `clarifying`. Guard or warn when the run is already
-  approved (pre-existing; `clarify suggest` makes bulk creation easier).
+- **Clarify `answer` resets approval** (low). The silent-regression bug is fixed
+  (M15.7): `clarify ask` / `answer` / `suggest` on an already-approved run now
+  **warn** that they reset approval to pending (surfaced via `approval_reset` and
+  a printed warning) instead of regressing to `clarifying` silently. Residual open
+  question: `clarify answer` *resolves* a question rather than adding one, yet it
+  still resets approval through the shared `refreshClarificationArtifacts` /
+  `resetApprovalIfApproved` path — arguably answering an open (non-blocking)
+  question should not regress an approved run. Decide whether to special-case
+  `answer` (skip the reset when no new open question is introduced).
 - **Committed `.heurema` run-record growth** (low, investigate). The durable run
   record is versioned and grows linearly with the number of dogfood runs. Not a
   problem today, but worth a proper look before it does. Baseline measured
