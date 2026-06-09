@@ -11,7 +11,7 @@ limits:
   execute:
     max_iterations: 10
   review:
-    max_rounds: 4
+    max_rounds: 10
 budget:
   mode: warn
   max_usd: null
@@ -20,3 +20,6 @@ memory:
   include_stale: warn
 agents:
   cross_model_review: true
+  review_panel:
+    - codex
+    - claude

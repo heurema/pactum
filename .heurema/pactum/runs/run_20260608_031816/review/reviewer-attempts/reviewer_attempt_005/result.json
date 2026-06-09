@@ -1,0 +1,13 @@
+{
+  "schema": "pactum.reviewer_result.v1",
+  "run_id": "run_20260608_031816",
+  "attempt_id": "reviewer_attempt_005",
+  "reviewer": "codex",
+  "started_at": "2026-06-08T04:50:53.969832Z",
+  "finished_at": "2026-06-08T04:52:56.50592Z",
+  "duration_ms": 122536,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "review/reviewer-attempts/reviewer_attempt_005/stdout.log",
+  "stderr": "review/reviewer-attempts/reviewer_attempt_005/stderr.log"
+}

@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260608_220342",
+  "status": "contract_approved",
+  "task": "ACP scope gating: enforce contract paths_in_scope at the ACP WriteTextFile callback (deny out-of-scope writes in real time)",
+  "created_at": "2026-06-08T22:03:42.009825Z",
+  "updated_at": "2026-06-08T22:04:17.16179Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260608_220341",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

@@ -1,0 +1,83 @@
+# Executor Prompt
+
+This prompt is prepared from an approved Pactum contract.
+This prompt is prepared for the selected built-in agent when `pactum execute run` is used.
+Pactum records execution artifacts and validates contract, map, and memory boundaries before execution.
+
+## Contract status
+- Run: run_20260608_220342
+- Approval: approved
+- Contract hash: 48695919e379e89a3c900a5afcdc828c644f93b644c3676dabcbe232fec7c0bc
+
+## Goal
+Enforce the contract path-scope at the ACP WriteTextFile callback so the ACPTransport denies out-of-scope file writes in real time. This is the architectural payoff of the Agent Client Protocol: a live scope guard at the file-write boundary, instead of relying only on the post-hoc gate. Scoped to the write stages (execute and review fix) over the ACP transport; the CLI transport is unaffected (it keeps relying on the gate). Use a predicate plumbed through RunRequest so the path-glob logic stays in internal/app and the transport stays agnostic.
+
+## In scope
+- RunRequest (internal/agents/types.go) gains a WritePathAllowed func(repoRelPath string) bool field; nil preserves current allow-all behavior. Document it. The CLI transport ignores it; only the ACP transport consults it.
+- ACPTransport (internal/agents/acp_transport.go): the acpClient holds the WritePathAllowed predicate and the RepoRoot. WriteTextFile converts the absolute ACP path to a repo-relative path against RepoRoot; if the path escapes the repo (relative starts with ..) OR WritePathAllowed is non-nil and returns false, WriteTextFile returns an error that denies the write (the agent receives a write failure for out-of-scope paths) and does NOT touch disk. In-scope paths (or a nil predicate) write as before.
+- agentAttemptLifecycle (internal/app/agent_attempt.go) gains a WritePathAllowed field threaded into the RunRequest it builds. The execute (internal/app/execute.go) and review fix (internal/app/review_fix.go) lifecycle setups populate it from the contract via a small shared helper contractWritePathAllowed(contract): a write to repoRelPath is allowed when (paths_in_scope is empty OR repoRelPath matches paths_in_scope) AND repoRelPath does not match paths_out_of_scope, reusing the existing pathGlobMatchesAny and nonEmptyPathGlobs. Read-only stages (reviewer / clarify suggest / contract draft) leave WritePathAllowed nil.
+- Tests: unit-test contractWritePathAllowed (in-scope allowed, out-of-scope denied, escape-repo denied, empty-in-scope allows non-out-of-scope); unit-test that acpClient.WriteTextFile denies (errors, no disk write) when the predicate rejects and writes when it allows or is nil. Docs: note the ACP real-time scope guard and its file-write-boundary limitation in docs/agents.md.
+
+## Out of scope
+- Gating RequestPermission or shell-command tool calls — the agent could still write out of scope via a shell command it runs; this slice gates only the ACP file-write boundary (WriteTextFile). Note this limitation in the docs.
+- The CLI transport (unchanged; it relies on the post-hoc gate). ReadTextFile gating (reads are not scope-restricted). Changing the gate, the contract schema, or path_scope matching semantics.
+- Native LLM API; changing how the ACP session is driven beyond the WriteTextFile check.
+
+## Paths in scope
+- internal/agents/*.go
+- internal/app/*.go
+- docs/*.md
+
+
+## Acceptance criteria
+- Over the ACP transport, an execute or fix run with a declared paths_in_scope denies (errors, no disk write) a WriteTextFile to an out-of-scope path; in-scope writes succeed. With no scope declared or for read-only stages, WriteTextFile behaves as before (allow).
+- The CLI transport behavior is unchanged. The path-glob logic stays in internal/app (the transport only calls the predicate).
+- make check (incl. deadcode + git diff --check) and make test-race pass; new unit tests cover the predicate and the WriteTextFile deny path.
+
+## Validation commands
+- make build
+- make check
+- make test-race
+
+## Assumptions
+- The ACP adapters route file writes through the client WriteTextFile when fs capabilities are advertised (they are), so gating there is a real in-band check for the file-edit path. Shell-command writes bypass it (documented limitation).
+- pathGlobMatches/pathGlobMatchesAny (internal/app/path_scope.go) and nonEmptyPathGlobs (gate.go) already exist and operate on repo-relative slash paths; reuse them.
+- No backward-compatibility constraints; a nil WritePathAllowed predicate preserves todays behavior for every existing caller and the CLI transport.
+
+## Clarifications
+- None
+
+## Project context
+- Executor context: context/executor-context.md
+- Repo map: .heurema/pactum/map/repo-map.md
+- Search results: context/search-results.json
+- Accepted memory context: context/memory-context.md
+
+## Accepted memory
+
+Memory context:
+- context/memory-context.md
+
+Selected memory:
+- total: 0
+- fresh: 0
+- stale: 0
+- unknown: 0
+
+Items:
+- none
+
+Rules:
+- Accepted memory is context, not semantic truth.
+- Stale memory may be outdated; verify before using.
+- Use `pactum search "<term>"` and inspect current source files before relying on memory.
+- Do not implement from memory alone.
+
+## Instructions for future executor
+- Follow the approved contract.
+- Do not implement out-of-scope work.
+- Search before creating new code.
+- Prefer existing code items when applicable.
+- If the contract is ambiguous, stop and request clarification.
+- Use the listed validation commands as expected checks.
+- Pactum gate can run approved validation commands after execution.

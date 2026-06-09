@@ -1,0 +1,13 @@
+{
+  "schema": "pactum.review_fix_result.v1",
+  "run_id": "run_20260608_031816",
+  "attempt_id": "attempt_002",
+  "fixer": "codex",
+  "started_at": "2026-06-08T04:39:41.261262Z",
+  "finished_at": "2026-06-08T04:46:54.511169Z",
+  "duration_ms": 433249,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "review/fix/attempts/attempt_002/stdout.log",
+  "stderr": "review/fix/attempts/attempt_002/stderr.log"
+}

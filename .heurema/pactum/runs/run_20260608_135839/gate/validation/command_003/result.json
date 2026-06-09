@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1",
+  "id": "command_003",
+  "command": "make test-race",
+  "started_at": "2026-06-08T17:15:44.365828Z",
+  "finished_at": "2026-06-08T17:19:38.1873Z",
+  "duration_ms": 233821,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "gate/validation/command_003/stdout.log",
+  "stderr": "gate/validation/command_003/stderr.log"
+}

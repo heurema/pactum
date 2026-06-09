@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260608_213111",
+  "status": "contract_approved",
+  "task": "ACP smoke: create docs/acp-smoke.md",
+  "created_at": "2026-06-08T21:31:11.284341Z",
+  "updated_at": "2026-06-08T21:31:11.304433Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260608_135839",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}
