@@ -216,6 +216,159 @@ func TestClarificationQuestionFromSuggestionRequiresRecommendedAnswerAndConfiden
 	})
 }
 
+func TestResolveClarifierDependsOn(t *testing.T) {
+	positionToID := map[int]string{
+		1: "q_001",
+		2: skippedClarifierPosition, // emitted at position 2 but dropped in validation
+		3: "q_003",
+	}
+
+	t.Run("valid earlier references resolve to ids", func(t *testing.T) {
+		resolved, warnings := resolveClarifierDependsOn(positionToID, 4, "q_004", []int{1, 3})
+		if len(warnings) != 0 {
+			t.Fatalf("unexpected warnings: %#v", warnings)
+		}
+		if len(resolved) != 2 || resolved[0] != "q_001" || resolved[1] != "q_003" {
+			t.Fatalf("resolved = %#v, want [q_001 q_003]", resolved)
+		}
+	})
+
+	t.Run("self forward and out-of-range references are dropped with warnings", func(t *testing.T) {
+		resolved, warnings := resolveClarifierDependsOn(positionToID, 4, "q_004", []int{4, 5, 0})
+		if len(resolved) != 0 {
+			t.Fatalf("resolved = %#v, want none", resolved)
+		}
+		if len(warnings) != 3 {
+			t.Fatalf("warnings = %#v, want 3 dropped references", warnings)
+		}
+	})
+
+	t.Run("reference to a skipped position is dropped", func(t *testing.T) {
+		resolved, warnings := resolveClarifierDependsOn(positionToID, 4, "q_004", []int{2})
+		if len(resolved) != 0 || len(warnings) != 1 {
+			t.Fatalf("skipped-position dependency should be dropped: resolved=%#v warnings=%#v", resolved, warnings)
+		}
+	})
+
+	t.Run("no dependencies returns nil", func(t *testing.T) {
+		resolved, warnings := resolveClarifierDependsOn(positionToID, 4, "q_004", nil)
+		if resolved != nil || warnings != nil {
+			t.Fatalf("expected nil, got resolved=%#v warnings=%#v", resolved, warnings)
+		}
+	})
+}
+
+func TestRecordClarifierSuggestionsResolvesDependsOnAndBlocks(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	state := readRunState(t, runPaths.RunJSON)
+	context := clarifyContext{Root: root, Paths: paths, RunPaths: runPaths, State: state}
+
+	now := time.Unix(0, 0).UTC()
+	output := clarifierStructuredOutput([]map[string]any{
+		{ // position 1 — foundational, no dependency
+			"text":               "Which storage backend should the cache use?",
+			"blocking":           true,
+			"rationale":          "The backend choice constrains the schema.",
+			"recommended_answer": "SQLite.",
+			"confidence":         "high",
+		},
+		{ // position 2 — valid dependency on the foundational question
+			"text":               "What schema should the cache table use?",
+			"blocking":           true,
+			"rationale":          "The schema follows from the chosen backend.",
+			"recommended_answer": "A single key/value table.",
+			"confidence":         "medium",
+			"depends_on":         []int{1},
+		},
+		{ // position 3 — self, forward, and out-of-range refs all dropped
+			"text":               "What eviction policy is acceptable?",
+			"blocking":           false,
+			"rationale":          "Eviction is independent of the earlier questions.",
+			"recommended_answer": "LRU.",
+			"confidence":         "low",
+			"depends_on":         []int{3, 4, 0},
+		},
+	})
+	stdoutPath := filepath.Join(root, "clarifier-stdout.log")
+	mustWriteFile(t, stdoutPath, output)
+
+	created, warnings, status, err := app.recordClarifierSuggestions(context, "clarifier_attempt_001", stdoutPath, now)
+	assertNoError(t, err)
+	if len(created) != 3 {
+		t.Fatalf("created = %d, want 3: %#v", len(created), created)
+	}
+	if len(created[0].DependsOn) != 0 {
+		t.Fatalf("foundational q_001 should carry no dependencies: %#v", created[0].DependsOn)
+	}
+	if len(created[1].DependsOn) != 1 || created[1].DependsOn[0] != "q_001" {
+		t.Fatalf("q_002 depends_on = %#v, want [q_001]", created[1].DependsOn)
+	}
+	if len(created[2].DependsOn) != 0 {
+		t.Fatalf("q_003 self/forward/out-of-range deps should all be dropped: %#v", created[2].DependsOn)
+	}
+	joinedWarnings := strings.Join(warnings, "\n")
+	for _, want := range []string{
+		"q_003 dependency dropped: depends_on position 3",
+		"q_003 dependency dropped: depends_on position 4",
+		"q_003 dependency dropped: depends_on position 0",
+	} {
+		if !strings.Contains(joinedWarnings, want) {
+			t.Fatalf("warnings missing %q:\n%s", want, joinedWarnings)
+		}
+	}
+
+	// The dropped-dependency question is still recorded and persisted.
+	persisted, err := readClarificationQuestions(runPaths.QuestionsJSONL)
+	assertNoError(t, err)
+	if len(persisted) != 3 {
+		t.Fatalf("persisted questions = %d, want 3", len(persisted))
+	}
+	if len(persisted[1].DependsOn) != 1 || persisted[1].DependsOn[0] != "q_001" {
+		t.Fatalf("persisted q_002 depends_on = %#v, want [q_001]", persisted[1].DependsOn)
+	}
+
+	// q_002 is open and its prerequisite q_001 is unanswered → Blocked.
+	if got := clarifyQuestionStatusByID(t, status, "q_002"); !got.Blocked {
+		t.Fatalf("q_002 should be Blocked while q_001 is unanswered: %#v", got)
+	}
+	if got := clarifyQuestionStatusByID(t, status, "q_001"); got.Blocked {
+		t.Fatalf("foundational q_001 must not be Blocked: %#v", got)
+	}
+	if got := clarifyQuestionStatusByID(t, status, "q_003"); got.Blocked {
+		t.Fatalf("q_003 has no resolved prerequisites and must not be Blocked: %#v", got)
+	}
+
+	// Counters treat a blocked blocking question as an ordinary open/blocking one.
+	if status.Open != 3 || status.BlockingOpen != 2 || status.Answered != 0 {
+		t.Fatalf("unexpected counters: open=%d blocking_open=%d answered=%d", status.Open, status.BlockingOpen, status.Answered)
+	}
+
+	// Answering the prerequisite clears the block on q_002.
+	var answerStdout bytes.Buffer
+	assertNoError(t, app.ClarifyAnswer(&answerStdout, runID, "q_001", "Use SQLite.", false))
+	afterStatus, err := buildClarificationStatus(runPaths, state)
+	assertNoError(t, err)
+	if got := clarifyQuestionStatusByID(t, afterStatus, "q_002"); got.Blocked {
+		t.Fatalf("q_002 should no longer be Blocked once q_001 is answered: %#v", got)
+	}
+	if got := clarifyQuestionStatusByID(t, afterStatus, "q_002"); got.Status != "open" {
+		t.Fatalf("q_002 should remain open after the prerequisite is answered: %#v", got)
+	}
+}
+
+func clarifyQuestionStatusByID(t *testing.T, status clarifyStatusResponse, id string) clarifyQuestionStatus {
+	t.Helper()
+	for _, question := range status.Questions {
+		if question.ID == id {
+			return question
+		}
+	}
+	t.Fatalf("question %s not found in status: %#v", id, status.Questions)
+	return clarifyQuestionStatus{}
+}
+
 func configureHelperClarifiers(app App, defaultReviewer string, names ...string) App {
 	descriptors := make([]agents.AgentDescriptor, 0, len(names))
 	for _, name := range names {

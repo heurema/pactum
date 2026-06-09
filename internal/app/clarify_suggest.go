@@ -71,6 +71,10 @@ type clarifierSuggestionInput struct {
 	Rationale         string `json:"rationale"`
 	RecommendedAnswer string `json:"recommended_answer"`
 	Confidence        string `json:"confidence"`
+	// DependsOn lists the 1-based positions of EARLIER questions in the same
+	// emitted sequence whose answers this question hinges on. Pactum resolves
+	// each position to the assigned question id when the suggestion is recorded.
+	DependsOn []int `json:"depends_on"`
 }
 
 type clarifySuggestResponse struct {
@@ -255,18 +259,32 @@ func (a App) recordClarifierSuggestions(context clarifyContext, attemptID string
 
 	blocks, warnings := parseClarifierSuggestionBlocks(string(stdoutBytes))
 	created := make([]clarificationQuestionRecord, 0)
+	// positionToID maps each emitted question's 1-based position (across all
+	// blocks in this attempt) to its assigned id, or to skippedClarifierPosition
+	// when the suggestion at that position was dropped during validation. A
+	// depends_on entry resolves only against strictly-earlier recorded positions,
+	// so a single forward pass keeps the dependency graph acyclic.
+	positionToID := make(map[int]string)
+	position := 0
 	for _, block := range blocks {
 		for _, rawQuestion := range block.Questions {
+			position++
 			var input clarifierSuggestionInput
 			if err := json.Unmarshal(rawQuestion, &input); err != nil {
 				warnings = append(warnings, "question skipped: invalid question object")
+				positionToID[position] = skippedClarifierPosition
 				continue
 			}
 			record, warning := clarificationQuestionFromSuggestion(context.Root, context.State.RunID, attemptID, len(questions)+len(created)+1, input, now)
 			if warning != "" {
 				warnings = append(warnings, warning)
+				positionToID[position] = skippedClarifierPosition
 				continue
 			}
+			dependsOn, dependsWarnings := resolveClarifierDependsOn(positionToID, position, record.ID, input.DependsOn)
+			warnings = append(warnings, dependsWarnings...)
+			record.DependsOn = dependsOn
+			positionToID[position] = record.ID
 			created = append(created, record)
 		}
 	}
@@ -347,6 +365,37 @@ func clarificationQuestionFromSuggestion(root string, runID string, attemptID st
 	}, ""
 }
 
+// skippedClarifierPosition marks an emitted question position whose suggestion
+// was dropped during validation, so a later depends_on referencing it resolves
+// to nothing rather than to a real question id.
+const skippedClarifierPosition = ""
+
+// resolveClarifierDependsOn turns a question's depends_on positions into the ids
+// of the earlier questions they reference. positionToID holds every already-
+// processed position (recorded id or skippedClarifierPosition); position is the
+// 1-based position of the question being resolved. An entry is dropped, with a
+// warning that keeps the question, when it is not a strictly-earlier (1 <= d <
+// position) recorded position.
+func resolveClarifierDependsOn(positionToID map[int]string, position int, questionID string, dependsOn []int) ([]string, []string) {
+	if len(dependsOn) == 0 {
+		return nil, nil
+	}
+	resolved := make([]string, 0, len(dependsOn))
+	warnings := []string{}
+	for _, d := range dependsOn {
+		id, ok := positionToID[d]
+		if d < 1 || d >= position || !ok || id == skippedClarifierPosition {
+			warnings = append(warnings, fmt.Sprintf("%s dependency dropped: depends_on position %d is not a strictly earlier recorded question", questionID, d))
+			continue
+		}
+		resolved = append(resolved, id)
+	}
+	if len(resolved) == 0 {
+		return nil, warnings
+	}
+	return resolved, warnings
+}
+
 func isValidClarificationConfidence(confidence string) bool {
 	switch confidence {
 	case "high", "medium", "low":
@@ -408,6 +457,12 @@ func renderClarifierContext(prep clarifierPreparation) string {
 					confidence = "unknown"
 				}
 				fmt.Fprintf(&b, "    recommended answer (confidence %s): %s\n", confidence, question.RecommendedAnswer)
+			}
+			if len(question.DependsOn) > 0 {
+				fmt.Fprintf(&b, "    depends on: %s\n", strings.Join(question.DependsOn, ", "))
+			}
+			if question.Blocked {
+				fmt.Fprintln(&b, "    blocked: waiting on unanswered prerequisites")
 			}
 			if question.Answer != "" {
 				fmt.Fprintf(&b, "    answer: %s\n", question.Answer)
@@ -487,6 +542,11 @@ func renderClarifierPrompt(runID string) string {
 	fmt.Fprintln(&b, "- EVERY question must carry a specific recommended answer: your best-guess resolution, phrased so the human can apply it directly as the contract change (confirm or adjust it, not author it from scratch).")
 	fmt.Fprintln(&b, "- EVERY question must carry a confidence of high, medium, or low, reflecting how sure you are the recommended answer is correct.")
 	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Order and dependencies")
+	fmt.Fprintln(&b, "- Order the questions foundational-first: ask the decisions that constrain other answers before the questions they constrain.")
+	fmt.Fprintln(&b, "- When a question's framing or answer hinges on an earlier question in this block, set its depends_on to that earlier question's 1-based position in the questions array (positions count from 1, top to bottom).")
+	fmt.Fprintln(&b, "- depends_on may reference only strictly-earlier positions; omit it (or leave it empty) for a foundational question.")
+	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Structured suggestions")
 	fmt.Fprintln(&b, "Include a fenced JSON block exactly like:")
 	fmt.Fprintln(&b)
@@ -499,13 +559,15 @@ func renderClarifierPrompt(runID string) string {
 	fmt.Fprintln(&b, `      "blocking": true,`)
 	fmt.Fprintln(&b, `      "rationale": "Why this answer changes scope or implementation choices, and what the repo already told you.",`)
 	fmt.Fprintln(&b, `      "recommended_answer": "Your best-guess resolution, phrased so it is directly usable as the contract change.",`)
-	fmt.Fprintln(&b, `      "confidence": "high"`)
+	fmt.Fprintln(&b, `      "confidence": "high",`)
+	fmt.Fprintln(&b, `      "depends_on": []`)
 	fmt.Fprintln(&b, "    }")
 	fmt.Fprintln(&b, "  ]")
 	fmt.Fprintln(&b, "}")
 	fmt.Fprintln(&b, "```")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "confidence must be one of: high, medium, low.")
+	fmt.Fprintln(&b, "depends_on (optional) lists the 1-based positions of earlier questions in this same block that must be answered first; omit or leave it empty for a foundational question.")
 	fmt.Fprintln(&b, "If no clarification is needed, return the same schema with an empty questions array.")
 	return b.String()
 }

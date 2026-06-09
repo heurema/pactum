@@ -113,9 +113,19 @@ reviews across M8–M10. Rough priority in parentheses.
     repo-answerable findings into the rationale and recommended answer, escalating
     only questions that genuinely need a human decision. (Recommendation is captured
     and displayed only; confidence-gated auto-resolve is a later slice.)
-  - **Slice 2 — dependency-ordered questioning** (todo). Let the clarifier express
-    `depends_on` between questions and order/gate them so foundational decisions are
-    settled before the questions they constrain.
+  - **Slice 2 — dependency-ordered questioning** (M15.2, shipped). The clarifier
+    now orders its questions foundational-first and declares `depends_on` for any
+    question whose framing or answer hinges on an earlier one, referencing those
+    earlier questions by their 1-based position in the emitted sequence. Pactum
+    resolves the positions to the assigned question ids in a single forward pass —
+    a forward/self/out-of-range/skipped reference is dropped with a warning while
+    the question is still recorded — persists the resolved ids on each question, and
+    marks an open question `blocked` when any prerequisite is still unanswered.
+    `clarify status` and the clarifier-context list surface the `depends_on` ids and
+    the blocked flag. Additive and display-only: the open/answered status values and
+    the Open/Answered/BlockingOpen counters are unchanged (a blocked blocking
+    question still counts as open/blocking), and this slice does not auto-defer or
+    hide dependent questions in the loop (a later slice).
   - **Slice 3 — terminology / domain challenge** (todo). Push back on vague or
     overloaded domain terms, forcing the requester to pin down concrete meanings.
   - **Slice 4 — edge-case probing** (todo). Systematically surface boundary

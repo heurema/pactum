@@ -28,6 +28,7 @@ type clarificationQuestionRecord struct {
 	Rationale          string    `json:"rationale,omitempty"`
 	RecommendedAnswer  string    `json:"recommended_answer,omitempty"`
 	Confidence         string    `json:"confidence,omitempty"`
+	DependsOn          []string  `json:"depends_on,omitempty"`
 	Status             string    `json:"status"`
 	CreatedAt          time.Time `json:"created_at"`
 	Source             string    `json:"source"`
@@ -59,14 +60,16 @@ type contractClarifySet struct {
 }
 
 type clarifyQuestionStatus struct {
-	ID                string `json:"id"`
-	Question          string `json:"question"`
-	Blocking          bool   `json:"blocking"`
-	Rationale         string `json:"rationale,omitempty"`
-	RecommendedAnswer string `json:"recommended_answer,omitempty"`
-	Confidence        string `json:"confidence,omitempty"`
-	Status            string `json:"status"`
-	Answer            string `json:"answer,omitempty"`
+	ID                string   `json:"id"`
+	Question          string   `json:"question"`
+	Blocking          bool     `json:"blocking"`
+	Rationale         string   `json:"rationale,omitempty"`
+	RecommendedAnswer string   `json:"recommended_answer,omitempty"`
+	Confidence        string   `json:"confidence,omitempty"`
+	DependsOn         []string `json:"depends_on,omitempty"`
+	Status            string   `json:"status"`
+	Blocked           bool     `json:"blocked,omitempty"`
+	Answer            string   `json:"answer,omitempty"`
 }
 
 type clarifyStatusResponse struct {
@@ -291,6 +294,15 @@ func buildClarificationStatus(runPaths contractRunPathSet, state contractRunStat
 				response.BlockingOpen++
 			}
 		}
+		blocked := false
+		if !answered {
+			for _, prerequisiteID := range question.DependsOn {
+				if _, prerequisiteAnswered := latestAnswers[prerequisiteID]; !prerequisiteAnswered {
+					blocked = true
+					break
+				}
+			}
+		}
 		response.Questions = append(response.Questions, clarifyQuestionStatus{
 			ID:                question.ID,
 			Question:          question.Question,
@@ -298,7 +310,9 @@ func buildClarificationStatus(runPaths contractRunPathSet, state contractRunStat
 			Rationale:         question.Rationale,
 			RecommendedAnswer: question.RecommendedAnswer,
 			Confidence:        question.Confidence,
+			DependsOn:         question.DependsOn,
 			Status:            questionStatus,
+			Blocked:           blocked,
 			Answer:            answerText,
 		})
 	}
@@ -477,6 +491,12 @@ func writeClarifyStatus(stdout io.Writer, status clarifyStatusResponse) {
 					confidence = "unknown"
 				}
 				fmt.Fprintf(stdout, "    recommended answer (confidence %s): %s\n", confidence, question.RecommendedAnswer)
+			}
+			if len(question.DependsOn) > 0 {
+				fmt.Fprintf(stdout, "    depends on: %s\n", strings.Join(question.DependsOn, ", "))
+			}
+			if question.Blocked {
+				fmt.Fprintln(stdout, "    blocked: waiting on unanswered prerequisites")
 			}
 		}
 	}
