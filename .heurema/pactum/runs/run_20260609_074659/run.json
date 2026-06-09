@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260609_074659",
+  "status": "contract_approved",
+  "task": "Refactor internal/app: extract the run-context loading boilerplate duplicated across the six load*Context functions into a shared helper — behavior-preserving, no test changes",
+  "created_at": "2026-06-09T07:46:59.563923Z",
+  "updated_at": "2026-06-09T07:47:19.304515Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260609_074659",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

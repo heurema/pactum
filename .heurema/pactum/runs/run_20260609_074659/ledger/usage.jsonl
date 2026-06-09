@@ -1,0 +1,1 @@
+{"schema_version":1,"record_id":"usage_980ed951f2a22ebe","run_id":"run_20260609_074659","attempt_id":"attempt_001","stage":"execute","created_at":"2026-06-09T07:52:34.900961Z","provider":"anthropic","agent":"claude","input_tokens":0,"output_tokens":0,"total_tokens":0,"captured":false}

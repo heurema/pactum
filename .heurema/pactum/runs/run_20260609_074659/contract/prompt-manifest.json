@@ -1,0 +1,41 @@
+{
+  "schema": "pactum.executor_prompt.v1",
+  "run_id": "run_20260609_074659",
+  "built_at": "2026-06-09T07:47:19Z",
+  "status": "ready",
+  "contract_sha256": "182883229d0f11857170bfb2092912cfc41729bc8628d872933f4c8d94da9d73",
+  "approval_status": "approved",
+  "approved_by": "manual",
+  "approved_at": "2026-06-09T07:47:19Z",
+  "map_run_id": "map_20260609_074659",
+  "artifacts": {
+    "prompt": "contract/prompt.md",
+    "executor_context": "context/executor-context.md",
+    "contract": "contract/contract.json",
+    "approval": "contract/approval.json",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json"
+  },
+  "memory": {
+    "context": "context/memory-context.md",
+    "selection": "context/memory-selection.json",
+    "context_sha256": "105ac3e5e02446b5747ad4342c31b08b1b3eade9d71496614211170222d2fcd4",
+    "selection_sha256": "641b2f66eea211c54307e8e0b38efbed64c8704a1a564985f35fe67fe2f205be",
+    "source_sha256": "e05afb5024e64f30ca731a1163f2e02f06e105cb76202d9ad3ff0edeaecb8086",
+    "selected": {
+      "total": 0,
+      "fresh": 0,
+      "stale": 0,
+      "unknown": 0
+    },
+    "latest_refresh": null
+  },
+  "checks": {
+    "contract_approved": true,
+    "contract_hash_matches_approval": true,
+    "project_map_fresh": true,
+    "blocking_clarifications_open": 0,
+    "memory_context_ready": true,
+    "memory_source_current": true
+  }
+}

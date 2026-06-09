@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260609_070146",
+  "status": "contract_approved",
+  "task": "Refactor internal/agents: extract the duplicated transport plumbing shared by CLITransport (runner.go) and ACPTransport (acp_transport.go) into shared helpers — behavior-preserving, no public API change",
+  "created_at": "2026-06-09T07:01:46.375159Z",
+  "updated_at": "2026-06-09T07:02:33.975574Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260609_070139",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

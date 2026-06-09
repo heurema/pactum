@@ -1,0 +1,46 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260609_070146",
+  "status": "approved",
+  "goal": "Remove the copy-paste duplication between CLITransport (internal/agents/runner.go) and ACPTransport (internal/agents/acp_transport.go) by extracting the shared attempt plumbing — request validation, attempt-artifact path layout, and attempt log-file creation — into shared helpers in the agents package. The two transports MUST keep producing byte-identical attempt artifacts and RunResult contents; the extraction is the mechanism that prevents them from drifting. Behavior-preserving only — no public API change.",
+  "scope": {
+    "in": [
+      "Extract a shared request-validation helper covering the duplicated RepoRoot/RunID/AttemptID/PromptRepoPath emptiness checks (with the same error messages) and call it from both RunSubprocess (runSubprocessWithRunner) and ACPTransport.Run.",
+      "Extract a shared attempt-artifact layout helper that computes the artifactDir default ('execute/attempts'), the absolute attemptDir under .heurema runs, the slash-relative stdout/stderr artifact paths, and the absolute stdout.log/stderr.log paths, performing the MkdirAll — and use it from both transports.",
+      "Extract a shared helper that creates the two attempt log files (stdout.log, stderr.log) and use it from both transports; the caller retains responsibility for deferring Close.",
+      "Update both runner.go and acp_transport.go to call the new helpers, deleting the duplicated inline code."
+    ],
+    "out": [
+      "Removing or renaming any exported type, function, or struct field (RunRequest, RunResult, Transport, AgentDescriptor, etc.) — including the test-coupled RunResult.Command/Args fields.",
+      "Any change to ACP protocol logic, idle-timeout watchdog, usage parsing/normalization, process-group handling, or the writer-wrapping (live-tee/activity) setup — leave those as-is even if similar.",
+      "Any change to files outside internal/agents, and any consolidation of reviewLoopLimits/reviewLimits (separate concern)."
+    ]
+  },
+  "paths_in_scope": [
+    "internal/agents/*.go"
+  ],
+  "acceptance_criteria": [
+    "runner.go and acp_transport.go no longer contain duplicated request-validation, attempt-path-layout, or log-file-creation code; both call the shared helpers.",
+    "Behavior is unchanged: the attempt directory layout, the slash-relative artifact paths, the absolute log paths, the validation error messages, and every RunResult field are identical to before the refactor.",
+    "All existing tests pass with NO test changes required (including internal/agents/executor_test.go); go build ./..., go vet ./..., and the deadcode gate are clean; go test -race ./internal/agents/... passes."
+  ],
+  "validation": {
+    "commands": [
+      "go build ./...",
+      "go test ./internal/agents/...",
+      "go vet ./...",
+      "go test -race ./internal/agents/..."
+    ]
+  },
+  "assumptions": [
+    "The CLI and ACP transports are required to produce identical attempt artifacts; the shared helpers are the single source of truth that enforces this, so extracting them is a net reduction in drift risk, not just line count.",
+    "No exported API changes are needed; the helpers are unexported package-internal functions in internal/agents."
+  ],
+  "open_questions": [],
+  "clarifications": {
+    "questions": []
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}
