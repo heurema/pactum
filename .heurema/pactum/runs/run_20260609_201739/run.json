@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260609_201739",
+  "status": "contract_approved",
+  "task": "Clarify hardening: surface the silent approval reset — when clarify ask/answer/suggest regress an already-approved run to clarifying, thread the existing approvalReset flag up and warn instead of doing it silently",
+  "created_at": "2026-06-09T20:17:39.25516Z",
+  "updated_at": "2026-06-09T20:17:59.59066Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260609_201739",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

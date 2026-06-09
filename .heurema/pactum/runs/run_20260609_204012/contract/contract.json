@@ -1,0 +1,44 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260609_204012",
+  "status": "draft",
+  "goal": "Demo",
+  "scope": {
+    "in": [
+      "x"
+    ],
+    "out": []
+  },
+  "acceptance_criteria": [
+    "y"
+  ],
+  "validation": {
+    "commands": [
+      "go build ./..."
+    ]
+  },
+  "assumptions": [],
+  "open_questions": [
+    "Should this also handle the X edge case?",
+    "And the Y case?"
+  ],
+  "clarifications": {
+    "questions": [
+      {
+        "id": "q_001",
+        "question": "Should this also handle the X edge case?",
+        "blocking": false,
+        "status": "open"
+      },
+      {
+        "id": "q_002",
+        "question": "And the Y case?",
+        "blocking": false,
+        "status": "open"
+      }
+    ]
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}

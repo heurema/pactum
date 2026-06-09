@@ -1,0 +1,2 @@
+{"schema":"pactum.clarification_question.v1","id":"q_001","run_id":"run_20260609_204012","question":"Should this also handle the X edge case?","blocking":false,"status":"open","created_at":"2026-06-09T20:40:41.087097Z","source":"manual"}
+{"schema":"pactum.clarification_question.v1","id":"q_002","run_id":"run_20260609_204012","question":"And the Y case?","blocking":false,"status":"open","created_at":"2026-06-09T20:40:41.095528Z","source":"manual"}
