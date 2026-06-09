@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -185,6 +186,146 @@ func TestWriteClarifyStatusShowsCoverageAndConverged(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("clarify status output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestClarifyAskSurfacesApprovalResetOnApprovedRun(t *testing.T) {
+	t.Run("approved run warns, regresses, and keeps the ledger event", func(t *testing.T) {
+		root := t.TempDir()
+		app, paths, runID := setupContractRun(t, root)
+		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+		approveRunForTest(t, app, runID)
+
+		var stdout bytes.Buffer
+		assertNoError(t, app.ClarifyAsk(&stdout, runID, "Which storage backend should the cache use?", true, false))
+
+		got := stdout.String()
+		for _, want := range []string{
+			"this run was approved",
+			"reset approval to pending",
+			`status now "clarifying"`,
+			"pactum contract approve " + runID,
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("ask output missing approval-reset warning %q:\n%s", want, got)
+			}
+		}
+
+		// An open blocking question regresses the run to clarifying and its approval
+		// to pending, and the reset is still recorded in the ledger.
+		if state := readRunState(t, runPaths.RunJSON); state.Status != "clarifying" {
+			t.Fatalf("run status = %q, want clarifying", state.Status)
+		}
+		if approval := readApproval(t, runPaths.ApprovalJSON); approval.Status != "pending" || approval.ContractSHA256 != nil {
+			t.Fatalf("approval not reset to pending: %#v", approval)
+		}
+		if eventTypes := ledgerEventTypes(t, paths.EventsJSONL); indexOfEvent(eventTypes, "contract_approval_reset") == -1 {
+			t.Fatalf("events missing contract_approval_reset:\n%v", eventTypes)
+		}
+
+		// JSON output reports approval_reset=true (checked on a fresh approved run,
+		// since the run above is no longer approved).
+		jsonRoot := t.TempDir()
+		jsonApp, _, jsonRunID := setupContractRun(t, jsonRoot)
+		approveRunForTest(t, jsonApp, jsonRunID)
+		var jsonOut bytes.Buffer
+		assertNoError(t, jsonApp.ClarifyAsk(&jsonOut, jsonRunID, "Which storage backend?", true, true))
+		var response clarifyAskResponse
+		assertNoError(t, json.Unmarshal(jsonOut.Bytes(), &response))
+		if !response.ApprovalReset {
+			t.Fatalf("approved run should report approval_reset=true: %#v", response)
+		}
+	})
+
+	t.Run("non-approved run leaves approval_reset false and prints no warning", func(t *testing.T) {
+		root := t.TempDir()
+		app, _, runID := setupContractRun(t, root)
+
+		var jsonOut bytes.Buffer
+		assertNoError(t, app.ClarifyAsk(&jsonOut, runID, "Which storage backend?", true, true))
+		if strings.Contains(jsonOut.String(), "approval_reset") {
+			t.Fatalf("non-approved run should omit approval_reset from JSON:\n%s", jsonOut.String())
+		}
+		var response clarifyAskResponse
+		assertNoError(t, json.Unmarshal(jsonOut.Bytes(), &response))
+		if response.ApprovalReset {
+			t.Fatalf("non-approved run should report approval_reset=false: %#v", response)
+		}
+
+		var stdout bytes.Buffer
+		assertNoError(t, app.ClarifyAsk(&stdout, runID, "Another question?", false, false))
+		if strings.Contains(stdout.String(), "this run was approved") {
+			t.Fatalf("non-approved run should not warn about approval reset:\n%s", stdout.String())
+		}
+	})
+}
+
+func TestClarifyAnswerSurfacesApprovalResetOnApprovedRun(t *testing.T) {
+	t.Run("approved run warns, regresses, and keeps the ledger event", func(t *testing.T) {
+		root := t.TempDir()
+		app, paths, runID := setupContractRun(t, root)
+		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+		// A non-blocking question leaves the contract approvable (only open blocking
+		// questions block approval), so the run can reach the approved state first.
+		var setup bytes.Buffer
+		assertNoError(t, app.ClarifyAsk(&setup, runID, "Any preferred eviction policy?", false, false))
+		approveRunForTest(t, app, runID)
+
+		var stdout bytes.Buffer
+		assertNoError(t, app.ClarifyAnswer(&stdout, runID, "q_001", "LRU is fine.", false))
+
+		got := stdout.String()
+		for _, want := range []string{
+			"this run was approved",
+			"reset approval to pending",
+			// No blocking question is open, so the run lands in contract_draft; the
+			// warning names that precise status rather than contradicting it.
+			`status now "contract_draft"`,
+			"pactum contract approve " + runID,
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("answer output missing approval-reset warning %q:\n%s", want, got)
+			}
+		}
+		if approval := readApproval(t, runPaths.ApprovalJSON); approval.Status != "pending" || approval.ContractSHA256 != nil {
+			t.Fatalf("approval not reset to pending: %#v", approval)
+		}
+		if eventTypes := ledgerEventTypes(t, paths.EventsJSONL); indexOfEvent(eventTypes, "contract_approval_reset") == -1 {
+			t.Fatalf("events missing contract_approval_reset:\n%v", eventTypes)
+		}
+	})
+
+	t.Run("non-approved run leaves approval_reset false and prints no warning", func(t *testing.T) {
+		root := t.TempDir()
+		app, _, runID := setupContractRun(t, root)
+		var setup bytes.Buffer
+		assertNoError(t, app.ClarifyAsk(&setup, runID, "Any preferred eviction policy?", false, false))
+
+		var jsonOut bytes.Buffer
+		assertNoError(t, app.ClarifyAnswer(&jsonOut, runID, "q_001", "LRU is fine.", true))
+		if strings.Contains(jsonOut.String(), "approval_reset") {
+			t.Fatalf("non-approved run should omit approval_reset from JSON:\n%s", jsonOut.String())
+		}
+		var response clarifyAnswerResponse
+		assertNoError(t, json.Unmarshal(jsonOut.Bytes(), &response))
+		if response.ApprovalReset {
+			t.Fatalf("non-approved run should report approval_reset=false: %#v", response)
+		}
+
+		var stdout bytes.Buffer
+		assertNoError(t, app.ClarifyAnswer(&stdout, runID, "q_001", "LRU again.", false))
+		if strings.Contains(stdout.String(), "this run was approved") {
+			t.Fatalf("non-approved run should not warn about approval reset:\n%s", stdout.String())
+		}
+	})
+}
+
+func approveRunForTest(t *testing.T, app App, runID string) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr); code != 0 {
+		t.Fatalf("contract approve exited %d, stderr: %s", code, stderr.String())
 	}
 }
 

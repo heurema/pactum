@@ -90,6 +90,10 @@ type clarifySuggestResponse struct {
 	Result    clarifierResultDocument       `json:"result"`
 	Created   []clarificationQuestionRecord `json:"created"`
 	Warnings  []string                      `json:"warnings"`
+	// ApprovalReset reports that recording these suggestions regressed an
+	// already-approved run back to clarifying (approval reset to pending). It is
+	// omitted (false) when the run was not approved or no questions were recorded.
+	ApprovalReset bool `json:"approval_reset,omitempty"`
 }
 
 func (a App) ClarifySuggest(stdout io.Writer, liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration, confirm bool, jsonOutput bool) error {
@@ -159,18 +163,19 @@ func (a App) ClarifySuggest(stdout io.Writer, liveOutput io.Writer, runID string
 			writeClarifySuggestRunOnly(stdout, request, result, prep.ModelSpec)
 		},
 		AfterSuccess: func(attempt agentAttemptContext[agents.DryRunCommand], request clarifierRequestDocument, result clarifierResultDocument, now time.Time) (clarifySuggestResponse, error) {
-			created, warnings, status, err := a.recordClarifierSuggestions(context, attempt.AttemptID, attempt.AttemptPaths.StdoutLog, now)
+			created, warnings, status, approvalReset, err := a.recordClarifierSuggestions(context, attempt.AttemptID, attempt.AttemptPaths.StdoutLog, now)
 			if err != nil {
 				return clarifySuggestResponse{}, err
 			}
 			return clarifySuggestResponse{
-				RunID:     runID,
-				RunStatus: status.RunStatus,
-				AttemptID: attempt.AttemptID,
-				Clarifier: prep.Clarifier.Name,
-				Result:    result,
-				Created:   created,
-				Warnings:  warnings,
+				RunID:         runID,
+				RunStatus:     status.RunStatus,
+				AttemptID:     attempt.AttemptID,
+				Clarifier:     prep.Clarifier.Name,
+				Result:        result,
+				Created:       created,
+				Warnings:      warnings,
+				ApprovalReset: approvalReset,
 			}, nil
 		},
 		RenderSuccess: func(stdout io.Writer, response clarifySuggestResponse, request clarifierRequestDocument) {
@@ -252,14 +257,19 @@ func writeClarifierPromptArtifacts(prep clarifierPreparation) error {
 	return activeStore.WriteBytes(prep.Context.RunPaths.ClarifierPromptMD, []byte(renderClarifierPrompt(prep.Context.State.RunID)), 0o644)
 }
 
-func (a App) recordClarifierSuggestions(context clarifyContext, attemptID string, stdoutPath string, now time.Time) ([]clarificationQuestionRecord, []string, clarifyStatusResponse, error) {
+// recordClarifierSuggestions parses the clarifier output into open questions and,
+// when any are recorded, refreshes the clarification artifacts. The returned bool
+// is the approvalReset flag from refreshClarificationArtifacts so ClarifySuggest
+// can surface an approved -> clarifying regression; it is false when zero
+// questions are recorded (the early-return path never refreshes artifacts).
+func (a App) recordClarifierSuggestions(context clarifyContext, attemptID string, stdoutPath string, now time.Time) ([]clarificationQuestionRecord, []string, clarifyStatusResponse, bool, error) {
 	stdoutBytes, err := activeStore.ReadBytes(stdoutPath)
 	if err != nil {
-		return nil, nil, clarifyStatusResponse{}, err
+		return nil, nil, clarifyStatusResponse{}, false, err
 	}
 	questions, err := readClarificationQuestions(context.RunPaths.QuestionsJSONL)
 	if err != nil {
-		return nil, nil, clarifyStatusResponse{}, err
+		return nil, nil, clarifyStatusResponse{}, false, err
 	}
 
 	blocks, warnings := parseClarifierSuggestionBlocks(string(stdoutBytes))
@@ -300,23 +310,25 @@ func (a App) recordClarifierSuggestions(context clarifyContext, attemptID string
 	if len(created) == 0 {
 		status, err := buildClarificationStatus(context.RunPaths, context.State)
 		if err != nil {
-			return nil, nil, clarifyStatusResponse{}, err
+			return nil, nil, clarifyStatusResponse{}, false, err
 		}
-		return created, warnings, status, nil
+		// No questions recorded: artifacts are not refreshed and approval is not
+		// reset, so approvalReset is false.
+		return created, warnings, status, false, nil
 	}
 	for _, record := range created {
 		if err := appendJSONLine(context.RunPaths.QuestionsJSONL, record); err != nil {
-			return nil, nil, clarifyStatusResponse{}, err
+			return nil, nil, clarifyStatusResponse{}, false, err
 		}
 	}
-	status, err := a.refreshClarificationArtifacts(context, now)
+	status, approvalReset, err := a.refreshClarificationArtifacts(context, now)
 	if err != nil {
-		return nil, nil, clarifyStatusResponse{}, err
+		return nil, nil, clarifyStatusResponse{}, false, err
 	}
 	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "clarification_questions_suggested", Timestamp: now, RunID: context.State.RunID}); err != nil {
-		return nil, nil, clarifyStatusResponse{}, err
+		return nil, nil, clarifyStatusResponse{}, false, err
 	}
-	return created, warnings, status, nil
+	return created, warnings, status, approvalReset, nil
 }
 
 func parseClarifierSuggestionBlocks(output string) ([]clarifierSuggestionsBlock, []string) {
@@ -638,6 +650,9 @@ func writeClarifySuggest(stdout io.Writer, response clarifySuggestResponse, requ
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", response.RunID)
 	fmt.Fprintf(stdout, "  status: %s\n", response.RunStatus)
+	if response.ApprovalReset {
+		writeApprovalResetWarning(stdout, response.RunID, response.RunStatus)
+	}
 	fmt.Fprintln(stdout)
 	writeResolved(stdout, request.Clarifier.Name, modelSpec)
 	fmt.Fprintln(stdout)
