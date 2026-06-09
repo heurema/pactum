@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260609_104410",
+  "status": "contract_approved",
+  "task": "Fix two codex review findings: update AGENTS.md to the real selective .heurema-commit policy, and stop leaking the absolute repo_root path into the versioned ledger by removing the unused ledger.Event.RepoRoot field",
+  "created_at": "2026-06-09T10:44:10.025009Z",
+  "updated_at": "2026-06-09T10:44:32.132942Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260609_104409",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}
