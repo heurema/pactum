@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/heurema/pactum/internal/agents"
 )
@@ -79,8 +80,14 @@ func TestClarifySuggestRunsClarifierAndRecordsOpenQuestions(t *testing.T) {
 	if questions[0].Rationale != "Approval should be reset if new human input can change scope." {
 		t.Fatalf("first question rationale = %q", questions[0].Rationale)
 	}
+	if questions[0].RecommendedAnswer != "Yes — reset approval to clarifying so the human re-approves after answering." || questions[0].Confidence != "high" {
+		t.Fatalf("first question missing recommended answer/confidence: %#v", questions[0])
+	}
 	if questions[1].ID != "q_002" || questions[1].Blocking || questions[1].Status != "open" {
 		t.Fatalf("unexpected second question: %#v", questions[1])
+	}
+	if questions[1].RecommendedAnswer != "Yes — keep them open and non-blocking so progress is not gated." || questions[1].Confidence != "medium" {
+		t.Fatalf("second question missing recommended answer/confidence: %#v", questions[1])
 	}
 	if answers := readLines(t, runPaths.AnswersJSONL); len(answers) != 0 {
 		t.Fatalf("clarify suggest should not answer questions: %v", answers)
@@ -165,6 +172,50 @@ func TestClarifySuggestJSONOutput(t *testing.T) {
 	}
 }
 
+func TestClarificationQuestionFromSuggestionRequiresRecommendedAnswerAndConfidence(t *testing.T) {
+	now := time.Unix(0, 0).UTC()
+	blocking := true
+	base := func() clarifierSuggestionInput {
+		return clarifierSuggestionInput{
+			Text:              "Should the run reset approval?",
+			Blocking:          &blocking,
+			Rationale:         "Scope may change.",
+			RecommendedAnswer: "Yes — reset to clarifying.",
+			Confidence:        "high",
+		}
+	}
+
+	t.Run("valid suggestion populates new fields", func(t *testing.T) {
+		record, warning := clarificationQuestionFromSuggestion("/repo", "run", "attempt_001", 1, base(), now)
+		if warning != "" {
+			t.Fatalf("unexpected warning: %q", warning)
+		}
+		if record.RecommendedAnswer != "Yes — reset to clarifying." || record.Confidence != "high" {
+			t.Fatalf("record missing recommended answer/confidence: %#v", record)
+		}
+	})
+
+	t.Run("missing recommended answer is rejected", func(t *testing.T) {
+		input := base()
+		input.RecommendedAnswer = "   "
+		_, warning := clarificationQuestionFromSuggestion("/repo", "run", "attempt_001", 1, input, now)
+		if warning != "question skipped: recommended answer is required" {
+			t.Fatalf("warning = %q", warning)
+		}
+	})
+
+	t.Run("invalid confidence is rejected", func(t *testing.T) {
+		for _, confidence := range []string{"", "certain", "HIGH", "maybe"} {
+			input := base()
+			input.Confidence = confidence
+			_, warning := clarificationQuestionFromSuggestion("/repo", "run", "attempt_001", 1, input, now)
+			if warning != "question skipped: confidence must be one of high, medium, low" {
+				t.Fatalf("confidence %q warning = %q", confidence, warning)
+			}
+		}
+	})
+}
+
 func configureHelperClarifiers(app App, defaultReviewer string, names ...string) App {
 	descriptors := make([]agents.AgentDescriptor, 0, len(names))
 	for _, name := range names {
@@ -209,14 +260,18 @@ func TestClarifierHelperProcess(t *testing.T) {
 	fmt.Printf("stdin_has_clarifier_prompt=%t\n", strings.Contains(string(stdin), "# Clarifier Prompt"))
 	fmt.Print(clarifierStructuredOutput([]map[string]any{
 		{
-			"text":      "Should generated clarification questions reset contract approval?",
-			"blocking":  true,
-			"rationale": "Approval should be reset if new human input can change scope.",
+			"text":               "Should generated clarification questions reset contract approval?",
+			"blocking":           true,
+			"rationale":          "Approval should be reset if new human input can change scope.",
+			"recommended_answer": "Yes — reset approval to clarifying so the human re-approves after answering.",
+			"confidence":         "high",
 		},
 		{
-			"text":      "Should non-blocking suggestions remain open for optional human answers?",
-			"blocking":  false,
-			"rationale": "Optional questions should not block progress but should remain answerable.",
+			"text":               "Should non-blocking suggestions remain open for optional human answers?",
+			"blocking":           false,
+			"rationale":          "Optional questions should not block progress but should remain answerable.",
+			"recommended_answer": "Yes — keep them open and non-blocking so progress is not gated.",
+			"confidence":         "medium",
 		},
 	}))
 	fmt.Fprintln(os.Stderr, "clarifier-stderr-line")

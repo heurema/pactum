@@ -66,9 +66,11 @@ type clarifierSuggestionsBlock struct {
 }
 
 type clarifierSuggestionInput struct {
-	Text      string `json:"text"`
-	Blocking  *bool  `json:"blocking"`
-	Rationale string `json:"rationale"`
+	Text              string `json:"text"`
+	Blocking          *bool  `json:"blocking"`
+	Rationale         string `json:"rationale"`
+	RecommendedAnswer string `json:"recommended_answer"`
+	Confidence        string `json:"confidence"`
 }
 
 type clarifySuggestResponse struct {
@@ -321,6 +323,14 @@ func clarificationQuestionFromSuggestion(root string, runID string, attemptID st
 	if rationale == "" {
 		return clarificationQuestionRecord{}, "question skipped: rationale is required"
 	}
+	recommendedAnswer := strings.TrimSpace(input.RecommendedAnswer)
+	if recommendedAnswer == "" {
+		return clarificationQuestionRecord{}, "question skipped: recommended answer is required"
+	}
+	confidence := strings.TrimSpace(input.Confidence)
+	if !isValidClarificationConfidence(confidence) {
+		return clarificationQuestionRecord{}, "question skipped: confidence must be one of high, medium, low"
+	}
 	return clarificationQuestionRecord{
 		Schema:             clarificationQuestionSchema,
 		ID:                 nextClarificationID("q", index),
@@ -328,11 +338,22 @@ func clarificationQuestionFromSuggestion(root string, runID string, attemptID st
 		Question:           sanitizeRepoRootInText(root, text),
 		Blocking:           *input.Blocking,
 		Rationale:          sanitizeRepoRootInText(root, rationale),
+		RecommendedAnswer:  sanitizeRepoRootInText(root, recommendedAnswer),
+		Confidence:         confidence,
 		Status:             "open",
 		CreatedAt:          now,
 		Source:             "clarifier_attempt",
 		ClarifierAttemptID: attemptID,
 	}, ""
+}
+
+func isValidClarificationConfidence(confidence string) bool {
+	switch confidence {
+	case "high", "medium", "low":
+		return true
+	default:
+		return false
+	}
 }
 
 func defaultClarifierArtifacts() clarifierArtifacts {
@@ -380,6 +401,13 @@ func renderClarifierContext(prep clarifierPreparation) string {
 			fmt.Fprintf(&b, "  - %s blocking=%t status=%s: %s\n", question.ID, question.Blocking, question.Status, question.Question)
 			if question.Rationale != "" {
 				fmt.Fprintf(&b, "    rationale: %s\n", question.Rationale)
+			}
+			if question.RecommendedAnswer != "" {
+				confidence := question.Confidence
+				if confidence == "" {
+					confidence = "unknown"
+				}
+				fmt.Fprintf(&b, "    recommended answer (confidence %s): %s\n", confidence, question.RecommendedAnswer)
 			}
 			if question.Answer != "" {
 				fmt.Fprintf(&b, "    answer: %s\n", question.Answer)
@@ -448,8 +476,16 @@ func renderClarifierPrompt(runID string) string {
 	fmt.Fprintln(&b, "- Do not edit files.")
 	fmt.Fprintln(&b, "- Do not draft or revise the contract.")
 	fmt.Fprintln(&b, "- Do not run commands that write to the repository.")
-	fmt.Fprintln(&b, "- Ask only questions a human can answer; omit questions answerable from the repo alone.")
 	fmt.Fprintln(&b, "- Mark blocking=true when execution should not continue safely without the answer.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Explore first, escalate sparingly")
+	fmt.Fprintln(&b, "- Try to resolve every candidate question yourself first: read the contract draft, the repository context, and the search results, and search the repository for the answer.")
+	fmt.Fprintln(&b, "- If the repository or contract already answers it, do NOT ask — fold the finding into the rationale and the recommended answer instead.")
+	fmt.Fprintln(&b, "- Escalate only questions that genuinely need a human decision: product intent, priorities, trade-offs, external constraints, or genuinely ambiguous requirements that the repo cannot settle.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Recommended answers")
+	fmt.Fprintln(&b, "- EVERY question must carry a specific recommended answer: your best-guess resolution, phrased so the human can apply it directly as the contract change (confirm or adjust it, not author it from scratch).")
+	fmt.Fprintln(&b, "- EVERY question must carry a confidence of high, medium, or low, reflecting how sure you are the recommended answer is correct.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Structured suggestions")
 	fmt.Fprintln(&b, "Include a fenced JSON block exactly like:")
@@ -461,12 +497,15 @@ func renderClarifierPrompt(runID string) string {
 	fmt.Fprintln(&b, "    {")
 	fmt.Fprintln(&b, `      "text": "What should the human clarify?",`)
 	fmt.Fprintln(&b, `      "blocking": true,`)
-	fmt.Fprintln(&b, `      "rationale": "Why this answer changes scope or implementation choices."`)
+	fmt.Fprintln(&b, `      "rationale": "Why this answer changes scope or implementation choices, and what the repo already told you.",`)
+	fmt.Fprintln(&b, `      "recommended_answer": "Your best-guess resolution, phrased so it is directly usable as the contract change.",`)
+	fmt.Fprintln(&b, `      "confidence": "high"`)
 	fmt.Fprintln(&b, "    }")
 	fmt.Fprintln(&b, "  ]")
 	fmt.Fprintln(&b, "}")
 	fmt.Fprintln(&b, "```")
 	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "confidence must be one of: high, medium, low.")
 	fmt.Fprintln(&b, "If no clarification is needed, return the same schema with an empty questions array.")
 	return b.String()
 }
