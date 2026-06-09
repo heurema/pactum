@@ -127,28 +127,13 @@ func (a App) ExecuteShow(stdout io.Writer, runID string, attemptID string, logs 
 }
 
 func (a App) loadExecuteReportContext(stdout io.Writer, runID string) (executeReportContext, bool, error) {
-	_, paths, ok, err := a.requireWorkspace(stdout, false)
+	base, ok, err := a.loadRunStateContext(stdout, runID, false)
 	if err != nil || !ok {
 		return executeReportContext{}, false, err
 	}
-
-	runDir := filepath.Join(paths.RunsDir, runID)
-	runDirExists, err := storeDirExists(runDir)
-	if err != nil {
-		return executeReportContext{}, false, err
-	}
-	if !runDirExists {
-		return executeReportContext{}, false, fmt.Errorf("run not found: %s", runID)
-	}
-
-	runPaths := contractRunPaths(runDir)
-	state, err := readContractRunState(runPaths.RunJSON)
-	if err != nil {
-		return executeReportContext{}, false, err
-	}
 	return executeReportContext{
-		RunPaths: runPaths,
-		State:    state,
+		RunPaths: base.RunPaths,
+		State:    base.State,
 	}, true, nil
 }
 

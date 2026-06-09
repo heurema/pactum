@@ -36,6 +36,18 @@ type runContext struct {
 	Approval approvalState
 }
 
+// runStateBase is the common base shared by every load*Context helper: the
+// resolved workspace root and paths, the run's artifact path set, and the
+// decoded run state. It is the result of the run-context loading prefix
+// (requireWorkspace -> run-not-found check -> readContractRunState) that each
+// load*Context function used to inline.
+type runStateBase struct {
+	Root     string
+	Paths    artifacts.Paths
+	RunPaths contractRunPathSet
+	State    contractRunState
+}
+
 type contractShowResponse struct {
 	RunID     string        `json:"run_id"`
 	RunStatus string        `json:"run_status"`
@@ -185,42 +197,63 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 	return nil
 }
 
-func (a App) loadContractContext(stdout io.Writer, runID string, jsonOutput bool) (runContext, bool, error) {
+// loadRunStateContext performs the run-context loading prefix shared by every
+// load*Context helper: it resolves the workspace, rejects a missing run dir
+// with "run not found: <id>", and decodes the run state. ok is true only on
+// full success; a requireWorkspace failure or !ok returns the zero base with
+// ok=false and requireWorkspace's err, and any later error propagates.
+func (a App) loadRunStateContext(stdout io.Writer, runID string, jsonOutput bool) (runStateBase, bool, error) {
 	root, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
 	if err != nil || !ok {
-		return runContext{}, false, err
+		return runStateBase{}, false, err
 	}
 
 	runDir := filepath.Join(paths.RunsDir, runID)
 	runDirExists, err := storeDirExists(runDir)
 	if err != nil {
-		return runContext{}, false, err
+		return runStateBase{}, false, err
 	}
 	if !runDirExists {
-		return runContext{}, false, fmt.Errorf("run not found: %s", runID)
+		return runStateBase{}, false, fmt.Errorf("run not found: %s", runID)
 	}
 
 	runPaths := contractRunPaths(runDir)
 	state, err := readContractRunState(runPaths.RunJSON)
 	if err != nil {
+		return runStateBase{}, false, err
+	}
+	return runStateBase{Root: root, Paths: paths, RunPaths: runPaths, State: state}, true, nil
+}
+
+// loadRunContext loads the full runContext (base plus the draft contract and
+// approval state). It is the shared tail of loadMemoryContext,
+// loadContractContext, and loadGateContext, which differ only in the jsonOutput
+// argument forwarded to requireWorkspace.
+func (a App) loadRunContext(stdout io.Writer, runID string, jsonOutput bool) (runContext, bool, error) {
+	base, ok, err := a.loadRunStateContext(stdout, runID, jsonOutput)
+	if err != nil || !ok {
 		return runContext{}, false, err
 	}
-	contract, err := readDraftContract(runPaths.ContractJSON)
+	contract, err := readDraftContract(base.RunPaths.ContractJSON)
 	if err != nil {
 		return runContext{}, false, err
 	}
-	approval, err := readApprovalState(runPaths.ApprovalJSON)
+	approval, err := readApprovalState(base.RunPaths.ApprovalJSON)
 	if err != nil {
 		return runContext{}, false, err
 	}
 	return runContext{
-		Root:     root,
-		Paths:    paths,
-		RunPaths: runPaths,
-		State:    state,
+		Root:     base.Root,
+		Paths:    base.Paths,
+		RunPaths: base.RunPaths,
+		State:    base.State,
 		Contract: contract,
 		Approval: approval,
 	}, true, nil
+}
+
+func (a App) loadContractContext(stdout io.Writer, runID string, jsonOutput bool) (runContext, bool, error) {
+	return a.loadRunContext(stdout, runID, jsonOutput)
 }
 
 func (revision contractRevision) hasChanges() bool {
