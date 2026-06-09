@@ -1,0 +1,54 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260609_122237",
+  "status": "draft",
+  "goal": "Add a retry mechanism for flaky operations",
+  "scope": {
+    "in": [],
+    "out": []
+  },
+  "acceptance_criteria": [],
+  "validation": {
+    "commands": []
+  },
+  "assumptions": [],
+  "open_questions": [
+    "Which Pactum operation should get the retry behavior?",
+    "What failures should count as retryable?",
+    "How many retries and what configuration/artifact behavior should the feature have?"
+  ],
+  "clarifications": {
+    "questions": [
+      {
+        "id": "q_001",
+        "question": "Which Pactum operation should get the retry behavior?",
+        "blocking": true,
+        "rationale": "The goal says \"flaky operations\", but the repo has several external operations: execute agents, review/fix agents, clarifier/drafter agents, gate validation commands, ACP adapter calls, and filesystem/project-map work. The repo's loop design specifically says execute is one-shot with an allowed single infrastructure-only retry, so the narrowest repo-backed scope is execute run.",
+        "recommended_answer": "Scope this change to `pactum execute run` only. Do not add retries for gate validation commands, review/review-fix, clarify/contract-draft, project-map/search, or general filesystem operations in this contract.",
+        "confidence": "medium",
+        "status": "open"
+      },
+      {
+        "id": "q_002",
+        "question": "What failures should count as retryable?",
+        "blocking": true,
+        "rationale": "The design docs distinguish infrastructure failure from an agent result that merely needs improvement. Retrying after partial edits or a bad result could violate Pactum's one-shot execution model and bypass the review loop.",
+        "recommended_answer": "Retry only when the first execute attempt appears to be an infrastructure failure and leaves no working-tree changes relative to the pre-attempt state: subprocess/transport error, non-zero exit, idle timeout, ACP initialize/session/prompt failure, or a zero-exit attempt that produced no diff. Do not retry after any file changes, validation failure, scope failure, review finding, or successful-but-unsatisfactory implementation.",
+        "confidence": "high",
+        "status": "open"
+      },
+      {
+        "id": "q_003",
+        "question": "How many retries and what configuration/artifact behavior should the feature have?",
+        "blocking": true,
+        "rationale": "The default config already contains `limits.execute.max_iterations: 10`, but the architecture docs say execute is one-shot with a single infrastructure-only retry. Reusing that existing limit would allow many agent reruns and would change the workflow more broadly.",
+        "recommended_answer": "Allow at most one retry, for two total execute attempts. Leave `limits.execute.max_iterations` unchanged and do not introduce user-facing retry configuration in this slice. Record each try as a normal `execute/attempts/attempt_NNN` with its own request/result/log artifacts and ledger events, and make `execute/last-result.json` point to the final attempt.",
+        "confidence": "medium",
+        "status": "open"
+      }
+    ]
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}

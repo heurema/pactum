@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260609_111239",
+  "status": "contract_approved",
+  "task": "Strengthen clarification (grill-me slice 1): every proposed question carries a recommended answer + confidence, and the clarifier prompt enforces explore-first discipline",
+  "created_at": "2026-06-09T11:12:39.226802Z",
+  "updated_at": "2026-06-09T11:13:06.451029Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260609_111238",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

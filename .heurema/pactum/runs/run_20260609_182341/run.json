@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260609_182341",
+  "status": "contract_approved",
+  "task": "Clarification grill-me slice 3: terminology / domain challenge — add a kind field categorizing each question, and instruct the clarifier to challenge vague or overloaded domain terms (anchored on the repo's real concepts), tagging those questions kind=terminology",
+  "created_at": "2026-06-09T18:23:41.02836Z",
+  "updated_at": "2026-06-09T18:24:06.242144Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260609_182340",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}
