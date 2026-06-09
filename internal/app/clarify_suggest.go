@@ -76,8 +76,9 @@ type clarifierSuggestionInput struct {
 	RecommendedAnswer string `json:"recommended_answer"`
 	Confidence        string `json:"confidence"`
 	// DependsOn lists the 1-based positions of EARLIER questions in the same
-	// emitted sequence whose answers this question hinges on. Pactum resolves
-	// each position to the assigned question id when the suggestion is recorded.
+	// emitted block whose answers this question hinges on. Positions are numbered
+	// per block, so Pactum resolves each one against that block's own questions
+	// when the suggestion is recorded — never across into another block.
 	DependsOn []int `json:"depends_on"`
 }
 
@@ -263,14 +264,17 @@ func (a App) recordClarifierSuggestions(context clarifyContext, attemptID string
 
 	blocks, warnings := parseClarifierSuggestionBlocks(string(stdoutBytes))
 	created := make([]clarificationQuestionRecord, 0)
-	// positionToID maps each emitted question's 1-based position (across all
-	// blocks in this attempt) to its assigned id, or to skippedClarifierPosition
-	// when the suggestion at that position was dropped during validation. A
-	// depends_on entry resolves only against strictly-earlier recorded positions,
-	// so a single forward pass keeps the dependency graph acyclic.
-	positionToID := make(map[int]string)
-	position := 0
 	for _, block := range blocks {
+		// positionToID maps each emitted question's 1-based position WITHIN THIS
+		// block to its assigned id, or to skippedClarifierPosition when the
+		// suggestion at that position was dropped during validation. Both the
+		// counter and the map reset per block, so a depends_on resolves only
+		// against strictly-earlier questions in the same block — matching the
+		// clarifier prompt's "this same block" wording — and can never reach an
+		// earlier block's question. The global q_NNN id assignment
+		// (len(questions)+len(created)+1) still numbers across all blocks.
+		positionToID := make(map[int]string)
+		position := 0
 		for _, rawQuestion := range block.Questions {
 			position++
 			var input clarifierSuggestionInput
@@ -354,6 +358,12 @@ func clarificationQuestionFromSuggestion(root string, runID string, attemptID st
 		return clarificationQuestionRecord{}, "question skipped: confidence must be one of high, medium, low"
 	}
 	kind := strings.TrimSpace(input.Kind)
+	if kind == "" {
+		// A missing kind defaults to the catch-all 'other', preserving v1
+		// compatibility for producers that predate the kind field. A non-empty
+		// kind outside the allowed set is still rejected.
+		kind = "other"
+	}
 	if !isValidClarificationKind(kind) {
 		return clarificationQuestionRecord{}, "question skipped: kind must be one of terminology, scope, acceptance, edge_case, assumption, other"
 	}

@@ -233,12 +233,28 @@ the attempt under `clarify/clarifier-attempts/`, and stores the latest result at
 `clarify/clarifier-last-result.json`.
 
 The clarifier must emit a fenced JSON block with
-`schema: "pactum.clarification_suggestions.v1"`. Pactum parses those suggestions
-directly into **open clarification questions** in `clarify/questions.jsonl` for
-a human to answer later with `pactum clarify answer`; the agent never answers
-questions, revises the contract, or edits code. Like other agent-running
-commands, it asks for confirmation on an interactive terminal and **requires
-`--yes`** for non-interactive/automated use.
+`schema: "pactum.clarification_suggestions.v1"` and a `questions` array. Each
+question object carries:
+
+- `text` — the question for the human (required).
+- `blocking` — whether execution should not continue without the answer (required).
+- `rationale` — why the answer changes scope or implementation, and what the repo
+  already settled (required).
+- `recommended_answer` — the best-guess resolution, phrased so the human can apply
+  it directly (required).
+- `confidence` — one of `high`, `medium`, `low` (required).
+- `kind` — one of `terminology`, `scope`, `acceptance`, `edge_case`, `assumption`,
+  `other`; an omitted or empty `kind` defaults to `other` (v1-compatible), while a
+  non-empty value outside the set is rejected.
+- `depends_on` — optional array of 1-based positions of earlier questions **in the
+  same block** whose answers this one hinges on; positions are numbered per block,
+  so a reference never resolves across into another block's questions.
+
+Pactum parses those suggestions directly into **open clarification questions** in
+`clarify/questions.jsonl` for a human to answer later with `pactum clarify answer`;
+the agent never answers questions, revises the contract, or edits code. Like other
+agent-running commands, it asks for confirmation on an interactive terminal and
+**requires `--yes`** for non-interactive/automated use.
 
 ## Contract draft
 
