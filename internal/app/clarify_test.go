@@ -1,0 +1,240 @@
+package app
+
+import (
+	"bytes"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestBuildClarificationStatusCoverageTally(t *testing.T) {
+	root := t.TempDir()
+	_, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	state := readRunState(t, runPaths.RunJSON)
+
+	// terminology has an open-blocking question and an answered one (the
+	// answered-vs-open split); scope and edge_case each have one question;
+	// acceptance and assumption stay at zero (an unprobed canonical dimension).
+	appendClarificationQuestionForTest(t, runPaths.QuestionsJSONL, "q_001", "terminology", true)
+	appendClarificationQuestionForTest(t, runPaths.QuestionsJSONL, "q_002", "terminology", false)
+	appendClarificationQuestionForTest(t, runPaths.QuestionsJSONL, "q_003", "scope", false)
+	appendClarificationQuestionForTest(t, runPaths.QuestionsJSONL, "q_004", "edge_case", true)
+	appendClarificationAnswerForTest(t, runPaths.AnswersJSONL, "a_001", "q_002")
+	appendClarificationAnswerForTest(t, runPaths.AnswersJSONL, "a_002", "q_004")
+
+	status, err := buildClarificationStatus(runPaths, state)
+	assertNoError(t, err)
+
+	// The five canonical dimensions are always present, in fixed order, and
+	// 'other' is absent because every question used a canonical kind.
+	if got := coverageKinds(status.Coverage); !equalStrings(got, canonicalClarificationKinds) {
+		t.Fatalf("coverage kinds = %v, want the five canonical dimensions in order", got)
+	}
+
+	wantByKind := map[string]clarifyKindCoverage{
+		"terminology": {Kind: "terminology", Total: 2, Open: 1, Answered: 1, BlockingOpen: 1},
+		"scope":       {Kind: "scope", Total: 1, Open: 1, Answered: 0, BlockingOpen: 0},
+		"acceptance":  {Kind: "acceptance"},
+		"edge_case":   {Kind: "edge_case", Total: 1, Open: 0, Answered: 1, BlockingOpen: 0},
+		"assumption":  {Kind: "assumption"},
+	}
+	for _, coverage := range status.Coverage {
+		if coverage != wantByKind[coverage.Kind] {
+			t.Fatalf("coverage[%s] = %#v, want %#v", coverage.Kind, coverage, wantByKind[coverage.Kind])
+		}
+	}
+
+	// The per-kind tallies sum back to the overall counters.
+	var sumTotal, sumOpen, sumAnswered, sumBlocking int
+	for _, coverage := range status.Coverage {
+		sumTotal += coverage.Total
+		sumOpen += coverage.Open
+		sumAnswered += coverage.Answered
+		sumBlocking += coverage.BlockingOpen
+	}
+	if sumTotal != status.Total || sumOpen != status.Open || sumAnswered != status.Answered || sumBlocking != status.BlockingOpen {
+		t.Fatalf("coverage sums (%d/%d/%d/%d) do not match overall (%d/%d/%d/%d)",
+			sumTotal, sumOpen, sumAnswered, sumBlocking,
+			status.Total, status.Open, status.Answered, status.BlockingOpen)
+	}
+
+	// One blocking question is still open, so the run has not converged.
+	if status.Converged {
+		t.Fatalf("status should not be converged while a blocking question is open: %#v", status)
+	}
+}
+
+func TestBuildClarificationStatusOtherBucketOnlyWhenUsed(t *testing.T) {
+	root := t.TempDir()
+	_, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	state := readRunState(t, runPaths.RunJSON)
+
+	// Before any non-canonical question, 'other' must not appear.
+	appendClarificationQuestionForTest(t, runPaths.QuestionsJSONL, "q_001", "scope", false)
+	beforeStatus, err := buildClarificationStatus(runPaths, state)
+	assertNoError(t, err)
+	if coverageByKind(beforeStatus.Coverage, "other") != nil {
+		t.Fatalf("'other' should be absent until a non-canonical question exists: %#v", beforeStatus.Coverage)
+	}
+	if len(beforeStatus.Coverage) != len(canonicalClarificationKinds) {
+		t.Fatalf("coverage should hold only the canonical dimensions: %#v", beforeStatus.Coverage)
+	}
+
+	// An explicit 'other'-kind question and a kind-less manual question both
+	// fall into the single 'other' catch-all bucket, appended last.
+	appendClarificationQuestionForTest(t, runPaths.QuestionsJSONL, "q_002", "other", false)
+	appendClarificationQuestionForTest(t, runPaths.QuestionsJSONL, "q_003", "", true)
+	afterStatus, err := buildClarificationStatus(runPaths, state)
+	assertNoError(t, err)
+	other := coverageByKind(afterStatus.Coverage, "other")
+	if other == nil {
+		t.Fatalf("'other' should be present once a non-canonical question exists: %#v", afterStatus.Coverage)
+	}
+	if want := (clarifyKindCoverage{Kind: "other", Total: 2, Open: 2, Answered: 0, BlockingOpen: 1}); *other != want {
+		t.Fatalf("'other' coverage = %#v, want %#v", *other, want)
+	}
+	if last := afterStatus.Coverage[len(afterStatus.Coverage)-1]; last.Kind != "other" {
+		t.Fatalf("'other' must be the last coverage entry, got %q", last.Kind)
+	}
+}
+
+func TestBuildClarificationStatusConvergedReflectsBlockingOpen(t *testing.T) {
+	root := t.TempDir()
+	_, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	state := readRunState(t, runPaths.RunJSON)
+
+	// An open non-blocking question and an answered blocking question leave no
+	// open blocking work, so the run is converged even though one question is
+	// still open.
+	appendClarificationQuestionForTest(t, runPaths.QuestionsJSONL, "q_001", "scope", false)
+	appendClarificationQuestionForTest(t, runPaths.QuestionsJSONL, "q_002", "acceptance", true)
+	appendClarificationAnswerForTest(t, runPaths.AnswersJSONL, "a_001", "q_002")
+
+	status, err := buildClarificationStatus(runPaths, state)
+	assertNoError(t, err)
+	if status.BlockingOpen != 0 {
+		t.Fatalf("blocking open = %d, want 0", status.BlockingOpen)
+	}
+	if !status.Converged {
+		t.Fatalf("status should be converged when no blocking question is open: %#v", status)
+	}
+
+	// Adding an open blocking question flips Converged back to false.
+	appendClarificationQuestionForTest(t, runPaths.QuestionsJSONL, "q_003", "edge_case", true)
+	reopened, err := buildClarificationStatus(runPaths, state)
+	assertNoError(t, err)
+	if reopened.BlockingOpen != 1 || reopened.Converged {
+		t.Fatalf("status should not be converged with an open blocking question: %#v", reopened)
+	}
+}
+
+func TestBuildClarificationStatusCanonicalDimensionsAlwaysPresent(t *testing.T) {
+	root := t.TempDir()
+	_, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	state := readRunState(t, runPaths.RunJSON)
+
+	// With no questions at all, every canonical dimension is still listed (at
+	// zero), in order, no 'other', and an empty run is converged.
+	status, err := buildClarificationStatus(runPaths, state)
+	assertNoError(t, err)
+	if got := coverageKinds(status.Coverage); !equalStrings(got, canonicalClarificationKinds) {
+		t.Fatalf("coverage kinds = %v, want the five canonical dimensions in order", got)
+	}
+	for _, coverage := range status.Coverage {
+		if (coverage != clarifyKindCoverage{Kind: coverage.Kind}) {
+			t.Fatalf("empty run should leave %q at zero: %#v", coverage.Kind, coverage)
+		}
+	}
+	if status.Total != 0 || !status.Converged {
+		t.Fatalf("empty run should be converged with no questions: %#v", status)
+	}
+}
+
+func TestWriteClarifyStatusShowsCoverageAndConverged(t *testing.T) {
+	status := clarifyStatusResponse{
+		RunID:        "run_20260101_000000",
+		RunStatus:    "clarifying",
+		Total:        2,
+		Answered:     1,
+		Open:         1,
+		BlockingOpen: 1,
+		Converged:    false,
+		Coverage: []clarifyKindCoverage{
+			{Kind: "terminology", Total: 2, Open: 1, Answered: 1, BlockingOpen: 1},
+			{Kind: "scope"},
+			{Kind: "acceptance"},
+			{Kind: "edge_case"},
+			{Kind: "assumption"},
+		},
+		Questions: []clarifyQuestionStatus{},
+	}
+
+	var buf bytes.Buffer
+	writeClarifyStatus(&buf, status)
+	got := buf.String()
+	for _, want := range []string{
+		"converged: no",
+		"Coverage by dimension:",
+		"- terminology: total 2, answered 1, open 1, blocking open 1",
+		"- acceptance: total 0, answered 0, open 0, blocking open 0",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("clarify status output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func appendClarificationQuestionForTest(t *testing.T, path string, id string, kind string, blocking bool) {
+	t.Helper()
+	assertNoError(t, appendJSONLine(path, clarificationQuestionRecord{
+		Schema:   clarificationQuestionSchema,
+		ID:       id,
+		Question: "Question " + id,
+		Blocking: blocking,
+		Kind:     kind,
+		Status:   "open",
+	}))
+}
+
+func appendClarificationAnswerForTest(t *testing.T, path string, id string, questionID string) {
+	t.Helper()
+	assertNoError(t, appendJSONLine(path, clarificationAnswerRecord{
+		Schema:     clarificationAnswerSchema,
+		ID:         id,
+		QuestionID: questionID,
+		Answer:     "answer for " + questionID,
+	}))
+}
+
+func coverageKinds(coverage []clarifyKindCoverage) []string {
+	kinds := make([]string, 0, len(coverage))
+	for _, c := range coverage {
+		kinds = append(kinds, c.Kind)
+	}
+	return kinds
+}
+
+func coverageByKind(coverage []clarifyKindCoverage, kind string) *clarifyKindCoverage {
+	for i := range coverage {
+		if coverage[i].Kind == kind {
+			return &coverage[i]
+		}
+	}
+	return nil
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

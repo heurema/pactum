@@ -260,6 +260,55 @@ func TestRenderClarifierPromptProbesEdgeCases(t *testing.T) {
 	}
 }
 
+func TestRenderClarifierContextSurfacesCoverage(t *testing.T) {
+	prep := clarifierPreparation{
+		Context:  clarifyContext{State: contractRunState{RunID: "run_20260101_000000", Status: "clarifying"}},
+		Contract: draftContract{Goal: "add a coverage signal"},
+		Status: clarifyStatusResponse{
+			Total:        1,
+			Open:         1,
+			BlockingOpen: 1,
+			Converged:    false,
+			Coverage: []clarifyKindCoverage{
+				{Kind: "terminology", Total: 1, Open: 1, Answered: 0, BlockingOpen: 1},
+				{Kind: "scope"},
+				{Kind: "acceptance"},
+				{Kind: "edge_case"},
+				{Kind: "assumption"},
+			},
+			Questions: []clarifyQuestionStatus{},
+		},
+	}
+	got := renderClarifierContext(prep)
+	for _, want := range []string{
+		"- Converged: false",
+		"- Coverage by dimension",
+		"- terminology: total 1, answered 0, open 1, blocking open 1",
+		"- acceptance: total 0, answered 0, open 0, blocking open 0",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("clarifier context missing coverage detail %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderClarifierPromptSeeksDimensionCoverage(t *testing.T) {
+	prompt := renderClarifierPrompt("run_20260101_000000")
+	// The coverage guidance must instruct covering the material dimensions
+	// before concluding while keeping explore-first discipline (no manufactured
+	// questions for dimensions the repo/contract already settles).
+	for _, want := range []string{
+		"## Cover the material dimensions",
+		"scope, acceptance, terminology, edge_case, assumption",
+		"Do NOT manufacture questions",
+		"explore-first still applies",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("clarifier prompt missing coverage guidance %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestResolveClarifierDependsOn(t *testing.T) {
 	positionToID := map[int]string{
 		1: "q_001",

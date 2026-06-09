@@ -102,9 +102,10 @@ reviews across M8–M10. Rough priority in parentheses.
   (dead-end — report "no additions" instead); re-running `contract draft` after accept
   clobbers the accepted proposal's audit fields; `accept-draft` hardcodes
   `accepted_by:"manual"` (no `--by`).
-- **Sharper clarify questioning** (med). Strengthen `clarify suggest` from a soft,
-  surface-level checklist into a "grill the requester" interrogation, sliced after
-  the grill-me principles so the resulting contract is precise rather than agreeable.
+- **Sharper clarify questioning** (med). **Arc complete — all five slices shipped
+  (M15.0–M15.5).** Strengthened `clarify suggest` from a soft, surface-level
+  checklist into a "grill the requester" interrogation, sliced after the grill-me
+  principles so the resulting contract is precise rather than agreeable.
   - **Slice 1 — recommended answers + explore-first** (M15.0, shipped). Every
     proposed question now carries a concrete `recommended_answer` plus a
     `confidence` (high|medium|low), so the human confirms/adjusts a recommendation
@@ -154,9 +155,24 @@ reviews across M8–M10. Rough priority in parentheses.
     change only — no schema, validation, or enum change; a prompt-content test
     asserts the section and its `kind=edge_case` tagging instruction cannot be
     silently dropped.
-  - **Slice 5 — coverage / convergence signal** (todo). Emit a signal of how well
-    the contract is pinned down (coverage / remaining ambiguity) so the clarify loop
-    knows when to stop interrogating.
+  - **Slice 5 — coverage / convergence signal** (M15.5, shipped). `clarify status`
+    now reports, per contract dimension (the `kind` set from slice 3), how many
+    questions are open vs answered (and open-and-blocking), and surfaces an overall
+    `converged` flag (true iff no open **blocking** questions remain — mirroring the
+    review-loop `resolved` condition). The coverage breakdown always lists the five
+    canonical dimensions — `terminology, scope, acceptance, edge_case, assumption` —
+    in fixed order even at zero, so an unprobed dimension is visible rather than
+    hidden behind a flat open count; `other` appears only when some question (an
+    explicit `other` kind or a kind-less manual question) falls outside the canonical
+    set. The per-kind tallies sum back to the overall Total/Answered/Open/BlockingOpen.
+    Both `clarify status` and the clarifier context surface the breakdown, and the
+    clarifier prompt gains a "Cover the material dimensions" instruction: consider each
+    material dimension before concluding, but do not manufacture questions for
+    dimensions the contract/repository already settles (explore-first still applies).
+    Additive and signal-only — no schema-version bump; `Converged`/`Coverage` are
+    computed and surfaced for the human and a future autonomous clarify loop to
+    consume, with no auto-stop / convergence-driven control flow built this slice.
+    This completes the "grill the requester" clarification arc (slices 1-5).
 
 ## Hardening / cleanup
 

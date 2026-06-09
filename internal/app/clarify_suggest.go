@@ -460,6 +460,11 @@ func renderClarifierContext(prep clarifierPreparation) string {
 	fmt.Fprintf(&b, "- Total: %d\n", prep.Status.Total)
 	fmt.Fprintf(&b, "- Open: %d\n", prep.Status.Open)
 	fmt.Fprintf(&b, "- Blocking open: %d\n", prep.Status.BlockingOpen)
+	fmt.Fprintf(&b, "- Converged: %t\n", prep.Status.Converged)
+	fmt.Fprintln(&b, "- Coverage by dimension (a zero-question dimension is unprobed, not necessarily settled):")
+	for _, coverage := range prep.Status.Coverage {
+		fmt.Fprintf(&b, "  - %s: total %d, answered %d, open %d, blocking open %d\n", coverage.Kind, coverage.Total, coverage.Answered, coverage.Open, coverage.BlockingOpen)
+	}
 	if len(prep.Status.Questions) == 0 {
 		fmt.Fprintln(&b, "- Questions: none")
 	} else {
@@ -575,6 +580,11 @@ func renderClarifierPrompt(runID string) string {
 	fmt.Fprintln(&b, "## Classify every question")
 	fmt.Fprintln(&b, "- EVERY question must carry a kind from: terminology, scope, acceptance, edge_case, assumption, other.")
 	fmt.Fprintln(&b, "- Use terminology for a vague/overloaded-term challenge (above), scope for what is in or out of scope, acceptance for how completion is verified, edge_case for boundary or failure conditions, assumption for an unstated premise you need confirmed, and other when none fits.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Cover the material dimensions")
+	fmt.Fprintln(&b, "- Before concluding, consider each material dimension — scope, acceptance, terminology, edge_case, assumption — and make sure none is left unprobed merely because you stopped early.")
+	fmt.Fprintln(&b, "- The clarifier context reports coverage by dimension; treat a dimension with zero questions as a prompt to check whether the contract or repository genuinely settles it.")
+	fmt.Fprintln(&b, "- Do NOT manufacture questions to fill a dimension the contract or repository already settles — explore-first still applies; a dimension can legitimately need no question.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Recommended answers")
 	fmt.Fprintln(&b, "- EVERY question must carry a specific recommended answer: your best-guess resolution, phrased so the human can apply it directly as the contract change (confirm or adjust it, not author it from scratch).")
