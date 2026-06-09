@@ -151,8 +151,6 @@ func runSubprocessWithRunner(request RunRequest, runner processRunner) (RunResul
 	writeUsageWarning(usage, stderr, request.LiveOutput)
 
 	return RunResult{
-		Command:        command.Command,
-		Args:           cloneArgs(command.Args),
 		ExitCode:       exitCode,
 		StartedAt:      started.Format(time.RFC3339Nano),
 		FinishedAt:     finished.Format(time.RFC3339Nano),

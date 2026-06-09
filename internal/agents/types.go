@@ -90,8 +90,6 @@ type RunRequest struct {
 }
 
 type RunResult struct {
-	Command        string     `json:"-"`
-	Args           []string   `json:"-"`
 	ExitCode       int        `json:"exit_code"`
 	StartedAt      string     `json:"started_at"`
 	FinishedAt     string     `json:"finished_at"`
