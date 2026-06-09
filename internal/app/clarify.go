@@ -81,8 +81,27 @@ type clarifyStatusResponse struct {
 	Answered     int                     `json:"answered"`
 	Open         int                     `json:"open"`
 	BlockingOpen int                     `json:"blocking_open"`
+	Converged    bool                    `json:"converged"`
+	Coverage     []clarifyKindCoverage   `json:"coverage"`
 	Questions    []clarifyQuestionStatus `json:"questions"`
 }
+
+// clarifyKindCoverage tallies, for one question kind, how many questions exist
+// and how many are still open vs answered (and open-and-blocking). It turns the
+// flat open count into a per-dimension view so an unprobed dimension is visible.
+type clarifyKindCoverage struct {
+	Kind         string `json:"kind"`
+	Total        int    `json:"total"`
+	Open         int    `json:"open"`
+	Answered     int    `json:"answered"`
+	BlockingOpen int    `json:"blocking_open"`
+}
+
+// canonicalClarificationKinds are the contract dimensions worth ensuring
+// coverage of, in the fixed display order. Each always appears in the coverage
+// breakdown (even at zero) so an unprobed dimension is visible; 'other' is a
+// catch-all surfaced only when used and is not listed here.
+var canonicalClarificationKinds = []string{"terminology", "scope", "acceptance", "edge_case", "assumption"}
 
 type clarifyAskResponse struct {
 	RunID     string                      `json:"run_id"`
@@ -320,12 +339,50 @@ func buildClarificationStatus(runPaths contractRunPathSet, state contractRunStat
 		})
 	}
 	response.Total = len(response.Questions)
+	response.Coverage = buildClarifyKindCoverage(response.Questions)
+	response.Converged = response.BlockingOpen == 0
 	if response.BlockingOpen > 0 {
 		response.RunStatus = "clarifying"
 	} else {
 		response.RunStatus = "contract_draft"
 	}
 	return response, nil
+}
+
+// buildClarifyKindCoverage tallies the questions per kind. Every canonical
+// dimension gets an entry in the fixed canonicalClarificationKinds order even
+// when it has no questions, so an unprobed dimension stays visible; a single
+// 'other' entry is appended only when some question falls outside the canonical
+// set (including kind-less manual questions). The per-kind Total/Open/Answered/
+// BlockingOpen are tallied exactly like the overall counters so they sum back.
+func buildClarifyKindCoverage(questions []clarifyQuestionStatus) []clarifyKindCoverage {
+	indexByKind := make(map[string]int, len(canonicalClarificationKinds)+1)
+	coverage := make([]clarifyKindCoverage, 0, len(canonicalClarificationKinds)+1)
+	for _, kind := range canonicalClarificationKinds {
+		indexByKind[kind] = len(coverage)
+		coverage = append(coverage, clarifyKindCoverage{Kind: kind})
+	}
+	otherIndex := -1
+	for _, question := range questions {
+		index, ok := indexByKind[question.Kind]
+		if !ok {
+			if otherIndex == -1 {
+				otherIndex = len(coverage)
+				coverage = append(coverage, clarifyKindCoverage{Kind: "other"})
+			}
+			index = otherIndex
+		}
+		coverage[index].Total++
+		if question.Status == "answered" {
+			coverage[index].Answered++
+		} else {
+			coverage[index].Open++
+			if question.Blocking {
+				coverage[index].BlockingOpen++
+			}
+		}
+	}
+	return coverage
 }
 
 func readContractRunState(path string) (contractRunState, error) {
@@ -476,6 +533,12 @@ func writeClarifyStatus(stdout io.Writer, status clarifyStatusResponse) {
 	fmt.Fprintf(stdout, "  answered: %d\n", status.Answered)
 	fmt.Fprintf(stdout, "  open: %d\n", status.Open)
 	fmt.Fprintf(stdout, "  blocking open: %d\n", status.BlockingOpen)
+	fmt.Fprintf(stdout, "  converged: %s\n", yesNo(status.Converged))
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Coverage by dimension:")
+	for _, coverage := range status.Coverage {
+		fmt.Fprintf(stdout, "  - %s: total %d, answered %d, open %d, blocking open %d\n", coverage.Kind, coverage.Total, coverage.Answered, coverage.Open, coverage.BlockingOpen)
+	}
 	if status.Open > 0 {
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, "Open questions:")
