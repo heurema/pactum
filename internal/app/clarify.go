@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -222,25 +221,11 @@ type clarifyContext struct {
 }
 
 func (a App) loadClarifyContext(stdout io.Writer, runID string, jsonOutput bool) (clarifyContext, bool, error) {
-	root, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
+	base, ok, err := a.loadRunStateContext(stdout, runID, jsonOutput)
 	if err != nil || !ok {
 		return clarifyContext{}, false, err
 	}
-
-	runDir := filepath.Join(paths.RunsDir, runID)
-	runDirExists, err := storeDirExists(runDir)
-	if err != nil {
-		return clarifyContext{}, false, err
-	}
-	if !runDirExists {
-		return clarifyContext{}, false, fmt.Errorf("run not found: %s", runID)
-	}
-	runPaths := contractRunPaths(runDir)
-	state, err := readContractRunState(runPaths.RunJSON)
-	if err != nil {
-		return clarifyContext{}, false, err
-	}
-	return clarifyContext{Root: root, Paths: paths, RunPaths: runPaths, State: state}, true, nil
+	return clarifyContext{Root: base.Root, Paths: base.Paths, RunPaths: base.RunPaths, State: base.State}, true, nil
 }
 
 func (a App) refreshClarificationArtifacts(context clarifyContext, updatedAt time.Time) (clarifyStatusResponse, error) {

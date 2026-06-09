@@ -282,41 +282,7 @@ func (a App) MemoryAccept(stdout io.Writer, runID string, acceptedBy string, jso
 }
 
 func (a App) loadMemoryContext(stdout io.Writer, runID string, jsonOutput bool) (runContext, bool, error) {
-	root, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
-	if err != nil || !ok {
-		return runContext{}, false, err
-	}
-
-	runDir := filepath.Join(paths.RunsDir, runID)
-	runDirExists, err := storeDirExists(runDir)
-	if err != nil {
-		return runContext{}, false, err
-	}
-	if !runDirExists {
-		return runContext{}, false, fmt.Errorf("run not found: %s", runID)
-	}
-
-	runPaths := contractRunPaths(runDir)
-	state, err := readContractRunState(runPaths.RunJSON)
-	if err != nil {
-		return runContext{}, false, err
-	}
-	contract, err := readDraftContract(runPaths.ContractJSON)
-	if err != nil {
-		return runContext{}, false, err
-	}
-	approval, err := readApprovalState(runPaths.ApprovalJSON)
-	if err != nil {
-		return runContext{}, false, err
-	}
-	return runContext{
-		Root:     root,
-		Paths:    paths,
-		RunPaths: runPaths,
-		State:    state,
-		Contract: contract,
-		Approval: approval,
-	}, true, nil
+	return a.loadRunContext(stdout, runID, jsonOutput)
 }
 
 func (a App) prepareMemoryCandidate(context runContext) (preparedMemoryCandidate, error) {

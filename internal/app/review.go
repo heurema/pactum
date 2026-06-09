@@ -542,30 +542,15 @@ func (a App) loadPreparedReviewState(stdout io.Writer, runID string, jsonOutput 
 }
 
 func (a App) loadReviewContext(stdout io.Writer, runID string) (reviewContext, bool, error) {
-	root, paths, ok, err := a.requireWorkspace(stdout, false)
+	base, ok, err := a.loadRunStateContext(stdout, runID, false)
 	if err != nil || !ok {
 		return reviewContext{}, false, err
 	}
-
-	runDir := filepath.Join(paths.RunsDir, runID)
-	runDirExists, err := storeDirExists(runDir)
-	if err != nil {
-		return reviewContext{}, false, err
-	}
-	if !runDirExists {
-		return reviewContext{}, false, fmt.Errorf("run not found: %s", runID)
-	}
-
-	runPaths := contractRunPaths(runDir)
-	state, err := readContractRunState(runPaths.RunJSON)
-	if err != nil {
-		return reviewContext{}, false, err
-	}
 	return reviewContext{
-		Root:     root,
-		Paths:    paths,
-		RunPaths: runPaths,
-		State:    state,
+		Root:     base.Root,
+		Paths:    base.Paths,
+		RunPaths: base.RunPaths,
+		State:    base.State,
 	}, true, nil
 }
 
