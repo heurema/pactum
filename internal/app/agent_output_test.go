@@ -77,7 +77,7 @@ func TestReadStageParsersExtractFromJSONWrappedAgentOutput(t *testing.T) {
 	}
 
 	clarifierBlocks, clarifierWarnings := parseClarifierSuggestionBlocks(claudeResultOutputForTest(t, clarifierStructuredOutput([]map[string]any{
-		{"text": "Wrapped question?", "blocking": true, "rationale": "Wrapped rationale.", "recommended_answer": "Wrapped recommendation.", "confidence": "low", "depends_on": []int{2}},
+		{"text": "Wrapped question?", "blocking": true, "kind": "terminology", "rationale": "Wrapped rationale.", "recommended_answer": "Wrapped recommendation.", "confidence": "low", "depends_on": []int{2}},
 	})))
 	if len(clarifierWarnings) != 0 || len(clarifierBlocks) != 1 || len(clarifierBlocks[0].Questions) != 1 {
 		t.Fatalf("wrapped clarifier parse mismatch: blocks=%#v warnings=%#v", clarifierBlocks, clarifierWarnings)
@@ -86,6 +86,9 @@ func TestReadStageParsersExtractFromJSONWrappedAgentOutput(t *testing.T) {
 	assertNoError(t, json.Unmarshal(clarifierBlocks[0].Questions[0], &clarifierInput))
 	if len(clarifierInput.DependsOn) != 1 || clarifierInput.DependsOn[0] != 2 {
 		t.Fatalf("wrapped clarifier depends_on = %#v, want [2]", clarifierInput.DependsOn)
+	}
+	if clarifierInput.Kind != "terminology" {
+		t.Fatalf("wrapped clarifier kind = %q, want terminology", clarifierInput.Kind)
 	}
 
 	draftBlocks, draftWarnings := parseContractDraftProposalBlocks(claudeResultOutputForTest(t, contractDrafterStructuredOutput()))
