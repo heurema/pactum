@@ -25,6 +25,7 @@ type clarificationQuestionRecord struct {
 	RunID              string    `json:"run_id"`
 	Question           string    `json:"question"`
 	Blocking           bool      `json:"blocking"`
+	Kind               string    `json:"kind,omitempty"`
 	Rationale          string    `json:"rationale,omitempty"`
 	RecommendedAnswer  string    `json:"recommended_answer,omitempty"`
 	Confidence         string    `json:"confidence,omitempty"`
@@ -63,6 +64,7 @@ type clarifyQuestionStatus struct {
 	ID                string   `json:"id"`
 	Question          string   `json:"question"`
 	Blocking          bool     `json:"blocking"`
+	Kind              string   `json:"kind,omitempty"`
 	Rationale         string   `json:"rationale,omitempty"`
 	RecommendedAnswer string   `json:"recommended_answer,omitempty"`
 	Confidence        string   `json:"confidence,omitempty"`
@@ -307,6 +309,7 @@ func buildClarificationStatus(runPaths contractRunPathSet, state contractRunStat
 			ID:                question.ID,
 			Question:          question.Question,
 			Blocking:          question.Blocking,
+			Kind:              question.Kind,
 			Rationale:         question.Rationale,
 			RecommendedAnswer: question.RecommendedAnswer,
 			Confidence:        question.Confidence,
@@ -485,6 +488,9 @@ func writeClarifyStatus(stdout io.Writer, status clarifyStatusResponse) {
 				blocking = " [blocking]"
 			}
 			fmt.Fprintf(stdout, "  - %s%s %s\n", question.ID, blocking, question.Question)
+			if question.Kind != "" {
+				fmt.Fprintf(stdout, "    kind: %s\n", question.Kind)
+			}
 			if question.RecommendedAnswer != "" {
 				confidence := question.Confidence
 				if confidence == "" {

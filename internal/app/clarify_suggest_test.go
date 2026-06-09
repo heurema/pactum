@@ -83,6 +83,9 @@ func TestClarifySuggestRunsClarifierAndRecordsOpenQuestions(t *testing.T) {
 	if questions[0].RecommendedAnswer != "Yes — reset approval to clarifying so the human re-approves after answering." || questions[0].Confidence != "high" {
 		t.Fatalf("first question missing recommended answer/confidence: %#v", questions[0])
 	}
+	if questions[0].Kind != "scope" || questions[1].Kind != "acceptance" {
+		t.Fatalf("questions did not persist kind: %q, %q", questions[0].Kind, questions[1].Kind)
+	}
 	if questions[1].ID != "q_002" || questions[1].Blocking || questions[1].Status != "open" {
 		t.Fatalf("unexpected second question: %#v", questions[1])
 	}
@@ -179,6 +182,7 @@ func TestClarificationQuestionFromSuggestionRequiresRecommendedAnswerAndConfiden
 		return clarifierSuggestionInput{
 			Text:              "Should the run reset approval?",
 			Blocking:          &blocking,
+			Kind:              "scope",
 			Rationale:         "Scope may change.",
 			RecommendedAnswer: "Yes — reset to clarifying.",
 			Confidence:        "high",
@@ -192,6 +196,31 @@ func TestClarificationQuestionFromSuggestionRequiresRecommendedAnswerAndConfiden
 		}
 		if record.RecommendedAnswer != "Yes — reset to clarifying." || record.Confidence != "high" {
 			t.Fatalf("record missing recommended answer/confidence: %#v", record)
+		}
+		if record.Kind != "scope" {
+			t.Fatalf("record missing kind: %#v", record)
+		}
+	})
+
+	t.Run("missing or invalid kind is rejected", func(t *testing.T) {
+		for _, kind := range []string{"", "  ", "Terminology", "domain", "unknown"} {
+			input := base()
+			input.Kind = kind
+			_, warning := clarificationQuestionFromSuggestion("/repo", "run", "attempt_001", 1, input, now)
+			if warning != "question skipped: kind must be one of terminology, scope, acceptance, edge_case, assumption, other" {
+				t.Fatalf("kind %q warning = %q", kind, warning)
+			}
+		}
+	})
+
+	t.Run("every allowed kind is accepted", func(t *testing.T) {
+		for _, kind := range []string{"terminology", "scope", "acceptance", "edge_case", "assumption", "other"} {
+			input := base()
+			input.Kind = kind
+			record, warning := clarificationQuestionFromSuggestion("/repo", "run", "attempt_001", 1, input, now)
+			if warning != "" || record.Kind != kind {
+				t.Fatalf("kind %q should be accepted: warning=%q record.Kind=%q", kind, warning, record.Kind)
+			}
 		}
 	})
 
@@ -270,6 +299,7 @@ func TestRecordClarifierSuggestionsResolvesDependsOnAndBlocks(t *testing.T) {
 		{ // position 1 — foundational, no dependency
 			"text":               "Which storage backend should the cache use?",
 			"blocking":           true,
+			"kind":               "scope",
 			"rationale":          "The backend choice constrains the schema.",
 			"recommended_answer": "SQLite.",
 			"confidence":         "high",
@@ -277,6 +307,7 @@ func TestRecordClarifierSuggestionsResolvesDependsOnAndBlocks(t *testing.T) {
 		{ // position 2 — valid dependency on the foundational question
 			"text":               "What schema should the cache table use?",
 			"blocking":           true,
+			"kind":               "terminology",
 			"rationale":          "The schema follows from the chosen backend.",
 			"recommended_answer": "A single key/value table.",
 			"confidence":         "medium",
@@ -285,6 +316,7 @@ func TestRecordClarifierSuggestionsResolvesDependsOnAndBlocks(t *testing.T) {
 		{ // position 3 — self, forward, and out-of-range refs all dropped
 			"text":               "What eviction policy is acceptable?",
 			"blocking":           false,
+			"kind":               "edge_case",
 			"rationale":          "Eviction is independent of the earlier questions.",
 			"recommended_answer": "LRU.",
 			"confidence":         "low",
@@ -327,6 +359,14 @@ func TestRecordClarifierSuggestionsResolvesDependsOnAndBlocks(t *testing.T) {
 	}
 	if len(persisted[1].DependsOn) != 1 || persisted[1].DependsOn[0] != "q_001" {
 		t.Fatalf("persisted q_002 depends_on = %#v, want [q_001]", persisted[1].DependsOn)
+	}
+	if persisted[0].Kind != "scope" || persisted[1].Kind != "terminology" || persisted[2].Kind != "edge_case" {
+		t.Fatalf("persisted questions did not carry kind: %q, %q, %q", persisted[0].Kind, persisted[1].Kind, persisted[2].Kind)
+	}
+
+	// kind is surfaced in the status view for each question.
+	if got := clarifyQuestionStatusByID(t, status, "q_002"); got.Kind != "terminology" {
+		t.Fatalf("status q_002 kind = %q, want terminology", got.Kind)
 	}
 
 	// q_002 is open and its prerequisite q_001 is unanswered → Blocked.
@@ -415,6 +455,7 @@ func TestClarifierHelperProcess(t *testing.T) {
 		{
 			"text":               "Should generated clarification questions reset contract approval?",
 			"blocking":           true,
+			"kind":               "scope",
 			"rationale":          "Approval should be reset if new human input can change scope.",
 			"recommended_answer": "Yes — reset approval to clarifying so the human re-approves after answering.",
 			"confidence":         "high",
@@ -422,6 +463,7 @@ func TestClarifierHelperProcess(t *testing.T) {
 		{
 			"text":               "Should non-blocking suggestions remain open for optional human answers?",
 			"blocking":           false,
+			"kind":               "acceptance",
 			"rationale":          "Optional questions should not block progress but should remain answerable.",
 			"recommended_answer": "Yes — keep them open and non-blocking so progress is not gated.",
 			"confidence":         "medium",

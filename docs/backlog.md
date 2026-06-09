@@ -126,8 +126,20 @@ reviews across M8–M10. Rough priority in parentheses.
     the Open/Answered/BlockingOpen counters are unchanged (a blocked blocking
     question still counts as open/blocking), and this slice does not auto-defer or
     hide dependent questions in the loop (a later slice).
-  - **Slice 3 — terminology / domain challenge** (todo). Push back on vague or
-    overloaded domain terms, forcing the requester to pin down concrete meanings.
+  - **Slice 3 — terminology / domain challenge** (M15.3, shipped). Every
+    clarification question now carries a `kind` from a closed set —
+    `terminology, scope, acceptance, edge_case, assumption, other` — validated when
+    the suggestion is recorded (a missing/invalid kind skips that question with a
+    clear warning while the others are still recorded), persisted on the question,
+    and surfaced in `clarify status` and the clarifier-context list. The clarifier
+    prompt gains a "challenge vague terminology" instruction: flag ambiguous or
+    overloaded domain terms in the contract (goal/scope/acceptance), ask which
+    concrete meaning is intended with the candidate interpretations named, anchored
+    on the repository's actual concepts/identifiers, and tag such questions
+    `kind=terminology`. Additive and behavior-compatible — no schema-version bump;
+    the ambiguous term and its candidate meanings live in the question text and
+    recommended answer (only the kind tag is structured). The kind field is the
+    structural basis for the remaining slices.
   - **Slice 4 — edge-case probing** (todo). Systematically surface boundary
     conditions, failure modes, and "what about X" cases the requester left implicit.
   - **Slice 5 — coverage / convergence signal** (todo). Emit a signal of how well

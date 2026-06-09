@@ -66,8 +66,12 @@ type clarifierSuggestionsBlock struct {
 }
 
 type clarifierSuggestionInput struct {
-	Text              string `json:"text"`
-	Blocking          *bool  `json:"blocking"`
+	Text     string `json:"text"`
+	Blocking *bool  `json:"blocking"`
+	// Kind classifies the question (terminology, scope, acceptance, edge_case,
+	// assumption, other). It categorizes the question and is the structural basis
+	// for later interrogation slices (edge-case probing, coverage signal).
+	Kind              string `json:"kind"`
 	Rationale         string `json:"rationale"`
 	RecommendedAnswer string `json:"recommended_answer"`
 	Confidence        string `json:"confidence"`
@@ -349,12 +353,17 @@ func clarificationQuestionFromSuggestion(root string, runID string, attemptID st
 	if !isValidClarificationConfidence(confidence) {
 		return clarificationQuestionRecord{}, "question skipped: confidence must be one of high, medium, low"
 	}
+	kind := strings.TrimSpace(input.Kind)
+	if !isValidClarificationKind(kind) {
+		return clarificationQuestionRecord{}, "question skipped: kind must be one of terminology, scope, acceptance, edge_case, assumption, other"
+	}
 	return clarificationQuestionRecord{
 		Schema:             clarificationQuestionSchema,
 		ID:                 nextClarificationID("q", index),
 		RunID:              runID,
 		Question:           sanitizeRepoRootInText(root, text),
 		Blocking:           *input.Blocking,
+		Kind:               kind,
 		Rationale:          sanitizeRepoRootInText(root, rationale),
 		RecommendedAnswer:  sanitizeRepoRootInText(root, recommendedAnswer),
 		Confidence:         confidence,
@@ -405,6 +414,15 @@ func isValidClarificationConfidence(confidence string) bool {
 	}
 }
 
+func isValidClarificationKind(kind string) bool {
+	switch kind {
+	case "terminology", "scope", "acceptance", "edge_case", "assumption", "other":
+		return true
+	default:
+		return false
+	}
+}
+
 func defaultClarifierArtifacts() clarifierArtifacts {
 	return clarifierArtifacts{
 		ClarifierPrompt:  clarifierPromptArtifact,
@@ -448,6 +466,9 @@ func renderClarifierContext(prep clarifierPreparation) string {
 		fmt.Fprintln(&b, "- Questions:")
 		for _, question := range prep.Status.Questions {
 			fmt.Fprintf(&b, "  - %s blocking=%t status=%s: %s\n", question.ID, question.Blocking, question.Status, question.Question)
+			if question.Kind != "" {
+				fmt.Fprintf(&b, "    kind: %s\n", question.Kind)
+			}
 			if question.Rationale != "" {
 				fmt.Fprintf(&b, "    rationale: %s\n", question.Rationale)
 			}
@@ -538,6 +559,16 @@ func renderClarifierPrompt(runID string) string {
 	fmt.Fprintln(&b, "- If the repository or contract already answers it, do NOT ask — fold the finding into the rationale and the recommended answer instead.")
 	fmt.Fprintln(&b, "- Escalate only questions that genuinely need a human decision: product intent, priorities, trade-offs, external constraints, or genuinely ambiguous requirements that the repo cannot settle.")
 	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Challenge vague terminology")
+	fmt.Fprintln(&b, "- Read the contract goal, scope, and acceptance criteria for vague or overloaded domain terms — words that could denote more than one concrete thing in this repository.")
+	fmt.Fprintln(&b, "- Do NOT silently pick a meaning. Ask which concrete concept is intended, and name the candidate interpretations you are choosing between in the question text and recommended answer.")
+	fmt.Fprintln(&b, "- Anchor the challenge on the repository's actual concepts and identifiers (types, functions, files, commands surfaced by the repository context and search results), so the human chooses among real options rather than abstractions.")
+	fmt.Fprintln(&b, "- Tag every such question kind=terminology.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Classify every question")
+	fmt.Fprintln(&b, "- EVERY question must carry a kind from: terminology, scope, acceptance, edge_case, assumption, other.")
+	fmt.Fprintln(&b, "- Use terminology for a vague/overloaded-term challenge (above), scope for what is in or out of scope, acceptance for how completion is verified, edge_case for boundary or failure conditions, assumption for an unstated premise you need confirmed, and other when none fits.")
+	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Recommended answers")
 	fmt.Fprintln(&b, "- EVERY question must carry a specific recommended answer: your best-guess resolution, phrased so the human can apply it directly as the contract change (confirm or adjust it, not author it from scratch).")
 	fmt.Fprintln(&b, "- EVERY question must carry a confidence of high, medium, or low, reflecting how sure you are the recommended answer is correct.")
@@ -557,6 +588,7 @@ func renderClarifierPrompt(runID string) string {
 	fmt.Fprintln(&b, "    {")
 	fmt.Fprintln(&b, `      "text": "What should the human clarify?",`)
 	fmt.Fprintln(&b, `      "blocking": true,`)
+	fmt.Fprintln(&b, `      "kind": "terminology",`)
 	fmt.Fprintln(&b, `      "rationale": "Why this answer changes scope or implementation choices, and what the repo already told you.",`)
 	fmt.Fprintln(&b, `      "recommended_answer": "Your best-guess resolution, phrased so it is directly usable as the contract change.",`)
 	fmt.Fprintln(&b, `      "confidence": "high",`)
@@ -566,6 +598,7 @@ func renderClarifierPrompt(runID string) string {
 	fmt.Fprintln(&b, "}")
 	fmt.Fprintln(&b, "```")
 	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "kind must be one of: terminology, scope, acceptance, edge_case, assumption, other (use other when none fits).")
 	fmt.Fprintln(&b, "confidence must be one of: high, medium, low.")
 	fmt.Fprintln(&b, "depends_on (optional) lists the 1-based positions of earlier questions in this same block that must be answered first; omit or leave it empty for a foundational question.")
 	fmt.Fprintln(&b, "If no clarification is needed, return the same schema with an empty questions array.")
