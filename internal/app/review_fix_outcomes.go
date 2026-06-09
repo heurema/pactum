@@ -133,7 +133,7 @@ func (a App) ReviewApplyFixOutcomes(stdout io.Writer, runID string, fixerAttempt
 		if err := writeJSON(context.RunPaths.ReviewJSON, review); err != nil {
 			return err
 		}
-		if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_fix_outcomes_applied", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+		if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_fix_outcomes_applied", Timestamp: now, RunID: runID}); err != nil {
 			return err
 		}
 	}

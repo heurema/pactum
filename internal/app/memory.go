@@ -170,7 +170,7 @@ func (a App) MemoryPropose(stdout io.Writer, runID string, jsonOutput bool) erro
 		}
 	}
 	now := a.nowUTC()
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "memory_candidate_proposed", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "memory_candidate_proposed", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 
@@ -269,7 +269,7 @@ func (a App) MemoryAccept(stdout io.Writer, runID string, acceptedBy string, jso
 	if err := writeJSON(context.RunPaths.MemoryAcceptanceJSON, acceptance); err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "memory_item_accepted", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "memory_item_accepted", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 

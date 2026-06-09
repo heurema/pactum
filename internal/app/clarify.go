@@ -116,7 +116,7 @@ func (a App) ClarifyAsk(stdout io.Writer, runID string, question string, blockin
 	if err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "clarification_question_added", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "clarification_question_added", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 
@@ -179,10 +179,10 @@ func (a App) ClarifyAnswer(stdout io.Writer, runID string, questionID string, an
 	if err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "clarification_answer_recorded", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "clarification_answer_recorded", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "clarification_decision_recorded", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "clarification_decision_recorded", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 

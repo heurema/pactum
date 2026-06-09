@@ -177,10 +177,10 @@ func (a App) createContractOnlyRun(root string, task string) (contractRunState, 
 		}
 	}
 
-	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "run_created", Timestamp: createdAt, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "run_created", Timestamp: createdAt, RunID: runID}); err != nil {
 		return contractRunState{}, err
 	}
-	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "contract_draft_created", Timestamp: createdAt, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "contract_draft_created", Timestamp: createdAt, RunID: runID}); err != nil {
 		return contractRunState{}, err
 	}
 

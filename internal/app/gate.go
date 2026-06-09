@@ -136,7 +136,7 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 	if err := activeStore.MkdirAll(context.RunPaths.GateDir); err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "gate_run_started", Timestamp: startedAt, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "gate_run_started", Timestamp: startedAt, RunID: runID}); err != nil {
 		return err
 	}
 
@@ -186,7 +186,7 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 	if err := writeJSON(context.RunPaths.GateReportJSON, report); err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "gate_run_finished", Timestamp: a.nowUTC(), RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "gate_run_finished", Timestamp: a.nowUTC(), RunID: runID}); err != nil {
 		return err
 	}
 

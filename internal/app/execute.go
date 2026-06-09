@@ -33,7 +33,7 @@ func (a App) ExecuteDryRun(stdout io.Writer, runID string, agentName string, jso
 	if err := writeJSON(prep.RunPaths.DryRunJSON, plan); err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, prep.Paths.EventsJSONL, ledger.Event{Type: "execution_dry_run_prepared", Timestamp: now, RunID: runID, RepoRoot: root}); err != nil {
+	if err := ledger.Append(activeStore, prep.Paths.EventsJSONL, ledger.Event{Type: "execution_dry_run_prepared", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 

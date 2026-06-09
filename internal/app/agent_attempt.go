@@ -113,7 +113,7 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 		return err
 	}
 	agentAttemptLifecycleMu.Lock()
-	err = ledger.Append(activeStore, cfg.EventsJSONL, ledger.Event{Type: cfg.StartedEvent, Timestamp: now, RunID: cfg.RunID, RepoRoot: cfg.Root})
+	err = ledger.Append(activeStore, cfg.EventsJSONL, ledger.Event{Type: cfg.StartedEvent, Timestamp: now, RunID: cfg.RunID})
 	agentAttemptLifecycleMu.Unlock()
 	if err != nil {
 		return err
@@ -141,7 +141,7 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 	err = writeJSON(cfg.LastResultJSON, result)
 	if err == nil {
 		appendUsageRecordBestEffort(cfg, attemptID, runResult)
-		err = ledger.Append(activeStore, cfg.EventsJSONL, ledger.Event{Type: cfg.FinishedEvent, Timestamp: agentAttemptFinishedAt(cfg.ProcessResult(result), now), RunID: cfg.RunID, RepoRoot: cfg.Root})
+		err = ledger.Append(activeStore, cfg.EventsJSONL, ledger.Event{Type: cfg.FinishedEvent, Timestamp: agentAttemptFinishedAt(cfg.ProcessResult(result), now), RunID: cfg.RunID})
 	}
 	agentAttemptLifecycleMu.Unlock()
 	if err != nil {

@@ -270,7 +270,7 @@ func (a App) ContractAcceptDraft(stdout io.Writer, runID string, jsonOutput bool
 	if err := writeContractDraftProposalArtifacts(context.RunPaths, proposal); err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_draft_accepted", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_draft_accepted", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 
@@ -356,7 +356,7 @@ func (a App) recordContractDraftProposal(context runContext, attemptID string, d
 	if err := writeContractDraftProposalArtifacts(context.RunPaths, proposal); err != nil {
 		return contractDraftProposalDocument{}, nil, err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_draft_proposed", Timestamp: now, RunID: context.State.RunID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_draft_proposed", Timestamp: now, RunID: context.State.RunID}); err != nil {
 		return contractDraftProposalDocument{}, nil, err
 	}
 	return proposal, warnings, nil

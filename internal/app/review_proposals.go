@@ -156,7 +156,7 @@ func (a App) ReviewProposeFindings(stdout io.Writer, runID string, reviewerAttem
 			return err
 		}
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_findings_proposed", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_findings_proposed", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 
@@ -241,14 +241,14 @@ func (a App) ReviewAcceptProposal(stdout io.Writer, runID string, proposalID str
 		return err
 	}
 	if resetApproval {
-		if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_approval_reset", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+		if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_approval_reset", Timestamp: now, RunID: runID}); err != nil {
 			return err
 		}
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_proposal_accepted", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_proposal_accepted", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_finding_added", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_finding_added", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 
@@ -297,7 +297,7 @@ func (a App) ReviewRejectProposal(stdout io.Writer, runID string, proposalID str
 		return err
 	}
 	decisions = append(decisions, decision)
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_proposal_rejected", Timestamp: now, RunID: runID, RepoRoot: context.Root}); err != nil {
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_proposal_rejected", Timestamp: now, RunID: runID}); err != nil {
 		return err
 	}
 

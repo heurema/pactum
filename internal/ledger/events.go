@@ -11,7 +11,6 @@ type Event struct {
 	Type      string    `json:"type"`
 	Timestamp time.Time `json:"timestamp"`
 	RunID     string    `json:"run_id,omitempty"`
-	RepoRoot  string    `json:"repo_root,omitempty"`
 }
 
 func Append(store store.Store, path string, event Event) error {
