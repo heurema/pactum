@@ -74,13 +74,25 @@ func codexAgentMessageText(stdout []byte) (string, bool) {
 			continue
 		}
 		found = true
-		if item.Text != "" {
-			b.WriteString(item.Text)
+		text := item.Text
+		if text == "" {
+			var parts strings.Builder
+			for _, part := range item.Content {
+				parts.WriteString(part.Text)
+			}
+			text = parts.String()
+		}
+		if text == "" {
 			continue
 		}
-		for _, part := range item.Content {
-			b.WriteString(part.Text)
+		// Separate successive agent_message texts with a newline so a fenced
+		// block that begins a later message starts on a fresh line and stays
+		// recognizable to extractFencedJSONBlocks. No leading newline is added
+		// before the first message.
+		if b.Len() > 0 {
+			b.WriteByte('\n')
 		}
+		b.WriteString(text)
 	}
 	if err := scanner.Err(); err != nil {
 		return "", false
