@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260610_201254",
+  "status": "contract_approved",
+  "task": "Integrate the autonomous clarify loop into task new: an opt-in --clarify flag runs the loop right after the run is created, so a task is born with a pre-interrogated contract and the human answers only the blocking questions automation could not resolve",
+  "created_at": "2026-06-10T20:12:54.667155Z",
+  "updated_at": "2026-06-10T20:13:25.040216Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260610_201254",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

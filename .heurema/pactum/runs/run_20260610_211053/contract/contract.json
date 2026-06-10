@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260610_211053",
+  "status": "approved",
+  "goal": "Fix ACP agent-message chunk gluing: separate streamed message chunks with a newline in the attempt log so a fenced suggestions block glued to prose is parseable, and warn when a suggestions-schema marker is present but zero blocks parse — a parse miss must not masquerade as convergence",
+  "scope": {
+    "in": [],
+    "out": []
+  },
+  "acceptance_criteria": [],
+  "validation": {
+    "commands": []
+  },
+  "assumptions": [],
+  "open_questions": [],
+  "clarifications": {
+    "questions": []
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}

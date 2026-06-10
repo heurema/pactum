@@ -1,0 +1,60 @@
+{
+  "schema": "pactum.clarify_loop_summary.v1",
+  "run_id": "run_20260610_210147",
+  "run_status": "contract_draft",
+  "started_at": "2026-06-10T21:01:47Z",
+  "finished_at": "2026-06-10T21:04:26Z",
+  "clarifier": "codex",
+  "max_rounds": 3,
+  "terminal_reason": "converged",
+  "converged": true,
+  "rounds": [
+    {
+      "round": 1,
+      "clarifier_attempt_id": "clarifier_attempt_001",
+      "questions_created": 0,
+      "auto_resolved": 0,
+      "open_blocking_after": 0
+    }
+  ],
+  "coverage": [
+    {
+      "kind": "terminology",
+      "total": 0,
+      "open": 0,
+      "answered": 0,
+      "blocking_open": 0
+    },
+    {
+      "kind": "scope",
+      "total": 0,
+      "open": 0,
+      "answered": 0,
+      "blocking_open": 0
+    },
+    {
+      "kind": "acceptance",
+      "total": 0,
+      "open": 0,
+      "answered": 0,
+      "blocking_open": 0
+    },
+    {
+      "kind": "edge_case",
+      "total": 0,
+      "open": 0,
+      "answered": 0,
+      "blocking_open": 0
+    },
+    {
+      "kind": "assumption",
+      "total": 0,
+      "open": 0,
+      "answered": 0,
+      "blocking_open": 0
+    }
+  ],
+  "artifacts": {
+    "summary": "clarify/loop-summary.json"
+  }
+}

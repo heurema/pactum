@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260610_210147",
+  "status": "draft",
+  "goal": "Add an export command that dumps a run's full record as a single archive",
+  "scope": {
+    "in": [],
+    "out": []
+  },
+  "acceptance_criteria": [],
+  "validation": {
+    "commands": []
+  },
+  "assumptions": [],
+  "open_questions": [],
+  "clarifications": {
+    "questions": []
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}
