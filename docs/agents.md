@@ -148,6 +148,15 @@ shell-command gating limitation for write stages.
 The ACP adapters are external npm packages and inherit the agent's auth from the
 environment.
 
+Over ACP the idle `--timeout` is reset by **any agent protocol activity** —
+streamed text, tool calls and tool-call updates, thoughts, plans, permission
+requests, and client-serviced file reads/writes — not only by visible output.
+An agent that works silently through tool calls for minutes (reading the repo,
+running tools) keeps the watchdog fed and is not killed as idle; the timeout
+fires only when the protocol goes truly quiet. The attempt log is unaffected:
+only the agent's streamed message text is written to `stdout.log`, the
+liveness ticks carry no content.
+
 #### Model pins over ACP
 
 The per-agent model pins from `execute.models` / `review.panel` reach the agent
