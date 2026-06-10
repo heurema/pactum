@@ -1,6 +1,9 @@
 package agents
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseCodexUsageTakesLastCompletedEvent(t *testing.T) {
 	output := []byte(`
@@ -89,5 +92,59 @@ func TestParseUsageSkippedWhenStructuredOutputIsNotEnabled(t *testing.T) {
 	usage := parseAgentUsage(AgentDescriptor{Name: BuiltinCodex, Args: []string{"exec", "--sandbox", "read-only"}}, []byte(`not json`), nil)
 	if usage.Captured || usage.CaptureWarning != "" {
 		t.Fatalf("unstructured read-stage usage should stay quietly uncaptured: %#v", usage)
+	}
+}
+
+func TestAgentRunCompleted(t *testing.T) {
+	claude := AgentDescriptor{Name: BuiltinClaude}
+	codex := AgentDescriptor{Name: BuiltinCodex}
+	tests := []struct {
+		name   string
+		agent  AgentDescriptor
+		stdout string
+		want   bool
+	}{
+		{"claude success envelope", claude, `{"type":"result","subtype":"success","is_error":false,"usage":{"input_tokens":1}}`, true},
+		{"claude error envelope", claude, `{"type":"result","subtype":"error_during_execution","is_error":true}`, false},
+		{"claude partial envelope", claude, `{"type":"result","is_er`, false},
+		{"claude non-result envelope", claude, `{"type":"message","is_error":false}`, false},
+		{"claude missing subtype is not success", claude, `{"type":"result","is_error":false}`, false},
+		{"claude empty output", claude, "", false},
+		{"codex terminal turn.completed", codex, "{\"type\":\"turn.started\"}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1}}\n", true},
+		{"codex turn.completed without usage", codex, `{"type":"turn.completed"}`, true},
+		{"codex no terminal event", codex, "{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\"}\n", false},
+		{"codex completed turn followed by killed work", codex, "{\"type\":\"turn.completed\"}\n{\"type\":\"turn.started\"}\n", false},
+		{"codex empty output", codex, "", false},
+		{"unknown agent", AgentDescriptor{Name: "custom"}, `{"type":"result","is_error":false}`, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := agentRunCompleted(tt.agent, []byte(tt.stdout)); got != tt.want {
+				t.Fatalf("agentRunCompleted = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestFinalizeTimedOutAttemptEmptyPathSkipsDetection pins the ACP guard: over
+// ACP the attempt log is free-streamed agent text where CLI terminal markers
+// cannot legitimately appear — an agent merely quoting a turn.completed event
+// must not convert a stalled, idle-killed turn into success. The ACP transport
+// passes an empty stdoutPath, which must skip the captured-output detection
+// entirely and rely on the protocol's recorded prompt response alone.
+func TestFinalizeTimedOutAttemptEmptyPathSkipsDetection(t *testing.T) {
+	var stderr strings.Builder
+	exitCode, completed := finalizeTimedOutAttempt(AgentDescriptor{Name: BuiltinCodex}, "", false, &stderr, nil)
+	if exitCode != -1 || completed {
+		t.Fatalf("empty stdoutPath must keep the timed-out failure: exit=%d completed=%t", exitCode, completed)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("no completion notice expected: %q", stderr.String())
+	}
+
+	exitCode, completed = finalizeTimedOutAttempt(AgentDescriptor{Name: BuiltinClaude}, "", true, &stderr, nil)
+	if exitCode != 0 || !completed {
+		t.Fatalf("alreadyCompleted must finalize as completed: exit=%d completed=%t", exitCode, completed)
 	}
 }

@@ -171,6 +171,27 @@ func TestACPClientTokenUsage(t *testing.T) {
 	}
 }
 
+func TestACPClientTurnCompleted(t *testing.T) {
+	// No recorded prompt response: the turn never finished before the kill.
+	c := &acpClient{}
+	if c.turnCompleted() {
+		t.Fatal("turn must not count as completed without a recorded response")
+	}
+
+	// A recorded end-turn response means the turn genuinely finished.
+	c.recordResult(acp.PromptResponse{StopReason: acp.StopReasonEndTurn})
+	if !c.turnCompleted() {
+		t.Fatal("a recorded end_turn response is a completed turn")
+	}
+
+	// A refusal is a refused turn, not completed work.
+	refused := &acpClient{}
+	refused.recordResult(acp.PromptResponse{StopReason: acp.StopReasonRefusal})
+	if refused.turnCompleted() {
+		t.Fatal("a refusal response must not count as completed work")
+	}
+}
+
 func TestACPClientWriteTextFileScopeGuard(t *testing.T) {
 	repoRoot := t.TempDir()
 	write := func(c *acpClient, abs, content string) error {

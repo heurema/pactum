@@ -89,14 +89,19 @@ type RunRequest struct {
 }
 
 type RunResult struct {
-	ExitCode       int        `json:"exit_code"`
-	StartedAt      string     `json:"started_at"`
-	FinishedAt     string     `json:"finished_at"`
-	DurationMillis int64      `json:"duration_ms"`
-	TimedOut       bool       `json:"timed_out"`
-	StdoutPath     string     `json:"stdout"`
-	StderrPath     string     `json:"stderr"`
-	Usage          TokenUsage `json:"usage"`
+	ExitCode       int    `json:"exit_code"`
+	StartedAt      string `json:"started_at"`
+	FinishedAt     string `json:"finished_at"`
+	DurationMillis int64  `json:"duration_ms"`
+	TimedOut       bool   `json:"timed_out"`
+	// CompletedDespiteTimeout marks an idle-killed attempt whose captured output
+	// carries the agent's successful terminal marker: the watchdog did fire
+	// (TimedOut stays true for the record), but the agent had already finished,
+	// so the attempt is finalized as completed with a warning (ExitCode 0).
+	CompletedDespiteTimeout bool       `json:"completed_despite_timeout,omitempty"`
+	StdoutPath              string     `json:"stdout"`
+	StderrPath              string     `json:"stderr"`
+	Usage                   TokenUsage `json:"usage"`
 }
 
 // TokenUsage is a provider-normalized view of one agent subprocess call's

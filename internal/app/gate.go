@@ -40,7 +40,11 @@ type gateExecutionReport struct {
 	AttemptID string `json:"attempt_id"`
 	ExitCode  int    `json:"exit_code"`
 	TimedOut  bool   `json:"timed_out"`
-	Result    string `json:"result"`
+	// CompletedDespiteTimeout mirrors the attempt result: the idle watchdog
+	// fired after the agent's successful terminal marker, so the execution
+	// still counts as passed.
+	CompletedDespiteTimeout bool   `json:"completed_despite_timeout,omitempty"`
+	Result                  string `json:"result"`
 }
 
 type gateChangeReport struct {
@@ -161,7 +165,7 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 	scope := buildGateScopeReport(context.Contract, changes, config.Gate.ScopeEnforcement)
 
 	summary := gateSummary{
-		ExecutionPassed:   attempt.Result.ExitCode == 0 && !attempt.Result.TimedOut,
+		ExecutionPassed:   attempt.Result.ExitCode == 0 && (!attempt.Result.TimedOut || attempt.Result.CompletedDespiteTimeout),
 		ValidationPassed:  gateValidationPassed(validation.Commands),
 		ChangesNeedReview: gateChangesNeedReview(changes),
 		ScopeBlocked:      gateScopeBlocked(scope),
@@ -173,10 +177,11 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 		CreatedAt: a.nowUTC().Format(time.RFC3339),
 		Status:    status,
 		Execution: gateExecutionReport{
-			AttemptID: attempt.ID,
-			ExitCode:  attempt.Result.ExitCode,
-			TimedOut:  attempt.Result.TimedOut,
-			Result:    resultArtifact,
+			AttemptID:               attempt.ID,
+			ExitCode:                attempt.Result.ExitCode,
+			TimedOut:                attempt.Result.TimedOut,
+			CompletedDespiteTimeout: attempt.Result.CompletedDespiteTimeout,
+			Result:                  resultArtifact,
 		},
 		Changes:    changes,
 		Scope:      scope,

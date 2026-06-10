@@ -437,6 +437,7 @@ func writeReviewFixRun(stdout io.Writer, request reviewFixRequestDocument, resul
 	fmt.Fprintf(stdout, "  id: %s\n", result.AttemptID)
 	fmt.Fprintf(stdout, "  exit code: %d\n", result.ExitCode)
 	fmt.Fprintf(stdout, "  timed out: %t\n", result.TimedOut)
+	writeCompletedDespiteTimeoutWarning(stdout, result.processResult)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Artifacts:")
 	fmt.Fprintf(stdout, "  request: %s\n", runArtifactRepoRel(result.RunID, filepath.ToSlash(filepath.Join(reviewFixAttemptsArtifact, result.AttemptID, "request.json"))))

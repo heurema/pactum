@@ -116,19 +116,24 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 	} else if client.stopReasonValue() == acp.StopReasonRefusal {
 		exitCode = 1
 	}
+	completedDespiteTimeout := false
 	if timedOut {
-		exitCode = -1
+		// A recorded prompt response means the turn finished before the kill —
+		// the protocol-level completion signal the text-only stdout log cannot
+		// carry; the stdout detector still covers any captured terminal marker.
+		exitCode, completedDespiteTimeout = finalizeTimedOutAttempt(request.Agent, "", client.turnCompleted(), stderrFile, request.LiveOutput)
 	}
 
 	return RunResult{
-		ExitCode:       exitCode,
-		StartedAt:      started.Format(time.RFC3339Nano),
-		FinishedAt:     finished.Format(time.RFC3339Nano),
-		DurationMillis: finished.Sub(started).Milliseconds(),
-		TimedOut:       timedOut,
-		StdoutPath:     layout.stdoutArtifact,
-		StderrPath:     layout.stderrArtifact,
-		Usage:          client.tokenUsage(),
+		ExitCode:                exitCode,
+		StartedAt:               started.Format(time.RFC3339Nano),
+		FinishedAt:              finished.Format(time.RFC3339Nano),
+		DurationMillis:          finished.Sub(started).Milliseconds(),
+		TimedOut:                timedOut,
+		CompletedDespiteTimeout: completedDespiteTimeout,
+		StdoutPath:              layout.stdoutArtifact,
+		StderrPath:              layout.stderrArtifact,
+		Usage:                   client.tokenUsage(),
 	}, runErr
 }
 
@@ -232,9 +237,10 @@ type acpClient struct {
 	// client where they are denied, not fall back to native writes.
 	readOnly bool
 
-	mu         sync.Mutex
-	stopReason acp.StopReason
-	usage      *acp.Usage
+	mu              sync.Mutex
+	promptResponded bool
+	stopReason      acp.StopReason
+	usage           *acp.Usage
 }
 
 var _ acp.Client = (*acpClient)(nil)
@@ -248,6 +254,7 @@ func (c *acpClient) tick() {
 func (c *acpClient) recordResult(resp acp.PromptResponse) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.promptResponded = true
 	c.stopReason = resp.StopReason
 	c.usage = resp.Usage
 }
@@ -256,6 +263,18 @@ func (c *acpClient) stopReasonValue() acp.StopReason {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.stopReason
+}
+
+// turnCompleted reports whether a prompt response was recorded before the
+// kill — the turn genuinely finished. A refusal response is a refused turn,
+// not completed work, so it does not count.
+func (c *acpClient) turnCompleted() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Whitelist: only an end_turn stop reason is a completed turn. Refusal,
+	// cancellation, and budget stops (max tokens / max turn requests) mean the
+	// work did not finish and must not finalize as completed.
+	return c.promptResponded && c.stopReason == acp.StopReasonEndTurn
 }
 
 func (c *acpClient) tokenUsage() TokenUsage {

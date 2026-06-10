@@ -687,4 +687,5 @@ func writeClarifySuggestRunOnly(stdout io.Writer, request clarifierRequestDocume
 	fmt.Fprintln(stdout, "Result:")
 	fmt.Fprintf(stdout, "  exit code: %d\n", result.ExitCode)
 	fmt.Fprintf(stdout, "  timed out: %t\n", result.TimedOut)
+	writeCompletedDespiteTimeoutWarning(stdout, result.processResult)
 }

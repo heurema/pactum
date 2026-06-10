@@ -39,15 +39,17 @@ reviews across M8–M10. Rough priority in parentheses.
   natural seed for custom agents later (command/args fields on an entry).
   Small follow-up: a registry-aware `agents doctor` view (list the registered
   entries with their inferred engines and pins, not just the built-ins).
-- **Timeout follow-ups** (med). `--timeout` is now idle-based (M11.6). Still open:
-  (a) **completion-aware finalize** — when the idle timeout fires but the agent
-  already produced a usable diff, report it as completed-with-warning instead of
-  `timed_out: true` / `exit -1` (a killed-but-complete run currently looks failed);
+- **Timeout follow-ups** (med). `--timeout` is now idle-based (M11.6) and
+  completion-aware (M20.0: an idle-killed attempt whose output carries the
+  agent's successful terminal marker finalizes as completed-with-warning —
+  exit 0, `timed_out: true` + `completed_despite_timeout: true`). Still open:
   (b) an optional **absolute total cap** (off by default) as a CI backstop for an
   agent that keeps emitting output yet never finishes (the idle timer never fires);
   (c) **per-project config defaults** for the idle window (and any cap) so a project
   sets it once instead of passing `--timeout` on every run;
-  (d) **silent-agent idle-timeout gap** — the claude executor (`claude -p --output-format
+  (d, note: moving claude to stream-json would also require reworking the
+  completion detector and parseClaudeUsage, which unmarshal the single terminal
+  result envelope) **silent-agent idle-timeout gap** — the claude executor (`claude -p --output-format
   json`) emits nothing to stdout/stderr until its final result, so the idle watchdog
   (which appears to arm on first output) never fires: a claude run is silent for its whole
   duration and is neither idle-killed mid-work (good here) nor protected against a real

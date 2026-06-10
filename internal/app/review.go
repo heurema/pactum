@@ -1503,7 +1503,11 @@ func writeReviewRun(stdout io.Writer, response reviewerRunResponse, reviewer age
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Attempts (one per lens):")
 	for _, result := range response.Attempts {
-		fmt.Fprintf(stdout, "  - %s [%s] exit code %d, timed out: %t\n", result.AttemptID, result.Lens, result.ExitCode, result.TimedOut)
+		suffix := ""
+		if result.CompletedDespiteTimeout {
+			suffix = " (completed despite timeout)"
+		}
+		fmt.Fprintf(stdout, "  - %s [%s] exit code %d, timed out: %t%s\n", result.AttemptID, result.Lens, result.ExitCode, result.TimedOut, suffix)
 	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Artifacts:")

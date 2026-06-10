@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"io"
 	"path/filepath"
 
 	"github.com/heurema/pactum/internal/agents"
@@ -16,20 +17,34 @@ type processResult struct {
 	DurationMillis int64  `json:"duration_ms"`
 	ExitCode       int    `json:"exit_code"`
 	TimedOut       bool   `json:"timed_out"`
-	Stdout         string `json:"stdout"`
-	Stderr         string `json:"stderr"`
+	// CompletedDespiteTimeout records the completed-with-warning finalize: the
+	// idle watchdog fired (TimedOut stays true), but the agent's output carried
+	// a successful terminal marker, so the attempt counts as a success.
+	CompletedDespiteTimeout bool   `json:"completed_despite_timeout,omitempty"`
+	Stdout                  string `json:"stdout"`
+	Stderr                  string `json:"stderr"`
 }
 
 func processResultFromRunResult(result agents.RunResult) processResult {
 	return processResult{
-		StartedAt:      result.StartedAt,
-		FinishedAt:     result.FinishedAt,
-		DurationMillis: result.DurationMillis,
-		ExitCode:       result.ExitCode,
-		TimedOut:       result.TimedOut,
-		Stdout:         result.StdoutPath,
-		Stderr:         result.StderrPath,
+		StartedAt:               result.StartedAt,
+		FinishedAt:              result.FinishedAt,
+		DurationMillis:          result.DurationMillis,
+		ExitCode:                result.ExitCode,
+		TimedOut:                result.TimedOut,
+		CompletedDespiteTimeout: result.CompletedDespiteTimeout,
+		Stdout:                  result.StdoutPath,
+		Stderr:                  result.StderrPath,
 	}
+}
+
+// writeCompletedDespiteTimeoutWarning surfaces the completed-with-warning
+// finalize in the human result output, right under the timed-out line.
+func writeCompletedDespiteTimeoutWarning(stdout io.Writer, result processResult) {
+	if !result.CompletedDespiteTimeout {
+		return
+	}
+	fmt.Fprintln(stdout, "  warning: idle timeout fired after the agent completed; treated as completed")
 }
 
 // attemptPathSet is the on-disk layout of a single executor or reviewer attempt.

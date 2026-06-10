@@ -57,22 +57,10 @@ func structuredUsageEnabled(agent AgentDescriptor) bool {
 	}
 }
 
-func parseCodexUsage(output []byte) TokenUsage {
-	type eventUsage struct {
-		InputTokens           int64 `json:"input_tokens"`
-		CachedInputTokens     int64 `json:"cached_input_tokens"`
-		OutputTokens          int64 `json:"output_tokens"`
-		ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
-	}
-	type eventEnvelope struct {
-		Type  string          `json:"type"`
-		Usage json.RawMessage `json:"usage"`
-		Turn  struct {
-			Usage json.RawMessage `json:"usage"`
-		} `json:"turn"`
-	}
-
-	var lastRaw json.RawMessage
+// codexTurnCompletedEvents returns the parsed turn.completed events from the
+// captured codex --json output, skipping blank and non-JSON lines.
+func codexTurnCompletedEvents(output []byte) ([]codexEventEnvelope, error) {
+	var events []codexEventEnvelope
 	scanner := bufio.NewScanner(bytes.NewReader(output))
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -80,13 +68,93 @@ func parseCodexUsage(output []byte) TokenUsage {
 		if line == "" {
 			continue
 		}
-		var envelope eventEnvelope
+		var envelope codexEventEnvelope
 		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
 			continue
 		}
 		if envelope.Type != "turn.completed" {
 			continue
 		}
+		events = append(events, envelope)
+	}
+	return events, scanner.Err()
+}
+
+// codexLastEventType returns the Type of the last parseable JSON event line in
+// the captured codex --json output ("" when none parse).
+func codexLastEventType(output []byte) (string, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	last := ""
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var envelope codexEventEnvelope
+		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+			continue
+		}
+		last = envelope.Type
+	}
+	return last, scanner.Err()
+}
+
+type codexEventEnvelope struct {
+	Type  string          `json:"type"`
+	Usage json.RawMessage `json:"usage"`
+	Turn  struct {
+		Usage json.RawMessage `json:"usage"`
+	} `json:"turn"`
+}
+
+type claudeResultEnvelope struct {
+	Type    string          `json:"type"`
+	Subtype string          `json:"subtype"`
+	IsError bool            `json:"is_error"`
+	Usage   json.RawMessage `json:"usage"`
+}
+
+// agentRunCompleted reports whether the captured stdout carries the agent's
+// successful terminal marker — the signal that the run finished even though the
+// idle watchdog killed the lingering process. claude emits its final result
+// envelope only at the very end of a run (is_error distinguishes success);
+// codex emits a terminal turn.completed event only when the turn finished.
+// Partial, absent, or error output reports false.
+func agentRunCompleted(agent AgentDescriptor, stdout []byte) bool {
+	switch agent.Name {
+	case BuiltinClaude:
+		var envelope claudeResultEnvelope
+		if err := json.Unmarshal(stdout, &envelope); err != nil {
+			return false
+		}
+		// Anchor on the success subtype as well as is_error: a result envelope
+		// with a non-success subtype must not finalize as completed.
+		return envelope.Type == "result" && envelope.Subtype == "success" && !envelope.IsError
+	case BuiltinCodex:
+		// The LAST parsed event must be turn.completed: an earlier completed
+		// turn followed by further (killed) work is not a completed run.
+		last, err := codexLastEventType(stdout)
+		return err == nil && last == "turn.completed"
+	default:
+		return false
+	}
+}
+
+func parseCodexUsage(output []byte) TokenUsage {
+	type eventUsage struct {
+		InputTokens           int64 `json:"input_tokens"`
+		CachedInputTokens     int64 `json:"cached_input_tokens"`
+		OutputTokens          int64 `json:"output_tokens"`
+		ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
+	}
+
+	events, err := codexTurnCompletedEvents(output)
+	if err != nil {
+		return TokenUsage{CaptureWarning: fmt.Sprintf("codex usage parse failed: %v", err)}
+	}
+	var lastRaw json.RawMessage
+	for _, envelope := range events {
 		raw := envelope.Usage
 		if len(raw) == 0 {
 			raw = envelope.Turn.Usage
@@ -95,9 +163,6 @@ func parseCodexUsage(output []byte) TokenUsage {
 			continue
 		}
 		lastRaw = append(json.RawMessage(nil), raw...)
-	}
-	if err := scanner.Err(); err != nil {
-		return TokenUsage{CaptureWarning: fmt.Sprintf("codex usage parse failed: %v", err)}
 	}
 	if len(lastRaw) == 0 {
 		return TokenUsage{CaptureWarning: "codex usage parse failed: no turn.completed usage event found"}
@@ -120,9 +185,6 @@ func parseCodexUsage(output []byte) TokenUsage {
 }
 
 func parseClaudeUsage(output []byte) TokenUsage {
-	type resultEnvelope struct {
-		Usage json.RawMessage `json:"usage"`
-	}
 	type resultUsage struct {
 		InputTokens              int64 `json:"input_tokens"`
 		OutputTokens             int64 `json:"output_tokens"`
@@ -133,7 +195,7 @@ func parseClaudeUsage(output []byte) TokenUsage {
 		ThinkingTokens           int64 `json:"thinking_tokens"`
 	}
 
-	var envelope resultEnvelope
+	var envelope claudeResultEnvelope
 	if err := json.Unmarshal(output, &envelope); err != nil {
 		return TokenUsage{CaptureWarning: fmt.Sprintf("claude usage parse failed: %v", err)}
 	}
