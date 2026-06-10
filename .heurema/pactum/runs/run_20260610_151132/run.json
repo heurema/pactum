@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260610_151132",
+  "status": "contract_approved",
+  "task": "Simplify the agent registry to {name, model, effort}: drop the agent field, infer the engine solely from the required model (claude-*/aliases -\u003e claude; gpt-*/codex-*/o\u003cdigit\u003e -\u003e codex), keep the at-least-one-agent rule, and reshape the workspace config atomically",
+  "created_at": "2026-06-10T15:11:32.33695Z",
+  "updated_at": "2026-06-10T15:12:13.810479Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260610_151132",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}
