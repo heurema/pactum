@@ -216,6 +216,7 @@ type contractRunPathSet struct {
 	ClarifierPromptMD       string
 	ClarifierAttemptsDir    string
 	ClarifierLastResultJSON string
+	ClarifyLoopSummaryJSON  string
 
 	ContractJSON   string
 	ContractMD     string
@@ -291,6 +292,7 @@ func contractRunPaths(runDir string) contractRunPathSet {
 		ClarifierPromptMD:             filepath.Join(clarifyDir, "clarifier-prompt.md"),
 		ClarifierAttemptsDir:          filepath.Join(clarifyDir, "clarifier-attempts"),
 		ClarifierLastResultJSON:       filepath.Join(clarifyDir, "clarifier-last-result.json"),
+		ClarifyLoopSummaryJSON:        filepath.Join(clarifyDir, "loop-summary.json"),
 		ContractJSON:                  filepath.Join(contractDir, "contract.json"),
 		ContractMD:                    filepath.Join(contractDir, "contract.md"),
 		PromptMD:                      filepath.Join(contractDir, "prompt.md"),

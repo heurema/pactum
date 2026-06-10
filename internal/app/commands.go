@@ -87,6 +87,20 @@ func (c *clarifySuggestCmd) Run(r *runner) error {
 	return r.App.ClarifySuggest(r.Stdout, r.Stderr, runID, c.Reviewer, c.Timeout, c.Yes, c.JSONOutput)
 }
 
+func (c *clarifyLoopCmd) Run(r *runner) error {
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ClarifyLoop(r.Stdout, r.Stderr, runID, clarifyLoopOptions{
+		Reviewer:   c.Reviewer,
+		MaxRounds:  c.MaxRounds,
+		Timeout:    c.Timeout,
+		Yes:        c.Yes,
+		JSONOutput: c.JSONOutput,
+	})
+}
+
 func (c *clarifyStatusCmd) Run(r *runner) error {
 	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
 	if err != nil || !ok {

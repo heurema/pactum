@@ -29,6 +29,33 @@ func TestReadConfigRejectsUnknownKeys(t *testing.T) {
 	}
 }
 
+func TestReadConfigParsesClarifySection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	contents := strings.Join([]string{
+		"schema: pactum.config.v1",
+		"clarify:",
+		"  max_rounds: 5",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	config, err := readConfig(path)
+	if err != nil {
+		t.Fatalf("readConfig: %v", err)
+	}
+	if config.Clarify.MaxRounds != 5 {
+		t.Fatalf("clarify.max_rounds = %d, want 5", config.Clarify.MaxRounds)
+	}
+}
+
+func TestDefaultConfigClarifyMaxRounds(t *testing.T) {
+	if got := defaultConfigFile().Clarify.MaxRounds; got != 3 {
+		t.Fatalf("default clarify.max_rounds = %d, want 3", got)
+	}
+}
+
 func TestValidateAgentModelEntries(t *testing.T) {
 	cases := []struct {
 		name    string

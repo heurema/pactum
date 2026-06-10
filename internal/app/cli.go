@@ -32,6 +32,7 @@ type clarifyCmd struct {
 	Ask     clarifyAskCmd     `cmd:"" help:"Add a manual clarification question."`
 	Answer  clarifyAnswerCmd  `cmd:"" help:"Record a manual clarification answer."`
 	Suggest clarifySuggestCmd `cmd:"" help:"Run a read-only clarifier agent and record proposed questions."`
+	Loop    clarifyLoopCmd    `cmd:"" help:"Run clarifier rounds that auto-resolve high-confidence recommendations until convergence."`
 	Status  clarifyStatusCmd  `cmd:"" aliases:"list" help:"Print clarification status for a run (alias: list)."`
 }
 
@@ -51,6 +52,15 @@ type clarifySuggestCmd struct {
 	Reviewer   string        `name:"reviewer" help:"Built-in clarifier agent name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
 	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum idle duration without clarifier output."`
 	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
+	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type clarifyLoopCmd struct {
+	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to clarify."`
+	Reviewer   string        `name:"reviewer" help:"Built-in clarifier agent name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
+	MaxRounds  int           `name:"max-rounds" help:"Maximum clarifier rounds. Defaults to clarify.max_rounds."`
+	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum idle duration without clarifier output."`
+	Yes        bool          `name:"yes" help:"Required confirmation for direct clarifier execution."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
