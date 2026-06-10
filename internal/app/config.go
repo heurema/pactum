@@ -33,7 +33,7 @@ type configFile struct {
 	Gate     gateConfig           `yaml:"gate"`
 	Clarify  clarifyConfig        `yaml:"clarify"`
 	Review   reviewConfig         `yaml:"review"`
-	Timeouts timeoutsConfig       `yaml:"timeouts"`
+	Timeouts timeoutsConfig       `yaml:"timeouts,omitempty"`
 }
 
 type mapConfig struct {
@@ -124,9 +124,9 @@ func defaultConfigFile() configFile {
 			},
 			Panel: []string{},
 		},
-		Timeouts: timeoutsConfig{
-			Idle: "10m",
-		},
+		// No Timeouts: the generated config carries only deviations from the
+		// built-in defaults, and the absent section falls back to
+		// defaultIdleTimeout.
 	}
 }
 
@@ -305,7 +305,7 @@ func normalizeIdleTimeout(value string) (string, error) {
 
 // defaultIdleTimeout is the built-in idle window for the agent-running
 // commands when neither --timeout nor timeouts.idle sets one.
-const defaultIdleTimeout = 10 * time.Minute
+const defaultIdleTimeout = 25 * time.Minute
 
 // resolveIdleTimeout resolves the idle window for an agent-running command: an
 // explicit --timeout wins, then timeouts.idle from the workspace config, then
