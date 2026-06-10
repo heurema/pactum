@@ -29,8 +29,11 @@ type reviewFixPreparation struct {
 	Review      reviewDocument
 	Findings    []reviewFindingRecord
 	Resolutions []reviewResolutionRecord
-	Fixer       agents.AgentDescriptor
-	ModelSpec   agents.ModelSpec
+	// FixerName is the registry name the fixer was invoked under; Fixer is the
+	// underlying built-in's descriptor with the entry's pins applied.
+	FixerName string
+	Fixer     agents.AgentDescriptor
+	ModelSpec agents.ModelSpec
 }
 
 type reviewFixDryRunDocument struct {
@@ -99,6 +102,7 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 		AttemptsDir:      context.RunPaths.ReviewFixAttemptsDir,
 		AttemptIDPrefix:  "attempt",
 		LastResultJSON:   context.RunPaths.ReviewFixLastResultJSON,
+		AgentName:        prep.FixerName,
 		Agent:            prep.Fixer,
 		Model:            prep.ModelSpec,
 		PromptRepoPath:   reviewFixPromptRepoPath(runID),
@@ -138,7 +142,7 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 			return result.processResult
 		},
 		RenderRunOnly: func(stdout io.Writer, request reviewFixRequestDocument, result reviewFixResultDocument) {
-			writeReviewFixRun(stdout, request, result, prep.ModelSpec)
+			writeReviewFixRun(stdout, request, result, prep.FixerName, prep.ModelSpec)
 		},
 	})
 }
@@ -166,23 +170,20 @@ func (a App) prepareReviewFixer(context reviewContext, agentName string) (review
 	if len(findings) == 0 {
 		return reviewFixPreparation{}, fmt.Errorf("cannot run review fix: no review findings found")
 	}
-	config, err := readConfig(context.Paths.Config)
+	config, err := a.readConfig(context.Paths.Config)
 	if err != nil {
 		return reviewFixPreparation{}, err
 	}
-	fixer, err := a.agentRegistry().ResolveExecutor(agentName)
+	// The fixer is an executor-stage agent: an explicit --agent resolves a
+	// registry name, an omitted one defaults to the first registry entry, and
+	// the entry's pins travel with the name.
+	entry, err := resolveExecutorEntry(config, agentName)
 	if err != nil {
 		return reviewFixPreparation{}, err
 	}
-	// The fixer is an executor-stage agent: its pin comes from its
-	// execute.models entry; an agent without an entry runs unpinned.
-	modelSpec := modelSpecFor(config.Execute.Models, fixer.Name)
-	fixer, err = agents.ApplyModelSpec(fixer, modelSpec)
+	resolved, err := a.resolveAgentForRole(entry, agentRoleExecutor)
 	if err != nil {
 		return reviewFixPreparation{}, err
-	}
-	if fixer.Input != agents.InputPromptFile {
-		return reviewFixPreparation{}, fmt.Errorf("unsupported agent input mode: %s", fixer.Input)
 	}
 
 	review = refreshReviewDocument(review, context.State.RunID, review.Gate.Status, findings, resolutions, "")
@@ -192,8 +193,9 @@ func (a App) prepareReviewFixer(context reviewContext, agentName string) (review
 		Review:      review,
 		Findings:    findings,
 		Resolutions: resolutions,
-		Fixer:       fixer,
-		ModelSpec:   modelSpec,
+		FixerName:   resolved.Name,
+		Fixer:       resolved.Agent,
+		ModelSpec:   resolved.ModelSpec,
 	}, nil
 }
 
@@ -415,13 +417,13 @@ func writeReviewFixFindingList(b *strings.Builder, findings []reviewFindingView)
 	}
 }
 
-func writeReviewFixRun(stdout io.Writer, request reviewFixRequestDocument, result reviewFixResultDocument, modelSpec agents.ModelSpec) {
+func writeReviewFixRun(stdout io.Writer, request reviewFixRequestDocument, result reviewFixResultDocument, fixerName string, modelSpec agents.ModelSpec) {
 	fmt.Fprintln(stdout, "Review fix attempt finished")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", result.RunID)
 	fmt.Fprintln(stdout)
-	writeResolved(stdout, request.Fixer.Name, modelSpec)
+	writeResolved(stdout, fixerName, modelSpec)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Fixer:")
 	fmt.Fprintf(stdout, "  name: %s\n", request.Fixer.Name)

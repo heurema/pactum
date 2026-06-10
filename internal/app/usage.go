@@ -32,6 +32,7 @@ type UsageRecord struct {
 	CreatedAt     string `json:"created_at"`
 	Provider      string `json:"provider"`
 	Agent         string `json:"agent"`
+	AgentName     string `json:"agent_name,omitempty"`
 	RequestModel  string `json:"request_model,omitempty"`
 	ResponseModel string `json:"response_model,omitempty"`
 	AgentVersion  string `json:"agent_version,omitempty"`
@@ -139,17 +140,17 @@ func (a App) UsageAll(stdout io.Writer, jsonOutput bool) error {
 	return nil
 }
 
-func appendUsageRecord(root string, runID string, attemptID string, stage string, requestModel string, agent agents.AgentDescriptor, usage agents.TokenUsage, createdAt string) error {
+func appendUsageRecord(root string, runID string, attemptID string, stage string, agentName string, requestModel string, agent agents.AgentDescriptor, usage agents.TokenUsage, createdAt string) error {
 	paths := artifacts.New(root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	if err := activeStore.MkdirAll(runPaths.LedgerDir); err != nil {
 		return err
 	}
-	record := usageRecordFromRunResult(runID, attemptID, stage, requestModel, agent, usage, createdAt)
+	record := usageRecordFromRunResult(runID, attemptID, stage, agentName, requestModel, agent, usage, createdAt)
 	return appendJSONLine(runPaths.UsageJSONL, record)
 }
 
-func usageRecordFromRunResult(runID string, attemptID string, stage string, requestModel string, agent agents.AgentDescriptor, usage agents.TokenUsage, createdAt string) UsageRecord {
+func usageRecordFromRunResult(runID string, attemptID string, stage string, agentName string, requestModel string, agent agents.AgentDescriptor, usage agents.TokenUsage, createdAt string) UsageRecord {
 	raw := append(json.RawMessage(nil), usage.Raw...)
 	return UsageRecord{
 		SchemaVersion:       usageRecordSchemaVersion,
@@ -160,6 +161,7 @@ func usageRecordFromRunResult(runID string, attemptID string, stage string, requ
 		CreatedAt:           usageCreatedAt(createdAt),
 		Provider:            providerForAgent(agent),
 		Agent:               agent.Name,
+		AgentName:           strings.TrimSpace(agentName),
 		RequestModel:        strings.TrimSpace(requestModel),
 		InputTokens:         usage.InputTokens,
 		OutputTokens:        usage.OutputTokens,

@@ -12,12 +12,13 @@ import (
 	"time"
 
 	"github.com/heurema/pactum/internal/agents"
+	"github.com/heurema/pactum/internal/artifacts"
 )
 
 func TestClarifySuggestRequiresYesNonInteractive(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
-	app = configureHelperClarifiers(app, "helper", "helper")
+	app = configureHelperClarifiers(t, app, paths, "helper")
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "helper"}, &stdout, &stderr)
@@ -40,7 +41,7 @@ func TestClarifySuggestRunsClarifierAndRecordsOpenQuestions(t *testing.T) {
 	readmeBefore := mustReadFile(t, filepath.Join(root, "README.md"))
 
 	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", mustResolveExecutorForTest(t, agents.BuiltinCodex))
-	app = configureHelperClarifiers(app, agents.BuiltinCodex, agents.BuiltinClaude)
+	app = configureHelperClarifiers(t, app, paths, agents.BuiltinClaude)
 
 	t.Setenv("PACTUM_CLARIFIER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", root)
@@ -158,8 +159,8 @@ func TestClarifySuggestRunsClarifierAndRecordsOpenQuestions(t *testing.T) {
 
 func TestClarifySuggestJSONOutput(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID := setupContractRun(t, root)
-	app = configureHelperClarifiers(app, "helper", "helper")
+	app, paths, runID := setupContractRun(t, root)
+	app = configureHelperClarifiers(t, app, paths, "helper")
 
 	t.Setenv("PACTUM_CLARIFIER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", root)
@@ -190,7 +191,7 @@ func TestClarifySuggestSurfacesApprovalResetOnApprovedRun(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-	app = configureHelperClarifiers(app, "helper", "helper")
+	app = configureHelperClarifiers(t, app, paths, "helper")
 	approveRunForTest(t, app, runID)
 
 	t.Setenv("PACTUM_CLARIFIER_HELPER_PROCESS", "1")
@@ -223,8 +224,8 @@ func TestClarifySuggestSurfacesApprovalResetOnApprovedRun(t *testing.T) {
 	// JSON output reports approval_reset=true (a fresh approved run, since the run
 	// above is no longer approved after the reset).
 	jsonRoot := t.TempDir()
-	jsonApp, _, jsonRunID := setupContractRun(t, jsonRoot)
-	jsonApp = configureHelperClarifiers(jsonApp, "helper", "helper")
+	jsonApp, jsonPaths, jsonRunID := setupContractRun(t, jsonRoot)
+	jsonApp = configureHelperClarifiers(t, jsonApp, jsonPaths, "helper")
 	approveRunForTest(t, jsonApp, jsonRunID)
 	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", jsonRoot)
 
@@ -618,7 +619,9 @@ func clarifyQuestionStatusByID(t *testing.T, status clarifyStatusResponse, id st
 	return clarifyQuestionStatus{}
 }
 
-func configureHelperClarifiers(app App, defaultReviewer string, names ...string) App {
+func configureHelperClarifiers(t *testing.T, app App, paths artifacts.Paths, names ...string) App {
+	t.Helper()
+	registerTestAgents(t, paths, names...)
 	descriptors := make([]agents.AgentDescriptor, 0, len(names))
 	for _, name := range names {
 		descriptors = append(descriptors, agents.AgentDescriptor{
@@ -628,12 +631,7 @@ func configureHelperClarifiers(app App, defaultReviewer string, names ...string)
 			Input:   agents.InputPromptFile,
 		})
 	}
-	registry := testAgentRegistry(descriptors...)
-	if fixed, ok := registry.(fixedAgentRegistry); ok {
-		fixed.defaultReviewer = defaultReviewer
-		registry = fixed
-	}
-	app.AgentRegistry = registry
+	app.AgentRegistry = testAgentRegistry(descriptors...)
 	return app
 }
 

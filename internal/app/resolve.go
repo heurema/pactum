@@ -255,7 +255,7 @@ func nextCommandForStatus(status string) string {
 	case "contract_approved":
 		return "pactum prompt build"
 	case "prompt_built":
-		return "pactum execute dry-run --agent codex"
+		return "pactum execute dry-run"
 	case "executed":
 		return "pactum gate run --allow-commands"
 	case "gated":

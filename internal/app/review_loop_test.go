@@ -31,7 +31,7 @@ func TestReviewLoopRequiresYes(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "1"}, &stdout, &stderr)
@@ -53,7 +53,7 @@ func TestReviewLoopFindingsThenCleanUsesConfigMaxRounds(t *testing.T) {
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
 	setReviewLoopMaxRoundsConfig(t, paths, 2)
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "findings_then_clean")
 
 	var stdout, stderr bytes.Buffer
@@ -118,7 +118,7 @@ func TestReviewLoopAppliesFixOutcomesAndShrinksOpenFindings(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "findings_then_clean")
 	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_MODE", "fix_f001")
 
@@ -153,7 +153,7 @@ func TestReviewLoopResolvesWhenBlockingFindingRebutted(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_MODE", "rebut_f001")
 
@@ -189,7 +189,7 @@ func TestReviewLoopResolvesNonBlockingFindingsWithoutFixer(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "non_blocking_finding")
 
 	var stdout, stderr bytes.Buffer
@@ -223,7 +223,7 @@ func TestReviewLoopStopsAtMaxRounds(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
@@ -262,7 +262,7 @@ func TestReviewLoopStopsWhenCapturedTokenBudgetExceeded(t *testing.T) {
 		Captured:      true,
 		CreatedAt:     "2026-06-07T18:00:00Z",
 	})
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
@@ -307,7 +307,7 @@ func TestReviewLoopBudgetWarnContinuesToOtherTerminal(t *testing.T) {
 		Captured:      true,
 		CreatedAt:     "2026-06-07T18:00:00Z",
 	})
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
@@ -348,7 +348,7 @@ func TestReviewLoopNoMaxTokensIgnoresExistingUsage(t *testing.T) {
 		Captured:      true,
 		CreatedAt:     "2026-06-07T18:00:00Z",
 	})
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "findings_then_clean")
 
 	var stdout, stderr bytes.Buffer
@@ -414,7 +414,7 @@ func TestReviewLoopBudgetCountsOnlyCapturedUsage(t *testing.T) {
 		Captured:      true,
 		CreatedAt:     "2026-06-07T18:01:00Z",
 	})
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
@@ -440,7 +440,7 @@ func TestReviewLoopDedupsReproposedOpenFindingAcrossRounds(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
@@ -488,7 +488,7 @@ func TestReviewLoopAcceptsNewFindingInLaterRound(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_new_findings")
 
 	var stdout, stderr bytes.Buffer
@@ -529,7 +529,7 @@ func TestReviewLoopDedupsIdenticalProposalsWithinRound(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "same_round_duplicates")
 
 	var stdout, stderr bytes.Buffer
@@ -568,7 +568,7 @@ func TestReviewLoopPanelRunsReviewersAndUpgradesDuplicateSeverity(t *testing.T) 
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
 	setReviewPanelConfig(t, paths, reviewLoopPanelLowName, reviewLoopPanelHighName)
-	app = configureReviewLoopPanelHelpers(app)
+	app = configureReviewLoopPanelHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "panel_duplicate")
 
 	var stdout, stderr bytes.Buffer
@@ -616,7 +616,7 @@ func TestReviewLoopExplicitReviewerDisablesConfiguredPanel(t *testing.T) {
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
 	setReviewPanelConfig(t, paths, reviewLoopPanelLowName, reviewLoopPanelHighName)
-	app = configureReviewLoopPanelHelpers(app)
+	app = configureReviewLoopPanelHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
@@ -645,7 +645,7 @@ func TestReviewLoopCleanPanelRoundTerminates(t *testing.T) {
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
 	setReviewPanelConfig(t, paths, reviewLoopPanelLowName, reviewLoopPanelHighName)
-	app = configureReviewLoopPanelHelpers(app)
+	app = configureReviewLoopPanelHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "panel_clean")
 
 	var stdout, stderr bytes.Buffer
@@ -667,13 +667,41 @@ func TestReviewLoopCleanPanelRoundTerminates(t *testing.T) {
 	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 }
 
+func TestResolveReviewLoopReviewersPanelAllowsSameBuiltInTwice(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	setAgentRegistryConfig(t, paths,
+		agentRegistryEntry{Name: "fable", Agent: "claude", Model: "claude-fable-5"},
+		agentRegistryEntry{Name: "sonnet", Agent: "claude", Model: "claude-sonnet-4-6"},
+	)
+	setReviewPanelConfig(t, paths, "fable", "sonnet")
+
+	var stdout bytes.Buffer
+	context, ok, err := app.loadReviewContext(&stdout, runID)
+	assertNoError(t, err)
+	if !ok {
+		t.Fatal("expected review context")
+	}
+	reviewers, err := app.resolveReviewLoopReviewers(context, "")
+	assertNoError(t, err)
+	if len(reviewers) != 2 || reviewers[0].Name != "fable" || reviewers[1].Name != "sonnet" {
+		t.Fatalf("panel should run both claude-backed entries as separate members: %#v", reviewers)
+	}
+	if reviewers[0].Agent.Name != "claude" || reviewers[1].Agent.Name != "claude" {
+		t.Fatalf("both panel members should run on the claude built-in: %#v", reviewers)
+	}
+	if reviewers[0].ModelSpec.Model != "claude-fable-5" || reviewers[1].ModelSpec.Model != "claude-sonnet-4-6" {
+		t.Fatalf("each panel member should carry its own entry pins: %#v", reviewers)
+	}
+}
+
 func TestReviewLoopUnknownPanelReviewerFailsClearly(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
 	setReviewPanelConfig(t, paths, "missing-reviewer", reviewLoopPanelHighName)
-	app = configureReviewLoopPanelHelpers(app)
+	app = configureReviewLoopPanelHelpers(t, app, paths)
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"review", "loop", runID, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--yes"}, &stdout, &stderr)
@@ -694,7 +722,7 @@ func TestReviewLoopReacceptsResolvedFindingWhenReproposed(t *testing.T) {
 	runReviewCommand(t, app, "review", "prepare", runID)
 	appendReviewLoopFindingForTest(t, runPaths, runID, "f_001", reviewLoopFixtureFindingCore("loop reviewer found a fixable issue", 42))
 	appendReviewLoopResolutionForTest(t, runPaths, runID, "r_001", "f_001")
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
@@ -731,7 +759,7 @@ func TestReviewLoopSuppressesRebuttedResolvedFindingWhenReproposed(t *testing.T)
 	runReviewCommand(t, app, "review", "prepare", runID)
 	appendReviewLoopFindingForTest(t, runPaths, runID, "f_001", reviewLoopFixtureFindingCore("loop reviewer found a fixable issue", 42))
 	appendReviewLoopResolutionWithOutcomeForTest(t, runPaths, runID, "r_001", "f_001", "rebutted")
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
@@ -766,7 +794,7 @@ func TestReviewLoopResetsStalemateStreakWhenFixerChangesWorkingTree(t *testing.T
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_new_findings")
 	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_SEQUENCE_FILE", filepath.Join(stateDir, "fixer-sequence"))
 	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_MODE", "append_readme")
@@ -811,7 +839,7 @@ func TestReviewLoopRequiresConsecutiveCleanRounds(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "clean_findings_clean_clean")
 
 	var stdout, stderr bytes.Buffer
@@ -856,7 +884,7 @@ func TestReviewLoopUnparsedFindingsIsNotCleanRound(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "malformed")
 
 	var stdout, stderr bytes.Buffer
@@ -884,7 +912,7 @@ func TestReviewLoopStopsWithGateFailedWhenFixerBreaksValidation(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID, "--allow-commands")
 	runReviewCommand(t, app, "review", "prepare", runID)
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 	t.Setenv("PACTUM_GATE_HELPER_EXIT", "7")
 
@@ -928,7 +956,7 @@ func TestReviewLoopStopsWithGateFailedWhenFixerViolatesPathScope(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_MODE", "append_readme")
 
@@ -972,7 +1000,7 @@ func TestReviewLoopGateInfrastructureErrorStillReturnsError(t *testing.T) {
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
 	mustWriteFile(t, executionAttemptPaths(runPaths, "attempt_001").ResultJSON, "{")
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
@@ -1009,7 +1037,7 @@ func TestReviewLoopStreamsSubRunOutputToStderrWithCleanStdout(t *testing.T) {
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
 	setReviewLoopMaxRoundsConfig(t, paths, 2)
-	app = configureReviewLoopHelpers(app)
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "findings_then_clean")
 
 	var stdout, stderr bytes.Buffer
@@ -1036,7 +1064,22 @@ func TestReviewLoopStreamsSubRunOutputToStderrWithCleanStdout(t *testing.T) {
 	}
 }
 
-func configureReviewLoopHelpers(app App) App {
+// registerReviewLoopAgents adds the loop helper agents to the config registry
+// so registry-name resolution finds them; the injected test agent registry
+// lists them as built-ins, so the config still validates.
+func registerReviewLoopAgents(t *testing.T, paths artifacts.Paths) {
+	t.Helper()
+	setAgentRegistryConfig(t, paths,
+		agentRegistryEntry{Name: "codex"},
+		agentRegistryEntry{Name: "claude"},
+		agentRegistryEntry{Name: reviewLoopReviewerName},
+		agentRegistryEntry{Name: reviewLoopFixerName},
+	)
+}
+
+func configureReviewLoopHelpers(t *testing.T, app App, paths artifacts.Paths) App {
+	t.Helper()
+	registerReviewLoopAgents(t, paths)
 	app.AgentRegistry = testAgentRegistry(
 		agents.AgentDescriptor{
 			Name:    reviewLoopReviewerName,
@@ -1054,7 +1097,9 @@ func configureReviewLoopHelpers(app App) App {
 	return app
 }
 
-func configureReviewLoopPanelHelpers(app App) App {
+func configureReviewLoopPanelHelpers(t *testing.T, app App, paths artifacts.Paths) App {
+	t.Helper()
+	registerReviewLoopAgents(t, paths)
 	app.AgentRegistry = testAgentRegistry(
 		agents.AgentDescriptor{
 			Name:    reviewLoopReviewerName,
@@ -1086,27 +1131,21 @@ func configureReviewLoopPanelHelpers(app App) App {
 
 func setReviewLoopMaxRoundsConfig(t *testing.T, paths artifacts.Paths, maxRounds int) {
 	t.Helper()
-	config, err := readConfig(paths.Config)
-	assertNoError(t, err)
+	config := readConfigForTest(t, paths.Config)
 	config.Review.MaxRounds = maxRounds
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 
 func setReviewPanelConfig(t *testing.T, paths artifacts.Paths, reviewers ...string) {
 	t.Helper()
-	config, err := readConfig(paths.Config)
-	assertNoError(t, err)
-	config.Review.Panel = nil
-	for _, reviewer := range reviewers {
-		config.Review.Panel = append(config.Review.Panel, agentModelEntry{Agent: reviewer})
-	}
+	config := readConfigForTest(t, paths.Config)
+	config.Review.Panel = append([]string{}, reviewers...)
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 
 func setReviewLoopBudgetConfig(t *testing.T, paths artifacts.Paths, mode string, maxTokens *int64) {
 	t.Helper()
-	config, err := readConfig(paths.Config)
-	assertNoError(t, err)
+	config := readConfigForTest(t, paths.Config)
 	config.Review.Budget.Mode = mode
 	config.Review.Budget.MaxTokens = maxTokens
 	assertNoError(t, writeYAML(paths.Config, config))

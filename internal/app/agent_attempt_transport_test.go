@@ -54,7 +54,7 @@ func singleTransportRequest(t *testing.T, transport *recordingAgentTransport) ag
 
 func TestExecuteRunPassesModelSpecAndStaysWriteStage(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID := setupApprovedAndBuiltPromptWithExecutorModels(t, root, agentModelEntry{Agent: "codex", Model: "gpt-5", Effort: "high"})
+	app, _, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "codex", Model: "gpt-5", Effort: "high"})
 	transport := &recordingAgentTransport{}
 	app.AgentTransport = transport
 
@@ -79,7 +79,7 @@ func TestExecuteRunPassesModelSpecAndStaysWriteStage(t *testing.T) {
 func TestReviewFixPassesModelSpecAndStaysWriteStage(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
-	setExecutorModelsConfig(t, paths, agentModelEntry{Agent: "codex", Model: "gpt-5", Effort: "high"})
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "codex", Model: "gpt-5", Effort: "high"})
 	runReviewCommand(t, app, "review", "add-finding", runID, "transport request fields")
 	transport := &recordingAgentTransport{}
 	app.AgentTransport = transport
@@ -105,7 +105,7 @@ func TestReviewFixPassesModelSpecAndStaysWriteStage(t *testing.T) {
 func TestReviewRunMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
-	setReviewPanelPinsConfig(t, paths, agentModelEntry{Agent: "codex", Model: "gpt-5", Effort: "high"})
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "codex", Model: "gpt-5", Effort: "high"})
 	transport := &recordingAgentTransport{}
 	app.AgentTransport = transport
 
@@ -127,7 +127,7 @@ func TestReviewRunMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 func TestClarifySuggestMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
-	setReviewPanelPinsConfig(t, paths, agentModelEntry{Agent: "claude", Model: "claude-sonnet-4", Effort: "high"})
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"})
 	transport := &recordingAgentTransport{stdout: clarifierStructuredOutput([]map[string]any{
 		{
 			"text":     "Should the read-only flag reach the transport?",
@@ -155,7 +155,7 @@ func TestClarifySuggestMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 func TestContractDraftMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
-	setReviewPanelPinsConfig(t, paths, agentModelEntry{Agent: "claude", Model: "claude-sonnet-4", Effort: "high"})
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"})
 	transport := &recordingAgentTransport{stdout: contractDrafterStructuredOutput()}
 	app.AgentTransport = transport
 

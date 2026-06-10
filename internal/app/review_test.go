@@ -473,24 +473,26 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 	assertFile(t, runPaths.ReviewPromptMD)
 	assertFile(t, runPaths.ReviewDryRunJSON)
 	got := stdout.String()
+	// No execution attempt exists, so cross-model selection treats the first
+	// registry entry (codex) as the would-be executor and picks claude.
 	for _, want := range []string{
 		"Reviewer dry-run prepared",
 		"Resolved:",
 		"Would run:",
-		"codex exec --json --sandbox read-only < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt.md",
+		"claude -p --output-format json < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt.md",
 		".heurema/pactum/runs/" + runID + "/review/reviewer-context.md",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("review dry-run output missing %q:\n%s", want, got)
 		}
 	}
-	assertResolvedBlock(t, got, "codex", "inherit", "inherit", "inherit")
+	assertResolvedBlock(t, got, "claude", "inherit", "inherit", "inherit")
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
-	if plan.Schema != reviewerDryRunSchema || plan.RunID != runID || plan.Reviewer.Name != "codex" {
+	if plan.Schema != reviewerDryRunSchema || plan.RunID != runID || plan.Reviewer.Name != "claude" {
 		t.Fatalf("unexpected reviewer dry-run plan: %#v", plan)
 	}
 	wantPrompt := runArtifactRepoRel(runID, reviewerPromptArtifact)
-	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec --json --sandbox read-only" || plan.WouldRun.Stdin != wantPrompt {
+	if plan.WouldRun.Command != "claude" || strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json" || plan.WouldRun.Stdin != wantPrompt {
 		t.Fatalf("unexpected would_run command: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, reviewerPromptArtifact, wantPrompt)
@@ -518,13 +520,13 @@ func TestReviewDryRunJSONOutput(t *testing.T) {
 	}
 	var plan reviewerDryRunDocument
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &plan))
-	if plan.Reviewer.Name != "codex" || !plan.Checks.ReviewPrepared || !plan.Checks.GateReportReady || !plan.Checks.ContractApproved {
+	if plan.Reviewer.Name != "claude" || !plan.Checks.ReviewPrepared || !plan.Checks.GateReportReady || !plan.Checks.ContractApproved {
 		t.Fatalf("unexpected reviewer dry-run json: %#v", plan)
 	}
 	if plan.Artifacts.ReviewerPrompt != reviewerPromptArtifact ||
 		plan.Artifacts.ReviewerContext != reviewerContextArtifact ||
-		plan.WouldRun.Command != "codex" ||
-		strings.Join(plan.WouldRun.Args, " ") != "exec --json --sandbox read-only" ||
+		plan.WouldRun.Command != "claude" ||
+		strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json" ||
 		plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
 		t.Fatalf("reviewer dry-run json missing artifacts/would_run: %#v", plan)
 	}
@@ -537,15 +539,18 @@ func TestReviewDryRunJSONOutput(t *testing.T) {
 }
 
 func TestReviewDryRunUsesDefaultReviewer(t *testing.T) {
+	// With no execution attempt the would-be executor is the first registry
+	// entry (codex), so the default reviewer is the first entry on a different
+	// built-in (claude).
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 
 	runReviewCommand(t, app, "review", "dry-run", runID)
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
-	if plan.Reviewer.Name != "codex" || plan.Reviewer.Command != "codex" {
+	if plan.Reviewer.Name != "claude" || plan.Reviewer.Command != "claude" {
 		t.Fatalf("default reviewer mismatch: %#v", plan.Reviewer)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "exec --json --sandbox read-only" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
+	if strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
 		t.Fatalf("default reviewer would_run mismatch: %#v", plan.WouldRun)
 	}
 }
@@ -594,28 +599,51 @@ func TestReviewDryRunCrossModelReviewExplicitReviewerWins(t *testing.T) {
 	assertResolvedBlock(t, stdout.String(), agents.BuiltinCodex, "inherit", "inherit", "inherit")
 }
 
-func TestReviewDryRunCrossModelReviewFallsBackWhenExecutorUnknown(t *testing.T) {
+func TestReviewDryRunCrossModelSkipsSameUnderlyingEntries(t *testing.T) {
+	// The first entry differing by UNDERLYING agent wins: fable runs on claude
+	// like the executor, so codex is selected even though fable comes first.
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	setAgentRegistryConfig(t, paths,
+		agentRegistryEntry{Name: "claude"},
+		agentRegistryEntry{Name: "fable", Agent: "claude", Model: "claude-fable-5"},
+		agentRegistryEntry{Name: "codex"},
+	)
+	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", mustResolveExecutorForTest(t, agents.BuiltinClaude))
 
 	runReviewCommand(t, app, "review", "dry-run", runID)
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
-	if plan.Reviewer.Name != "helper" {
-		t.Fatalf("unknown executor should fall back to default reviewer, got: %#v", plan.Reviewer)
+	if plan.Reviewer.Name != agents.BuiltinCodex {
+		t.Fatalf("cross-model should skip same-underlying entries, got: %#v", plan.Reviewer)
 	}
 }
 
-func TestReviewDryRunCrossModelReviewFallsBackForNonBuiltInExecutor(t *testing.T) {
+func TestReviewDryRunCrossModelFallsBackToFirstEntryWhenNoOtherBuiltIn(t *testing.T) {
+	// Every registry entry runs on the executor's built-in, so cross-model
+	// selection falls back to the first registry entry.
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "codex"})
+	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", mustResolveExecutorForTest(t, agents.BuiltinCodex))
+
+	runReviewCommand(t, app, "review", "dry-run", runID)
+	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
+	if plan.Reviewer.Name != agents.BuiltinCodex {
+		t.Fatalf("same-built-in registry should fall back to the first entry, got: %#v", plan.Reviewer)
+	}
+}
+
+func TestReviewDryRunCrossModelReviewForNonBuiltInExecutor(t *testing.T) {
+	// The recorded executor is not a built-in, so every registry entry's
+	// underlying agent differs and the first entry (codex) is selected.
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", helperAgentDescriptor("helper"))
 
 	runReviewCommand(t, app, "review", "dry-run", runID)
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
-	if plan.Reviewer.Name != "helper" {
-		t.Fatalf("non-built-in executor should fall back to default reviewer, got: %#v", plan.Reviewer)
+	if plan.Reviewer.Name != agents.BuiltinCodex {
+		t.Fatalf("non-built-in executor should select the first registry entry, got: %#v", plan.Reviewer)
 	}
 }
 
@@ -647,9 +675,9 @@ func TestReviewDryRunExplicitReviewers(t *testing.T) {
 func TestReviewDryRunAppliesPanelEntryPinToCodex(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	setReviewPanelPinsConfig(t, paths,
-		agentModelEntry{Agent: "codex", Model: "gpt-5", Effort: "high"},
-		agentModelEntry{Agent: "claude"},
+	setAgentRegistryConfig(t, paths,
+		agentRegistryEntry{Name: "codex", Model: "gpt-5", Effort: "high"},
+		agentRegistryEntry{Name: "claude"},
 	)
 
 	var stdout, stderr bytes.Buffer
@@ -686,7 +714,7 @@ func TestReviewDryRunAppliesPanelEntryPinToCodex(t *testing.T) {
 func TestReviewDryRunAppliesPanelEntryPinToClaude(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	setReviewPanelPinsConfig(t, paths, agentModelEntry{Agent: "claude", Model: "claude-sonnet-4", Effort: "high"})
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"})
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"review", "dry-run", runID, "--reviewer", "claude"}, &stdout, &stderr)
@@ -711,14 +739,15 @@ func TestReviewDryRunUnsupportedReviewerFails(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("review dry-run should fail for missing reviewer")
 	}
-	if got := stderr.String(); !strings.Contains(got, "unsupported agent: missing") {
+	if got := stderr.String(); !strings.Contains(got, `unknown agent "missing": not registered in config agents`) {
 		t.Fatalf("missing reviewer stderr mismatch:\n%s", got)
 	}
 }
 
 func TestReviewDryRunUnsupportedInputModeFails(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	registerTestAgents(t, paths, "bad-input")
 	app.AgentRegistry = testAgentRegistry(agents.AgentDescriptor{
 		Name:    "bad-input",
 		Command: "bad-reviewer",
@@ -903,14 +932,15 @@ func TestReviewRunUnsupportedReviewerFails(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("review run should fail for missing reviewer")
 	}
-	if got := stderr.String(); !strings.Contains(got, "unsupported agent: missing") {
+	if got := stderr.String(); !strings.Contains(got, `unknown agent "missing": not registered in config agents`) {
 		t.Fatalf("missing reviewer stderr mismatch:\n%s", got)
 	}
 }
 
 func TestReviewRunUnsupportedInputModeFails(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	registerTestAgents(t, paths, "bad-input")
 	app.AgentRegistry = testAgentRegistry(agents.AgentDescriptor{
 		Name:    "bad-input",
 		Command: "bad-reviewer",
@@ -931,7 +961,7 @@ func TestReviewRunUnsupportedInputModeFails(t *testing.T) {
 func TestReviewRunStreamsLiveOutputToStderr(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	app = configureHelperReviewers(t, app, paths, "helper")
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 
@@ -958,7 +988,7 @@ func TestReviewRunStreamsLiveOutputToStderr(t *testing.T) {
 func TestReviewRunWritesAttemptArtifacts(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	app = configureHelperReviewers(t, app, paths, "helper")
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 
@@ -1041,7 +1071,7 @@ func TestReviewRunWritesAttemptArtifacts(t *testing.T) {
 func TestReviewRunNonZeroWritesArtifactsAndReturnsNonZero(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	app = configureHelperReviewers(t, app, paths, "helper")
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 	t.Setenv("PACTUM_REVIEWER_EXIT", "7")
@@ -1071,7 +1101,7 @@ func TestReviewRunNonZeroWritesArtifactsAndReturnsNonZero(t *testing.T) {
 func TestReviewRunCreatesIncrementingAttempts(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	app = configureHelperReviewers(t, app, paths, "helper")
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 
@@ -1092,7 +1122,7 @@ func TestReviewRunCreatesIncrementingAttempts(t *testing.T) {
 func TestReviewRunStoresCrossReviewerAttempts(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperReviewers(t, app, paths, "helper-a", "helper-a", "helper-b")
+	app = configureHelperReviewers(t, app, paths, "helper-a", "helper-b")
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 
@@ -1116,7 +1146,7 @@ func TestReviewRunStoresCrossReviewerAttempts(t *testing.T) {
 func TestReviewRunAutoBuildsDryRunArtifacts(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	app = configureHelperReviewers(t, app, paths, "helper")
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 	_ = os.Remove(runPaths.ReviewDryRunJSON)
@@ -1132,7 +1162,7 @@ func TestReviewRunAutoBuildsDryRunArtifacts(t *testing.T) {
 func TestReviewRunRequestWouldRunMatchesDryRun(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	app = configureHelperReviewers(t, app, paths, "helper")
 	runReviewCommand(t, app, "review", "dry-run", runID, "--reviewer", "helper")
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 
@@ -1150,7 +1180,7 @@ func TestReviewRunRequestWouldRunMatchesDryRun(t *testing.T) {
 func TestReviewRunArtifactsArePortable(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	app = configureHelperReviewers(t, app, paths, "helper")
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 
@@ -1168,7 +1198,7 @@ func TestReviewRunArtifactsArePortable(t *testing.T) {
 func TestReviewRunDoesNotCreateFindingsFromReviewerOutput(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	app = configureHelperReviewers(t, app, paths, "helper")
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 	t.Setenv("PACTUM_REVIEWER_FINDING_TEXT", "1")
@@ -1186,7 +1216,7 @@ func TestReviewRunDoesNotCreateFindingsFromReviewerOutput(t *testing.T) {
 func TestReviewRunJSONOutput(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	app = configureHelperReviewers(t, app, paths, "helper")
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 
@@ -1249,7 +1279,7 @@ func TestReviewFixDryRunArtifactsUseWriteEnabledExecutorAndPrompt(t *testing.T) 
 		t.Run(tc.agent, func(t *testing.T) {
 			root := t.TempDir()
 			app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-			setExecutorModelsConfig(t, paths, agentModelEntry{Agent: tc.agent, Model: "gpt-5", Effort: "high"})
+			setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: tc.agent, Model: "gpt-5", Effort: "high"})
 			runReviewCommand(t, app, "review", "add-finding", runID, "Fix prompt should include accepted review finding", "--file", "internal/app/review.go", "--line", "42", "--blocking", "--category", "correctness")
 
 			var stdout bytes.Buffer
@@ -1342,7 +1372,7 @@ func TestReviewFixRegeneratesPromptWhenFindingsChange(t *testing.T) {
 func TestReviewFixRunWritesAttemptArtifacts(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperFixers(t, app, "helper")
+	app = configureHelperFixers(t, app, paths, "helper")
 	runReviewCommand(t, app, "review", "add-finding", runID, "valid fixer finding", "--blocking", "--category", "quality")
 	t.Setenv("PACTUM_FIXER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_FIXER_EXPECTED_CWD", root)
@@ -1425,8 +1455,8 @@ func TestReviewFixRunWritesAttemptArtifacts(t *testing.T) {
 
 func TestReviewFixStreamsLiveOutputToStderr(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperFixers(t, app, "helper")
+	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperFixers(t, app, paths, "helper")
 	runReviewCommand(t, app, "review", "add-finding", runID, "valid fixer finding", "--blocking", "--category", "quality")
 	t.Setenv("PACTUM_FIXER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_FIXER_EXPECTED_CWD", root)
@@ -1454,7 +1484,7 @@ func TestReviewFixStreamsLiveOutputToStderr(t *testing.T) {
 func TestReviewFixResolvedBlockShowsExecutorModel(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	setExecutorModelsConfig(t, paths, agentModelEntry{Agent: "codex", Model: "gpt-5", Effort: "high"})
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "codex", Model: "gpt-5", Effort: "high"})
 	runReviewCommand(t, app, "review", "add-finding", runID, "model pinning should be visible")
 	t.Setenv("PACTUM_FIXER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_FIXER_EXPECTED_CWD", root)
@@ -1487,8 +1517,8 @@ func TestReviewFixResolvedBlockShowsExecutorModel(t *testing.T) {
 
 func TestReviewFixJSONOutput(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperFixers(t, app, "helper")
+	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperFixers(t, app, paths, "helper")
 	runReviewCommand(t, app, "review", "add-finding", runID, "json output finding")
 	t.Setenv("PACTUM_FIXER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_FIXER_EXPECTED_CWD", root)
@@ -2099,22 +2129,6 @@ func setupApprovedPreparedReview(t *testing.T, root string, gateStatus string) (
 	return app, paths, runID, runPaths
 }
 
-func setReviewPanelPinsConfig(t *testing.T, paths artifacts.Paths, entries ...agentModelEntry) {
-	t.Helper()
-	config, err := readConfig(paths.Config)
-	assertNoError(t, err)
-	config.Review.Panel = append([]agentModelEntry{}, entries...)
-	assertNoError(t, writeYAML(paths.Config, config))
-}
-
-func setExecutorModelsConfig(t *testing.T, paths artifacts.Paths, entries ...agentModelEntry) {
-	t.Helper()
-	config, err := readConfig(paths.Config)
-	assertNoError(t, err)
-	config.Execute.Models = append([]agentModelEntry{}, entries...)
-	assertNoError(t, writeYAML(paths.Config, config))
-}
-
 func setupApprovedReviewWithoutGateReport(t *testing.T, root string) (App, artifacts.Paths, string, contractRunPathSet) {
 	t.Helper()
 	app, paths, runID := setupApprovedPromptContract(t, root)
@@ -2367,9 +2381,9 @@ func readReviewerDryRunPlan(t *testing.T, path string) reviewerDryRunDocument {
 	return plan
 }
 
-func configureHelperReviewers(t *testing.T, app App, paths artifacts.Paths, defaultReviewer string, names ...string) App {
+func configureHelperReviewers(t *testing.T, app App, paths artifacts.Paths, names ...string) App {
 	t.Helper()
-	_ = paths
+	registerTestAgents(t, paths, names...)
 	descriptors := make([]agents.AgentDescriptor, 0, len(names))
 	for _, name := range names {
 		descriptors = append(descriptors, agents.AgentDescriptor{
@@ -2379,17 +2393,13 @@ func configureHelperReviewers(t *testing.T, app App, paths artifacts.Paths, defa
 			Input:   agents.InputPromptFile,
 		})
 	}
-	registry := testAgentRegistry(descriptors...)
-	if fixed, ok := registry.(fixedAgentRegistry); ok {
-		fixed.defaultReviewer = defaultReviewer
-		registry = fixed
-	}
-	app.AgentRegistry = registry
+	app.AgentRegistry = testAgentRegistry(descriptors...)
 	return app
 }
 
-func configureHelperFixers(t *testing.T, app App, names ...string) App {
+func configureHelperFixers(t *testing.T, app App, paths artifacts.Paths, names ...string) App {
 	t.Helper()
+	registerTestAgents(t, paths, names...)
 	descriptors := make([]agents.AgentDescriptor, 0, len(names))
 	for _, name := range names {
 		descriptors = append(descriptors, agents.AgentDescriptor{

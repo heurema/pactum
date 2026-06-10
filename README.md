@@ -50,11 +50,19 @@ deterministic checks around the agent — not a security boundary.
 
 Pactum ships two built-in agents:
 
-- `codex` — runs `codex exec` (the default executor and reviewer).
+- `codex` — runs `codex exec`.
 - `claude` — runs `claude -p`.
 
-Both read their prompt from a prompt file that Pactum prepares. Check that the
-agent CLIs are installed and visible on your `PATH` with `pactum agents doctor`.
+Agents are invoked through the required `agents` registry in
+`.heurema/pactum/config.yaml`: each entry names an agent (with the built-in it
+runs on plus optional model/effort pins), and `--agent`/`--reviewer` accept
+those registry names. The generated default registers a single unpinned
+`claude` entry, and an omitted `--agent` runs the first registry entry. See
+[docs/agents.md](docs/agents.md) for the registry and selection rules.
+
+Both built-ins read their prompt from a prompt file that Pactum prepares. Check
+that the agent CLIs are installed and visible on your `PATH` with
+`pactum agents doctor`.
 
 Pactum runs these agents as **direct subprocesses in your repository**. There is
 no Pactum-managed isolation, container, or virtual machine around them.
@@ -145,9 +153,10 @@ pactum prompt build
 
 # 6. Inspect the planned execution, then run the agent. `execute run` runs the
 #    agent directly in your repository; it asks for confirmation on a terminal,
-#    or pass --yes for non-interactive use.
-pactum execute dry-run --agent codex
-pactum execute run --agent codex --yes
+#    or pass --yes for non-interactive use. An omitted --agent runs the first
+#    entry of the config agents registry; --agent <name> picks another entry.
+pactum execute dry-run
+pactum execute run --yes
 
 # 7. Gate the result. Validation commands run only with --allow-commands.
 pactum gate run --allow-commands

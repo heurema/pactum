@@ -11,12 +11,13 @@ import (
 	"testing"
 
 	"github.com/heurema/pactum/internal/agents"
+	"github.com/heurema/pactum/internal/artifacts"
 )
 
 func TestContractDraftRequiresYesNonInteractive(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
-	app = configureHelperContractDrafters(app, "helper", "helper")
+	app = configureHelperContractDrafters(t, app, paths, "helper")
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
 	var stdout, stderr bytes.Buffer
@@ -54,7 +55,7 @@ func TestContractDraftRecordsProposalWithoutApplying(t *testing.T) {
 	decisionsBefore := mustReadFile(t, runPaths.DecisionsJSONL)
 
 	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", mustResolveExecutorForTest(t, agents.BuiltinCodex))
-	app = configureHelperContractDrafters(app, agents.BuiltinCodex, agents.BuiltinCodex, agents.BuiltinClaude)
+	app = configureHelperContractDrafters(t, app, paths, agents.BuiltinCodex, agents.BuiltinClaude)
 
 	t.Setenv("PACTUM_CONTRACT_DRAFTER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_CONTRACT_DRAFTER_EXPECTED_CWD", root)
@@ -157,7 +158,7 @@ func TestContractShowDraftAndAcceptAppliesProposalThroughRevision(t *testing.T) 
 		t.Fatalf("pre-draft status = %q, want contract_approved", state.Status)
 	}
 
-	app = configureHelperContractDrafters(app, "helper", "helper")
+	app = configureHelperContractDrafters(t, app, paths, "helper")
 	t.Setenv("PACTUM_CONTRACT_DRAFTER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_CONTRACT_DRAFTER_EXPECTED_CWD", root)
 
@@ -233,7 +234,9 @@ func TestContractShowDraftAndAcceptAppliesProposalThroughRevision(t *testing.T) 
 	}
 }
 
-func configureHelperContractDrafters(app App, defaultReviewer string, names ...string) App {
+func configureHelperContractDrafters(t *testing.T, app App, paths artifacts.Paths, names ...string) App {
+	t.Helper()
+	registerTestAgents(t, paths, names...)
 	descriptors := make([]agents.AgentDescriptor, 0, len(names))
 	for _, name := range names {
 		descriptors = append(descriptors, agents.AgentDescriptor{
@@ -243,12 +246,7 @@ func configureHelperContractDrafters(app App, defaultReviewer string, names ...s
 			Input:   agents.InputPromptFile,
 		})
 	}
-	registry := testAgentRegistry(descriptors...)
-	if fixed, ok := registry.(fixedAgentRegistry); ok {
-		fixed.defaultReviewer = defaultReviewer
-		registry = fixed
-	}
-	app.AgentRegistry = registry
+	app.AgentRegistry = testAgentRegistry(descriptors...)
 	return app
 }
 

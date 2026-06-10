@@ -134,7 +134,7 @@ func TestExecuteDryRunUnsupportedAgentFails(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("execute dry-run should fail for missing agent")
 	}
-	if got := stderr.String(); !strings.Contains(got, "unsupported agent: missing") {
+	if got := stderr.String(); !strings.Contains(got, `unknown agent "missing": not registered in config agents`) {
 		t.Fatalf("missing agent stderr mismatch:\n%s", got)
 	}
 }
@@ -197,7 +197,7 @@ func TestExecuteDryRunExplicitClaude(t *testing.T) {
 
 func TestExecuteDryRunAppliesExecutorModelConfigToCodex(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID := setupApprovedAndBuiltPromptWithExecutorModels(t, root, agentModelEntry{Agent: "codex", Model: "gpt-5", Effort: "high"})
+	app, paths, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "codex", Model: "gpt-5", Effort: "high"})
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "codex"}, &stdout, &stderr)
@@ -215,7 +215,7 @@ func TestExecuteDryRunAppliesExecutorModelConfigToCodex(t *testing.T) {
 
 func TestExecuteDryRunAppliesExecutorModelConfigToClaude(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID := setupApprovedAndBuiltPromptWithExecutorModels(t, root, agentModelEntry{Agent: "claude", Model: "claude-sonnet-4", Effort: "high"})
+	app, paths, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"}, agentRegistryEntry{Name: "codex"})
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "claude"}, &stdout, &stderr)
@@ -233,7 +233,7 @@ func TestExecuteDryRunAppliesExecutorModelConfigToClaude(t *testing.T) {
 
 func TestExecuteDryRunResolvedPartialPin(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID := setupApprovedAndBuiltPromptWithExecutorModels(t, root, agentModelEntry{Agent: "codex", Effort: "high"})
+	app, _, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "codex", Effort: "high"})
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "codex"}, &stdout, &stderr)
@@ -247,7 +247,7 @@ func TestExecuteDryRunResolvedPartialPin(t *testing.T) {
 func TestExecuteDryRunPinAppliesOnlyToMatchingAgent(t *testing.T) {
 	root := t.TempDir()
 	// Only claude is pinned; invoking codex must run unpinned.
-	app, paths, runID := setupApprovedAndBuiltPromptWithExecutorModels(t, root, agentModelEntry{Agent: "claude", Model: "claude-sonnet-4", Effort: "high"})
+	app, paths, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"}, agentRegistryEntry{Name: "codex"})
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "codex"}, &stdout, &stderr)
@@ -261,6 +261,60 @@ func TestExecuteDryRunPinAppliesOnlyToMatchingAgent(t *testing.T) {
 		t.Fatalf("codex would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
 	}
 	assertResolvedBlock(t, stdout.String(), "codex", "inherit", "inherit", "inherit")
+}
+
+func TestExecuteDryRunDefaultsToFirstRegistryEntry(t *testing.T) {
+	root := t.TempDir()
+	// claude first: an omitted --agent must pick the first registry entry, not
+	// a hardcoded built-in default.
+	app, paths, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root,
+		agentRegistryEntry{Name: "claude"},
+		agentRegistryEntry{Name: "codex"},
+	)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute dry-run exited %d, stderr: %s", code, stderr.String())
+	}
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	plan := readDryRunPlan(t, runPaths.DryRunJSON)
+	if plan.Agent.Name != "claude" || plan.Agent.Command != "claude" {
+		t.Fatalf("default executor should be the first registry entry: %#v", plan.Agent)
+	}
+	assertResolvedBlock(t, stdout.String(), "claude", "inherit", "inherit", "inherit")
+}
+
+func TestExecuteDryRunTwoEntriesOnSameBuiltInCarryDistinctPins(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root,
+		agentRegistryEntry{Name: "fable", Agent: "claude", Model: "claude-fable-5"},
+		agentRegistryEntry{Name: "opus", Agent: "claude", Model: "claude-opus-4-8"},
+	)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "fable"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute dry-run fable exited %d, stderr: %s", code, stderr.String())
+	}
+	plan := readDryRunPlan(t, runPaths.DryRunJSON)
+	if plan.Agent.Name != "claude" || strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json --dangerously-skip-permissions --model claude-fable-5" {
+		t.Fatalf("fable entry should pin claude-fable-5 on claude: %#v", plan)
+	}
+	assertResolvedBlock(t, stdout.String(), "fable", "claude-fable-5", "inherit", "partial")
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"execute", "dry-run", runID, "--agent", "opus"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute dry-run opus exited %d, stderr: %s", code, stderr.String())
+	}
+	plan = readDryRunPlan(t, runPaths.DryRunJSON)
+	if plan.Agent.Name != "claude" || strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json --dangerously-skip-permissions --model claude-opus-4-8" {
+		t.Fatalf("opus entry should pin claude-opus-4-8 on claude: %#v", plan)
+	}
+	assertResolvedBlock(t, stdout.String(), "opus", "claude-opus-4-8", "inherit", "partial")
 }
 
 func TestExecuteDryRunHashMismatchFails(t *testing.T) {
@@ -390,13 +444,16 @@ func TestExecuteDryRunWritesLedgerEvent(t *testing.T) {
 
 func TestExecuteDryRunUnsupportedInputModeFails(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID := setupApprovedAndBuiltPrompt(t, root)
+	app, paths, runID := setupApprovedPromptContract(t, root)
+	registerTestAgents(t, paths, "bad-input")
 	app.AgentRegistry = testAgentRegistry(agents.AgentDescriptor{
 		Name:    "bad-input",
 		Command: "bad-agent",
 		Args:    []string{"dry-run"},
 		Input:   "stdin",
 	})
+	runReviewCommand(t, app, "map", "refresh")
+	runReviewCommand(t, app, "prompt", "build", runID)
 
 	var stdout, stderr bytes.Buffer
 	stdout.Reset()
@@ -757,6 +814,9 @@ func setupApprovedBuiltPromptWithHelperAgent(t *testing.T, root string, name str
 	t.Helper()
 	app, paths, runID := setupApprovedPromptContract(t, root)
 	app = configureHelperAgent(app, name)
+	// The helper agent must be registered in the config registry to be
+	// referenceable; the injected test agent registry lists it as a built-in.
+	registerTestAgents(t, paths, name)
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"map", "refresh"}, &stdout, &stderr)
@@ -772,13 +832,10 @@ func setupApprovedBuiltPromptWithHelperAgent(t *testing.T, root string, name str
 	return app, paths, runID
 }
 
-func setupApprovedAndBuiltPromptWithExecutorModels(t *testing.T, root string, entries ...agentModelEntry) (App, artifacts.Paths, string) {
+func setupApprovedAndBuiltPromptWithAgentRegistry(t *testing.T, root string, entries ...agentRegistryEntry) (App, artifacts.Paths, string) {
 	t.Helper()
 	app, paths, runID := setupApprovedPromptContract(t, root)
-	config, err := readConfig(paths.Config)
-	assertNoError(t, err)
-	config.Execute.Models = append([]agentModelEntry{}, entries...)
-	assertNoError(t, writeYAML(paths.Config, config))
+	setAgentRegistryConfig(t, paths, entries...)
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"map", "refresh"}, &stdout, &stderr)

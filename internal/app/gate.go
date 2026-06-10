@@ -127,7 +127,7 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 	if len(commands) > 0 && !allowCommands {
 		return errors.New("refusing to run validation commands without --allow-commands")
 	}
-	config, err := readConfig(context.Paths.Config)
+	config, err := a.readConfig(context.Paths.Config)
 	if err != nil {
 		return err
 	}
@@ -157,7 +157,7 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 			validation.Commands = append(validation.Commands, result)
 		}
 	}
-	changes := buildGateChangeReport(context.Root, context.Paths)
+	changes := a.buildGateChangeReport(context.Root, context.Paths)
 	scope := buildGateScopeReport(context.Contract, changes, config.Gate.ScopeEnforcement)
 
 	summary := gateSummary{
@@ -329,7 +329,7 @@ func nonEmptyValidationCommands(commands []string) []string {
 	return filtered
 }
 
-func buildGateChangeReport(root string, paths artifacts.Paths) gateChangeReport {
+func (a App) buildGateChangeReport(root string, paths artifacts.Paths) gateChangeReport {
 	report := gateChangeReport{
 		Status:       "clean",
 		ChangedFiles: []string{},
@@ -346,7 +346,7 @@ func buildGateChangeReport(root string, paths artifacts.Paths) gateChangeReport 
 		report.Reasons = append(report.Reasons, "cannot read project map hashes: "+err.Error())
 		return report
 	}
-	config, err := readConfig(paths.Config)
+	config, err := a.readConfig(paths.Config)
 	if err != nil {
 		report.Status = "unknown"
 		report.Reasons = append(report.Reasons, "cannot read project map config: "+err.Error())

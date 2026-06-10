@@ -49,7 +49,7 @@ type clarifyAnswerCmd struct {
 
 type clarifySuggestCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to suggest clarifications for."`
-	Reviewer   string        `name:"reviewer" help:"Built-in clarifier agent name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
+	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the clarifier. Defaults to cross-model selection against the run executor."`
 	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum idle duration without clarifier output."`
 	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
@@ -57,7 +57,7 @@ type clarifySuggestCmd struct {
 
 type clarifyLoopCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to clarify."`
-	Reviewer   string        `name:"reviewer" help:"Built-in clarifier agent name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
+	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the clarifier. Defaults to cross-model selection against the run executor."`
 	MaxRounds  int           `name:"max-rounds" help:"Maximum clarifier rounds. Defaults to clarify.max_rounds."`
 	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum idle duration without clarifier output."`
 	Yes        bool          `name:"yes" help:"Required confirmation for direct clarifier execution."`
@@ -132,7 +132,7 @@ type contractShowCmd struct {
 
 type contractDraftCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to draft contract fields for."`
-	Reviewer   string        `name:"reviewer" help:"Built-in read-only drafter name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
+	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the read-only drafter. Defaults to cross-model selection against the run executor."`
 	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum idle duration without drafter output."`
 	Yes        bool          `name:"yes" help:"Required confirmation for direct drafter execution."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
@@ -179,13 +179,13 @@ type promptShowCmd struct {
 
 type executeDryRunCmd struct {
 	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to prepare for execution."`
-	Agent      string `name:"agent" help:"Built-in agent name. Defaults to codex."`
+	Agent      string `name:"agent" help:"Registry name (config agents) of the executor. Defaults to the first registry entry."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type executeRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to execute."`
-	Agent      string        `name:"agent" help:"Built-in agent name. Defaults to codex."`
+	Agent      string        `name:"agent" help:"Registry name (config agents) of the executor. Defaults to the first registry entry."`
 	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum idle duration without agent output."`
 	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
@@ -252,13 +252,13 @@ type reviewApproveCmd struct {
 
 type reviewDryRunCmd struct {
 	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to prepare reviewer artifacts for."`
-	Reviewer   string `name:"reviewer" help:"Built-in reviewer name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
+	Reviewer   string `name:"reviewer" help:"Registry name (config agents) of the reviewer. Defaults to cross-model selection against the run executor."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to review."`
-	Reviewer   string        `name:"reviewer" help:"Built-in reviewer name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
+	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the reviewer. Defaults to cross-model selection against the run executor."`
 	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum idle duration without reviewer output."`
 	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
@@ -266,7 +266,7 @@ type reviewRunCmd struct {
 
 type reviewFixCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id whose review findings should be fixed."`
-	Agent      string        `name:"agent" help:"Built-in fixer agent name. Defaults to codex."`
+	Agent      string        `name:"agent" help:"Registry name (config agents) of the fixer. Defaults to the first registry entry."`
 	Timeout    time.Duration `name:"timeout" default:"10m" help:"Maximum idle duration without fixer output."`
 	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
@@ -274,8 +274,8 @@ type reviewFixCmd struct {
 
 type reviewLoopCmd struct {
 	RunID       string        `arg:"" optional:"" name:"run_id" help:"Run id to review."`
-	Reviewer    string        `name:"reviewer" help:"Built-in reviewer name. Defaults to the configured reviewer unless cross-model review selects another built-in."`
-	Agent       string        `name:"agent" help:"Built-in fixer agent name. Defaults to codex."`
+	Reviewer    string        `name:"reviewer" help:"Registry name (config agents) of the reviewer. Defaults to the review panel, falling back to cross-model selection."`
+	Agent       string        `name:"agent" help:"Registry name (config agents) of the fixer. Defaults to the first registry entry."`
 	MaxRounds   int           `name:"max-rounds" help:"Maximum review rounds. Defaults to review.max_rounds."`
 	Patience    int           `name:"patience" help:"Consecutive no-change fixer rounds before stopping as stalemate. Defaults to review.patience."`
 	CleanRounds int           `name:"clean-rounds" help:"Consecutive clean review rounds required before convergence. Defaults to review.clean_rounds."`

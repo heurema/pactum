@@ -114,11 +114,12 @@ prints the built prompt.
 
 ### Execute
 
-Always inspect `pactum execute dry-run --agent codex` before `pactum execute
-run`. `dry-run` writes the exact command Pactum would run
-(`execute/dry-run.json`) without launching anything. `pactum execute run --agent
-codex` runs the agent as a subprocess and captures the attempt (request, result,
-stdout, stderr) under `execute/attempts/`. Because direct execution is
+Always inspect `pactum execute dry-run` before `pactum execute run`. `dry-run`
+writes the exact command Pactum would run (`execute/dry-run.json`) without
+launching anything. `pactum execute run` runs the agent as a subprocess and
+captures the attempt (request, result, stdout, stderr) under
+`execute/attempts/`. An omitted `--agent` runs the first entry of the config
+agents registry; `--agent <name>` picks another registered entry. Because direct execution is
 unsandboxed, `execute run` asks for confirmation on an interactive terminal and
 **requires `--yes`** for non-interactive/automated use; `dry-run` never needs
 `--yes`. Both first re-verify the boundaries recorded at prompt build: the

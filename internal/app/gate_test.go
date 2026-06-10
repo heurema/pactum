@@ -582,6 +582,7 @@ func setupGatePreparedRunWithRevision(t *testing.T, root string, reviseFlags []s
 		t.Fatalf("contract approve exited %d, stderr: %s", code, stderr.String())
 	}
 	app = configureHelperAgent(app, "helper")
+	registerTestAgents(t, paths, "helper")
 
 	for _, args := range [][]string{
 		{"map", "refresh"},
@@ -609,8 +610,7 @@ func setupGatePreparedRunWithRevision(t *testing.T, root string, reviseFlags []s
 
 func setGateScopeEnforcementConfig(t *testing.T, paths artifacts.Paths, enforcement string) {
 	t.Helper()
-	config, err := readConfig(paths.Config)
-	assertNoError(t, err)
+	config := readConfigForTest(t, paths.Config)
 	config.Gate.ScopeEnforcement = enforcement
 	assertNoError(t, writeYAML(paths.Config, config))
 }

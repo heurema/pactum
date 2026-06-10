@@ -76,7 +76,7 @@ func writeStatusNotInitialized(stdout io.Writer) error {
 
 func (a App) workspaceStatus(root string) (statusResponse, error) {
 	paths := artifacts.New(root)
-	config, err := readConfig(paths.Config)
+	config, err := a.readConfig(paths.Config)
 	if err != nil {
 		return statusResponse{}, err
 	}

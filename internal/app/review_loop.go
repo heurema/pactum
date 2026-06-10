@@ -100,7 +100,12 @@ type reviewLoopRoundSummary struct {
 	GateReportArtifact         string   `json:"gate_report_artifact,omitempty"`
 }
 
+// reviewLoopReviewer is one resolved panel member: the registry name it was
+// invoked under, the underlying built-in's read-only descriptor with the
+// entry's pins applied, and the pin spec. Two members may share an underlying
+// built-in — they run as separate panel members under their own names.
 type reviewLoopReviewer struct {
+	Name      string
 	Agent     agents.AgentDescriptor
 	ModelSpec agents.ModelSpec
 }
@@ -276,7 +281,7 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 			}
 			roundSummary.CleanStreak = cleanStreak
 			roundSummary.UnchangedFingerprintStreak = unchangedFingerprintStreak
-			fingerprint, err := reviewLoopWorkingTreeFingerprint(context)
+			fingerprint, err := a.reviewLoopWorkingTreeFingerprint(context)
 			if err != nil {
 				summary.Rounds = append(summary.Rounds, roundSummary)
 				loopErr = err
@@ -304,7 +309,7 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 		// work, so the loop converges resolved without invoking the fixer.
 		if reviewSummaryAfterAccept.BlockingOpen == 0 {
 			roundSummary.UnchangedFingerprintStreak = unchangedFingerprintStreak
-			fingerprint, err := reviewLoopWorkingTreeFingerprint(context)
+			fingerprint, err := a.reviewLoopWorkingTreeFingerprint(context)
 			if err != nil {
 				summary.Rounds = append(summary.Rounds, roundSummary)
 				loopErr = err
@@ -316,7 +321,7 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 			break
 		}
 
-		fingerprintBefore, err := reviewLoopWorkingTreeFingerprint(context)
+		fingerprintBefore, err := a.reviewLoopWorkingTreeFingerprint(context)
 		if err != nil {
 			summary.Rounds = append(summary.Rounds, roundSummary)
 			loopErr = err
@@ -351,7 +356,7 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 		}
 		roundSummary.OpenFindings = reviewSummaryAfterFix.Open
 		roundSummary.OpenBlockingFindings = reviewSummaryAfterFix.BlockingOpen
-		fingerprintAfter, err := reviewLoopWorkingTreeFingerprint(context)
+		fingerprintAfter, err := a.reviewLoopWorkingTreeFingerprint(context)
 		if err != nil {
 			summary.Rounds = append(summary.Rounds, roundSummary)
 			loopErr = err
@@ -436,7 +441,7 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 }
 
 func (a App) resolveReviewLoopSettings(context reviewContext, options reviewLoopOptions) (reviewLoopSettings, error) {
-	config, err := readConfig(context.Paths.Config)
+	config, err := a.readConfig(context.Paths.Config)
 	if err != nil {
 		return reviewLoopSettings{}, err
 	}
@@ -531,42 +536,44 @@ func reviewLoopCapturedTokenTotal(runPaths contractRunPathSet) (int64, error) {
 }
 
 func (a App) resolveReviewLoopReviewers(context reviewContext, reviewerName string) ([]reviewLoopReviewer, error) {
-	config, err := readConfig(context.Paths.Config)
+	config, err := a.readConfig(context.Paths.Config)
 	if err != nil {
 		return nil, err
 	}
-	var roster []agentModelEntry
+	var roster []agentRegistryEntry
 	if explicit := strings.TrimSpace(reviewerName); explicit != "" {
-		// An explicit --reviewer overrides the roster; it takes pins from its
-		// review.panel entry when present and runs unpinned otherwise.
-		entry, ok := findAgentModelEntry(config.Review.Panel, explicit)
-		if !ok {
-			entry = agentModelEntry{Agent: explicit}
+		// An explicit --reviewer overrides the panel: a single registry name
+		// running with its entry's pins.
+		entry, err := findRegistryEntry(config, explicit)
+		if err != nil {
+			return nil, err
 		}
-		roster = []agentModelEntry{entry}
+		roster = []agentRegistryEntry{entry}
 	} else if len(config.Review.Panel) > 0 {
-		roster = config.Review.Panel
+		for _, name := range config.Review.Panel {
+			entry, err := findRegistryEntry(config, name)
+			if err != nil {
+				return nil, err
+			}
+			roster = append(roster, entry)
+		}
 	} else {
-		// Empty panel: cross-model default — a single reviewer, the agent other
-		// than the run's executor.
-		roster = []agentModelEntry{{Agent: resolveReviewerNameForReview(context, "")}}
+		// Empty panel: cross-model default — a single reviewer whose underlying
+		// agent differs from the run executor's when the registry has one.
+		entry, err := resolveReviewerEntry(config, context, "")
+		if err != nil {
+			return nil, err
+		}
+		roster = []agentRegistryEntry{entry}
 	}
 
 	reviewers := make([]reviewLoopReviewer, 0, len(roster))
 	for _, entry := range roster {
-		reviewer, err := a.agentRegistry().ResolveReviewer(entry.Agent)
+		resolved, err := a.resolveAgentForRole(entry, agentRoleReviewer)
 		if err != nil {
 			return nil, err
 		}
-		modelSpec := entry.modelSpec()
-		reviewer, err = agents.ApplyModelSpec(reviewer, modelSpec)
-		if err != nil {
-			return nil, err
-		}
-		if reviewer.Input != agents.InputPromptFile {
-			return nil, fmt.Errorf("unsupported agent input mode: %s", reviewer.Input)
-		}
-		reviewers = append(reviewers, reviewLoopReviewer{Agent: reviewer, ModelSpec: modelSpec})
+		reviewers = append(reviewers, reviewLoopReviewer{Name: resolved.Name, Agent: resolved.Agent, ModelSpec: resolved.ModelSpec})
 	}
 	return reviewers, nil
 }
@@ -574,7 +581,7 @@ func (a App) resolveReviewLoopReviewers(context reviewContext, reviewerName stri
 func reviewLoopReviewerNames(reviewers []reviewLoopReviewer) []string {
 	names := make([]string, 0, len(reviewers))
 	for _, reviewer := range reviewers {
-		names = append(names, reviewer.Agent.Name)
+		names = append(names, reviewer.Name)
 	}
 	return names
 }
@@ -608,7 +615,7 @@ func (a App) runReviewLoopReviewRound(context reviewContext, liveOutput io.Write
 	wg.Wait()
 	for index, err := range errs {
 		if err != nil {
-			return reviewLoopReviewRoundResult{}, fmt.Errorf("reviewer %s: %w", reviewers[index].Agent.Name, err)
+			return reviewLoopReviewRoundResult{}, fmt.Errorf("reviewer %s: %w", reviewers[index].Name, err)
 		}
 	}
 
@@ -659,6 +666,7 @@ func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID st
 		AttemptsDir:     prep.Context.RunPaths.ReviewAttemptsDir,
 		AttemptIDPrefix: "reviewer_attempt",
 		LastResultJSON:  prep.Context.RunPaths.ReviewLastResultJSON,
+		AgentName:       reviewer.Name,
 		Agent:           reviewer.Agent,
 		Model:           reviewer.ModelSpec,
 		PromptRepoPath:  reviewerPromptRepoPath(runID),
@@ -701,7 +709,7 @@ func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID st
 			return result.processResult
 		},
 		RenderRunOnly: func(stdout io.Writer, request reviewerRequestDocument, result reviewerResultDocument) {
-			writeReviewRun(stdout, request, result, reviewer.ModelSpec)
+			writeReviewRun(stdout, request, result, reviewer.Name, reviewer.ModelSpec)
 		},
 	})
 }
@@ -890,8 +898,8 @@ func reviewLoopDedupFindingFingerprints(runPaths contractRunPathSet) (map[review
 	return open, rebutted, nil
 }
 
-func reviewLoopWorkingTreeFingerprint(context reviewContext) (string, error) {
-	changes := buildGateChangeReport(context.Root, context.Paths)
+func (a App) reviewLoopWorkingTreeFingerprint(context reviewContext) (string, error) {
+	changes := a.buildGateChangeReport(context.Root, context.Paths)
 	hasher := sha256.New()
 	fmt.Fprintf(hasher, "head\x00%s\x00", reviewLoopGitHead(context.Root))
 	fmt.Fprintf(hasher, "status\x00%s\x00", changes.Status)
