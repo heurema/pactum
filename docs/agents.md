@@ -307,6 +307,53 @@ the agent never answers questions, revises the contract, or edits code. Like oth
 agent-running commands, it asks for confirmation on an interactive terminal and
 **requires `--yes`** for non-interactive/automated use.
 
+## Clarify loop
+
+`pactum clarify loop <run_id> --yes` composes `clarify suggest` and the
+per-question recommendation into autonomous clarification rounds. Each round:
+
+1. **Suggest** — runs the clarifier exactly as `clarify suggest` does (same
+   prompt, same artifacts under `clarify/clarifier-attempts/`, same prompt-level
+   dedupe via the existing-questions context).
+2. **Auto-resolve** — every open question whose `confidence` is `high`, whose
+   `recommended_answer` is non-empty, and whose `depends_on` prerequisites are
+   all answered gets that recommendation recorded as its answer (answer source
+   `auto_recommended`, decision source `clarify_loop_auto`). Questions with
+   `medium`/`low` confidence, no recommendation, or an unanswered prerequisite
+   stay open — a recommendation formed without the answer its `depends_on`
+   declares it needs is not committed by automation. Questions resolve
+   foundational-first, so a prerequisite auto-resolved earlier in the same
+   round unblocks its dependents.
+3. **Refresh** — after a round that auto-resolved something the clarification
+   artifacts are refreshed once; a resolve-less round only recomputes the
+   status (suggest already refreshed when it recorded questions).
+
+The loop stops at the first of three terminals, checked after each round (a
+round that errors finalizes the summary with the defensive `error` terminal
+instead):
+
+- `converged` — no open blocking questions remain (the same condition as the
+  `clarify status` converged flag).
+- `needs_human` — a round created no new questions and auto-resolved nothing:
+  automation is out of moves, and the open blocking questions await the human.
+- `max_rounds` — the round cap was reached. `--max-rounds` overrides the
+  `clarify.max_rounds` workspace config key (default 3).
+
+The loop writes `clarify/loop-summary.json`
+(`pactum.clarify_loop_summary.v1`) with per-round counts (questions created,
+auto-resolved, open blocking after), the terminal reason, the converged flag,
+and the final per-dimension coverage; `--json` prints the same document.
+`--reviewer` selects the clarifier explicitly (same resolution as `clarify
+suggest`), the idle `--timeout` applies to each clarifier attempt, and `--yes`
+is required because the loop runs clarifier agents directly. Running the loop
+on an approved run surfaces the same approval-reset warning as `clarify
+suggest`.
+
+**The safety story is the downstream gate:** the loop lets the clarifier's own
+high-confidence recommendations answer its questions, which is acceptable only
+because `pactum contract approve` stays manual — the loop automates the
+question-and-answer churn, never the human decision to approve the contract.
+
 ## Contract draft
 
 `pactum contract draft <run_id> --reviewer codex --yes` launches a read-only

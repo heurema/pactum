@@ -177,39 +177,9 @@ func (a App) ClarifyAnswer(stdout io.Writer, runID string, questionID string, an
 	if !hasClarificationQuestion(questions, questionID) {
 		return fmt.Errorf("question not found: %s", questionID)
 	}
-	answers, err := readClarificationAnswers(context.RunPaths.AnswersJSONL)
-	if err != nil {
-		return err
-	}
-	decisions, err := readClarificationDecisions(context.RunPaths.DecisionsJSONL)
-	if err != nil {
-		return err
-	}
-
 	now := a.nowUTC()
-	answerRecord := clarificationAnswerRecord{
-		Schema:     clarificationAnswerSchema,
-		ID:         nextClarificationID("a", len(answers)+1),
-		RunID:      runID,
-		QuestionID: questionID,
-		Answer:     answer,
-		CreatedAt:  now,
-		Source:     "manual",
-	}
-	decisionRecord := clarificationDecisionRecord{
-		Schema:     clarificationDecisionSchema,
-		ID:         nextClarificationID("d", len(decisions)+1),
-		RunID:      runID,
-		QuestionID: questionID,
-		Decision:   answer,
-		CreatedAt:  now,
-		Source:     "manual_answer",
-	}
-	// TODO: Later revisions may reject duplicate answers or model answer revisions explicitly.
-	if err := appendJSONLine(context.RunPaths.AnswersJSONL, answerRecord); err != nil {
-		return err
-	}
-	if err := appendJSONLine(context.RunPaths.DecisionsJSONL, decisionRecord); err != nil {
+	answerRecord, decisionRecord, err := recordClarificationAnswer(context.RunPaths, runID, questionID, answer, "manual", "manual_answer", now)
+	if err != nil {
 		return err
 	}
 	status, approvalReset, err := a.refreshClarificationArtifacts(context, now)
@@ -229,6 +199,49 @@ func (a App) ClarifyAnswer(stdout io.Writer, runID string, questionID string, an
 	}
 	writeClarifyAnswerResponse(stdout, response)
 	return nil
+}
+
+// recordClarificationAnswer creates and appends the answer record and its
+// mirroring decision record for a question, with the given record sources, so
+// the manual ClarifyAnswer path and the clarify loop's auto-resolve share one
+// write path. It neither refreshes the clarification artifacts nor appends
+// ledger events — callers own those (the loop refreshes once per round, after
+// all of the round's auto-resolves).
+// TODO: Later revisions may reject duplicate answers or model answer revisions explicitly.
+func recordClarificationAnswer(runPaths contractRunPathSet, runID string, questionID string, answer string, answerSource string, decisionSource string, now time.Time) (clarificationAnswerRecord, clarificationDecisionRecord, error) {
+	answers, err := readClarificationAnswers(runPaths.AnswersJSONL)
+	if err != nil {
+		return clarificationAnswerRecord{}, clarificationDecisionRecord{}, err
+	}
+	decisions, err := readClarificationDecisions(runPaths.DecisionsJSONL)
+	if err != nil {
+		return clarificationAnswerRecord{}, clarificationDecisionRecord{}, err
+	}
+	answerRecord := clarificationAnswerRecord{
+		Schema:     clarificationAnswerSchema,
+		ID:         nextClarificationID("a", len(answers)+1),
+		RunID:      runID,
+		QuestionID: questionID,
+		Answer:     answer,
+		CreatedAt:  now,
+		Source:     answerSource,
+	}
+	decisionRecord := clarificationDecisionRecord{
+		Schema:     clarificationDecisionSchema,
+		ID:         nextClarificationID("d", len(decisions)+1),
+		RunID:      runID,
+		QuestionID: questionID,
+		Decision:   answer,
+		CreatedAt:  now,
+		Source:     decisionSource,
+	}
+	if err := appendJSONLine(runPaths.AnswersJSONL, answerRecord); err != nil {
+		return clarificationAnswerRecord{}, clarificationDecisionRecord{}, err
+	}
+	if err := appendJSONLine(runPaths.DecisionsJSONL, decisionRecord); err != nil {
+		return clarificationAnswerRecord{}, clarificationDecisionRecord{}, err
+	}
+	return answerRecord, decisionRecord, nil
 }
 
 func (a App) ClarifyStatus(stdout io.Writer, runID string, jsonOutput bool) error {

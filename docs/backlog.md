@@ -94,15 +94,33 @@ reviews across M8–M10. Rough priority in parentheses.
 - **L2 — severity by composition** (med). A broad fix pass, then a critical/major-
   only final gate (no per-finding severity schema).
 - **Phase 1 — clarify loop** (high, large). Slices done: `clarify suggest` (agent
-  proposes questions, M11.0) and `contract draft` (agent drafts contract fields from
-  answers → proposal → `accept-draft`, M11.1). Remaining: the **loop driver**
-  (suggest → answer → draft → repeat to a precise contract, with caps). Open edges:
-  re-proposed-question dedup; the clarifier/drafter fuse run+parse so a non-zero exit
+  proposes questions, M11.0), `contract draft` (agent drafts contract fields from
+  answers → proposal → `accept-draft`, M11.1), and **slice 1 — the autonomous
+  clarify loop driver** (M17.0, shipped): `pactum clarify loop` runs
+  suggest → auto-resolve → re-suggest rounds, composing the grill-me pieces —
+  per-question `recommended_answer` + `confidence` (M15.0) and the
+  converged/coverage signal (M15.5) — into the review-loop pattern. Each round
+  auto-resolves every open question whose confidence is `high` and whose
+  recommendation is non-empty (answer source `auto_recommended`, decision source
+  `clarify_loop_auto`; medium/low or recommendation-less questions stay open),
+  refreshes artifacts once, and stops `converged` (no open blocking),
+  `needs_human` (a round created nothing and resolved nothing), or `max_rounds`
+  (the revived `clarify.max_rounds` cap, default 3). The loop writes
+  `clarify/loop-summary.json` (`pactum.clarify_loop_summary.v1`); `contract
+  approve` stays manual — that is the safety story for letting the clarifier's
+  own high-confidence recommendations answer its questions. Remaining Phase 1
+  slices: the **contract-refinement leg** (fold `contract draft` →
+  `accept-draft` into the loop so answers refine the contract, not just the
+  question set) and the **human-answer round-trip** (resume the loop after the
+  human answers what `needs_human` left open). Open edges:
+  re-proposed-question dedup is still prompt-level only (no semantic dedup);
+  the clarifier/drafter fuse run+parse so a non-zero exit
   discards valid output (decouple like `review propose-findings`); an all-empty
   `contract draft` records a pending proposal that `accept-draft` then rejects
   (dead-end — report "no additions" instead); re-running `contract draft` after accept
   clobbers the accepted proposal's audit fields; `accept-draft` hardcodes
-  `accepted_by:"manual"` (no `--by`).
+  `accepted_by:"manual"` (no `--by`); no budget gating for the clarify loop yet
+  (token records still accrue per attempt).
 - **Sharper clarify questioning** (med). **Arc complete — all five slices shipped
   (M15.0–M15.5).** Strengthened `clarify suggest` from a soft, surface-level
   checklist into a "grill the requester" interrogation, sliced after the grill-me

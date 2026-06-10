@@ -258,7 +258,7 @@ unenforced. Wiring them is the implementation — not new config surface.
 
 | Config (today) | Used by |
 |----------------|---------|
-| clarify iteration caps (removed as dead in M16.0; return with Phase 1) | Phase 1 caps |
+| `clarify.max_rounds` (removed as dead in M16.0; live again since M17.0) | Phase 1 round cap — enforced by `pactum clarify loop` |
 | `review.max_rounds` | Phase 3 round cap |
 | `review.budget.mode`, `review.budget.max_tokens` | Phase 3 budget stop |
 | `clarify --blocking`, review `blocking` findings | severity gate (critical ⇄ blocking) |

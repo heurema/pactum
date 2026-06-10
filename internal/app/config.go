@@ -30,6 +30,7 @@ type configFile struct {
 	Schema  string        `yaml:"schema"`
 	Map     mapConfig     `yaml:"map"`
 	Gate    gateConfig    `yaml:"gate"`
+	Clarify clarifyConfig `yaml:"clarify"`
 	Execute executeConfig `yaml:"execute"`
 	Review  reviewConfig  `yaml:"review"`
 }
@@ -41,6 +42,13 @@ type mapConfig struct {
 
 type gateConfig struct {
 	ScopeEnforcement string `yaml:"scope_enforcement"`
+}
+
+// clarifyConfig bounds the autonomous clarify loop. MaxRounds is the Phase 1
+// round cap; like the review limits it is resolved at loop time, where a
+// non-positive value falls back to the default.
+type clarifyConfig struct {
+	MaxRounds int `yaml:"max_rounds"`
 }
 
 type executeConfig struct {
@@ -112,6 +120,9 @@ func defaultConfigFile() configFile {
 		},
 		Gate: gateConfig{
 			ScopeEnforcement: gateScopeEnforcementBlock,
+		},
+		Clarify: clarifyConfig{
+			MaxRounds: 3,
 		},
 		Execute: executeConfig{
 			Models: []agentModelEntry{},
