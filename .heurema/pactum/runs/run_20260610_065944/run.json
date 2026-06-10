@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260610_065944",
+  "status": "contract_approved",
+  "task": "Flip the agent transport default to ACP: with both M16.1 gaps closed, ACP becomes the hardwired default and PACTUM_AGENT_TRANSPORT=cli stays as the debug escape hatch",
+  "created_at": "2026-06-10T06:59:44.233397Z",
+  "updated_at": "2026-06-10T07:00:09.262034Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260610_065943",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

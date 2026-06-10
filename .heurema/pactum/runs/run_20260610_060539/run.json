@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260610_060539",
+  "status": "contract_approved",
+  "task": "Close the two ACP transport gaps: model/effort pins must reach the ACP adapters (codex-acp -c overrides; claude-agent-acp ANTHROPIC_MODEL + CLAUDE_CODE_EFFORT_LEVEL env), and read-only stages over ACP must deny file writes and permission requests instead of allowing everything",
+  "created_at": "2026-06-10T06:05:39.610009Z",
+  "updated_at": "2026-06-10T06:06:18.746351Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260610_060539",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

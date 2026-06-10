@@ -1,0 +1,138 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260610_064741",
+  "status": "draft",
+  "goal": "Sketch a plan for improving error messages",
+  "scope": {
+    "in": [],
+    "out": []
+  },
+  "acceptance_criteria": [],
+  "validation": {
+    "commands": []
+  },
+  "assumptions": [],
+  "open_questions": [
+    "Which 'error messages' should the plan target? Candidates in this repo: (a) user-facing CLI command errors — the human stderr line and the pactum.error.v1 JSON envelope produced in internal/app/errors.go; (b) internal Go error wrapping — ~96 fmt.Errorf sites in internal/app and 16 in internal/agents; (c) agent-subprocess failure reporting — executor/transport errors, idle-timeout messages, and doctor diagnostics in internal/agents; or (d) all of the above.",
+    "What artifact does 'sketch a plan' deliver: a new design document following the existing docs/*-design.md convention (like docs/cost-budget-design.md and docs/loop-architecture-design.md), an entry in docs/backlog.md, or a plan plus some initial implementation?",
+    "Are any code changes in scope for this run — for example the quick win of replacing the substring-matching classifyErrorCode in internal/app/errors.go with typed sentinel errors — or is this run strictly the planning document?",
+    "What must the plan contain for the run to be accepted? Candidate required sections: an inventory of current error surfaces with file references; message style principles (e.g. the cause-plus-remediation pattern of errNotInitialized: 'pactum is not initialized; run: pactum init'); a stable error-code taxonomy for the pactum.error.v1 JSON envelope; and a prioritized list of improvement work items with affected files.",
+    "What should validation.commands contain for a docs-only deliverable: leave it empty (human review only), a file-existence check such as 'test -f docs/error-messages-design.md', and/or 'go test ./...' as a no-regression guard confirming no code changed?",
+    "When a spawned executor subprocess (claude/codex) fails with its own error text — for example a pactum execute run that hits the idle timeout, or an agent binary missing from PATH — is improving how Pactum wraps and presents that failure part of this plan, or only errors Pactum itself authors?",
+    "classifyErrorCode in internal/app/errors.go derives the machine-readable JSON code by substring-matching the message (e.g. 'contract is not approved', 'not found'), so rewording a message can silently change the code a --json consumer sees. Should the plan treat stable machine-readable codes as a hard constraint — i.e. include migrating to typed errors so codes are independent of wording — before any message rewording happens?",
+    "Should the plan be structured as contract-sized work items, each executable as a future Pactum dogfood run, or as a free-form design narrative?"
+  ],
+  "clarifications": {
+    "questions": [
+      {
+        "id": "q_001",
+        "question": "Which 'error messages' should the plan target? Candidates in this repo: (a) user-facing CLI command errors — the human stderr line and the pactum.error.v1 JSON envelope produced in internal/app/errors.go; (b) internal Go error wrapping — ~96 fmt.Errorf sites in internal/app and 16 in internal/agents; (c) agent-subprocess failure reporting — executor/transport errors, idle-timeout messages, and doctor diagnostics in internal/agents; or (d) all of the above.",
+        "blocking": true,
+        "kind": "terminology",
+        "rationale": "The goal names no error surface, and the repo has at least three distinct ones with different owners and improvement levers. The choice determines which files the plan inventories and what 'improvement' even means (user remediation hints vs. wrap-chain hygiene vs. subprocess failure presentation).",
+        "recommended_answer": "Target (a) user-facing CLI errors as the primary surface, with (c) agent-subprocess failure presentation as a secondary section; touch (b) internal wrapping only where it feeds user-visible text. State this in scope.in.",
+        "confidence": "medium",
+        "status": "open"
+      },
+      {
+        "id": "q_002",
+        "question": "What artifact does 'sketch a plan' deliver: a new design document following the existing docs/*-design.md convention (like docs/cost-budget-design.md and docs/loop-architecture-design.md), an entry in docs/backlog.md, or a plan plus some initial implementation?",
+        "blocking": true,
+        "kind": "scope",
+        "rationale": "The contract has empty scope and the deliverable form changes everything downstream: which files the executor may write, what acceptance looks like, and whether validation commands are meaningful. The repo's *-design.md convention is the closest existing pattern for a 'plan'.",
+        "recommended_answer": "Deliver a new docs/error-messages-design.md following the existing design-doc convention, plus a short pointer entry in docs/backlog.md. No other files change.",
+        "confidence": "medium",
+        "status": "open"
+      },
+      {
+        "id": "q_003",
+        "question": "Are any code changes in scope for this run — for example the quick win of replacing the substring-matching classifyErrorCode in internal/app/errors.go with typed sentinel errors — or is this run strictly the planning document?",
+        "blocking": true,
+        "kind": "scope",
+        "rationale": "Without an explicit answer the executor could either write code the human did not want or skip a quick win the human expected. The goal verb 'sketch a plan' suggests docs-only, but the contract's empty scope.out does not forbid code.",
+        "recommended_answer": "Docs-only: add 'code changes under internal/ and cmd/' to scope.out. Code improvements become follow-up runs driven by the plan's work items.",
+        "confidence": "medium",
+        "depends_on": [
+          "q_002"
+        ],
+        "status": "open",
+        "blocked": true
+      },
+      {
+        "id": "q_004",
+        "question": "What must the plan contain for the run to be accepted? Candidate required sections: an inventory of current error surfaces with file references; message style principles (e.g. the cause-plus-remediation pattern of errNotInitialized: 'pactum is not initialized; run: pactum init'); a stable error-code taxonomy for the pactum.error.v1 JSON envelope; and a prioritized list of improvement work items with affected files.",
+        "blocking": true,
+        "kind": "acceptance",
+        "rationale": "acceptance_criteria is empty, so there is currently no way to verify completion. A 'plan' can range from three bullet points to a full design; the human must pick the bar.",
+        "recommended_answer": "Accept when the document contains all four sections: (1) error-surface inventory with file references, (2) message style principles, (3) JSON-envelope code taxonomy, (4) prioritized work items with affected files and rough effort. Add each as an acceptance criterion.",
+        "confidence": "medium",
+        "depends_on": [
+          "q_001",
+          "q_002"
+        ],
+        "status": "open",
+        "blocked": true
+      },
+      {
+        "id": "q_005",
+        "question": "What should validation.commands contain for a docs-only deliverable: leave it empty (human review only), a file-existence check such as 'test -f docs/error-messages-design.md', and/or 'go test ./...' as a no-regression guard confirming no code changed?",
+        "blocking": false,
+        "kind": "acceptance",
+        "rationale": "validation.commands is empty and the gate step needs something runnable, but most existing validation conventions in this repo assume code changes. For a document, mechanical validation can only check existence/format, not quality.",
+        "recommended_answer": "Use 'test -f docs/error-messages-design.md' plus 'go test ./...' (which must pass unchanged, demonstrating no code was touched); content quality is verified by human review against the acceptance criteria.",
+        "confidence": "low",
+        "depends_on": [
+          "q_002",
+          "q_003"
+        ],
+        "status": "open",
+        "blocked": true
+      },
+      {
+        "id": "q_006",
+        "question": "When a spawned executor subprocess (claude/codex) fails with its own error text — for example a pactum execute run that hits the idle timeout, or an agent binary missing from PATH — is improving how Pactum wraps and presents that failure part of this plan, or only errors Pactum itself authors?",
+        "blocking": false,
+        "kind": "edge_case",
+        "rationale": "Agent-originated failures are a major real-world error path in this repo (internal/agents runner/transport, doctor), but the text originates outside Pactum. The contract is silent on whether presentation of third-party failure output counts as 'error messages'.",
+        "recommended_answer": "In scope for the inventory and for wrapping conventions (what context Pactum adds: run id, stage, remediation); explicitly out of scope to rewrite or filter the agent-authored text itself.",
+        "confidence": "medium",
+        "depends_on": [
+          "q_001"
+        ],
+        "status": "open",
+        "blocked": true
+      },
+      {
+        "id": "q_007",
+        "question": "classifyErrorCode in internal/app/errors.go derives the machine-readable JSON code by substring-matching the message (e.g. 'contract is not approved', 'not found'), so rewording a message can silently change the code a --json consumer sees. Should the plan treat stable machine-readable codes as a hard constraint — i.e. include migrating to typed errors so codes are independent of wording — before any message rewording happens?",
+        "blocking": false,
+        "kind": "edge_case",
+        "rationale": "This is the concrete failure mode of the whole project: the very act of improving message wording can break the pactum.error.v1 contract for scripted consumers. Whether code stability is a prerequisite changes the plan's ordering and priorities.",
+        "recommended_answer": "Yes: the plan's first work item should decouple codes from wording (typed/sentinel errors carrying an explicit code), and all rewording items should be sequenced after it.",
+        "confidence": "high",
+        "depends_on": [
+          "q_001"
+        ],
+        "status": "open",
+        "blocked": true
+      },
+      {
+        "id": "q_008",
+        "question": "Should the plan be structured as contract-sized work items, each executable as a future Pactum dogfood run, or as a free-form design narrative?",
+        "blocking": false,
+        "kind": "assumption",
+        "rationale": "This repo plans work via docs/backlog.md milestones executed as Pactum runs. If the plan's items are meant to feed that pipeline, each must be independently scopeable with its own acceptance criteria — a different document shape than a prose sketch.",
+        "recommended_answer": "Structure the improvement items as a prioritized list where each item is sized and specified well enough to become a single future Pactum run (goal, rough scope, acceptance sketch).",
+        "confidence": "medium",
+        "depends_on": [
+          "q_002"
+        ],
+        "status": "open",
+        "blocked": true
+      }
+    ]
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}

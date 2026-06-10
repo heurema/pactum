@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.execution_result.v1",
+  "run_id": "run_20260609_210926",
+  "attempt_id": "attempt_001",
+  "started_at": "2026-06-09T21:10:03.073191Z",
+  "finished_at": "2026-06-09T21:20:03.330671Z",
+  "duration_ms": 600257,
+  "exit_code": -1,
+  "timed_out": true,
+  "stdout": "execute/attempts/attempt_001/stdout.log",
+  "stderr": "execute/attempts/attempt_001/stderr.log"
+}

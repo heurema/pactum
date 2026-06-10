@@ -1,0 +1,7 @@
+{
+  "schema": "pactum.approval.v1",
+  "status": "pending",
+  "approved_at": null,
+  "approved_by": null,
+  "contract_sha256": null
+}
