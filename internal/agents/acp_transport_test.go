@@ -355,6 +355,67 @@ func TestACPClientActivityTicksOnAllInboundCalls(t *testing.T) {
 	}
 }
 
+func TestACPClientSeparatesMessageBoundariesWithNewline(t *testing.T) {
+	var out strings.Builder
+	c := &acpClient{out: &out}
+	ctx := context.Background()
+	send := func(text string, messageID string) {
+		chunk := &acp.SessionUpdateAgentMessageChunk{Content: acp.TextBlock(text)}
+		if messageID != "" {
+			chunk.MessageId = &messageID
+		}
+		err := c.SessionUpdate(ctx, acp.SessionNotification{Update: acp.SessionUpdate{AgentMessageChunk: chunk}})
+		if err != nil {
+			t.Fatalf("session update %q: %v", text, err)
+		}
+	}
+
+	// Delta chunks sharing a messageId stream one message: no separator inside.
+	send("Hel", "msg_1")
+	send("lo.", "msg_1")
+	// A messageId change is a message boundary: the fenced block that would
+	// otherwise glue to the prose gets its own line.
+	send("```json\n{\"k\":1}\n```", "msg_2")
+	// An empty chunk writes nothing and does not move the boundary state.
+	send("", "msg_3")
+	// A new id after a trailing newline needs no extra separator.
+	send("done.\n", "msg_4")
+	send("end", "msg_5")
+
+	want := "Hello.\n```json\n{\"k\":1}\n```\ndone.\nend"
+	if out.String() != want {
+		t.Fatalf("out = %q, want %q", out.String(), want)
+	}
+}
+
+func TestACPClientNeverSeparatesIdlessChunks(t *testing.T) {
+	// Adapters that stamp no messageId stream raw token deltas: a separator
+	// between any two of them would land inside words or JSON string literals
+	// and corrupt the output, so id-less chunks must concatenate verbatim —
+	// even when that glues a fence to prose (the parse layer handles glue).
+	var out strings.Builder
+	c := &acpClient{out: &out}
+	ctx := context.Background()
+	send := func(text string) {
+		chunk := &acp.SessionUpdateAgentMessageChunk{Content: acp.TextBlock(text)}
+		err := c.SessionUpdate(ctx, acp.SessionNotification{Update: acp.SessionUpdate{AgentMessageChunk: chunk}})
+		if err != nil {
+			t.Fatalf("session update %q: %v", text, err)
+		}
+	}
+
+	send("{\"questions\": [{\"text\": \"What does ")
+	send("full record")
+	send(" mean?\"}]}")
+	send("All settled.")
+	send("```json")
+
+	want := "{\"questions\": [{\"text\": \"What does full record mean?\"}]}All settled.```json"
+	if out.String() != want {
+		t.Fatalf("out = %q, want %q", out.String(), want)
+	}
+}
+
 func TestACPClientNilActivityIsSafe(t *testing.T) {
 	// Without an armed timeout the callback is nil; every inbound method must
 	// be a safe no-op tick (no panic), preserving its normal behavior.

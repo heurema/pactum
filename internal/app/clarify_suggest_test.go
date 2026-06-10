@@ -545,6 +545,66 @@ func TestRecordClarifierSuggestionsResolvesDependsOnAndBlocks(t *testing.T) {
 	}
 }
 
+func TestRecordClarifierSuggestionsWarnsWhenSchemaMarkerParsesNoBlocks(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	state := readRunState(t, runPaths.RunJSON)
+	context := clarifyContext{Root: root, Paths: paths, RunPaths: runPaths, State: state}
+	now := time.Unix(0, 0).UTC()
+
+	// A block cut before its closing fence yields zero parsed blocks even
+	// though the schema marker is in the output. That must warn — not silently
+	// read as "no clarification needed".
+	truncated := "Emitting now.\n```json\n{\"schema\": \"" + clarificationSuggestionsSchema + "\", \"questions\": [\n"
+	stdoutPath := filepath.Join(root, "clarifier-stdout.log")
+	mustWriteFile(t, stdoutPath, truncated)
+	created, warnings, _, _, err := app.recordClarifierSuggestions(context, "clarifier_attempt_001", stdoutPath, now)
+	assertNoError(t, err)
+	if len(created) != 0 {
+		t.Fatalf("truncated block must record no questions, got %#v", created)
+	}
+	if joined := strings.Join(warnings, "\n"); !strings.Contains(joined, "parse miss") {
+		t.Fatalf("warnings must flag the parse miss, got:\n%s", joined)
+	}
+
+	// A parsed empty-questions block is genuine convergence: no warning.
+	mustWriteFile(t, stdoutPath, clarifierStructuredOutput([]map[string]any{}))
+	created, warnings, _, _, err = app.recordClarifierSuggestions(context, "clarifier_attempt_002", stdoutPath, now)
+	assertNoError(t, err)
+	if len(created) != 0 || len(warnings) != 0 {
+		t.Fatalf("parsed empty block must record nothing and warn nothing, got created=%#v warnings=%#v", created, warnings)
+	}
+}
+
+func TestRecordClarifierSuggestionsParsesFenceGluedToProse(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	state := readRunState(t, runPaths.RunJSON)
+	context := clarifyContext{Root: root, Paths: paths, RunPaths: runPaths, State: state}
+	now := time.Unix(0, 0).UTC()
+
+	// The showcase regression: an id-less ACP stream glues the opening fence
+	// to the tail of the preceding prose message, and the transport cannot
+	// separate them. The questions must still be recorded.
+	glued := "That settles the portability boundary.```json\n" +
+		"{\"schema\": \"" + clarificationSuggestionsSchema + "\", \"questions\": [" +
+		"{\"text\": \"What does full record mean?\", \"blocking\": true, \"rationale\": \"scope\", " +
+		"\"recommended_answer\": \"the whole run tree\", \"confidence\": \"medium\"}" +
+		"]}\n```\n"
+	stdoutPath := filepath.Join(root, "clarifier-stdout.log")
+	mustWriteFile(t, stdoutPath, glued)
+	created, warnings, _, _, err := app.recordClarifierSuggestions(context, "clarifier_attempt_001", stdoutPath, now)
+	assertNoError(t, err)
+	if len(created) != 1 {
+		t.Fatalf("glued fence must still yield the question, got created=%#v warnings=%v", created, warnings)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("a parsed glued fence must not warn, got %v", warnings)
+	}
+}
+
 func TestRecordClarifierSuggestionsNumbersDependsOnPerBlock(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)

@@ -200,6 +200,16 @@ liveness ticks carry no content. A prompt response recorded before the kill
 counts as the agent's completion signal for the completion-aware finalize
 described under [Execute: dry-run vs run](#execute-dry-run-vs-run).
 
+Message chunks land in `stdout.log` as streamed. Chunks stamped with a
+`messageId` share one id per message, so an id change marks a message
+boundary and pactum inserts a newline there when the log would otherwise
+glue the new message to the previous one. Chunks without an id are raw token
+deltas — separating those would corrupt the text mid-word — so they
+concatenate verbatim, and a fenced block glued to the tail of a prose
+message is recovered by the structured-output parser instead, which also
+warns when a schema marker is present but no block parses (a parse miss
+must not read as an empty result).
+
 #### Model pins over ACP
 
 The per-entry model pins from the agents registry reach the agent over ACP the
