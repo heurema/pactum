@@ -87,13 +87,16 @@ type reviewFindingInput struct {
 // findingCore is the body shared by review findings and review proposals.
 // Evidence is intentionally NOT part of the core: it belongs only to reviewer
 // proposals, so accepting a proposal must not carry it into a review finding.
+// Confidence is empty on manual findings; reviewer proposals always carry one
+// (a missing value defaults to medium at parse time).
 type findingCore struct {
-	Message  string `json:"message"`
-	Severity string `json:"severity"`
-	Category string `json:"category"`
-	File     string `json:"file,omitempty"`
-	Line     int    `json:"line,omitempty"`
-	Blocking bool   `json:"blocking"`
+	Message    string `json:"message"`
+	Severity   string `json:"severity"`
+	Category   string `json:"category"`
+	File       string `json:"file,omitempty"`
+	Line       int    `json:"line,omitempty"`
+	Blocking   bool   `json:"blocking"`
+	Confidence string `json:"confidence,omitempty"`
 }
 
 type reviewFindingFingerprint struct {
@@ -1077,7 +1080,7 @@ func renderReviewerContext(prep reviewerDryRunPreparation) string {
 	fmt.Fprintln(&b, "- Use `pactum search \"<term>\"` and inspect files before proposing findings.")
 	fmt.Fprintln(&b, "- Do not invent changes.")
 	fmt.Fprintln(&b, "- Do not approve automatically.")
-	fmt.Fprintln(&b, "- If uncertain, propose a blocking finding that asks for clarification.")
+	fmt.Fprintln(&b, "- If you are not certain an issue is real after verification, do not flag it.")
 	return b.String()
 }
 
@@ -1112,10 +1115,68 @@ func renderReviewerPrompt(runID string) string {
 	fmt.Fprintln(&b, "- Do not approve the review.")
 	fmt.Fprintln(&b, "- Do not claim semantic correctness without evidence.")
 	fmt.Fprintln(&b, "- Prefer concrete findings with file/path evidence.")
-	fmt.Fprintln(&b, "- Focus on real problems, not style preferences.")
 	fmt.Fprintln(&b, "- Read the actual file and surrounding context before proposing a finding.")
 	fmt.Fprintln(&b, "- Check whether the issue is already mitigated or already represented in existing findings/proposals.")
-	fmt.Fprintln(&b, "- If uncertain, recommend a blocking manual finding.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## High-signal contract")
+	fmt.Fprintln(&b, "- Report a finding only when you are certain it is real after verification.")
+	fmt.Fprintln(&b, "- If you are not certain an issue is real, do not flag it. False positives erode trust and waste reviewer time.")
+	fmt.Fprintln(&b, "- Report problems only. No positive observations, no praise.")
+	fmt.Fprintln(&b, "- Do NOT flag:")
+	fmt.Fprintln(&b, "  - Style or formatting preferences.")
+	fmt.Fprintln(&b, "  - Anything the contract's validation commands already catch (the gate runs them; they are listed in the reviewer context).")
+	fmt.Fprintln(&b, "  - Input-dependent hypotheticals without a concrete failure path.")
+	fmt.Fprintln(&b, "  - Subjective redesign suggestions.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Review lenses")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "Check the change through every lens:")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "### Correctness")
+	fmt.Fprintln(&b, "- Logic errors: off-by-one, wrong operators, inverted conditions.")
+	fmt.Fprintln(&b, "- Edge cases: empty, nil, boundary, and concurrent inputs.")
+	fmt.Fprintln(&b, "- Error handling: no silent failures.")
+	fmt.Fprintln(&b, "- Resource cleanup: leaks, unclosed handles.")
+	fmt.Fprintln(&b, "- Races and deadlocks.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "### Implementation vs contract")
+	fmt.Fprintln(&b, "- Does the diff achieve the contract goal?")
+	fmt.Fprintln(&b, "- Is every in-scope item and acceptance criterion covered?")
+	fmt.Fprintln(&b, "- Is wiring and integration complete (components registered, configs updated)?")
+	fmt.Fprintln(&b, "- Are there missing pieces that prevent the change from working end to end?")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "### Test quality")
+	fmt.Fprintln(&b, "- New code paths and error paths have tests.")
+	fmt.Fprintln(&b, "- Fake tests: always-pass tests, hardcoded-value checks, assertions on mock behavior instead of the code under test, ignored errors, commented-out cases.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "### Over-engineering")
+	fmt.Fprintln(&b, "- Wrappers that add nothing.")
+	fmt.Fprintln(&b, "- Factories or abstractions for a single case.")
+	fmt.Fprintln(&b, "- Premature generalization and unused extension points.")
+	fmt.Fprintln(&b, "- Dual implementations where the old path has no callers.")
+	fmt.Fprintln(&b, "- Silent fallbacks that hide failures.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "### Documentation")
+	fmt.Fprintln(&b, "- User-visible changes missing documentation updates.")
+	fmt.Fprintln(&b, "- Internal-only changes need no documentation; do not flag them.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Verify before reporting")
+	fmt.Fprintln(&b, "For every candidate finding, before emitting it:")
+	fmt.Fprintln(&b, "- Read the actual code at the file and line, plus 20-30 surrounding lines.")
+	fmt.Fprintln(&b, "- Check whether the issue is already mitigated elsewhere.")
+	fmt.Fprintln(&b, "- Check for duplicates among existing findings and proposals.")
+	fmt.Fprintln(&b, "- Classify the candidate CONFIRMED or FALSE POSITIVE.")
+	fmt.Fprintln(&b, "- Report only CONFIRMED findings. Discard FALSE POSITIVE candidates.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Pre-existing issues")
+	fmt.Fprintln(&b, "- Issues that were present before this change are advisory: report them as non-blocking findings.")
+	fmt.Fprintln(&b, "- Never mark a pre-existing issue blocking.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Output ordering")
+	fmt.Fprintln(&b, "- Findings first, ordered by severity, each with file and line.")
+	fmt.Fprintln(&b, "- Open questions and assumptions after the findings.")
+	fmt.Fprintln(&b, "- Summary last.")
+	fmt.Fprintln(&b, "- If there are no findings, say so explicitly and name residual risks or testing gaps.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Output shape")
 	fmt.Fprintln(&b, "If you report findings in prose, make them easy for a human to convert manually:")
@@ -1141,6 +1202,7 @@ func renderReviewerPrompt(runID string) string {
 	fmt.Fprintln(&b, `      "file": "internal/app/example.go",`)
 	fmt.Fprintln(&b, `      "line": 42,`)
 	fmt.Fprintln(&b, `      "blocking": true,`)
+	fmt.Fprintln(&b, `      "confidence": "high",`)
 	fmt.Fprintln(&b, `      "evidence": "Short evidence from reviewed artifacts."`)
 	fmt.Fprintln(&b, "    }")
 	fmt.Fprintln(&b, "  ]")
@@ -1152,9 +1214,11 @@ func renderReviewerPrompt(runID string) string {
 	fmt.Fprintln(&b, "- Do not include absolute paths.")
 	fmt.Fprintf(&b, "- Use severity: %s.\n", strings.Join(reviewSeverities, ", "))
 	fmt.Fprintf(&b, "- Use category: %s.\n", strings.Join(reviewCategories, ", "))
-	fmt.Fprintln(&b, "- Set blocking=true for findings that must block a merge: correctness or security bugs, or high/critical severity.")
-	fmt.Fprintln(&b, "- Set blocking=false for advisory, style, or low-severity findings; they are still recorded but do not block convergence.")
-	fmt.Fprintln(&b, "- If uncertain, set blocking=true and explain uncertainty in evidence.")
+	fmt.Fprintln(&b, "- Set blocking=true for findings introduced by this change that must block a merge: correctness or security bugs, or high/critical severity.")
+	fmt.Fprintln(&b, "- Set blocking=false for advisory, pre-existing, or low-severity findings; they are still recorded but do not block convergence.")
+	fmt.Fprintln(&b, "- If unsure whether a confirmed finding should block, set blocking=true and explain why in evidence.")
+	fmt.Fprintf(&b, "- Use confidence: %s. Confidence reflects how certain you are the finding is real after verification.\n", strings.Join(reviewConfidences, ", "))
+	fmt.Fprintln(&b, "- A missing confidence defaults to medium.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "Important: Pactum does not trust this output automatically. A human must accept proposals.")
 	return b.String()
@@ -1254,6 +1318,9 @@ func writeReviewShow(stdout io.Writer, state reviewStateResponse) {
 					location = fmt.Sprintf("%s:%d", location, finding.Line)
 				}
 				fmt.Fprintf(stdout, "    location: %s\n", location)
+			}
+			if finding.Confidence != "" {
+				fmt.Fprintf(stdout, "    confidence: %s\n", finding.Confidence)
 			}
 			fmt.Fprintf(stdout, "    status: %s\n", finding.Status)
 			if finding.LatestResolution != nil && finding.LatestResolution.Note != "" {

@@ -85,16 +85,18 @@ reviews across M8–M10. Rough priority in parentheses.
   the loop is strong at FINDING but cannot yet CONVERGE on a refactor; today its output is
   a draft to curate, not an auto-merge.
 - **Strengthen the executor + reviewer prompts with house style + best practices**
-  (high — design done, ready to slice). The built-in prompt templates carry only
-  generic guidance. A survey of leading agent review prompts is distilled in
-  [`review-prompt-design.md`](review-prompt-design.md); the planned slices:
-  (1) reviewer prompt hardening — the high-signal contract (certain-or-silent,
-  explicit NOT-to-flag list, problems-only), five lens checklists (correctness,
-  implementation-vs-contract, test quality + fake-test detection,
-  over-engineering catalog, documentation gaps), verify-then-report
-  (CONFIRMED/FALSE-POSITIVE classification before emitting), findings-first
-  ordering with honest empties, pre-existing-issues-as-advisory policy, and a
-  per-finding `confidence` field (schema precedent: clarify questions, M15.0);
+  (high — design done; **slice 1 shipped, M19.0**). The built-in prompt templates
+  carried only generic guidance. A survey of leading agent review prompts is
+  distilled in [`review-prompt-design.md`](review-prompt-design.md); the slices:
+  (1) reviewer prompt hardening — **shipped (M19.0)**: the high-signal contract
+  (certain-or-silent, explicit NOT-to-flag list, problems-only), five lens
+  checklists (correctness, implementation-vs-contract, test quality +
+  fake-test detection, over-engineering catalog, documentation gaps),
+  verify-then-report (CONFIRMED/FALSE-POSITIVE classification before
+  emitting), findings-first ordering with honest empties,
+  pre-existing-issues-as-advisory policy, and a per-finding `confidence` field
+  (schema precedent: clarify questions, M15.0; missing defaults to medium,
+  invalid skips with a warning, recorded and displayed but gating nothing yet);
   (2) executor prompt house style — match idiom/naming/comment density, reuse
   helpers, small focused diffs, simplicity-first with the over-engineering
   catalog as DON'Ts, no dead code, behavior-verifying tests; (3) recorded

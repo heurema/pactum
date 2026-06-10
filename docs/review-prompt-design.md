@@ -112,13 +112,16 @@ also enforce:
 
 ## Slicing proposal
 
-1. **Slice 1 — reviewer prompt hardening**: bake the high-signal contract
-   (certain-or-silent, NOT-to-flag list, problems-only), the five lens
-   checklists, verify-then-report (classify CONFIRMED/FALSE POSITIVE before
-   emitting), findings-first ordering with honest empties, the pre-existing →
-   advisory policy, and a `confidence` field on finding proposals (schema
-   precedent: clarify questions) into `renderReviewerPrompt`. Prompt-content
-   tests guard each section.
+1. **Slice 1 — reviewer prompt hardening** (shipped, M19.0): bake the
+   high-signal contract (certain-or-silent, NOT-to-flag list, problems-only),
+   the five lens checklists, verify-then-report (classify CONFIRMED/FALSE
+   POSITIVE before emitting), findings-first ordering with honest empties, the
+   pre-existing → advisory policy, and a `confidence` field on finding
+   proposals (schema precedent: clarify questions) into
+   `renderReviewerPrompt`. Prompt-content tests guard each section. A missing
+   confidence defaults to medium (the kind-field compatibility lesson); an
+   invalid one skips the proposal with a warning; confidence is recorded and
+   displayed but gates nothing yet.
 2. **Slice 2 — executor prompt house style**: the style/discipline section in
    the executor prompt (`renderApprovedPromptMD`), mirroring what the reviewer
    enforces, plus prompt-content tests.

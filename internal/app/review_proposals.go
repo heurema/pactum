@@ -64,13 +64,14 @@ type reviewerFindingBlock struct {
 }
 
 type reviewerFindingProposalInput struct {
-	Message  string `json:"message"`
-	Severity string `json:"severity"`
-	Category string `json:"category"`
-	File     string `json:"file"`
-	Line     *int   `json:"line"`
-	Blocking *bool  `json:"blocking"`
-	Evidence string `json:"evidence"`
+	Message    string `json:"message"`
+	Severity   string `json:"severity"`
+	Category   string `json:"category"`
+	File       string `json:"file"`
+	Line       *int   `json:"line"`
+	Blocking   *bool  `json:"blocking"`
+	Confidence string `json:"confidence"`
+	Evidence   string `json:"evidence"`
 }
 
 type reviewProposeFindingsResponse struct {
@@ -457,6 +458,16 @@ func proposalRecordFromReviewerInput(root string, runID string, attemptID string
 	if input.Blocking != nil {
 		blocking = *input.Blocking
 	}
+	confidence := strings.TrimSpace(input.Confidence)
+	if confidence == "" {
+		// A missing confidence defaults to medium, preserving v1 compatibility
+		// for producers that predate the confidence field. A non-empty value
+		// outside the allowed set is still rejected.
+		confidence = "medium"
+	}
+	if !validReviewConfidence(confidence) {
+		return reviewProposalRecord{}, "proposal skipped: confidence must be one of high, medium, low"
+	}
 	return reviewProposalRecord{
 		Schema:            reviewProposalSchema,
 		ID:                nextReviewID("p", index),
@@ -464,12 +475,13 @@ func proposalRecordFromReviewerInput(root string, runID string, attemptID string
 		Source:            "reviewer_attempt",
 		ReviewerAttemptID: attemptID,
 		findingCore: findingCore{
-			Message:  sanitizeRepoRootInText(root, message),
-			Severity: severity,
-			Category: category,
-			File:     filepath.ToSlash(file),
-			Line:     line,
-			Blocking: blocking,
+			Message:    sanitizeRepoRootInText(root, message),
+			Severity:   severity,
+			Category:   category,
+			File:       filepath.ToSlash(file),
+			Line:       line,
+			Blocking:   blocking,
+			Confidence: confidence,
 		},
 		Evidence:  sanitizeRepoRootInText(root, strings.TrimSpace(input.Evidence)),
 		Status:    "pending",
@@ -477,12 +489,14 @@ func proposalRecordFromReviewerInput(root string, runID string, attemptID string
 	}, ""
 }
 
-// reviewSeverities and reviewCategories are the canonical enum value sets for
-// review findings, shared by the proposal validators and the reviewer prompt.
+// reviewSeverities, reviewCategories, and reviewConfidences are the canonical
+// enum value sets for review findings, shared by the proposal validators and
+// the reviewer prompt.
 // (The CLI kong `enum:` tags in app.go must stay literal struct tags.)
 var (
-	reviewSeverities = []string{"low", "medium", "high", "critical"}
-	reviewCategories = []string{"correctness", "scope", "quality", "validation", "process", "other"}
+	reviewSeverities  = []string{"low", "medium", "high", "critical"}
+	reviewCategories  = []string{"correctness", "scope", "quality", "validation", "process", "other"}
+	reviewConfidences = []string{"high", "medium", "low"}
 )
 
 func validReviewSeverity(value string) bool {
@@ -491,6 +505,10 @@ func validReviewSeverity(value string) bool {
 
 func validReviewCategory(value string) bool {
 	return slices.Contains(reviewCategories, value)
+}
+
+func validReviewConfidence(value string) bool {
+	return slices.Contains(reviewConfidences, value)
 }
 
 func isRepoRelativeReviewFile(file string) bool {
@@ -649,6 +667,9 @@ func writeReviewPendingProposals(stdout io.Writer, proposals []reviewProposalVie
 				location = fmt.Sprintf("%s:%d", location, proposal.Line)
 			}
 			fmt.Fprintf(stdout, "    location: %s\n", location)
+		}
+		if proposal.Confidence != "" {
+			fmt.Fprintf(stdout, "    confidence: %s\n", proposal.Confidence)
 		}
 		fmt.Fprintf(stdout, "    status: %s\n", proposal.Status)
 		if proposal.Evidence != "" {
