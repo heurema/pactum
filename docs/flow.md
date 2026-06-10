@@ -78,6 +78,20 @@ lexical search results for the task, and the accepted memory selected for the
 task. The new run is recorded as the **current run** (a local-only pointer at
 `cache/current-run`), so the staged commands below can omit the run id.
 
+`pactum task new "<task>" --clarify --yes` additionally runs the autonomous
+clarify loop (see [agents.md](agents.md)) against the new run as soon as it is
+created: suggest → auto-resolve high-confidence recommendations → re-suggest,
+until converged, `needs_human`, or the round cap. The command then prints the
+created run, the loop summary, and a "questions awaiting you" section with the
+open blocking questions automation could not resolve — each with its kind,
+confidence, and recommended answer — so you answer only those and proceed to
+`pactum contract approve`. `--reviewer`, `--max-rounds`, and the idle
+`--timeout` pass through to the loop, and `--yes` is required because the loop
+runs clarifier agents directly. A loop failure never rolls back the run: it
+stays created (and current), and you can re-run `pactum clarify loop` on it.
+Without `--clarify`, `task new` only creates the run and the draft contract as
+described above.
+
 `pactum task list` lists every run with its derived lifecycle status, `pactum
 task show [run_id|--latest]` shows one run and its next step, `pactum task use
 <run_id>` changes the current run, and `pactum task current` prints it. When a

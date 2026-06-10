@@ -428,6 +428,16 @@ is required because the loop runs clarifier agents directly. Running the loop
 on an approved run surfaces the same approval-reset warning as `clarify
 suggest`.
 
+`pactum task new "<task>" --clarify --yes` runs this same loop immediately
+after creating the run — one command from task to a pre-interrogated contract.
+The flag is opt-in and demands `--yes` exactly like the loop itself;
+`--reviewer`, `--max-rounds`, and `--timeout` pass through unchanged. The
+command renders the created run, the loop summary, and the open blocking
+questions with their kind, confidence, and recommended answer (the human's
+working set); `--json` embeds the loop summary document alongside the task
+response (`pactum.task_new_clarify.v1`). A loop failure leaves the created run
+intact and current — re-run `pactum clarify loop` on it.
+
 **The safety story is the downstream gate:** the loop lets the clarifier's own
 high-confidence recommendations answer its questions, which is acceptable only
 because `pactum contract approve` stays manual — the loop automates the

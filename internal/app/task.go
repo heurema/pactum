@@ -1,19 +1,24 @@
 package app
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/heurema/pactum/internal/artifacts"
 )
 
 const (
-	taskListSchema    = "pactum.task_list.v1"
-	taskShowSchema    = "pactum.task.v1"
-	taskUseSchema     = "pactum.task_use.v1"
-	taskCurrentSchema = "pactum.task_current.v1"
+	taskListSchema       = "pactum.task_list.v1"
+	taskShowSchema       = "pactum.task.v1"
+	taskUseSchema        = "pactum.task_use.v1"
+	taskCurrentSchema    = "pactum.task_current.v1"
+	taskNewClarifySchema = "pactum.task_new_clarify.v1"
 )
 
 type taskCmd struct {
@@ -25,8 +30,13 @@ type taskCmd struct {
 }
 
 type taskNewCmd struct {
-	Task       string `arg:"" name:"task" help:"Task to prepare a contract for."`
-	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+	Task       string        `arg:"" name:"task" help:"Task to prepare a contract for."`
+	Clarify    bool          `name:"clarify" help:"Run the autonomous clarify loop on the new run (requires --yes)."`
+	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the clarifier. Defaults to cross-model selection against the run executor."`
+	MaxRounds  int           `name:"max-rounds" help:"Maximum clarifier rounds. Defaults to clarify.max_rounds."`
+	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without clarifier output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
+	Yes        bool          `name:"yes" help:"Required confirmation for direct clarifier execution (with --clarify)."`
+	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type taskListCmd struct {
@@ -49,7 +59,14 @@ type taskCurrentCmd struct {
 }
 
 func (c *taskNewCmd) Run(r *runner) error {
-	return r.App.TaskNew(r.Stdout, c.Task, c.JSONOutput)
+	return r.App.TaskNew(r.Stdout, r.Stderr, c.Task, taskNewOptions{
+		Clarify:    c.Clarify,
+		Reviewer:   c.Reviewer,
+		MaxRounds:  c.MaxRounds,
+		Timeout:    c.Timeout,
+		Yes:        c.Yes,
+		JSONOutput: c.JSONOutput,
+	})
 }
 
 func (c *taskListCmd) Run(r *runner) error {
@@ -108,9 +125,29 @@ type taskCurrentResponse struct {
 	Exists       bool   `json:"exists"`
 }
 
+type taskNewOptions struct {
+	Clarify    bool
+	Reviewer   string
+	MaxRounds  int
+	Timeout    time.Duration
+	Yes        bool
+	JSONOutput bool
+}
+
+type taskNewClarifyResponse struct {
+	Schema      string                     `json:"schema"`
+	Run         contractRunState           `json:"run"`
+	ClarifyLoop clarifyLoopSummaryDocument `json:"clarify_loop"`
+}
+
 // TaskNew creates a contract-first run for a task and records it as the current
-// run. It replaces the old top-level `run "..." --contract-only` command.
-func (a App) TaskNew(stdout io.Writer, task string, jsonOutput bool) error {
+// run. It replaces the old top-level `run "..." --contract-only` command. With
+// --clarify it then runs the autonomous clarify loop against the new run, so
+// the human is left with only the questions automation could not resolve.
+func (a App) TaskNew(stdout io.Writer, liveOutput io.Writer, task string, options taskNewOptions) error {
+	if options.Clarify && !options.Yes {
+		return errors.New("task new --clarify requires --yes because it runs clarifier agents directly")
+	}
 	root, workspace, err := a.resolveStatusRoot()
 	if err != nil {
 		return err
@@ -128,11 +165,88 @@ func (a App) TaskNew(stdout io.Writer, task string, jsonOutput bool) error {
 		return err
 	}
 
-	if jsonOutput {
-		return writeJSONResponse(stdout, state)
+	if !options.Clarify {
+		if options.JSONOutput {
+			return writeJSONResponse(stdout, state)
+		}
+		writeTaskCreated(stdout, state)
+		return nil
 	}
-	writeTaskCreated(stdout, state)
+	return a.taskNewClarify(stdout, liveOutput, paths, state, options)
+}
+
+// taskNewClarify runs the clarify loop against the just-created run and renders
+// the combined output: the created run, the loop summary, and the open blocking
+// questions awaiting the human. A loop failure never rolls back the run — the
+// created-run section is printed before the loop starts (human mode), and the
+// returned error names the run and how to re-run the loop on it.
+func (a App) taskNewClarify(stdout io.Writer, liveOutput io.Writer, paths artifacts.Paths, state contractRunState, options taskNewOptions) error {
+	if !options.JSONOutput {
+		writeTaskCreatedRun(stdout, state)
+	}
+	summary, err := a.runTaskNewClarifyLoop(liveOutput, state.RunID, options)
+	if err != nil {
+		return fmt.Errorf("run %s was created, but its clarify loop failed (re-run it with: pactum clarify loop %s --yes): %w", state.RunID, state.RunID, err)
+	}
+	// Re-read the run state: the loop may have moved it (clarifying vs
+	// contract_draft), and both output paths must report the fresh status.
+	runPaths := contractRunPaths(runDirFor(paths, state.RunID))
+	refreshed, err := readContractRunState(runPaths.RunJSON)
+	if err != nil {
+		return err
+	}
+	if options.JSONOutput {
+		return writeJSONResponse(stdout, taskNewClarifyResponse{Schema: taskNewClarifySchema, Run: refreshed, ClarifyLoop: summary})
+	}
+	status, err := buildClarificationStatus(runPaths, refreshed)
+	if err != nil {
+		return err
+	}
+	awaiting := openBlockingClarifyQuestions(status.Questions)
+
+	fmt.Fprintln(stdout)
+	writeClarifyLoopSummary(stdout, summary)
+	fmt.Fprintln(stdout)
+	writeTaskNewQuestionsAwaiting(stdout, awaiting)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Next:")
+	if len(awaiting) > 0 {
+		fmt.Fprintln(stdout, "  Answer each question with: pactum clarify answer <question_id> \"<answer>\", then: pactum contract approve")
+	} else {
+		fmt.Fprintln(stdout, "  Review the contract draft, then: pactum contract approve")
+	}
 	return nil
+}
+
+// runTaskNewClarifyLoop reuses the clarify loop wholesale through its own
+// command path (same rounds, terminals, artifacts, and ledger events as
+// `pactum clarify loop`) and parses its JSON summary so TaskNew can embed it.
+func (a App) runTaskNewClarifyLoop(liveOutput io.Writer, runID string, options taskNewOptions) (clarifyLoopSummaryDocument, error) {
+	var stdout bytes.Buffer
+	if err := a.ClarifyLoop(&stdout, liveOutput, runID, clarifyLoopOptions{
+		Reviewer:   options.Reviewer,
+		MaxRounds:  options.MaxRounds,
+		Timeout:    options.Timeout,
+		Yes:        options.Yes,
+		JSONOutput: true,
+	}); err != nil {
+		return clarifyLoopSummaryDocument{}, err
+	}
+	var summary clarifyLoopSummaryDocument
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		return clarifyLoopSummaryDocument{}, err
+	}
+	return summary, nil
+}
+
+func openBlockingClarifyQuestions(questions []clarifyQuestionStatus) []clarifyQuestionStatus {
+	open := []clarifyQuestionStatus{}
+	for _, question := range questions {
+		if question.Status == "open" && question.Blocking {
+			open = append(open, question)
+		}
+	}
+	return open
 }
 
 // TaskList lists every run with its derived lifecycle status, marking the
@@ -260,6 +374,13 @@ func readRunTask(paths artifacts.Paths, runID string) (string, error) {
 }
 
 func writeTaskCreated(stdout io.Writer, state contractRunState) {
+	writeTaskCreatedRun(stdout, state)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Next:")
+	fmt.Fprintln(stdout, "  Review the contract draft, then: pactum contract approve")
+}
+
+func writeTaskCreatedRun(stdout io.Writer, state contractRunState) {
 	fmt.Fprintln(stdout, "Run created")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
@@ -267,9 +388,37 @@ func writeTaskCreated(stdout io.Writer, state contractRunState) {
 	fmt.Fprintf(stdout, "  status: %s\n", state.Status)
 	fmt.Fprintf(stdout, "  task: %s\n", state.Task)
 	fmt.Fprintln(stdout, "  current: yes")
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Next:")
-	fmt.Fprintln(stdout, "  Review the contract draft, then: pactum contract approve")
+}
+
+// writeTaskNewQuestionsAwaiting renders the human's working set after the
+// clarify loop: every open blocking question with the clarifier's
+// recommendation, so the operator answers only what automation could not
+// resolve.
+func writeTaskNewQuestionsAwaiting(stdout io.Writer, questions []clarifyQuestionStatus) {
+	fmt.Fprintln(stdout, "Questions awaiting you:")
+	if len(questions) == 0 {
+		fmt.Fprintln(stdout, "  (none — no open blocking questions remain)")
+		return
+	}
+	for _, question := range questions {
+		fmt.Fprintf(stdout, "  - %s %s\n", question.ID, question.Question)
+		if question.Kind != "" {
+			fmt.Fprintf(stdout, "    kind: %s\n", question.Kind)
+		}
+		if question.RecommendedAnswer != "" {
+			confidence := question.Confidence
+			if confidence == "" {
+				confidence = "unknown"
+			}
+			fmt.Fprintf(stdout, "    recommended answer (confidence %s): %s\n", confidence, question.RecommendedAnswer)
+		}
+		if len(question.DependsOn) > 0 {
+			fmt.Fprintf(stdout, "    depends on: %s\n", strings.Join(question.DependsOn, ", "))
+		}
+		if question.Blocked {
+			fmt.Fprintln(stdout, "    blocked: waiting on unanswered prerequisites — answer those first")
+		}
+	}
 }
 
 func writeTaskList(stdout io.Writer, response taskListResponse) {

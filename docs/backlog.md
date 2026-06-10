@@ -166,7 +166,14 @@ reviews across M8–M10. Rough priority in parentheses.
   (the revived `clarify.max_rounds` cap, default 3). The loop writes
   `clarify/loop-summary.json` (`pactum.clarify_loop_summary.v1`); `contract
   approve` stays manual — that is the safety story for letting the clarifier's
-  own high-confidence recommendations answer its questions. Remaining Phase 1
+  own high-confidence recommendations answer its questions. The **task-new
+  integration** (M21.0, shipped) folds the loop into task creation: `pactum
+  task new "<task>" --clarify --yes` runs it right after the run is created and
+  surfaces the remaining open blocking questions with their recommendations —
+  one command from task to a pre-interrogated contract; the loop pass-throughs
+  (`--reviewer`, `--max-rounds`, `--timeout`) ride along, a loop failure leaves
+  the created run intact, and without `--clarify` the command is byte-identical
+  to before. Remaining Phase 1
   slices: the **contract-refinement leg** (fold `contract draft` →
   `accept-draft` into the loop so answers refine the contract, not just the
   question set) and the **human-answer round-trip** (resume the loop after the
