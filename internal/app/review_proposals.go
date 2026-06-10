@@ -400,7 +400,8 @@ func prefixAttemptWarning(attemptIDs []string, attemptID string, warning string)
 }
 
 func parseReviewerFindingBlocks(output string) ([]reviewerFindingBlock, []string) {
-	jsonBlocks := extractFencedJSONBlocks(agentMessageText([]byte(output)))
+	text := agentMessageText([]byte(output))
+	jsonBlocks := extractFencedJSONBlocks(text)
 	blocks := make([]reviewerFindingBlock, 0, len(jsonBlocks))
 	warnings := []string{}
 	for _, raw := range jsonBlocks {
@@ -414,6 +415,13 @@ func parseReviewerFindingBlocks(output string) ([]reviewerFindingBlock, []string
 		}
 		blocks = append(blocks, block)
 	}
+	// The schema marker without a single parsed block means the reviewer did
+	// emit findings that this parse missed (e.g. a stream cut before the
+	// closing fence) — zero proposals must read as a parse miss, not a clean
+	// review.
+	if len(blocks) == 0 && strings.Contains(text, reviewerFindingsSchema) {
+		warnings = append(warnings, "findings schema marker present but no findings block parsed: zero proposals is a parse miss, not a clean review (inspect the attempt stdout)")
+	}
 	return blocks, warnings
 }
 
@@ -425,10 +433,17 @@ func extractFencedJSONBlocks(output string) []string {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if !inJSON {
-			if isJSONFenceStart(trimmed) {
+			if isJSONFenceStart(trimmed) || hasGluedJSONFenceStart(trimmed) {
 				inJSON = true
 				b.Reset()
 			}
+			continue
+		}
+		if isJSONFenceStart(trimmed) {
+			// An opening fence cannot close a block: reaching one mid-block
+			// means a stray glued opener swallowed prose — the real block
+			// starts fresh here.
+			b.Reset()
 			continue
 		}
 		if strings.HasPrefix(trimmed, "```") {
@@ -440,6 +455,19 @@ func extractFencedJSONBlocks(output string) []string {
 		b.WriteByte('\n')
 	}
 	return blocks
+}
+
+// hasGluedJSONFenceStart reports whether a line ends with an opening ```json
+// fence glued to prose — the shape an ACP attempt log gets when an agent ends
+// one message without a trailing newline and opens the next with a fence, and
+// the transport cannot separate them (adapters streaming raw token deltas
+// carry no messageId to mark the boundary).
+func hasGluedJSONFenceStart(line string) bool {
+	idx := strings.LastIndex(line, "```")
+	if idx <= 0 {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(line[idx+3:]), "json")
 }
 
 func isJSONFenceStart(line string) bool {

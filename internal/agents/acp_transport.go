@@ -241,6 +241,13 @@ type acpClient struct {
 	promptResponded bool
 	stopReason      acp.StopReason
 	usage           *acp.Usage
+
+	// Message-separator state for SessionUpdate (guarded by mu): whether any
+	// chunk text has been written, the messageId of the last written chunk, and
+	// whether that text ended with a newline. See the boundary rule there.
+	textWritten      bool
+	lastMessageID    string
+	textEndedNewline bool
 }
 
 var _ acp.Client = (*acpClient)(nil)
@@ -342,8 +349,34 @@ func (c *acpClient) SessionUpdate(ctx context.Context, p acp.SessionNotification
 	c.tick()
 	u := p.Update
 	if u.AgentMessageChunk != nil && u.AgentMessageChunk.Content.Text != nil {
+		text := u.AgentMessageChunk.Content.Text.Text
+		if text == "" {
+			return nil
+		}
+		messageID := ""
+		if u.AgentMessageChunk.MessageId != nil {
+			messageID = *u.AgentMessageChunk.MessageId
+		}
 		c.mu.Lock()
-		_, _ = io.WriteString(c.out, u.AgentMessageChunk.Content.Text.Text)
+		// Chunks of different messages are separated by a newline, so a fenced
+		// block opening a later message starts on a fresh line instead of gluing
+		// to the previous message's prose (which would hide it from
+		// extractFencedJSONBlocks). Only an id change between stamped chunks is
+		// a boundary: adapters that stamp deltas share one messageId per
+		// message, while adapters that stamp nothing stream raw token deltas —
+		// injecting separators between those would corrupt the text (a newline
+		// inside a JSON string literal breaks the block), so id-less chunks are
+		// never separated and a glued fence is handled at the parse layer
+		// instead. No separator when the log already ends with a newline.
+		if c.textWritten && !c.textEndedNewline && messageID != "" && messageID != c.lastMessageID {
+			_, _ = io.WriteString(c.out, "\n")
+		}
+		_, _ = io.WriteString(c.out, text)
+		c.textWritten = true
+		if messageID != "" {
+			c.lastMessageID = messageID
+		}
+		c.textEndedNewline = strings.HasSuffix(text, "\n")
 		c.mu.Unlock()
 	}
 	return nil

@@ -321,7 +321,8 @@ func (a App) recordClarifierSuggestions(context clarifyContext, attemptID string
 }
 
 func parseClarifierSuggestionBlocks(output string) ([]clarifierSuggestionsBlock, []string) {
-	jsonBlocks := extractFencedJSONBlocks(agentMessageText([]byte(output)))
+	text := agentMessageText([]byte(output))
+	jsonBlocks := extractFencedJSONBlocks(text)
 	blocks := make([]clarifierSuggestionsBlock, 0, len(jsonBlocks))
 	warnings := []string{}
 	for _, raw := range jsonBlocks {
@@ -334,6 +335,13 @@ func parseClarifierSuggestionBlocks(output string) ([]clarifierSuggestionsBlock,
 			continue
 		}
 		blocks = append(blocks, block)
+	}
+	// The schema marker without a single parsed block means the clarifier did
+	// emit suggestions that this parse missed (e.g. a stream cut before the
+	// closing fence) — zero questions must read as a parse miss, not
+	// convergence.
+	if len(blocks) == 0 && strings.Contains(text, clarificationSuggestionsSchema) {
+		warnings = append(warnings, "suggestions schema marker present but no suggestions block parsed: zero questions is a parse miss, not convergence (inspect the attempt stdout)")
 	}
 	return blocks, warnings
 }
