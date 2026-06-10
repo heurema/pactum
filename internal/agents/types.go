@@ -75,6 +75,17 @@ type RunRequest struct {
 	// guard in addition to the post-hoc gate. The CLI transport ignores this
 	// field. Leaving it nil preserves allow-all behavior for every caller.
 	WritePathAllowed func(repoRelPath string) bool
+	// Model is the resolved model pin for this attempt. The ACP transport
+	// threads it to the adapter (codex: -c overrides, claude: env vars); the CLI
+	// transport ignores it — the pin is already applied to the agent CLI args
+	// via ApplyModelSpec. A zero spec means unpinned.
+	Model ModelSpec
+	// ReadOnly marks the attempt as a read-only stage (review, clarify suggest,
+	// contract draft). The ACP transport denies WriteTextFile and refuses
+	// permission requests instead of auto-approving; the CLI transport ignores
+	// it — read-only-ness is already baked into the reviewer descriptors (e.g.
+	// codex --sandbox read-only).
+	ReadOnly bool
 }
 
 type RunResult struct {

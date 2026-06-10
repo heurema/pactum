@@ -25,7 +25,7 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 	if err := validateRunRequest(request); err != nil {
 		return RunResult{}, err
 	}
-	adapterCmd, adapterArgs, err := acpAdapterCommand(request.Agent.Name)
+	adapterCmd, adapterArgs, adapterEnv, err := acpAdapterCommand(request.Agent.Name, request.Model, request.ReadOnly)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -68,7 +68,7 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 	// go to stderr (captured to the attempt stderr.log).
 	cmd := exec.CommandContext(ctx, adapterCmd, adapterArgs...)
 	cmd.Dir = request.RepoRoot
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), adapterEnv...)
 	cmd.Stderr = stderrFile
 	// Run the adapter in its own process group so the whole tree (the npx wrapper,
 	// the adapter, and the agent child it launches) can be reaped together. On
@@ -88,7 +88,7 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 		return RunResult{}, err
 	}
 
-	client := &acpClient{out: stdoutWriter, repoRoot: request.RepoRoot, writePathAllowed: request.WritePathAllowed}
+	client := &acpClient{out: stdoutWriter, repoRoot: request.RepoRoot, writePathAllowed: request.WritePathAllowed, readOnly: request.ReadOnly}
 	conn := acp.NewClientSideConnection(client, adapterIn, adapterOut)
 	runErr := driveACPSession(ctx, conn, request.RepoRoot, string(prompt), client)
 
@@ -145,25 +145,58 @@ func driveACPSession(ctx context.Context, conn *acp.ClientSideConnection, cwd st
 	return nil
 }
 
-// acpAdapterCommand maps a built-in agent name to the command that launches its
-// ACP server adapter. The adapters are external npm packages run via npx; they
-// inherit the process environment (and thus the agent's auth) from the parent.
-func acpAdapterCommand(agentName string) (string, []string, error) {
+// acpAdapterCommand maps a built-in agent name and its resolved model pin to
+// the command, args, and extra environment entries that launch its ACP server
+// adapter. The adapters are external npm packages run via npx; they inherit the
+// process environment (and thus the agent's auth) from the parent, with the
+// returned entries appended on top. The pin is threaded the way each adapter
+// accepts it: codex-acp takes the same `-c` config overrides as the codex CLI
+// (the model TOML-quoted, matching ApplyModelSpec); claude-agent-acp launches
+// Claude Code, which honors the ANTHROPIC_MODEL and CLAUDE_CODE_EFFORT_LEVEL
+// env vars for the launched session. An empty model/effort adds nothing.
+//
+// readOnly is enforced per leg. claude-agent-acp routes the agent's writes and
+// permission requests through the ACP client, where the read-only acpClient
+// denies them — no adapter flag is needed. codex applies patches natively
+// in-process and consults its own approval policy (a trusted repo asks no
+// permission at all), so client-side denials cannot stop it; the sandbox is
+// pinned at the adapter instead, mirroring the CLI reviewer's
+// `--sandbox read-only`.
+func acpAdapterCommand(agentName string, spec ModelSpec, readOnly bool) (string, []string, []string, error) {
 	switch agentName {
 	case BuiltinClaude:
-		return "npx", []string{"-y", "@agentclientprotocol/claude-agent-acp@latest"}, nil
+		var env []string
+		if spec.Model != "" {
+			env = append(env, "ANTHROPIC_MODEL="+spec.Model)
+		}
+		if spec.Effort != "" {
+			env = append(env, "CLAUDE_CODE_EFFORT_LEVEL="+spec.Effort)
+		}
+		return "npx", []string{"-y", "@agentclientprotocol/claude-agent-acp@latest"}, env, nil
 	case BuiltinCodex:
-		return "npx", []string{"-y", "@zed-industries/codex-acp@latest"}, nil
+		args := []string{"-y", "@zed-industries/codex-acp@latest"}
+		if readOnly {
+			args = append(args, "-c", `sandbox_mode="read-only"`)
+		}
+		if spec.Model != "" {
+			args = append(args, "-c", fmt.Sprintf("model=%q", spec.Model))
+		}
+		if spec.Effort != "" {
+			args = append(args, "-c", "model_reasoning_effort="+spec.Effort)
+		}
+		return "npx", args, nil, nil
 	default:
-		return "", nil, fmt.Errorf("no ACP adapter configured for agent %q", agentName)
+		return "", nil, nil, fmt.Errorf("no ACP adapter configured for agent %q", agentName)
 	}
 }
 
-// acpClient implements acp.Client: it auto-approves permission requests (shell
-// commands are still only enforced post-hoc by the gate), services the agent's
-// file reads/writes against the working tree, streams the agent's text to the
-// attempt log, and records the turn's token usage. When writePathAllowed is set
-// it also enforces the contract path-scope at the WriteTextFile boundary.
+// acpClient implements acp.Client: it auto-approves permission requests on
+// write stages (shell commands are still only enforced post-hoc by the gate),
+// services the agent's file reads/writes against the working tree, streams the
+// agent's text to the attempt log, and records the turn's token usage. When
+// writePathAllowed is set it also enforces the contract path-scope at the
+// WriteTextFile boundary; when readOnly is set it denies writes and refuses
+// permission requests outright.
 type acpClient struct {
 	out io.Writer
 
@@ -173,6 +206,12 @@ type acpClient struct {
 	// the contract scope. See WriteTextFile.
 	repoRoot         string
 	writePathAllowed func(repoRelPath string) bool
+	// readOnly marks a read-only stage (review, clarify suggest, contract
+	// draft): WriteTextFile is denied regardless of writePathAllowed, and
+	// RequestPermission rejects instead of auto-approving. The write capability
+	// stays advertised either way — the agent must route writes through the
+	// client where they are denied, not fall back to native writes.
+	readOnly bool
 
 	mu         sync.Mutex
 	stopReason acp.StopReason
@@ -228,6 +267,19 @@ func derefIntToInt64(p *int) int64 {
 }
 
 func (c *acpClient) RequestPermission(ctx context.Context, p acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
+	// On a read-only stage the agent's write/exec tool calls are refused: pick a
+	// reject option when the agent offers one, otherwise cancel the request.
+	// The cancelled outcome is spec-reserved for prompt-turn cancellation, but
+	// both adapters map it to a per-tool denial (the turn continues), and they
+	// always offer reject options in practice, so this fallback is rarely hit.
+	if c.readOnly {
+		for _, o := range p.Options {
+			if o.Kind == acp.PermissionOptionKindRejectOnce || o.Kind == acp.PermissionOptionKindRejectAlways {
+				return acp.RequestPermissionResponse{Outcome: acp.RequestPermissionOutcome{Selected: &acp.RequestPermissionOutcomeSelected{OptionId: o.OptionId}}}, nil
+			}
+		}
+		return acp.RequestPermissionResponse{Outcome: acp.RequestPermissionOutcome{Cancelled: &acp.RequestPermissionOutcomeCancelled{}}}, nil
+	}
 	for _, o := range p.Options {
 		if o.Kind == acp.PermissionOptionKindAllowOnce || o.Kind == acp.PermissionOptionKindAllowAlways {
 			return acp.RequestPermissionResponse{Outcome: acp.RequestPermissionOutcome{Selected: &acp.RequestPermissionOutcomeSelected{OptionId: o.OptionId}}}, nil
@@ -250,6 +302,9 @@ func (c *acpClient) SessionUpdate(ctx context.Context, p acp.SessionNotification
 }
 
 func (c *acpClient) WriteTextFile(ctx context.Context, p acp.WriteTextFileRequest) (acp.WriteTextFileResponse, error) {
+	if c.readOnly {
+		return acp.WriteTextFileResponse{}, fmt.Errorf("acp write denied: read-only stage: %s", p.Path)
+	}
 	if !filepath.IsAbs(p.Path) {
 		return acp.WriteTextFileResponse{}, fmt.Errorf("acp write: path must be absolute: %s", p.Path)
 	}

@@ -100,7 +100,7 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 		AttemptIDPrefix:  "attempt",
 		LastResultJSON:   context.RunPaths.ReviewFixLastResultJSON,
 		Agent:            prep.Fixer,
-		RequestModel:     prep.ModelSpec.Model,
+		Model:            prep.ModelSpec,
 		PromptRepoPath:   reviewFixPromptRepoPath(runID),
 		ArtifactDir:      reviewFixAttemptsArtifact,
 		Timeout:          timeout,

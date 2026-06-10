@@ -138,11 +138,56 @@ gate, and attempt lifecycle are unaware of it:
 Select it with the `PACTUM_AGENT_TRANSPORT` env var (`acp` or `cli`; the default
 is `cli`). The transport is intentionally not a config key — it is an execution
 mechanism, not workspace state, and ACP is planned to become the hardwired
-default once its remaining gaps (model pins over ACP, a write guard for
-read-only stages) are closed, leaving the env var as a debug escape hatch.
+default, leaving the env var as a debug escape hatch. The two gaps that blocked
+that flip — model pins over ACP and a write guard for read-only stages — are
+closed (see below); what remains is the documented shell-command gating
+limitation for write stages.
 
 The ACP adapters are external npm packages and inherit the agent's auth from the
 environment. `cli` remains the default.
+
+#### Model pins over ACP
+
+The per-agent model pins from `execute.models` / `review.panel` reach the agent
+over ACP the same way they reach the agent CLIs. The resolved pin travels with
+the run request, and the transport threads it the way each adapter accepts it:
+
+- **codex** — `codex-acp` accepts the same `-c` config overrides as the codex
+  CLI, so the adapter is launched with `-c model="<model>"` (TOML-quoted) and
+  `-c model_reasoning_effort=<effort>`.
+- **claude** — `claude-agent-acp` launches Claude Code, which honors the
+  `ANTHROPIC_MODEL` and `CLAUDE_CODE_EFFORT_LEVEL` env vars for the launched
+  session, so the adapter subprocess gets them in its environment.
+
+An unpinned run adds neither; the `Resolved` block shown before a run reflects
+the same pin regardless of transport. One claude caveat: `claude-agent-acp`
+resolves `ANTHROPIC_MODEL` against its known-model list and silently keeps the
+default when nothing matches — a mistyped pin runs the default model while the
+usage ledger records the pinned name (the CLI transport's `--model` fails loudly
+instead).
+
+#### Read-only stages over ACP
+
+The read-only stages (`review`, `clarify suggest`, `contract draft`) are marked
+read-only on the run request, and enforcement follows how each agent actually
+performs writes:
+
+- **claude** — `claude-agent-acp` routes the agent's file edits and permission
+  requests through the ACP client, so the read-only client refuses them: every
+  `WriteTextFile` is denied with a clear `read-only stage` error before touching
+  disk (regardless of path scope), and permission requests are answered with a
+  reject option (or cancelled when the agent offers none) instead of
+  auto-approved. File reads keep working. The client still advertises the write
+  capability — the agent must route writes through the client where they are
+  denied, not fall back to native writes that would bypass it.
+- **codex** — codex applies patches natively in-process and consults its own
+  approval policy (a trusted repo asks no permission at all), so client-side
+  denials cannot stop it. The adapter is instead launched with
+  `-c sandbox_mode="read-only"`, pinning the same sandbox the CLI reviewer uses
+  (`codex --sandbox read-only`) regardless of the operator's codex config.
+
+Write stages (`execute run`, `review fix`) keep auto-approval and the
+scope-guarded writes described below.
 
 #### Real-time write scope guard (ACP only)
 
@@ -157,13 +202,15 @@ catch out-of-scope changes after the fact.
 
 The guard has two deliberate limits:
 
-- It gates **only the file-write boundary** (`WriteTextFile`). An agent that
-  writes through a *shell command* it runs bypasses the guard; such changes are
-  still caught only by the post-hoc gate.
+- It gates **only the file-write boundary** (`WriteTextFile`) and, on write
+  stages, auto-approves permission requests. An agent that writes through a
+  *shell command* it runs bypasses the guard; such changes are still caught
+  only by the post-hoc gate.
 - It applies **only to the ACP transport**. The CLI transport is unchanged and
-  continues to rely entirely on the gate. Read-only stages (reviewer, clarify
-  suggest, contract draft) are not scope-restricted, and when a contract
-  declares no path-scope every in-repo write is allowed.
+  continues to rely entirely on the gate (and, for reviewers, on the agent's
+  own sandbox flags). On write stages, when a contract declares no path-scope
+  every in-repo write is allowed; read-only stages deny every write outright,
+  as described above.
 
 ## Live output
 
