@@ -439,7 +439,28 @@ func renderApprovedPromptMD(contract draftContract, runID string, contractSHA256
 	fmt.Fprintln(&buffer, "- If the contract is ambiguous, stop and request clarification.")
 	fmt.Fprintln(&buffer, "- Use the listed validation commands as expected checks.")
 	fmt.Fprintln(&buffer, "- Pactum gate can run approved validation commands after execution.")
+	fmt.Fprintln(&buffer)
+	writeHouseStyleSection(&buffer)
 	return buffer.Bytes()
+}
+
+// writeHouseStyleSection emits the house-style rules shared by the write-stage
+// prompts (executor and review fixer). The discipline rules (over-engineering,
+// fake tests, dead code, error handling) are the write-side mirror of the
+// built-in reviewer's lenses; the style rules keep the codebase consistent even
+// though the reviewer does not flag pure style.
+func writeHouseStyleSection(w io.Writer) {
+	fmt.Fprintln(w, "## House style")
+	fmt.Fprintln(w, "- Match the surrounding code: idiom, naming, comment density.")
+	fmt.Fprintln(w, "- Comment only where the code is not self-explanatory; do not narrate the obvious.")
+	fmt.Fprintln(w, "- Search for and reuse existing helpers before writing new ones.")
+	fmt.Fprintln(w, "- Keep the diff small and focused: change only what the contract requires.")
+	fmt.Fprintln(w, "- Simplicity first: no enterprise patterns for simple problems, question every new abstraction, no premature generalization or optimization.")
+	fmt.Fprintln(w, "- Over-engineering DON'Ts: wrappers that add nothing, factories or abstractions for a single case, unused extension points, dual implementations where the old path has no callers, silent fallbacks that hide failures.")
+	fmt.Fprintln(w, "- No dead code, no commented-out code, no unused parameters.")
+	fmt.Fprintln(w, "- Handle errors per the project's existing convention; no silent failures.")
+	fmt.Fprintln(w, "- Tests verify behavior, not implementation details, and cover error paths.")
+	fmt.Fprintln(w, "- Fake-test DON'Ts: always-pass tests, hardcoded-value checks, assertions on mock behavior instead of the code under test, ignored errors, commented-out cases.")
 }
 
 func writeApprovedPromptMemorySection(buffer *bytes.Buffer, selection memorySelectionDocument) {

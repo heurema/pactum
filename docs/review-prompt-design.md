@@ -122,9 +122,13 @@ also enforce:
    confidence defaults to medium (the kind-field compatibility lesson); an
    invalid one skips the proposal with a warning; confidence is recorded and
    displayed but gates nothing yet.
-2. **Slice 2 — executor prompt house style**: the style/discipline section in
-   the executor prompt (`renderApprovedPromptMD`), mirroring what the reviewer
-   enforces, plus prompt-content tests.
+2. **Slice 2 — write-stage house style** (shipped, M19.1): one shared
+   house-style section (`writeHouseStyleSection`) in both write-stage prompts —
+   the executor prompt (`renderApprovedPromptMD`) and the review-fix fixer
+   prompt (`renderReviewFixPrompt`, which adds a note that the reviewer
+   re-checks fixes against the same ruleset) — mirroring what the reviewer
+   enforces. Prompt-content tests pin the section's key lines and that both
+   prompts contain the identical section text.
 3. **Follow-up (recorded, not sliced)** — per-panel-member lenses: a registry
    entry could carry an optional review `lens`, letting a panel run
    quality+implementation+testing as separate members instead of one

@@ -299,6 +299,15 @@ hash matches, the project map is fresh and matches the prompt manifest, and the
 accepted-memory boundary recorded at prompt build is unchanged. If any check
 fails, neither dry-run nor run proceeds.
 
+Both write-stage prompts — the built executor prompt and the review-fix fixer
+prompt — carry a shared **house style** section: match the surrounding idiom,
+reuse existing helpers before writing new ones, small focused diffs,
+simplicity-first with the over-engineering catalog as DON'Ts, no dead code,
+and behavior-verifying tests with the fake-test catalog as DON'Ts. It is the
+write-side mirror of the discipline rules the built-in reviewer checks (style rules keep the codebase consistent; the reviewer does not flag pure style) (see
+[`review-prompt-design.md`](review-prompt-design.md)), so the writer is told
+the rules it will be reviewed against.
+
 After execution, gate the result with `pactum gate run <run_id>` (validation
 commands run only with `--allow-commands`).
 

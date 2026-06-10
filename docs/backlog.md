@@ -85,7 +85,7 @@ reviews across M8–M10. Rough priority in parentheses.
   the loop is strong at FINDING but cannot yet CONVERGE on a refactor; today its output is
   a draft to curate, not an auto-merge.
 - **Strengthen the executor + reviewer prompts with house style + best practices**
-  (high — design done; **slice 1 shipped, M19.0**). The built-in prompt templates
+  (slices 1-2 **shipped, M19.0 + M19.1**). The built-in prompt templates
   carried only generic guidance. A survey of leading agent review prompts is
   distilled in [`review-prompt-design.md`](review-prompt-design.md); the slices:
   (1) reviewer prompt hardening — **shipped (M19.0)**: the high-signal contract
@@ -97,9 +97,12 @@ reviews across M8–M10. Rough priority in parentheses.
   pre-existing-issues-as-advisory policy, and a per-finding `confidence` field
   (schema precedent: clarify questions, M15.0; missing defaults to medium,
   invalid skips with a warning, recorded and displayed but gating nothing yet);
-  (2) executor prompt house style — match idiom/naming/comment density, reuse
-  helpers, small focused diffs, simplicity-first with the over-engineering
-  catalog as DON'Ts, no dead code, behavior-verifying tests; (3) recorded
+  (2) write-stage house style — **shipped (M19.1)**: one shared section in the
+  executor and review-fix fixer prompts — match idiom/naming/comment density,
+  reuse helpers, small focused diffs, simplicity-first with the
+  over-engineering catalog as DON'Ts, no dead code, behavior-verifying tests
+  with the fake-test catalog as DON'Ts — so the writer is told the rules the
+  reviewer holds it to; (3) remaining recorded
   follow-up — per-panel-member review lenses (a registry entry could carry an
   optional `lens`), composing with the M18.0 registry and the M12.4 panel.
 - **Loop stop conditions.** Stalemate-by-fingerprint and K-consecutive-clean —

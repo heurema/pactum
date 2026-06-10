@@ -399,6 +399,47 @@ func TestPromptArtifactsUseRepoRelativePaths(t *testing.T) {
 	}
 }
 
+// TestWriteStagePromptsShareHouseStyleSection pins the house-style section in
+// both write-stage prompts: the shared text must carry the key rules, and both
+// the executor prompt and the fixer prompt must contain that exact section, so
+// it cannot be silently dropped or forked in either prompt.
+func TestWriteStagePromptsShareHouseStyleSection(t *testing.T) {
+	var section strings.Builder
+	writeHouseStyleSection(&section)
+	for _, want := range []string{
+		"## House style",
+		"Match the surrounding code: idiom, naming, comment density.",
+		"Search for and reuse existing helpers before writing new ones.",
+		"Keep the diff small and focused: change only what the contract requires.",
+		"Simplicity first: no enterprise patterns for simple problems, question every new abstraction, no premature generalization or optimization.",
+		"Over-engineering DON'Ts: wrappers that add nothing, factories or abstractions for a single case, unused extension points, dual implementations where the old path has no callers, silent fallbacks that hide failures.",
+		"No dead code, no commented-out code, no unused parameters.",
+		"Tests verify behavior, not implementation details, and cover error paths.",
+		"Fake-test DON'Ts: always-pass tests, hardcoded-value checks, assertions on mock behavior instead of the code under test, ignored errors, commented-out cases.",
+	} {
+		if !strings.Contains(section.String(), want) {
+			t.Fatalf("house style section missing %q:\n%s", want, section.String())
+		}
+	}
+
+	executorPrompt := string(renderApprovedPromptMD(draftContract{}, "run_x", "hash", memorySelectionDocument{}))
+	fixerPrompt := renderReviewFixPrompt(reviewFixPreparation{})
+	for name, prompt := range map[string]string{
+		"executor prompt": executorPrompt,
+		"fixer prompt":    fixerPrompt,
+	} {
+		if !strings.Contains(prompt, section.String()) {
+			t.Fatalf("%s missing the shared house style section:\n%s", name, prompt)
+		}
+	}
+	if !strings.Contains(fixerPrompt, "The reviewer will re-check your fixes against the discipline rules above.") {
+		t.Fatalf("fixer prompt missing the reviewer re-check note:\n%s", fixerPrompt)
+	}
+	if strings.Contains(executorPrompt, "The reviewer will re-check your fixes against the discipline rules above.") {
+		t.Fatalf("reviewer re-check note is fixer-specific and should not be in the executor prompt:\n%s", executorPrompt)
+	}
+}
+
 func TestPromptBuildWritesLedgerEvent(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedPromptContract(t, root)
