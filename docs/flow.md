@@ -20,7 +20,7 @@ report, the review, and the accepted memory are all files you can read.
 | Execute | `pactum execute dry-run`, `pactum execute run`, `pactum execute show/status` | `execute/dry-run.json`, `execute/attempts/attempt_NNN/{request,result,stdout,stderr}`, `execute/last-result.json` | `dry-run`/`run`: Yes; `show`/`status`: No |
 | Gate | `pactum gate run`, `pactum gate show` | `gate/gate-report.json`, `gate/validation/command_NNN/{stdout,stderr,result}` | `run`: Yes; `show`: No |
 | Review | `pactum review prepare`, `pactum review add-finding`, `pactum review resolve`, `pactum review approve`, `pactum review status/show` | `review/review.json`, `review/findings.jsonl`, `review/resolutions.jsonl` | mutating subcommands: Yes; `status`/`show`: No |
-| Reviewer proposals | `pactum review dry-run`, `pactum review run`, `pactum review propose-findings`, `pactum review accept-proposal`, `pactum review reject-proposal` | `review/reviewer-context.md`, `review/reviewer-prompt.md`, `review/reviewer-dry-run.json`, `review/reviewer-attempts/...`, `review/proposals.jsonl`, `review/proposal-decisions.jsonl` | Yes |
+| Reviewer proposals | `pactum review dry-run`, `pactum review run`, `pactum review propose-findings`, `pactum review accept-proposal`, `pactum review reject-proposal` | `review/reviewer-context.md`, `review/reviewer-prompt-<name>-<lens>.md`, `review/reviewer-dry-run.json`, `review/reviewer-attempts/...`, `review/proposals.jsonl`, `review/proposal-decisions.jsonl` | Yes |
 | Memory | `pactum memory propose`, `pactum memory show`, `pactum memory accept`, `pactum memory search`, `pactum memory refresh`, `pactum memory stale` | `runs/<id>/memory/{memory-candidate.json,memory-candidate.md,memory-acceptance.json}`, `memory/items.jsonl`, `memory/project-memory.md`, `memory/refreshes.jsonl` | `propose`/`accept`/`refresh`: Yes; `show`/`search`/`stale`: No |
 
 "Mutates state?" means the command writes durable artifacts and/or appends to
@@ -165,7 +165,8 @@ Reviewer agents are optional and never trusted automatically. `pactum review
 dry-run` prepares the reviewer prompt/context without launching. `pactum review
 run` runs a reviewer subprocess and captures its output. `pactum review
 propose-findings <run_id>` parses optional fenced-JSON finding blocks from the
-reviewer's captured stdout into **pending proposals**. A human then runs
+captured stdout of every completed reviewer attempt (all lenses; `--attempt`
+narrows to one) into **pending proposals**. A human then runs
 `pactum review accept-proposal <run_id> p_001` (which creates a real finding) or
 `pactum review reject-proposal <run_id> p_001 --reason "..."`. Pending proposals
 must be decided before memory can be proposed.

@@ -90,8 +90,8 @@ func TestReviewLoopFindingsThenCleanUsesConfigMaxRounds(t *testing.T) {
 	if artifact.TerminalReason != summary.TerminalReason || len(artifact.Rounds) != len(summary.Rounds) {
 		t.Fatalf("summary artifact mismatch:\nstdout=%#v\nartifact=%#v", summary, artifact)
 	}
-	assertFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_001").ResultJSON)
-	assertFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_002").ResultJSON)
+	assertFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(1)).ResultJSON)
+	assertFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(2)).ResultJSON)
 	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_002").ResultJSON)
 
@@ -143,7 +143,7 @@ func TestReviewLoopAppliesFixOutcomesAndShrinksOpenFindings(t *testing.T) {
 		t.Fatalf("fix outcome resolution mismatch: %#v", resolutions)
 	}
 	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
-	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_002").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(2)).ResultJSON)
 }
 
 func TestReviewLoopResolvesWhenBlockingFindingRebutted(t *testing.T) {
@@ -239,7 +239,7 @@ func TestReviewLoopStopsAtMaxRounds(t *testing.T) {
 		t.Fatalf("max rounds summary mismatch: %#v", summary)
 	}
 	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
-	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_002").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(2)).ResultJSON)
 }
 
 func TestReviewLoopStopsWhenCapturedTokenBudgetExceeded(t *testing.T) {
@@ -281,9 +281,9 @@ func TestReviewLoopStopsWhenCapturedTokenBudgetExceeded(t *testing.T) {
 	if summary.Budget == nil || summary.Budget.Mode != budgetModeBlock || summary.Budget.MaxTokens != 100 || summary.Budget.CapturedTotalTokens != 150 {
 		t.Fatalf("budget summary mismatch: %#v", summary.Budget)
 	}
-	assertFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_001").ResultJSON)
+	assertFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(1)).ResultJSON)
 	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
-	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_002").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(2)).ResultJSON)
 	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_002").ResultJSON)
 }
 
@@ -478,7 +478,7 @@ func TestReviewLoopDedupsReproposedOpenFindingAcrossRounds(t *testing.T) {
 	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_002").ResultJSON)
 	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_003").ResultJSON)
-	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_003").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(3)).ResultJSON)
 }
 
 func TestReviewLoopAcceptsNewFindingInLaterRound(t *testing.T) {
@@ -582,25 +582,58 @@ func TestReviewLoopPanelRunsReviewersAndUpgradesDuplicateSeverity(t *testing.T) 
 	if summary.Reviewer != reviewLoopPanelLowName+","+reviewLoopPanelHighName || !sameStringSlice(summary.Reviewers, []string{reviewLoopPanelLowName, reviewLoopPanelHighName}) {
 		t.Fatalf("summary should record full reviewer panel: %#v", summary)
 	}
-	if len(summary.Rounds) != 1 || len(summary.Rounds[0].ReviewerAttemptIDs) != 2 || summary.Rounds[0].ReviewerAttemptID == "" {
-		t.Fatalf("round should record both reviewer attempts: %#v", summary.Rounds)
+	// Two panel members times five lenses: ten attempts in the round.
+	wantAttempts := 2 * len(reviewLenses)
+	if len(summary.Rounds) != 1 || len(summary.Rounds[0].ReviewerAttemptIDs) != wantAttempts || summary.Rounds[0].ReviewerAttemptID == "" {
+		t.Fatalf("round should record member-times-lens reviewer attempts: %#v", summary.Rounds)
 	}
-	if got := summary.Rounds[0]; got.ProposalsCreated != 2 || got.ProposalsAccepted != 1 || got.OpenFindings != 1 {
+	// Every lens of both members emits the same finding; all ten cross-member,
+	// cross-lens duplicates collapse onto one stored finding.
+	if got := summary.Rounds[0]; got.ProposalsCreated != wantAttempts || got.ProposalsAccepted != 1 || got.OpenFindings != 1 {
 		t.Fatalf("panel duplicate round mismatch: %#v", got)
 	}
-	for _, attemptID := range summary.Rounds[0].ReviewerAttemptIDs {
-		assertFile(t, reviewerAttemptPaths(runPaths, attemptID).ResultJSON)
+	if len(summary.Rounds[0].ReviewerAttempts) != wantAttempts {
+		t.Fatalf("round should surface the lens per attempt: %#v", summary.Rounds[0].ReviewerAttempts)
+	}
+	seenMemberLenses := map[string]bool{}
+	for _, ref := range summary.Rounds[0].ReviewerAttempts {
+		if seenMemberLenses[ref.Reviewer+"/"+ref.Lens] {
+			t.Fatalf("duplicate member/lens attempt ref: %#v", summary.Rounds[0].ReviewerAttempts)
+		}
+		seenMemberLenses[ref.Reviewer+"/"+ref.Lens] = true
+		attemptPaths := reviewerAttemptPaths(runPaths, ref.AttemptID)
+		assertFile(t, attemptPaths.ResultJSON)
+		// Each attempt's request points at its own per-member, per-lens prompt.
+		var request reviewerRequestDocument
+		assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.RequestJSON)), &request))
+		wantPrompt := "review/reviewer-prompt-" + ref.Reviewer + "-" + ref.Lens + ".md"
+		if request.Lens != ref.Lens || request.Artifacts.ReviewerPrompt != wantPrompt || request.WouldRun.Stdin != runArtifactRepoRel(runID, wantPrompt) {
+			t.Fatalf("attempt %s request prompt mismatch (want %s): %#v", ref.AttemptID, wantPrompt, request)
+		}
+	}
+	for _, member := range []string{reviewLoopPanelLowName, reviewLoopPanelHighName} {
+		for _, lens := range reviewLenses {
+			if !seenMemberLenses[member+"/"+lens.Key] {
+				t.Fatalf("missing attempt for member %s lens %s: %#v", member, lens.Key, seenMemberLenses)
+			}
+			assertFile(t, reviewerLensPromptPath(runPaths, member, lens))
+		}
 	}
 	findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL)
 	if len(findings) != 1 || findings[0].Severity != "critical" {
 		t.Fatalf("duplicate severity should upgrade stored finding to critical: %#v", findings)
 	}
 	decisions := readReviewProposalDecisions(t, runPaths.ReviewProposalDecisionsJSONL)
-	if len(decisions) != 2 || decisions[0].Decision != "accepted" || decisions[1].Decision != "duplicate" || decisions[1].FindingID != "f_001" {
+	if len(decisions) != wantAttempts || decisions[0].Decision != "accepted" {
 		t.Fatalf("panel duplicate decisions mismatch: %#v", decisions)
 	}
+	for _, decision := range decisions[1:] {
+		if decision.Decision != "duplicate" || decision.FindingID != "f_001" {
+			t.Fatalf("panel duplicate decisions mismatch: %#v", decisions)
+		}
+	}
 	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
-	if countEvents(eventTypes, "reviewer_attempt_started") != 2 || countEvents(eventTypes, "review_finding_severity_upgraded") != 1 {
+	if countEvents(eventTypes, "reviewer_attempt_started") != wantAttempts || countEvents(eventTypes, "review_finding_severity_upgraded") != 1 {
 		t.Fatalf("panel ledger event counts mismatch:\n%v", eventTypes)
 	}
 	if got := stderr.String(); !strings.Contains(got, "panel_reviewer=low") || !strings.Contains(got, "panel_reviewer=high") {
@@ -630,11 +663,13 @@ func TestReviewLoopExplicitReviewerDisablesConfiguredPanel(t *testing.T) {
 	if summary.Reviewer != reviewLoopReviewerName || len(summary.Reviewers) != 0 {
 		t.Fatalf("explicit reviewer should disable configured panel: %#v", summary)
 	}
-	if len(summary.Rounds) != 1 || summary.Rounds[0].ReviewerAttemptID == "" || len(summary.Rounds[0].ReviewerAttemptIDs) != 0 {
-		t.Fatalf("explicit reviewer should run one reviewer attempt: %#v", summary.Rounds)
+	// A single explicit reviewer still fans out into the five lens attempts,
+	// but not into the panel's member-times-lens count.
+	if len(summary.Rounds) != 1 || summary.Rounds[0].ReviewerAttemptID == "" || len(summary.Rounds[0].ReviewerAttemptIDs) != len(reviewLenses) {
+		t.Fatalf("explicit reviewer should run one lens fan-out: %#v", summary.Rounds)
 	}
 	assertFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_001").ResultJSON)
-	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_002").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, fmt.Sprintf("reviewer_attempt_%03d", len(reviewLenses)+1)).ResultJSON)
 }
 
 func TestReviewLoopCleanPanelRoundTerminates(t *testing.T) {
@@ -659,11 +694,12 @@ func TestReviewLoopCleanPanelRoundTerminates(t *testing.T) {
 	if summary.TerminalReason != "clean_round" || len(summary.Rounds) != 1 {
 		t.Fatalf("clean panel should terminate after one round: %#v", summary)
 	}
-	if len(summary.Rounds[0].ReviewerAttemptIDs) != 2 || summary.Rounds[0].ProposalsCreated != 0 || summary.Rounds[0].ProposalsAccepted != 0 {
+	if len(summary.Rounds[0].ReviewerAttemptIDs) != 2*len(reviewLenses) || summary.Rounds[0].ProposalsCreated != 0 || summary.Rounds[0].ProposalsAccepted != 0 {
 		t.Fatalf("clean panel round mismatch: %#v", summary.Rounds[0])
 	}
-	assertFile(t, reviewerAttemptPaths(runPaths, summary.Rounds[0].ReviewerAttemptIDs[0]).ResultJSON)
-	assertFile(t, reviewerAttemptPaths(runPaths, summary.Rounds[0].ReviewerAttemptIDs[1]).ResultJSON)
+	for _, attemptID := range summary.Rounds[0].ReviewerAttemptIDs {
+		assertFile(t, reviewerAttemptPaths(runPaths, attemptID).ResultJSON)
+	}
 	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 }
 
@@ -829,7 +865,7 @@ func TestReviewLoopResetsStalemateStreakWhenFixerChangesWorkingTree(t *testing.T
 	}
 	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_003").ResultJSON)
 	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_004").ResultJSON)
-	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_004").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(4)).ResultJSON)
 }
 
 func TestReviewLoopRequiresConsecutiveCleanRounds(t *testing.T) {
@@ -871,8 +907,8 @@ func TestReviewLoopRequiresConsecutiveCleanRounds(t *testing.T) {
 	if got := summary.Rounds[1]; got.ProposalsAccepted != 1 || got.FixerAttemptID != "attempt_001" || got.UnchangedFingerprintStreak != 1 {
 		t.Fatalf("non-clean round should reset clean streak and run one fixer: %#v", got)
 	}
-	assertFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_004").ResultJSON)
-	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_005").ResultJSON)
+	assertFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(4)).ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(5)).ResultJSON)
 	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_002").ResultJSON)
 }
@@ -946,7 +982,7 @@ func TestReviewLoopStopsWithGateFailedWhenFixerBreaksValidation(t *testing.T) {
 		t.Fatalf("failed gate report mismatch: %#v", report)
 	}
 	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
-	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_002").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(2)).ResultJSON)
 }
 
 func TestReviewLoopStopsWithGateFailedWhenFixerViolatesPathScope(t *testing.T) {
@@ -989,7 +1025,7 @@ func TestReviewLoopStopsWithGateFailedWhenFixerViolatesPathScope(t *testing.T) {
 		t.Fatalf("blocked scope should report fixer README change: %#v", report.Scope)
 	}
 	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
-	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_002").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(2)).ResultJSON)
 }
 
 func TestReviewLoopGateInfrastructureErrorStillReturnsError(t *testing.T) {
@@ -1165,6 +1201,12 @@ func setReviewLoopHelperEnv(t *testing.T, root string, sequenceFile string, mode
 	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_EXPECTED_CWD", root)
 }
 
+// reviewLoopRoundFirstAttemptID is the first lens attempt ID of the given
+// round for a single-reviewer loop: each round spawns one attempt per lens.
+func reviewLoopRoundFirstAttemptID(round int) string {
+	return fmt.Sprintf("reviewer_attempt_%03d", (round-1)*len(reviewLenses)+1)
+}
+
 func readReviewLoopSummary(t *testing.T, path string) reviewLoopSummaryDocument {
 	t.Helper()
 	var summary reviewLoopSummaryDocument
@@ -1254,6 +1296,12 @@ func TestReviewLoopReviewerHelperProcess(t *testing.T) {
 		os.Exit(2)
 	}
 	fmt.Printf("stdin_has_reviewer_prompt=%t\n", strings.Contains(string(stdin), "# Reviewer Prompt"))
+	// Only the correctness-lens attempt of the five-lens fan-out reports and
+	// advances the round sequence; the other lenses come back clean. This keeps
+	// one reviewer finding per round, so the sequence file counts rounds.
+	if !strings.Contains(string(stdin), "You are the correctness reviewer") {
+		os.Exit(0)
+	}
 	attempt := nextReviewLoopReviewerAttempt()
 	mode := os.Getenv("PACTUM_REVIEW_LOOP_REVIEWER_MODE")
 	validFinding := []map[string]any{reviewLoopFixtureFinding("loop reviewer found a fixable issue", 42)}

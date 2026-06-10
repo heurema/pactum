@@ -119,18 +119,20 @@ func TestReviewRunRecordsCapturedCodexUsage(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	records, err := readUsageRecords(runPaths.UsageJSONL)
 	assertNoError(t, err)
-	if len(records) != 1 {
-		t.Fatalf("usage record count = %d, want 1: %#v", len(records), records)
+	// One usage record per lens attempt, each under the registry name.
+	if len(records) != len(reviewLenses) {
+		t.Fatalf("usage record count = %d, want %d: %#v", len(records), len(reviewLenses), records)
 	}
-	record := records[0]
-	if !record.Captured || record.Stage != "review" || record.Provider != "codex" || record.Agent != "codex" {
-		t.Fatalf("reviewer usage should be captured with review identity: %#v", record)
-	}
-	if record.InputTokens != 210 || record.OutputTokens != 65 || record.TotalTokens != 275 {
-		t.Fatalf("reviewer usage counts mismatch: %#v", record)
-	}
-	if record.CacheReadTokens != 40 || record.ReasoningTokens != 15 || len(record.Raw) == 0 {
-		t.Fatalf("reviewer usage classes/raw mismatch: %#v", record)
+	for _, record := range records {
+		if !record.Captured || record.Stage != "review" || record.Provider != "codex" || record.Agent != "codex" || record.AgentName != "codex" {
+			t.Fatalf("reviewer usage should be captured with review identity: %#v", record)
+		}
+		if record.InputTokens != 210 || record.OutputTokens != 65 || record.TotalTokens != 275 {
+			t.Fatalf("reviewer usage counts mismatch: %#v", record)
+		}
+		if record.CacheReadTokens != 40 || record.ReasoningTokens != 15 || len(record.Raw) == 0 {
+			t.Fatalf("reviewer usage classes/raw mismatch: %#v", record)
+		}
 	}
 }
 
