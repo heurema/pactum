@@ -916,3 +916,14 @@
 {"type":"contract_approved","timestamp":"2026-06-10T16:10:28.678309Z","run_id":"run_20260610_161028"}
 {"type":"executor_prompt_built","timestamp":"2026-06-10T16:10:28.709951Z","run_id":"run_20260610_161028"}
 {"type":"execution_dry_run_prepared","timestamp":"2026-06-10T16:10:28.74719Z","run_id":"run_20260610_161028"}
+{"type":"map_refresh_started","timestamp":"2026-06-10T16:30:50.970293Z","run_id":"map_20260610_163050"}
+{"type":"search_index_started","timestamp":"2026-06-10T16:30:51.236903Z","run_id":"map_20260610_163050"}
+{"type":"search_index_finished","timestamp":"2026-06-10T16:30:51.251992Z","run_id":"map_20260610_163050"}
+{"type":"map_refresh_finished","timestamp":"2026-06-10T16:30:51.252085Z","run_id":"map_20260610_163050"}
+{"type":"run_created","timestamp":"2026-06-10T16:30:51.295156Z","run_id":"run_20260610_163051"}
+{"type":"contract_draft_created","timestamp":"2026-06-10T16:30:51.295156Z","run_id":"run_20260610_163051"}
+{"type":"contract_revised","timestamp":"2026-06-10T16:31:22.746837Z","run_id":"run_20260610_163051"}
+{"type":"contract_approved","timestamp":"2026-06-10T16:31:22.758314Z","run_id":"run_20260610_163051"}
+{"type":"executor_prompt_built","timestamp":"2026-06-10T16:31:22.818154Z","run_id":"run_20260610_163051"}
+{"type":"execution_attempt_started","timestamp":"2026-06-10T16:31:32.839471Z","run_id":"run_20260610_163051"}
+{"type":"execution_attempt_finished","timestamp":"2026-06-10T16:52:12.465174Z","run_id":"run_20260610_163051"}
