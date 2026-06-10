@@ -2082,7 +2082,7 @@ func TestReviewPromptIncludesStructuredProposalContract(t *testing.T) {
 	for _, want := range []string{
 		"## Optional structured finding proposals",
 		`"schema": "pactum.reviewer_findings.v1"`,
-		"Focus on real problems, not style preferences.",
+		"Style or formatting preferences.",
 		"Read the actual file and surrounding context before proposing a finding.",
 		"Check whether the issue is already mitigated or already represented in existing findings/proposals.",
 		"Important: Pactum does not trust this output automatically. A human must accept proposals.",
@@ -2090,6 +2090,144 @@ func TestReviewPromptIncludesStructuredProposalContract(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("reviewer prompt missing %q:\n%s", want, prompt)
 		}
+	}
+}
+
+func TestReviewerPromptIncludesReviewMethodology(t *testing.T) {
+	prompt := renderReviewerPrompt("run_x")
+	for _, want := range []string{
+		"## High-signal contract",
+		"If you are not certain an issue is real, do not flag it. False positives erode trust and waste reviewer time.",
+		"Report problems only. No positive observations, no praise.",
+		"- Do NOT flag:",
+		"Style or formatting preferences.",
+		"Anything the contract's validation commands already catch",
+		"Input-dependent hypotheticals without a concrete failure path.",
+		"Subjective redesign suggestions.",
+		"## Review lenses",
+		"### Correctness",
+		"### Implementation vs contract",
+		"### Test quality",
+		"Fake tests: always-pass tests, hardcoded-value checks",
+		"### Over-engineering",
+		"### Documentation",
+		"## Verify before reporting",
+		"Read the actual code at the file and line, plus 20-30 surrounding lines.",
+		"Classify the candidate CONFIRMED or FALSE POSITIVE.",
+		"Report only CONFIRMED findings. Discard FALSE POSITIVE candidates.",
+		"## Pre-existing issues",
+		"report them as non-blocking findings",
+		"Never mark a pre-existing issue blocking.",
+		"## Output ordering",
+		"Findings first, ordered by severity, each with file and line.",
+		"If there are no findings, say so explicitly and name residual risks or testing gaps.",
+		`"confidence": "high",`,
+		"- Use confidence: high, medium, low.",
+		"- A missing confidence defaults to medium.",
+		"blocking=true for findings introduced by this change",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("reviewer prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, gone := range []string{
+		"If uncertain, recommend a blocking manual finding.",
+		"If uncertain, set blocking=true and explain uncertainty in evidence.",
+		"If uncertain, propose a blocking finding that asks for clarification.",
+	} {
+		if strings.Contains(prompt, gone) {
+			t.Fatalf("reviewer prompt still contains %q, which contradicts certain-or-silent:\n%s", gone, prompt)
+		}
+	}
+}
+
+// TestReviewerContextAlignsWithCertainOrSilent pins that the reviewer context
+// artifact (the prompt's first input) carries the same uncertainty rule as the
+// prompt — an "if uncertain, escalate" leftover there would contradict the
+// high-signal contract on every reviewer invocation.
+func TestReviewerContextAlignsWithCertainOrSilent(t *testing.T) {
+	prep := reviewerDryRunPreparation{}
+	context := renderReviewerContext(prep)
+	if strings.Contains(context, "If uncertain, propose a blocking finding") {
+		t.Fatalf("reviewer context still escalates uncertainty, contradicting certain-or-silent:\n%s", context)
+	}
+	if !strings.Contains(context, "If you are not certain an issue is real after verification, do not flag it.") {
+		t.Fatalf("reviewer context missing the certain-or-silent rule:\n%s", context)
+	}
+}
+
+func TestReviewProposeFindingsConfidenceDefaultsAndValidation(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", reviewerStructuredOutput([]map[string]any{
+		{
+			"message":  "missing confidence defaults to medium",
+			"severity": "medium",
+			"category": "quality",
+		},
+		{
+			"message":    "valid confidence is recorded",
+			"severity":   "high",
+			"category":   "correctness",
+			"confidence": "low",
+		},
+		{
+			"message":    "invalid confidence is skipped",
+			"severity":   "medium",
+			"category":   "quality",
+			"confidence": "certain",
+		},
+	}), true)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "propose-findings", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review propose-findings --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var response reviewProposeFindingsResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if len(response.Created) != 2 {
+		t.Fatalf("unexpected created proposals: %#v", response.Created)
+	}
+	if response.Created[0].Confidence != "medium" {
+		t.Fatalf("missing confidence should default to medium: %#v", response.Created[0])
+	}
+	if response.Created[1].Confidence != "low" {
+		t.Fatalf("valid confidence should be recorded: %#v", response.Created[1])
+	}
+	warnings := strings.Join(response.Warnings, "\n")
+	if !strings.Contains(warnings, "confidence must be one of high, medium, low") {
+		t.Fatalf("warnings missing confidence validation:\n%v", response.Warnings)
+	}
+}
+
+func TestReviewShowDisplaysFindingConfidence(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", reviewerStructuredOutput([]map[string]any{
+		{
+			"message":    "confidence travels to the finding",
+			"severity":   "medium",
+			"category":   "quality",
+			"file":       "internal/app/review.go",
+			"confidence": "high",
+		},
+	}), true)
+	runReviewCommand(t, app, "review", "propose-findings", runID)
+	runReviewCommand(t, app, "review", "accept-proposal", runID, "p_001")
+
+	findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL)
+	if len(findings) != 1 || findings[0].Confidence != "high" {
+		t.Fatalf("accepted finding should carry proposal confidence: %#v", findings)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "show", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review show exited %d, stderr: %s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "confidence: high") {
+		t.Fatalf("review show should display finding confidence:\n%s", got)
 	}
 }
 

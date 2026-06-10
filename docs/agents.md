@@ -422,6 +422,16 @@ automatically.
   terminal and **requires `--yes`** for non-interactive/automated use; `review
   dry-run` never needs `--yes`.
 
+The built-in reviewer prompt encodes a hardened review methodology: findings
+must be certain-or-silent (with an explicit NOT-to-flag list), five review
+lenses (correctness, implementation-vs-contract, test quality,
+over-engineering, documentation), a verify-then-report pass that emits only
+CONFIRMED candidates, findings-first output with honest empties, pre-existing
+issues as non-blocking advisories, and a per-finding `confidence`
+(high/medium/low — recorded and displayed, not yet gating anything). The
+design sources are condensed in
+[`review-prompt-design.md`](review-prompt-design.md).
+
 A reviewer can emit optional structured finding proposals as a fenced JSON block.
 `pactum review propose-findings <run_id>` parses the captured reviewer stdout
 into **pending proposals** — it does not create findings. In the manual flow, a
