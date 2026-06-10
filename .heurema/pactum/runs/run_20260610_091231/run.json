@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260610_091231",
+  "status": "contract_approved",
+  "task": "Agent registry in the config: a required top-level agents list — entries {name, agent, model, effort} with name decoupled from the built-in — that review.panel, --agent, and --reviewer reference by name; the execute section disappears, the default config generates a claude entry, and an empty registry fails loudly",
+  "created_at": "2026-06-10T09:12:31.398697Z",
+  "updated_at": "2026-06-10T09:14:07.680147Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260610_091231",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}
