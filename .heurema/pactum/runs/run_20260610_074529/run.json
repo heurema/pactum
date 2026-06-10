@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260610_074529",
+  "status": "contract_approved",
+  "task": "Autonomous clarify loop (Phase 1 slice 1): a clarify loop command that rounds suggest -\u003e auto-resolve high-confidence recommendations -\u003e re-suggest, stopping on convergence (no open blocking questions), no-progress (needs human), or max rounds — composing the M15 grill-me pieces (recommended_answer/confidence, Converged signal) into the review-loop pattern",
+  "created_at": "2026-06-10T07:45:29.498911Z",
+  "updated_at": "2026-06-10T07:46:05.436186Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260610_074529",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}
