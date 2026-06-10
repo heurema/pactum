@@ -1,0 +1,28 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260610_161028",
+  "status": "approved",
+  "goal": "Demo",
+  "scope": {
+    "in": [
+      "x"
+    ],
+    "out": []
+  },
+  "acceptance_criteria": [
+    "y"
+  ],
+  "validation": {
+    "commands": [
+      "go build ./..."
+    ]
+  },
+  "assumptions": [],
+  "open_questions": [],
+  "clarifications": {
+    "questions": []
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}
