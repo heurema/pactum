@@ -8,11 +8,14 @@ auditable stages. Every stage writes durable artifacts under a workspace
 directory, so you can see exactly what an agent was asked to do, what it did, and
 how it was checked — before any change is trusted.
 
-Pactum invokes agent CLIs (`codex`, `claude`) directly as subprocesses. It does
-**not** sandbox or isolate execution: an agent runs with your shell environment
-and your repository, just as if you launched it yourself. Pactum's value is the
-contract, the boundaries it records, and the deterministic checks around the
-agent — not a security boundary.
+Pactum invokes agents (`codex`, `claude`) directly as subprocesses — by default
+through each agent's Agent Client Protocol (ACP) adapter, which streams output
+live and lets Pactum guard file writes in real time; setting
+`PACTUM_AGENT_TRANSPORT=cli` is the debug escape hatch that invokes the one-shot
+agent CLIs instead. It does **not** sandbox or isolate execution: an agent runs
+with your shell environment and your repository, just as if you launched it
+yourself. Pactum's value is the contract, the boundaries it records, and the
+deterministic checks around the agent — not a security boundary.
 
 ## What Pactum does
 

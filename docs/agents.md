@@ -109,21 +109,20 @@ pactum agents doctor --agent claude
 ## Execution model: direct subprocess, no isolation
 
 When you run an agent, Pactum launches it as a **direct subprocess in your
-repository**:
+repository** (by default that subprocess is the agent's ACP adapter — see the
+transport section below):
 
 - The working directory is your repository root.
 - The agent inherits your environment.
 - The prepared prompt is piped to the agent's standard input.
 - The agent's stdout and stderr are captured to attempt artifacts.
 
-### Transport: CLI (default) or ACP
+### Transport: ACP (default) or CLI
 
 How the agent is *reached* is a swappable transport behind one seam, so the loop,
 gate, and attempt lifecycle are unaware of it:
 
-- **`cli`** (default) — the one-shot agent CLI described above (`codex exec`,
-  `claude -p`), with the prompt piped to stdin.
-- **`acp`** — the agent is driven over the [Agent Client
+- **`acp`** (default) — the agent is driven over the [Agent Client
   Protocol](https://agentclientprotocol.com) via its server adapter
   (`claude-agent-acp` / `codex-acp`, launched with `npx`) using a JSON-RPC client.
   The agent edits the working tree through client-serviced file writes, its text
@@ -134,17 +133,20 @@ gate, and attempt lifecycle are unaware of it:
   [`cost-budget-design.md`](cost-budget-design.md)), so ACP and CLI usage records
   are directly comparable. The same `RunResult` and attempt artifacts are
   produced either way.
+- **`cli`** — the one-shot agent CLI described above (`codex exec`,
+  `claude -p`), with the prompt piped to stdin.
 
-Select it with the `PACTUM_AGENT_TRANSPORT` env var (`acp` or `cli`; the default
-is `cli`). The transport is intentionally not a config key — it is an execution
-mechanism, not workspace state, and ACP is planned to become the hardwired
-default, leaving the env var as a debug escape hatch. The two gaps that blocked
-that flip — model pins over ACP and a write guard for read-only stages — are
-closed (see below); what remains is the documented shell-command gating
-limitation for write stages.
+ACP is the default; `PACTUM_AGENT_TRANSPORT=cli` is the debug escape hatch that
+selects the one-shot CLI transport (the value is trimmed and case-insensitive;
+empty, `acp`, or any other value keeps the ACP default). The transport is
+intentionally not a config key — it is an execution mechanism, not workspace
+state, and the env var exists for debugging, not configuration. The two gaps
+that blocked making ACP the default — model pins over ACP and a write guard for
+read-only stages — are closed (see below); what remains is the documented
+shell-command gating limitation for write stages.
 
 The ACP adapters are external npm packages and inherit the agent's auth from the
-environment. `cli` remains the default.
+environment.
 
 #### Model pins over ACP
 
