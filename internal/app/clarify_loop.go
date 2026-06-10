@@ -81,6 +81,10 @@ func (a App) ClarifyLoop(stdout io.Writer, liveOutput io.Writer, runID string, o
 	if err != nil {
 		return err
 	}
+	options.Timeout, err = resolveIdleTimeout(context.Paths.Config, options.Timeout)
+	if err != nil {
+		return err
+	}
 
 	startedAt := a.nowUTC()
 	summary := clarifyLoopSummaryDocument{

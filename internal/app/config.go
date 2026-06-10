@@ -27,12 +27,13 @@ type workspaceManifest struct {
 }
 
 type configFile struct {
-	Schema  string               `yaml:"schema"`
-	Agents  []agentRegistryEntry `yaml:"agents"`
-	Map     mapConfig            `yaml:"map"`
-	Gate    gateConfig           `yaml:"gate"`
-	Clarify clarifyConfig        `yaml:"clarify"`
-	Review  reviewConfig         `yaml:"review"`
+	Schema   string               `yaml:"schema"`
+	Agents   []agentRegistryEntry `yaml:"agents"`
+	Map      mapConfig            `yaml:"map"`
+	Gate     gateConfig           `yaml:"gate"`
+	Clarify  clarifyConfig        `yaml:"clarify"`
+	Review   reviewConfig         `yaml:"review"`
+	Timeouts timeoutsConfig       `yaml:"timeouts"`
 }
 
 type mapConfig struct {
@@ -62,6 +63,14 @@ type reviewConfig struct {
 type reviewBudgetConfig struct {
 	Mode      string `yaml:"mode"`
 	MaxTokens *int64 `yaml:"max_tokens"`
+}
+
+// timeoutsConfig carries the project-wide timeout defaults for the
+// agent-running commands. Idle is the idle window as a duration string
+// (e.g. 15m); empty means no project default. The section is plural to leave
+// room for a future absolute total cap without a new section.
+type timeoutsConfig struct {
+	Idle string `yaml:"idle"`
 }
 
 // agentRegistryEntry registers one invocable agent in the top-level agents
@@ -114,6 +123,9 @@ func defaultConfigFile() configFile {
 				MaxTokens: nil,
 			},
 			Panel: []string{},
+		},
+		Timeouts: timeoutsConfig{
+			Idle: "10m",
 		},
 	}
 }
@@ -169,6 +181,11 @@ func readConfig(path string) (configFile, error) {
 		return configFile{}, err
 	}
 	config.Review.Budget.Mode = budgetMode
+	idleTimeout, err := normalizeIdleTimeout(config.Timeouts.Idle)
+	if err != nil {
+		return configFile{}, err
+	}
+	config.Timeouts.Idle = idleTimeout
 	if err := validateAgentRegistry(config.Agents); err != nil {
 		return configFile{}, err
 	}
@@ -267,6 +284,48 @@ func normalizeGateScopeEnforcement(value string) (string, error) {
 	default:
 		return "", fmt.Errorf("config gate.scope_enforcement must be %q or %q, got %q", gateScopeEnforcementBlock, gateScopeEnforcementWarn, value)
 	}
+}
+
+// normalizeIdleTimeout validates timeouts.idle: empty means no project
+// default, anything else must parse as a positive duration.
+func normalizeIdleTimeout(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return "", fmt.Errorf("config timeouts.idle: cannot parse %q as a duration (e.g. 15m)", value)
+	}
+	if parsed <= 0 {
+		return "", fmt.Errorf("config timeouts.idle must be a positive duration, got %q", value)
+	}
+	return value, nil
+}
+
+// defaultIdleTimeout is the built-in idle window for the agent-running
+// commands when neither --timeout nor timeouts.idle sets one.
+const defaultIdleTimeout = 10 * time.Minute
+
+// resolveIdleTimeout resolves the idle window for an agent-running command: an
+// explicit --timeout wins, then timeouts.idle from the workspace config, then
+// the built-in default. Like the loop limits, 0 means the flag was not given;
+// a negative flag value is rejected.
+func resolveIdleTimeout(configPath string, override time.Duration) (time.Duration, error) {
+	if override < 0 {
+		return 0, errors.New("timeout must be positive")
+	}
+	if override > 0 {
+		return override, nil
+	}
+	config, err := readConfig(configPath)
+	if err != nil {
+		return 0, err
+	}
+	if config.Timeouts.Idle == "" {
+		return defaultIdleTimeout, nil
+	}
+	return time.ParseDuration(config.Timeouts.Idle)
 }
 
 func normalizeBudgetMode(value string) (string, error) {

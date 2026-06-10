@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/heurema/pactum/internal/agents"
 	"github.com/heurema/pactum/internal/artifacts"
@@ -159,6 +161,73 @@ func TestClarifySuggestMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 	}
 	if want := (agents.ModelSpec{Model: "claude-sonnet-4", Effort: "high"}); request.Model != want {
 		t.Fatalf("clarify suggest model spec = %+v, want %+v", request.Model, want)
+	}
+}
+
+// setIdleTimeoutConfig sets timeouts.idle in the workspace config.
+func setIdleTimeoutConfig(t *testing.T, paths artifacts.Paths, idle string) {
+	t.Helper()
+	config := readConfigForTest(t, paths.Config)
+	config.Timeouts.Idle = idle
+	assertNoError(t, writeYAML(paths.Config, config))
+}
+
+func TestClarifySuggestOmittedTimeoutUsesConfigIdleDefault(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4"})
+	setIdleTimeoutConfig(t, paths, "15m")
+	transport := &recordingAgentTransport{stdout: clarifierStructuredOutput([]map[string]any{})}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "claude", "--yes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify suggest exited %d, stderr: %s", code, stderr.String())
+	}
+
+	request := singleTransportRequest(t, transport)
+	if request.Timeout != 15*time.Minute {
+		t.Fatalf("omitted --timeout should resolve timeouts.idle: %s, want 15m", request.Timeout)
+	}
+}
+
+func TestClarifySuggestExplicitTimeoutOverridesConfigIdleDefault(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4"})
+	setIdleTimeoutConfig(t, paths, "15m")
+	transport := &recordingAgentTransport{stdout: clarifierStructuredOutput([]map[string]any{})}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "claude", "--timeout", "90s", "--yes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify suggest exited %d, stderr: %s", code, stderr.String())
+	}
+
+	request := singleTransportRequest(t, transport)
+	if request.Timeout != 90*time.Second {
+		t.Fatalf("explicit --timeout should win over timeouts.idle: %s, want 90s", request.Timeout)
+	}
+}
+
+func TestExecuteRunNegativeTimeoutIsRejected(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
+	transport := &recordingAgentTransport{}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "run", runID, "--agent", "codex", "--timeout=-5s", "--yes"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("execute run with a negative --timeout should fail")
+	}
+	if !strings.Contains(stderr.String(), "timeout must be positive") {
+		t.Fatalf("negative --timeout error mismatch:\n%s", stderr.String())
+	}
+	if len(transport.requests) != 0 {
+		t.Fatalf("no agent should launch on a rejected --timeout, got %d requests", len(transport.requests))
 	}
 }
 

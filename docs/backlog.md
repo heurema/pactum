@@ -39,14 +39,15 @@ reviews across M8–M10. Rough priority in parentheses.
   natural seed for custom agents later (command/args fields on an entry).
   Small follow-up: a registry-aware `agents doctor` view (list the registered
   entries with their inferred engines and pins, not just the built-ins).
-- **Timeout follow-ups** (med). `--timeout` is now idle-based (M11.6) and
+- **Timeout follow-ups** (med). `--timeout` is now idle-based (M11.6),
   completion-aware (M20.0: an idle-killed attempt whose output carries the
   agent's successful terminal marker finalizes as completed-with-warning —
-  exit 0, `timed_out: true` + `completed_despite_timeout: true`). Still open:
+  exit 0, `timed_out: true` + `completed_despite_timeout: true`), and
+  per-project configurable (M20.1: the `timeouts.idle` config key; resolution
+  is explicit `--timeout` → `timeouts.idle` → built-in 10m). Still open:
   (b) an optional **absolute total cap** (off by default) as a CI backstop for an
-  agent that keeps emitting output yet never finishes (the idle timer never fires);
-  (c) **per-project config defaults** for the idle window (and any cap) so a project
-  sets it once instead of passing `--timeout` on every run;
+  agent that keeps emitting output yet never finishes (the idle timer never
+  fires) — a sibling key in the `timeouts` section;
   (d, note: moving claude to stream-json would also require reworking the
   completion detector and parseClaudeUsage, which unmarshal the single terminal
   result envelope) **silent-agent idle-timeout gap** — the claude executor (`claude -p --output-format
@@ -249,6 +250,15 @@ reviews across M8–M10. Rough priority in parentheses.
     This completes the "grill the requester" clarification arc (slices 1-5).
 
 ## Hardening / cleanup
+
+- **Lens fan-out test flakiness under full-suite race load** (small). Two
+  different review tests (`TestReviewRunStoresCrossReviewerAttempts`,
+  `TestReviewLoopDedupsReproposedOpenFindingAcrossRounds`) have each flaked once
+  during a full `go test -race ./...` run while passing repeatedly in isolation
+  (`-count=3 -race`). The M19.2 lens fan-out multiplied concurrent helper
+  subprocesses per test, so under full-suite load timing assumptions
+  occasionally slip. Diagnose the shared cause (helper-process sequencing or
+  output-collection timing) rather than retry-masking it.
 
 - **ACP shell-command / tool-call scope gating on write stages** (med). The
   M13.5 real-time write scope guard enforces the contract path-scope only at the

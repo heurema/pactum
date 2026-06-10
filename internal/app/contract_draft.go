@@ -125,6 +125,10 @@ func (a App) ContractDraft(stdout io.Writer, liveOutput io.Writer, runID string,
 	if err != nil || !ok {
 		return err
 	}
+	timeout, err = resolveIdleTimeout(context.Paths.Config, timeout)
+	if err != nil {
+		return err
+	}
 	prep, err := a.prepareContractDrafter(context, reviewerName)
 	if err != nil {
 		return err

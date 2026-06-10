@@ -54,6 +54,10 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 	if err != nil {
 		return err
 	}
+	timeout, err = resolveIdleTimeout(prep.Paths.Config, timeout)
+	if err != nil {
+		return err
+	}
 
 	promptRepoPath := executionPromptRepoPath(runID)
 	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[agents.DryRunPlan, executionRequestDocument, executionResultDocument, struct{}]{

@@ -3,8 +3,10 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/heurema/pactum/internal/agents"
 )
@@ -58,6 +60,115 @@ func TestReadConfigParsesClarifySection(t *testing.T) {
 func TestDefaultConfigClarifyMaxRounds(t *testing.T) {
 	if got := defaultConfigFile().Clarify.MaxRounds; got != 3 {
 		t.Fatalf("default clarify.max_rounds = %d, want 3", got)
+	}
+}
+
+func TestReadConfigParsesTimeoutsSection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	contents := strings.Join([]string{
+		"schema: pactum.config.v1",
+		"agents:",
+		"  - name: claude",
+		"    model: claude-opus-4-8",
+		"timeouts:",
+		"  idle: 15m",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	config, err := readConfig(path)
+	if err != nil {
+		t.Fatalf("readConfig: %v", err)
+	}
+	if config.Timeouts.Idle != "15m" {
+		t.Fatalf("timeouts.idle = %q, want 15m", config.Timeouts.Idle)
+	}
+}
+
+func TestReadConfigRejectsInvalidIdleTimeout(t *testing.T) {
+	cases := []struct {
+		name string
+		idle string
+	}{
+		{name: "garbage value", idle: "soon"},
+		{name: "zero duration", idle: "0s"},
+		{name: "negative duration", idle: "-5m"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			contents := strings.Join([]string{
+				"schema: pactum.config.v1",
+				"agents:",
+				"  - name: claude",
+				"    model: claude-opus-4-8",
+				"timeouts:",
+				"  idle: " + strconv.Quote(tc.idle),
+			}, "\n")
+			if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+
+			_, err := readConfig(path)
+			if err == nil {
+				t.Fatalf("readConfig should reject timeouts.idle %q", tc.idle)
+			}
+			if !strings.Contains(err.Error(), "timeouts.idle") || !strings.Contains(err.Error(), tc.idle) {
+				t.Fatalf("error should name timeouts.idle and the value %q: %v", tc.idle, err)
+			}
+		})
+	}
+}
+
+func TestResolveIdleTimeout(t *testing.T) {
+	writeConfig := func(t *testing.T, lines ...string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		contents := strings.Join(append([]string{
+			"schema: pactum.config.v1",
+			"agents:",
+			"  - name: claude",
+			"    model: claude-opus-4-8",
+		}, lines...), "\n")
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+		return path
+	}
+	withIdle := writeConfig(t, "timeouts:", "  idle: 15m")
+	withoutIdle := writeConfig(t)
+
+	cases := []struct {
+		name       string
+		configPath string
+		override   time.Duration
+		want       time.Duration
+		wantErr    string
+	}{
+		{name: "explicit flag wins over config", configPath: withIdle, override: 90 * time.Second, want: 90 * time.Second},
+		{name: "config beats built-in", configPath: withIdle, override: 0, want: 15 * time.Minute},
+		{name: "built-in when both unset", configPath: withoutIdle, override: 0, want: defaultIdleTimeout},
+		{name: "negative flag is rejected", configPath: withIdle, override: -time.Second, wantErr: "timeout must be positive"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveIdleTimeout(tc.configPath, tc.override)
+			if tc.wantErr != "" {
+				if err == nil || err.Error() != tc.wantErr {
+					t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveIdleTimeout: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("resolveIdleTimeout = %s, want %s", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -222,6 +333,11 @@ func TestDefaultConfigRoundTripsStrictReader(t *testing.T) {
 	}
 	if len(config.Review.Panel) != 0 {
 		t.Fatalf("default review panel should be empty: %#v", config.Review.Panel)
+	}
+	// The generated default carries the built-in idle window so the key is
+	// discoverable in a fresh workspace.
+	if config.Timeouts.Idle != "10m" {
+		t.Fatalf("default timeouts.idle = %q, want 10m", config.Timeouts.Idle)
 	}
 }
 
