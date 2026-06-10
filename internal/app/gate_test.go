@@ -660,3 +660,39 @@ func TestGateValidationHelperProcess(t *testing.T) {
 	}
 	os.Exit(0)
 }
+
+// TestGateRunPassesCompletedDespiteTimeoutAttempt pins the end-to-end story of
+// completion-aware finalize: an idle-killed attempt whose agent had already
+// completed (exit 0, timed_out true, completed_despite_timeout true) must pass
+// the gate's execution check — otherwise the success path dies one pipeline
+// step later and the feature means nothing.
+func TestGateRunPassesCompletedDespiteTimeoutAttempt(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	// Rewrite the recorded attempt as completed-despite-timeout.
+	markCompletedDespiteTimeout := func(path string) {
+		var doc map[string]any
+		assertNoError(t, readJSON(path, &doc))
+		doc["timed_out"] = true
+		doc["completed_despite_timeout"] = true
+		doc["exit_code"] = 0
+		assertNoError(t, writeJSON(path, doc))
+	}
+	markCompletedDespiteTimeout(filepath.Join(runPaths.AttemptsDir, "attempt_001", "result.json"))
+	markCompletedDespiteTimeout(runPaths.LastResultJSON)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("gate run should pass a completed-despite-timeout attempt, exited %d, stderr: %s", code, stderr.String())
+	}
+	report := readGateReport(t, runPaths.GateReportJSON)
+	if !report.Summary.ExecutionPassed || report.Status != "passed" {
+		t.Fatalf("execution should pass: %#v", report.Summary)
+	}
+	if !report.Execution.CompletedDespiteTimeout || !report.Execution.TimedOut {
+		t.Fatalf("execution report should carry the honest pair: %#v", report.Execution)
+	}
+}

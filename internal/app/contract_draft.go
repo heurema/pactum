@@ -648,6 +648,7 @@ func writeContractDraftRunOnly(stdout io.Writer, request contractDrafterRequestD
 	fmt.Fprintln(stdout, "Result:")
 	fmt.Fprintf(stdout, "  exit code: %d\n", result.ExitCode)
 	fmt.Fprintf(stdout, "  timed out: %t\n", result.TimedOut)
+	writeCompletedDespiteTimeoutWarning(stdout, result.processResult)
 }
 
 func writeContractShowDraft(stdout io.Writer, response contractShowDraftResponse, proposalMD string) {

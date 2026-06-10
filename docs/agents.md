@@ -196,7 +196,9 @@ An agent that works silently through tool calls for minutes (reading the repo,
 running tools) keeps the watchdog fed and is not killed as idle; the timeout
 fires only when the protocol goes truly quiet. The attempt log is unaffected:
 only the agent's streamed message text is written to `stdout.log`, the
-liveness ticks carry no content.
+liveness ticks carry no content. A prompt response recorded before the kill
+counts as the agent's completion signal for the completion-aware finalize
+described under [Execute: dry-run vs run](#execute-dry-run-vs-run).
 
 #### Model pins over ACP
 
@@ -308,6 +310,20 @@ There is also **no Docker support yet**.
   run` asks for confirmation on an interactive terminal and **requires `--yes`**
   when stdin is not a terminal (CI/automation), so it never launches an agent
   unattended by accident. `execute dry-run` never needs `--yes`.
+
+The idle timeout is **completion-aware**: when the watchdog fires but the
+captured output already carries the agent's successful terminal marker —
+claude's final result envelope with `is_error: false`, codex's terminal
+`turn.completed` event, or (over ACP) a prompt response recorded before the
+kill — the attempt is finalized as **completed with a warning** instead of
+failed. The exit code becomes 0, the attempt proceeds through the normal
+success path, and the result document records the honest pair
+`timed_out: true` + `completed_despite_timeout: true`, with a visible warning
+in the attempt stderr, the live output, and the human summary. Partial or
+error-terminal output keeps the plain timed-out failure. The kill itself still
+happens — completion awareness finalizes honestly, it does not extend the
+deadline. This applies to every stage that honors `--timeout`, not just
+`execute run`.
 
 The two built-in executors use different output channels: codex streams its
 reasoning/progress to **stderr** (with the final result on stdout), while claude

@@ -144,22 +144,55 @@ func runSubprocessWithRunner(request RunRequest, runner processRunner) (RunResul
 			fmt.Fprintln(stderr, err.Error())
 		}
 	}
+	completedDespiteTimeout := false
 	if timedOut {
-		exitCode = -1
+		exitCode, completedDespiteTimeout = finalizeTimedOutAttempt(request.Agent, stdoutPath, false, stderr, request.LiveOutput)
 	}
 	usage := captureUsageFromArtifacts(request.Agent, stdoutPath, stderrPath)
 	writeUsageWarning(usage, stderr, request.LiveOutput)
 
 	return RunResult{
-		ExitCode:       exitCode,
-		StartedAt:      started.Format(time.RFC3339Nano),
-		FinishedAt:     finished.Format(time.RFC3339Nano),
-		DurationMillis: finished.Sub(started).Milliseconds(),
-		TimedOut:       timedOut,
-		StdoutPath:     layout.stdoutArtifact,
-		StderrPath:     layout.stderrArtifact,
-		Usage:          usage,
+		ExitCode:                exitCode,
+		StartedAt:               started.Format(time.RFC3339Nano),
+		FinishedAt:              finished.Format(time.RFC3339Nano),
+		DurationMillis:          finished.Sub(started).Milliseconds(),
+		TimedOut:                timedOut,
+		CompletedDespiteTimeout: completedDespiteTimeout,
+		StdoutPath:              layout.stdoutArtifact,
+		StderrPath:              layout.stderrArtifact,
+		Usage:                   usage,
 	}, err
+}
+
+const completedDespiteTimeoutNotice = "idle timeout fired after the agent completed; treating as completed with warning"
+
+// finalizeTimedOutAttempt resolves an idle-killed attempt against the agent's
+// completion signal: when the captured stdout carries a successful terminal
+// marker (or the caller already observed completion, e.g. a recorded ACP
+// prompt response), the attempt is finalized as completed-with-warning — exit
+// code 0, the warning appended to the attempt stderr and the live writer.
+// TimedOut stays true on the result for the record. Without the marker the
+// timed-out failure stands (exit -1).
+// An empty stdoutPath skips the captured-output detection: over ACP the
+// attempt log is free-streamed agent text where the CLI terminal markers
+// cannot legitimately appear (an agent merely QUOTING one must not convert a
+// stalled turn into success), so the recorded prompt response is the
+// protocol's only completion signal.
+func finalizeTimedOutAttempt(agent AgentDescriptor, stdoutPath string, alreadyCompleted bool, stderr io.Writer, live io.Writer) (exitCode int, completed bool) {
+	completed = alreadyCompleted
+	if !completed && stdoutPath != "" {
+		stdout, err := os.ReadFile(stdoutPath)
+		completed = err == nil && agentRunCompleted(agent, stdout)
+	}
+	if !completed {
+		return -1, false
+	}
+	line := completedDespiteTimeoutNotice + "\n"
+	_, _ = io.WriteString(stderr, line)
+	if live != nil {
+		_, _ = io.WriteString(live, line)
+	}
+	return 0, true
 }
 
 func captureUsageFromArtifacts(agent AgentDescriptor, stdoutPath string, stderrPath string) TokenUsage {

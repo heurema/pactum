@@ -282,6 +282,66 @@ func TestRunSubprocessTimesOutAfterIdleOutputGap(t *testing.T) {
 	}
 }
 
+func TestRunSubprocessIdleTimeoutAfterTerminalMarkerCompletesWithWarning(t *testing.T) {
+	claudeAgent := AgentDescriptor{Name: BuiltinClaude, Command: "claude", Args: []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"}, Input: InputPromptFile}
+	codexAgent := AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile}
+
+	tests := []struct {
+		name          string
+		agent         AgentDescriptor
+		stdout        string
+		wantCompleted bool
+	}{
+		{"claude success envelope", claudeAgent, `{"type":"result","subtype":"success","is_error":false,"usage":{"input_tokens":10,"output_tokens":5}}`, true},
+		{"claude error envelope", claudeAgent, `{"type":"result","subtype":"error_during_execution","is_error":true}`, false},
+		{"claude partial output", claudeAgent, `{"type":"result","is_er`, false},
+		{"codex terminal turn.completed", codexAgent, "{\"type\":\"turn.started\"}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}\n", true},
+		{"codex no terminal event", codexAgent, "{\"type\":\"turn.started\"}\n", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			promptRepoPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
+			writePrompt(t, root, promptRepoPath, "executor prompt body")
+
+			var live bytes.Buffer
+			result, err := runSubprocessWithRunner(RunRequest{
+				RepoRoot:       root,
+				RunID:          "run_123",
+				AttemptID:      "attempt_001",
+				Agent:          tt.agent,
+				PromptRepoPath: promptRepoPath,
+				Timeout:        30 * time.Millisecond,
+				LiveOutput:     &live,
+			}, outputThenIdleRunner{stdout: tt.stdout})
+			if err == nil {
+				t.Fatal("the idle kill error is still reported to the caller")
+			}
+			if !result.TimedOut {
+				t.Fatalf("TimedOut must stay true for the record: %#v", result)
+			}
+
+			stderrLog := readFile(t, filepath.Join(root, ".heurema", "pactum", "runs", "run_123", "execute", "attempts", "attempt_001", "stderr.log"))
+			if tt.wantCompleted {
+				if result.ExitCode != 0 || !result.CompletedDespiteTimeout {
+					t.Fatalf("terminal marker should finalize as completed-with-warning: %#v", result)
+				}
+				if !strings.Contains(stderrLog, completedDespiteTimeoutNotice) || !strings.Contains(live.String(), completedDespiteTimeoutNotice) {
+					t.Fatalf("warning missing:\nstderr: %q\nlive: %q", stderrLog, live.String())
+				}
+			} else {
+				if result.ExitCode != -1 || result.CompletedDespiteTimeout {
+					t.Fatalf("partial/error output should keep the timed-out failure: %#v", result)
+				}
+				if strings.Contains(stderrLog, completedDespiteTimeoutNotice) {
+					t.Fatalf("failed timeout must not carry the completion warning: %q", stderrLog)
+				}
+			}
+		})
+	}
+}
+
 func TestRunSubprocessIdleTimeoutResetsOnOutput(t *testing.T) {
 	root := t.TempDir()
 	promptRepoPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
@@ -379,6 +439,19 @@ func (r *recordingRunner) Run(_ context.Context, spec processSpec) error {
 type idleRunner struct{}
 
 func (idleRunner) Run(ctx context.Context, _ processSpec) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// outputThenIdleRunner writes its configured stdout immediately, then idles
+// until the watchdog kills it — an agent that finished its work but whose
+// process lingered past the idle window.
+type outputThenIdleRunner struct {
+	stdout string
+}
+
+func (r outputThenIdleRunner) Run(ctx context.Context, spec processSpec) error {
+	fmt.Fprint(spec.Stdout, r.stdout)
 	<-ctx.Done()
 	return ctx.Err()
 }

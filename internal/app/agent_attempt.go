@@ -161,7 +161,10 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 		return err
 	}
 
-	if runErr != nil {
+	// A completed-despite-timeout attempt is a success with a warning: the idle
+	// kill error does not fail the run, and the attempt proceeds below exactly
+	// like a success (AfterSuccess runs, artifacts already written).
+	if runErr != nil && !cfg.ProcessResult(result).CompletedDespiteTimeout {
 		if err := writeAgentAttemptRunOnly(cfg, request, result); err != nil {
 			return err
 		}
