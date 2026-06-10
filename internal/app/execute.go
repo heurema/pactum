@@ -70,7 +70,7 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 		AttemptIDPrefix:  "attempt",
 		LastResultJSON:   prep.RunPaths.LastResultJSON,
 		Agent:            prep.Agent,
-		RequestModel:     prep.ModelSpec.Model,
+		Model:            prep.ModelSpec,
 		PromptRepoPath:   promptRepoPath,
 		Timeout:          timeout,
 		WritePathAllowed: contractWritePathAllowed(prep.Contract),

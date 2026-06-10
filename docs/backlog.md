@@ -177,14 +177,21 @@ reviews across M8–M10. Rough priority in parentheses.
 
 ## Hardening / cleanup
 
-- **ACP shell-command / tool-call scope gating** (med). The M13.5 real-time write
-  scope guard enforces the contract path-scope only at the `WriteTextFile`
-  boundary (see [`agents.md`](agents.md)); an agent that writes through a *shell
-  command* or other tool call it runs bypasses the guard, and such changes are
-  still caught only by the post-hoc gate. Closing this is deeper — it means
-  intercepting/gating the adapter's command and tool-call requests, not just file
-  writes — so it stays a documented limitation for now rather than a fix in the
-  M13.6 hardening slice.
+- **ACP shell-command / tool-call scope gating on write stages** (med). The
+  M13.5 real-time write scope guard enforces the contract path-scope only at the
+  `WriteTextFile` boundary (see [`agents.md`](agents.md)); an agent that writes
+  through a *shell command* or other tool call it runs bypasses the guard, and
+  such changes are still caught only by the post-hoc gate. M16.1 narrowed the
+  remaining surface to the write stages (`execute run`, `review fix`): the two
+  gaps that blocked making ACP the default are closed — model pins now reach the
+  ACP adapters (codex `-c` overrides, claude env vars), and read-only stages
+  (review, clarify suggest, contract draft) are enforced per leg: claude via the
+  ACP client (write denial + permission rejection — claude routes writes through
+  the client), codex via `-c sandbox_mode="read-only"` pinned on the adapter
+  (codex applies patches natively, so client-side denials cannot stop it).
+  Closing the rest is deeper — it means intercepting/gating the adapter's
+  command and tool-call requests on write stages, not just file writes — so it
+  stays a documented limitation for now.
 - **Consolidated ACP design note** (low, optional). The ACP transport, its
   real-time write scope guard, usage normalization, and cross-platform
   process-group reaping are currently described across `agents.md` and the M13.x

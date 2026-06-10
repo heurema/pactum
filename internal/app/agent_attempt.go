@@ -32,8 +32,11 @@ type agentAttemptLifecycle[Prepared any, Request any, Result any, Response any] 
 	AttemptIDPrefix string
 	LastResultJSON  string
 
-	Agent          agents.AgentDescriptor
-	RequestModel   string
+	Agent agents.AgentDescriptor
+	// Model is the stage's resolved model pin (the same spec shown in the
+	// Resolved block). It feeds the usage record and is passed through to the
+	// RunRequest so the ACP transport can thread the pin to the adapter.
+	Model          agents.ModelSpec
 	PromptRepoPath string
 	ArtifactDir    string
 	Timeout        time.Duration
@@ -43,6 +46,10 @@ type agentAttemptLifecycle[Prepared any, Request any, Result any, Response any] 
 	// boundary. Write stages (execute, review fix) populate it; read-only stages
 	// leave it nil. The CLI transport ignores it.
 	WritePathAllowed func(repoRelPath string) bool
+	// ReadOnly marks read-only stages (review, clarify suggest, contract draft):
+	// the ACP transport denies the agent's writes and permission requests. Write
+	// stages (execute, review fix) leave it false. The CLI transport ignores it.
+	ReadOnly bool
 
 	StartedEvent  string
 	FinishedEvent string
@@ -129,6 +136,8 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 		Timeout:          cfg.Timeout,
 		LiveOutput:       cfg.LiveOutput,
 		WritePathAllowed: cfg.WritePathAllowed,
+		Model:            cfg.Model,
+		ReadOnly:         cfg.ReadOnly,
 	})
 	if runErr != nil && runResult.StartedAt == "" {
 		return runErr
@@ -219,7 +228,7 @@ func appendUsageRecordBestEffort[Prepared any, Request any, Result any, Response
 	if strings.TrimSpace(createdAt) == "" {
 		createdAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	if err := appendUsageRecord(cfg.Root, cfg.RunID, attemptID, cfg.Stage, cfg.RequestModel, cfg.Agent, runResult.Usage, createdAt); err != nil && cfg.LiveOutput != nil {
+	if err := appendUsageRecord(cfg.Root, cfg.RunID, attemptID, cfg.Stage, cfg.Model.Model, cfg.Agent, runResult.Usage, createdAt); err != nil && cfg.LiveOutput != nil {
 		_, _ = fmt.Fprintf(cfg.LiveOutput, "usage capture warning: append usage ledger: %v\n", err)
 	}
 }
