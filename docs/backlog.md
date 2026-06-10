@@ -84,19 +84,22 @@ reviews across M8–M10. Rough priority in parentheses.
   manual pass missed — 0 bad merges) but doubled finding volume and amplified churn. Net:
   the loop is strong at FINDING but cannot yet CONVERGE on a refactor; today its output is
   a draft to curate, not an auto-merge.
-- **Strengthen the executor + reviewer prompts with house style + best practices** (med).
-  The built-in prompt templates carry only generic guidance — the executor prompt
-  (`renderApprovedPromptMD`) says "follow the contract / no out-of-scope / search before
-  creating", and the reviewer prompt (`renderReviewerPrompt`) gives the findings schema +
-  "do not apply patches". Neither encodes the project's minimal style guide or engineering
-  best practices. Bake them into both: for the executor — match surrounding idiom, naming,
-  and comment density; prefer existing helpers; small focused diffs; conventional error
-  handling; no dead code; behavior-preserving where asked. For the reviewer — also flag
-  style / best-practice / readability violations against the same ruleset, not only
-  correctness. Decide sourcing: a short minimal ruleset baked into the templates vs.
-  referencing `AGENTS.md` / `CLAUDE.md` (already read by the agents). Applies to BOTH the
-  write and review stages. (Relates to the dropped custom review-guidelines knob — this is
-  the built-in-prompt version.)
+- **Strengthen the executor + reviewer prompts with house style + best practices**
+  (high — design done, ready to slice). The built-in prompt templates carry only
+  generic guidance. A survey of leading agent review prompts is distilled in
+  [`review-prompt-design.md`](review-prompt-design.md); the planned slices:
+  (1) reviewer prompt hardening — the high-signal contract (certain-or-silent,
+  explicit NOT-to-flag list, problems-only), five lens checklists (correctness,
+  implementation-vs-contract, test quality + fake-test detection,
+  over-engineering catalog, documentation gaps), verify-then-report
+  (CONFIRMED/FALSE-POSITIVE classification before emitting), findings-first
+  ordering with honest empties, pre-existing-issues-as-advisory policy, and a
+  per-finding `confidence` field (schema precedent: clarify questions, M15.0);
+  (2) executor prompt house style — match idiom/naming/comment density, reuse
+  helpers, small focused diffs, simplicity-first with the over-engineering
+  catalog as DON'Ts, no dead code, behavior-verifying tests; (3) recorded
+  follow-up — per-panel-member review lenses (a registry entry could carry an
+  optional `lens`), composing with the M18.0 registry and the M12.4 panel.
 - **Loop stop conditions.** Stalemate-by-fingerprint and K-consecutive-clean —
   **done (M10.3)**. Token-native `max_tokens` budget stop is **done** with a
   `budget_exceeded` terminal. Remaining cost-layer follow-ups live in
