@@ -189,9 +189,12 @@ reviews across M8–M10. Rough priority in parentheses.
   ACP client (write denial + permission rejection — claude routes writes through
   the client), codex via `-c sandbox_mode="read-only"` pinned on the adapter
   (codex applies patches natively, so client-side denials cannot stop it).
-  Closing the rest is deeper — it means intercepting/gating the adapter's
-  command and tool-call requests on write stages, not just file writes — so it
-  stays a documented limitation for now.
+  M16.2 then flipped the default: ACP is now the hardwired default transport and
+  `PACTUM_AGENT_TRANSPORT=cli` is the debug escape hatch, completing the ACP arc
+  (M13.x→M16.2). This item is what remains of it. Closing it is deeper — it
+  means intercepting/gating the adapter's command and tool-call requests on
+  write stages, not just file writes — so it stays a documented limitation for
+  now.
 - **Consolidated ACP design note** (low, optional). The ACP transport, its
   real-time write scope guard, usage normalization, and cross-platform
   process-group reaping are currently described across `agents.md` and the M13.x

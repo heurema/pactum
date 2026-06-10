@@ -2487,6 +2487,11 @@ func TestSearchNoResults(t *testing.T) {
 func testApp(root string) App {
 	return App{
 		WorkingDir: root,
+		// The helper-process agent descriptors are one-shot CLI commands, so
+		// app tests pin the CLI transport instead of inheriting the ACP
+		// default; transport selection itself is covered at the seam in
+		// transport_selection_test.go.
+		AgentTransport: agents.CLITransport{},
 		Now: func() time.Time {
 			return time.Date(2026, 5, 31, 18, 40, 12, 0, time.UTC)
 		},
@@ -2575,6 +2580,9 @@ func testAppSequence(root string) App {
 	now := time.Date(2026, 5, 31, 18, 40, 11, 0, time.UTC)
 	return App{
 		WorkingDir: root,
+		// Same CLI-transport pin as testApp: helper-process agents are
+		// one-shot CLI commands.
+		AgentTransport: agents.CLITransport{},
 		Now: func() time.Time {
 			now = now.Add(time.Second)
 			return now
