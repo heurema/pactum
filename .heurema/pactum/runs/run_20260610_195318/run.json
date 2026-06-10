@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260610_195318",
+  "status": "contract_approved",
+  "task": "Make the built-in idle timeout a sane 15m and stop emitting timeouts.idle into generated and workspace configs: the key stays supported as an override, but a config only carries deviations from sane defaults",
+  "created_at": "2026-06-10T19:53:18.026905Z",
+  "updated_at": "2026-06-10T19:57:29.564729Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260610_195317",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}
