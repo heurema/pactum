@@ -150,7 +150,7 @@ func TestResolveIdleTimeout(t *testing.T) {
 	}{
 		{name: "explicit flag wins over config", configPath: withIdle, override: 90 * time.Second, want: 90 * time.Second},
 		{name: "config beats built-in", configPath: withIdle, override: 0, want: 15 * time.Minute},
-		{name: "built-in when both unset", configPath: withoutIdle, override: 0, want: defaultIdleTimeout},
+		{name: "built-in when both unset", configPath: withoutIdle, override: 0, want: 25 * time.Minute},
 		{name: "negative flag is rejected", configPath: withIdle, override: -time.Second, wantErr: "timeout must be positive"},
 	}
 	for _, tc := range cases {
@@ -334,10 +334,18 @@ func TestDefaultConfigRoundTripsStrictReader(t *testing.T) {
 	if len(config.Review.Panel) != 0 {
 		t.Fatalf("default review panel should be empty: %#v", config.Review.Panel)
 	}
-	// The generated default carries the built-in idle window so the key is
-	// discoverable in a fresh workspace.
-	if config.Timeouts.Idle != "10m" {
-		t.Fatalf("default timeouts.idle = %q, want 10m", config.Timeouts.Idle)
+	// The generated default carries only deviations from the built-ins, so it
+	// must not emit a timeouts key; the absent section resolves to the
+	// built-in idle window.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read generated config: %v", err)
+	}
+	if strings.Contains(string(raw), "timeouts") {
+		t.Fatalf("generated default config should not emit a timeouts key:\n%s", raw)
+	}
+	if idle, err := resolveIdleTimeout(path, 0); err != nil || idle != 25*time.Minute {
+		t.Fatalf("absent timeouts section should resolve the built-in: %s, %v, want 25m", idle, err)
 	}
 }
 

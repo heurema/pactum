@@ -44,7 +44,9 @@ reviews across M8–M10. Rough priority in parentheses.
   agent's successful terminal marker finalizes as completed-with-warning —
   exit 0, `timed_out: true` + `completed_despite_timeout: true`), and
   per-project configurable (M20.1: the `timeouts.idle` config key; resolution
-  is explicit `--timeout` → `timeouts.idle` → built-in 10m). Still open:
+  is explicit `--timeout` → `timeouts.idle` → built-in 25m since M20.2, which
+  raised the built-in from 10m and stopped emitting the key into the generated
+  config — set it only to deviate). Still open:
   (b) an optional **absolute total cap** (off by default) as a CI backstop for an
   agent that keeps emitting output yet never finishes (the idle timer never
   fires) — a sibling key in the `timeouts` section;
@@ -441,7 +443,7 @@ reviews across M8–M10. Rough priority in parentheses.
 
 - Idle agent timeout (M11.6) — `--timeout` is now an idle (no-output) safety
   timeout: a subprocess is killed only after the window passes with no stdout/stderr
-  (default 10m), so long actively-streaming runs are never cut mid-work; the fixed
+  (default 10m then, 25m since M20.2), so long actively-streaming runs are never cut mid-work; the fixed
   total wall-clock cap is removed. Channel-based watchdog, race-clean.
 - Legacy `default_executor` / `default_reviewer` / `adapters` config removed (#44) —
   intentionally ignored, not a bug.

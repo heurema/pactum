@@ -308,8 +308,9 @@ There is also **no Docker support yet**.
   cancelled only after the configured duration passes with no stdout or stderr
   output. The idle window resolves in order: an explicit `--timeout`, then the
   `timeouts.idle` workspace config key (a duration string, e.g. `15m`), then
-  the built-in 10 minutes — the same resolution applies to every agent-running
-  command that honors `--timeout`. Because execution is **unsandboxed**, `execute
+  the built-in 25 minutes — the same resolution applies to every agent-running
+  command that honors `--timeout`. The generated config carries no `timeouts`
+  section; set `timeouts.idle` only to deviate from the built-in. Because execution is **unsandboxed**, `execute
   run` asks for confirmation on an interactive terminal and **requires `--yes`**
   when stdin is not a terminal (CI/automation), so it never launches an agent
   unattended by accident. `execute dry-run` never needs `--yes`.
