@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260610_105617",
+  "status": "contract_approved",
+  "task": "Reviewer prompt hardening (review-prompt-design slice 1): bake the high-signal contract, five lens checklists, verify-then-report discipline, findings-first output, the pre-existing-as-advisory policy, and a per-finding confidence field into the built-in reviewer prompt",
+  "created_at": "2026-06-10T10:56:17.280289Z",
+  "updated_at": "2026-06-10T10:56:55.034119Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260610_105616",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

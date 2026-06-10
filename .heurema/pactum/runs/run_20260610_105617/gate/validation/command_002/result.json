@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1",
+  "id": "command_002",
+  "command": "go test ./internal/app/...",
+  "started_at": "2026-06-10T11:33:59.725404Z",
+  "finished_at": "2026-06-10T11:34:24.33052Z",
+  "duration_ms": 24605,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "gate/validation/command_002/stdout.log",
+  "stderr": "gate/validation/command_002/stderr.log"
+}
