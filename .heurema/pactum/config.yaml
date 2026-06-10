@@ -20,3 +20,5 @@ review:
   panel:
     - fable
     - codex
+timeouts:
+  idle: 15m

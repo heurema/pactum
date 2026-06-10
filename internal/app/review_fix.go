@@ -84,6 +84,10 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 	if err != nil || !ok {
 		return err
 	}
+	timeout, err = resolveIdleTimeout(context.Paths.Config, timeout)
+	if err != nil {
+		return err
+	}
 	prep, err := a.prepareReviewFixer(context, agentName)
 	if err != nil {
 		return err

@@ -154,6 +154,10 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 	if _, err := requireReviewPrepared(context.RunPaths, runID); err != nil {
 		return err
 	}
+	options.Timeout, err = resolveIdleTimeout(context.Paths.Config, options.Timeout)
+	if err != nil {
+		return err
+	}
 	settings, err := a.resolveReviewLoopSettings(context, options)
 	if err != nil {
 		return err
