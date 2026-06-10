@@ -1,0 +1,71 @@
+# Contract Draft
+
+## Goal
+Add progress indicators so long operations feel responsive
+
+## Current status
+Contract status: draft
+Manual clarification, contract approval, prompt build, and agent execution are available through staged Pactum commands.
+
+## Relevant repository context
+- Map run: map_20260610_074529
+- Repo map: .heurema/pactum/map/repo-map.md
+- Search results: context/search-results.json (0 result(s))
+
+## Clarifications
+- q_001 [blocking] — Which concrete form should 'progress indicators' take? The repo supports several distinct interpretations: (a) periodic plain-text heartbeat lines on operator stderr while an agent attempt runs (stage, attempt id, elapsed time), emitted by the shared lifecycle in internal/app/agent_attempt.go; (b) a TTY-only animated spinner/elapsed-time display; (c) step-boundary announcements (e.g. 'clarify loop: round 2/5 starting', 'attempt exec_0002 started') in clarify_loop.go/review_loop.go, which today print only an end-of-run summary; (d) richer parsed agent activity surfaced from the ACP stream (e.g. 'agent is reading internal/app/run.go'). Which of (a)-(d), or which combination, is intended?
+  Rationale: Each interpretation lands in different code (transport vs lifecycle vs loop renderers) and has very different cost. Today the only liveness signal is the agent's own teed output (LiveOutput = r.Stderr in commands.go), which can be silent for minutes — the goal 'feel responsive' does not pick among these by itself.
+  Answer: pending
+- q_002 [blocking] — Which operations are 'long operations' in scope? Candidates: (1) only the agent-attempt stages that run subprocesses for minutes (contract draft, clarify suggest, clarify loop, execute, review, review fix, review loop — all via runAgentAttemptLifecycle); (2) also the multi-round loop commands' round boundaries; (3) also deterministic commands like 'pactum map refresh' (internal/app/map.go), which scans/indexes the repo but typically finishes in seconds on this repo (133 files).
+  Rationale: The contract's in-scope list is empty. Scoping to the shared agent-attempt lifecycle means one implementation point covers seven commands; pulling map refresh in adds per-file progress plumbing through internal/projectmap for an operation that is rarely slow here, though it could be slow on large repos.
+  Answer: pending
+- q_003 — Should progress output go exclusively to stderr, and should it still be emitted when --json is set? Every relevant command has a JSONOutput flag ('Print machine-readable JSON output', internal/app/cli.go) writing to stdout, and liveOutput is already wired to r.Stderr in commands.go.
+  Rationale: Progress on stdout would corrupt --json consumers and the human-readable end summaries. The existing convention (agent live output on stderr) strongly suggests stderr, but whether --json runs should stay progress-free entirely is a product choice for scripted callers.
+  Answer: pending
+- q_004 — Silent-agent scenario: 'pactum execute' runs with --timeout 600s and the agent emits nothing for 5+ minutes while the idle watchdog (startIdleTimeout in internal/agents) counts toward killing the attempt. What should the operator see during the silence, and should the heartbeat expose watchdog state (time since last agent output, configured idle timeout) so an impending kill is predictable?
+  Rationale: This is the documented pain case: claude -p barely streams, so attempts look hung and the watchdog can fire at the default timeout with no warning. Note the heartbeat must be written outside the activityWriter path — it is Pactum's own output and must not reset the agent's idle timer.
+  Answer: pending
+- q_005 — Non-TTY scenario: a CI job (.github/workflows/ci.yml) or a parent process like Claude Code runs 'pactum execute' with stderr captured to a log. A 10-minute attempt at a 15s heartbeat produces ~40 log lines. Should non-TTY stderr get the same cadence, a reduced cadence, or no heartbeat at all — and is any TTY-only rendering (carriage-return spinner) wanted when stderr is a terminal?
+  Rationale: The contract is silent on TTY detection. Plain lines are safe everywhere but noisy in logs; ANSI rewriting is pleasant interactively but garbles CI logs. This choice decides whether the implementation needs isatty detection at all.
+  Answer: pending
+- q_006 — Should progress be operator-controllable — a global --no-progress/--quiet CLI flag, a workspace config key, or always-on? M16.0 deliberately made the workspace config stage-centric and strict with dead keys removed, so adding a config key is a real surface change.
+  Rationale: The contract says nothing about configurability. Always-on keeps the M16.0 config surface untouched and the CLI flag set stable, but parent tools that already parse stderr might want to opt out.
+  Answer: pending
+- q_007 [blocking] — How should 'feel responsive' be accepted and verified? Propose concrete acceptance criteria, e.g.: (1) during any agent attempt, the first progress line appears on stderr within 15s and at least every N seconds until the attempt exits; (2) clarify loop and review loop announce each round before its first attempt starts; (3) stdout under --json remains byte-identical to today; verified via unit tests with an injected clock/writer plus 'make check'. Is that the intended bar, and what is N?
+  Rationale: The contract has no acceptance criteria or validation commands, and 'feel responsive' is unverifiable as written. The repo already injects io.Writer everywhere and has a Makefile check target, so time-based criteria are testable without real agents.
+  Answer: pending
+- q_008 — Should progress indicators remain ephemeral operator output only, or also be persisted? runAgentAttemptLifecycle (internal/app/agent_attempt.go) already appends typed started/finished events to events.jsonl via ledger.Append, so attempt boundaries are durably recorded today. Persisting a 15-30s heartbeat as ledger events would add hundreds of entries per long run; a new run artifact (e.g. progress.log per attempt) is a third option. Which is intended: stderr-only, ledger events, an artifact, or some combination?
+  Rationale: The contract and the seven open questions only discuss where progress is displayed (stderr, q_003), not whether it is recorded. The repo settles that attempt boundaries are already durable (StartedEvent/FinishedEvent in agent_attempt.go), which argues heartbeats add no durable value, but ledger bloat vs. post-hoc debuggability is a product trade-off the repo cannot decide. The answer changes scope: ledger persistence touches the versioned event schema and store, stderr-only touches nothing but writers.
+  Answer: Progress is ephemeral stderr-only: no new ledger event types, no changes to events.jsonl, no new run artifacts. The existing started/finished ledger events remain the durable record of attempt boundaries.
+- q_009 — Chatty-agent interleaving scenario: agent live output is teed to the operator stderr as raw byte chunks (io.MultiWriter + lockedWriter in internal/agents/runner.go and acp_transport.go), so a chunk can end mid-line. A heartbeat written at that moment splices onto a partial agent line, and nothing distinguishes Pactum's progress lines from the agent's own output for a parent process (CI job, Claude Code) reading stderr. Should every progress line (a) be emitted as a single atomic Write through the same lockedWriter, and (b) carry a stable machine-recognizable prefix (e.g. 'pactum <stage> <attempt_id>:') that is documented as the greppable identifier — or is occasional ambiguous interleaving acceptable?
+  Rationale: Presupposes line-based progress on stderr (open q_001's leading interpretation). q_004 covers the silent agent and q_005 covers cadence, but neither addresses the opposite case — an agent actively streaming when the heartbeat fires. The repo confirms writes are chunk-level, not line-buffered, so splicing is real; and once a prefix exists, parent tools will match on it, making the format a quasi-API that is costly to change later. That makes the prefix wording a product decision, not just an implementation detail.
+  Answer: pending
+- q_010 — Concurrent-reviewers scenario: a review-loop review round fans out one goroutine per configured reviewer (sync.WaitGroup in runReviewLoopReviewRound, internal/app/review_loop.go), so with 2-3 reviewers, 2-3 agent attempts stream to the same stderr simultaneously through a synchronizedWriter. Should each concurrent attempt emit its own independent heartbeat (N interleaved heartbeat streams, distinguished only by the attempt-id prefix from q_009), or should the review loop aggregate them into one consolidated round-level status line (e.g. 'review round 1: 3 attempts running, reviewer_attempt_004 silent 2m') — and does the 'first progress line within 15s' acceptance criterion apply to each concurrent attempt individually?
+  Rationale: No existing question covers concurrent attempts: q_009 addresses heartbeat-vs-agent splicing within one attempt, and q_004/q_005 assume a single attempt. The repo confirms the review round is the only place attempts run concurrently (the clarify loop and review-fix rounds are sequential) and already wraps liveOutput in a synchronizedWriter for exactly this case. The answer picks the implementation point — per-attempt heartbeats fall out of implementing once in runAgentAttemptLifecycle, while a consolidated round line is a separate aggregator with its own state in review_loop.go — and determines how the acceptance criterion is worded for concurrent attempts. Presupposes q_001 lands on heartbeat lines (its leading interpretation), so this stays open until that is decided.
+  Answer: pending
+
+## In scope
+TBD
+
+## Out of scope
+TBD
+
+## Acceptance criteria
+TBD
+
+## Validation commands
+TBD
+
+## Assumptions
+TBD
+
+## Open questions
+- Which concrete form should 'progress indicators' take? The repo supports several distinct interpretations: (a) periodic plain-text heartbeat lines on operator stderr while an agent attempt runs (stage, attempt id, elapsed time), emitted by the shared lifecycle in internal/app/agent_attempt.go; (b) a TTY-only animated spinner/elapsed-time display; (c) step-boundary announcements (e.g. 'clarify loop: round 2/5 starting', 'attempt exec_0002 started') in clarify_loop.go/review_loop.go, which today print only an end-of-run summary; (d) richer parsed agent activity surfaced from the ACP stream (e.g. 'agent is reading internal/app/run.go'). Which of (a)-(d), or which combination, is intended?
+- Which operations are 'long operations' in scope? Candidates: (1) only the agent-attempt stages that run subprocesses for minutes (contract draft, clarify suggest, clarify loop, execute, review, review fix, review loop — all via runAgentAttemptLifecycle); (2) also the multi-round loop commands' round boundaries; (3) also deterministic commands like 'pactum map refresh' (internal/app/map.go), which scans/indexes the repo but typically finishes in seconds on this repo (133 files).
+- Should progress output go exclusively to stderr, and should it still be emitted when --json is set? Every relevant command has a JSONOutput flag ('Print machine-readable JSON output', internal/app/cli.go) writing to stdout, and liveOutput is already wired to r.Stderr in commands.go.
+- Silent-agent scenario: 'pactum execute' runs with --timeout 600s and the agent emits nothing for 5+ minutes while the idle watchdog (startIdleTimeout in internal/agents) counts toward killing the attempt. What should the operator see during the silence, and should the heartbeat expose watchdog state (time since last agent output, configured idle timeout) so an impending kill is predictable?
+- Non-TTY scenario: a CI job (.github/workflows/ci.yml) or a parent process like Claude Code runs 'pactum execute' with stderr captured to a log. A 10-minute attempt at a 15s heartbeat produces ~40 log lines. Should non-TTY stderr get the same cadence, a reduced cadence, or no heartbeat at all — and is any TTY-only rendering (carriage-return spinner) wanted when stderr is a terminal?
+- Should progress be operator-controllable — a global --no-progress/--quiet CLI flag, a workspace config key, or always-on? M16.0 deliberately made the workspace config stage-centric and strict with dead keys removed, so adding a config key is a real surface change.
+- How should 'feel responsive' be accepted and verified? Propose concrete acceptance criteria, e.g.: (1) during any agent attempt, the first progress line appears on stderr within 15s and at least every N seconds until the attempt exits; (2) clarify loop and review loop announce each round before its first attempt starts; (3) stdout under --json remains byte-identical to today; verified via unit tests with an injected clock/writer plus 'make check'. Is that the intended bar, and what is N?
+- Chatty-agent interleaving scenario: agent live output is teed to the operator stderr as raw byte chunks (io.MultiWriter + lockedWriter in internal/agents/runner.go and acp_transport.go), so a chunk can end mid-line. A heartbeat written at that moment splices onto a partial agent line, and nothing distinguishes Pactum's progress lines from the agent's own output for a parent process (CI job, Claude Code) reading stderr. Should every progress line (a) be emitted as a single atomic Write through the same lockedWriter, and (b) carry a stable machine-recognizable prefix (e.g. 'pactum <stage> <attempt_id>:') that is documented as the greppable identifier — or is occasional ambiguous interleaving acceptable?
+- Concurrent-reviewers scenario: a review-loop review round fans out one goroutine per configured reviewer (sync.WaitGroup in runReviewLoopReviewRound, internal/app/review_loop.go), so with 2-3 reviewers, 2-3 agent attempts stream to the same stderr simultaneously through a synchronizedWriter. Should each concurrent attempt emit its own independent heartbeat (N interleaved heartbeat streams, distinguished only by the attempt-id prefix from q_009), or should the review loop aggregate them into one consolidated round-level status line (e.g. 'review round 1: 3 attempts running, reviewer_attempt_004 silent 2m') — and does the 'first progress line within 15s' acceptance criterion apply to each concurrent attempt individually?

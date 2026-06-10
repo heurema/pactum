@@ -1,0 +1,74 @@
+{
+  "schema": "pactum.clarify_loop_summary.v1",
+  "run_id": "run_20260610_082523",
+  "run_status": "clarifying",
+  "started_at": "2026-06-10T08:25:23Z",
+  "finished_at": "2026-06-10T08:33:58Z",
+  "clarifier": "claude",
+  "max_rounds": 3,
+  "terminal_reason": "max_rounds",
+  "converged": false,
+  "rounds": [
+    {
+      "round": 1,
+      "clarifier_attempt_id": "clarifier_attempt_001",
+      "questions_created": 7,
+      "auto_resolved": 0,
+      "open_blocking_after": 3
+    },
+    {
+      "round": 2,
+      "clarifier_attempt_id": "clarifier_attempt_002",
+      "questions_created": 2,
+      "auto_resolved": 1,
+      "open_blocking_after": 3
+    },
+    {
+      "round": 3,
+      "clarifier_attempt_id": "clarifier_attempt_003",
+      "questions_created": 1,
+      "auto_resolved": 0,
+      "open_blocking_after": 3
+    }
+  ],
+  "coverage": [
+    {
+      "kind": "terminology",
+      "total": 1,
+      "open": 1,
+      "answered": 0,
+      "blocking_open": 1
+    },
+    {
+      "kind": "scope",
+      "total": 2,
+      "open": 2,
+      "answered": 0,
+      "blocking_open": 1
+    },
+    {
+      "kind": "acceptance",
+      "total": 1,
+      "open": 1,
+      "answered": 0,
+      "blocking_open": 1
+    },
+    {
+      "kind": "edge_case",
+      "total": 4,
+      "open": 4,
+      "answered": 0,
+      "blocking_open": 0
+    },
+    {
+      "kind": "assumption",
+      "total": 2,
+      "open": 1,
+      "answered": 1,
+      "blocking_open": 0
+    }
+  ],
+  "artifacts": {
+    "summary": "clarify/loop-summary.json"
+  }
+}
