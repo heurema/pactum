@@ -202,7 +202,7 @@ func (a App) prepareClarifier(context clarifyContext, reviewerName string) (clar
 	if err != nil {
 		return clarifierPreparation{}, err
 	}
-	config, err := a.readConfig(context.Paths.Config)
+	config, err := readConfig(context.Paths.Config)
 	if err != nil {
 		return clarifierPreparation{}, err
 	}

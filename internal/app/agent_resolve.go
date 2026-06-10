@@ -51,42 +51,63 @@ func resolveExecutorEntry(config configFile, name string) (agentRegistryEntry, e
 // resolveReviewerEntry picks the registry entry for a reviewer-role
 // invocation (review, clarify suggest, contract draft): an explicit name
 // resolves against the registry; an omitted name keeps cross-model semantics
-// against underlying agents — the first entry whose underlying built-in
-// differs from the run executor's, falling back to the first entry.
+// against inferred engines — the first entry whose engine differs from the
+// run executor's, falling back to the first entry.
 func resolveReviewerEntry(config configFile, context reviewContext, name string) (agentRegistryEntry, error) {
 	if strings.TrimSpace(name) != "" {
 		return findRegistryEntry(config, name)
 	}
-	executorAgent, ok := latestExecutionExecutorName(context)
+	executorEngine, ok := latestExecutionExecutorName(context)
 	if !ok {
 		// No execution attempt yet (clarify suggest and contract draft run
 		// before execution): the executor that would run is the default — the
 		// first registry entry.
-		executorAgent = config.Agents[0].Agent
+		engine, err := registryEntryEngine(config.Agents[0])
+		if err != nil {
+			return agentRegistryEntry{}, err
+		}
+		executorEngine = engine
 	}
 	for _, entry := range config.Agents {
-		if entry.Agent != executorAgent {
+		engine, err := registryEntryEngine(entry)
+		if err != nil {
+			return agentRegistryEntry{}, err
+		}
+		if engine != executorEngine {
 			return entry, nil
 		}
 	}
 	return config.Agents[0], nil
 }
 
+// registryEntryEngine infers the built-in engine a registry entry runs on from
+// its model. readConfig validates inference for every entry, so a failure here
+// means the entry bypassed config validation.
+func registryEntryEngine(entry agentRegistryEntry) (string, error) {
+	engine, ok := agents.InferAgentFromModel(entry.Model)
+	if !ok {
+		return "", fmt.Errorf("agent %q: cannot infer the engine from model %q", entry.Name, entry.Model)
+	}
+	return engine, nil
+}
+
 // resolveAgentForRole turns a registry entry into the runnable descriptor for
 // a role, with the entry's model/effort pins applied.
 func (a App) resolveAgentForRole(entry agentRegistryEntry, role agentRole) (resolvedAgent, error) {
+	// Inference never yields an empty engine, and an unrecognized model errors
+	// out here. That matters because the agents-package resolvers fall back to
+	// their own hardcoded default on an empty name — the exact behavior the
+	// registry replaces, which must not re-enter through this seam.
+	engine, err := registryEntryEngine(entry)
+	if err != nil {
+		return resolvedAgent{}, err
+	}
 	var descriptor agents.AgentDescriptor
-	var err error
-	// entry.Agent is always non-empty here: readConfig normalizes it (defaulting
-	// to the entry name) and validates it against the built-ins. That matters
-	// because the agents-package resolvers fall back to their own hardcoded
-	// default on an empty name — the exact behavior the registry replaces, which
-	// must not re-enter through this seam.
 	switch role {
 	case agentRoleReviewer:
-		descriptor, err = a.agentRegistry().ResolveReviewer(entry.Agent)
+		descriptor, err = a.agentRegistry().ResolveReviewer(engine)
 	default:
-		descriptor, err = a.agentRegistry().ResolveExecutor(entry.Agent)
+		descriptor, err = a.agentRegistry().ResolveExecutor(engine)
 	}
 	if err != nil {
 		return resolvedAgent{}, err

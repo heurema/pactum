@@ -66,14 +66,13 @@ type reviewBudgetConfig struct {
 
 // agentRegistryEntry registers one invocable agent in the top-level agents
 // registry, the config's source of truth for agents. Name is how the entry is
-// referenced everywhere (review.panel, --agent, --reviewer); Agent is the
-// built-in it runs on (defaulting to Name); Model and Effort are optional pins
-// that travel with the name wherever it is used. A name is decoupled from the
-// built-in, so two entries may run the same built-in with different pins.
+// referenced everywhere (review.panel, --agent, --reviewer); Model is required
+// because the underlying engine is inferred solely from it (see
+// agents.InferAgentFromModel); Effort is an optional pin. Name and engine are
+// decoupled, so two entries may run the same engine with different pins.
 type agentRegistryEntry struct {
 	Name   string `yaml:"name"`
-	Agent  string `yaml:"agent,omitempty"`
-	Model  string `yaml:"model,omitempty"`
+	Model  string `yaml:"model"`
 	Effort string `yaml:"effort,omitempty"`
 }
 
@@ -92,7 +91,9 @@ func defaultConfigFile() configFile {
 	return configFile{
 		Schema: configSchema,
 		Agents: []agentRegistryEntry{
-			{Name: agents.BuiltinClaude},
+			// The model must be pinned: the engine is inferred from it, so an
+			// inherit-the-CLI-default entry cannot exist.
+			{Name: agents.BuiltinClaude, Model: "claude-opus-4-8"},
 		},
 		Map: mapConfig{
 			MaxFileBytes: 500000,
@@ -142,7 +143,7 @@ func readWorkspaceManifest(path string) (workspaceManifest, error) {
 	return manifest, nil
 }
 
-func (a App) readConfig(path string) (configFile, error) {
+func readConfig(path string) (configFile, error) {
 	var config configFile
 	data, err := activeStore.ReadBytes(path)
 	if err != nil {
@@ -168,7 +169,7 @@ func (a App) readConfig(path string) (configFile, error) {
 		return configFile{}, err
 	}
 	config.Review.Budget.Mode = budgetMode
-	if err := validateAgentRegistry(config.Agents, a.agentRegistry().ListBuiltins()); err != nil {
+	if err := validateAgentRegistry(config.Agents); err != nil {
 		return configFile{}, err
 	}
 	if err := validateReviewPanel(config.Review.Panel, config.Agents); err != nil {
@@ -177,12 +178,6 @@ func (a App) readConfig(path string) (configFile, error) {
 	return config, nil
 }
 
-// validateAgentRegistry enforces the agents-registry rules: at least one entry
-// (the registry is the only way to make an agent invocable), non-empty unique
-// names, an underlying agent (after defaulting to the name) that is a built-in,
-// and model pins carrying no ':' effort suffix (effort is its own key). Names
-// and underlying agents are normalized in place so resolution can rely on a
-// trimmed Name and a non-empty Agent.
 // agentNameIsPathSafe reports whether a registry name is safe to embed in
 // artifact file names (no path separators or other special characters).
 func agentNameIsPathSafe(name string) bool {
@@ -196,15 +191,15 @@ func agentNameIsPathSafe(name string) bool {
 	return true
 }
 
-func validateAgentRegistry(entries []agentRegistryEntry, builtins []agents.AgentDescriptor) error {
+// validateAgentRegistry enforces the agents-registry rules: at least one entry
+// (the registry is the only way to make an agent invocable), non-empty unique
+// path-safe names, a required model the engine can be inferred from, and model
+// pins carrying no ':' effort suffix (effort is its own key). Names are
+// normalized in place so resolution can rely on a trimmed Name; the inferred
+// engine is not cached — the resolution layer re-infers it where needed.
+func validateAgentRegistry(entries []agentRegistryEntry) error {
 	if len(entries) == 0 {
 		return errors.New("config agents: at least one agent must be registered")
-	}
-	known := map[string]bool{}
-	knownNames := make([]string, 0, len(builtins))
-	for _, descriptor := range builtins {
-		known[descriptor.Name] = true
-		knownNames = append(knownNames, descriptor.Name)
 	}
 	seen := map[string]bool{}
 	for i := range entries {
@@ -221,18 +216,16 @@ func validateAgentRegistry(entries []agentRegistryEntry, builtins []agents.Agent
 		if !agentNameIsPathSafe(name) {
 			return fmt.Errorf("config agents: name %q must contain only letters, digits, '.', '_', or '-'", name)
 		}
-		agent := strings.TrimSpace(entries[i].Agent)
-		if agent == "" {
-			agent = name
-		}
-		if !known[agent] {
-			return fmt.Errorf("config agents: entry %q: unknown agent %q (built-ins: %s)", name, agent, strings.Join(knownNames, ", "))
+		if strings.TrimSpace(entries[i].Model) == "" {
+			return fmt.Errorf("config agents: entry %q: model is required (the engine is inferred from the model)", name)
 		}
 		if strings.Contains(entries[i].Model, ":") {
 			return fmt.Errorf("config agents: entry %q: model %q must not contain ':'; set the effort key instead", name, entries[i].Model)
 		}
+		if _, ok := agents.InferAgentFromModel(entries[i].Model); !ok {
+			return fmt.Errorf("config agents: entry %q: cannot infer the engine from model %q (recognized: claude* or opus/sonnet/haiku/fable run on claude; gpt*, codex*, or o<digit>* run on codex)", name, entries[i].Model)
+		}
 		entries[i].Name = name
-		entries[i].Agent = agent
 	}
 	return nil
 }

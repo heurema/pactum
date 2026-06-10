@@ -61,7 +61,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 		return MapRefreshResult{}, err
 	}
 
-	config, err := a.readConfig(paths.Config)
+	config, err := readConfig(paths.Config)
 	if err != nil {
 		return MapRefreshResult{}, err
 	}

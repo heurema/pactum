@@ -195,7 +195,7 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 		return executionPreparation{}, err
 	}
 
-	config, err := a.readConfig(paths.Config)
+	config, err := readConfig(paths.Config)
 	if err != nil {
 		return executionPreparation{}, err
 	}

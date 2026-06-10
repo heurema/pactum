@@ -452,7 +452,7 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 }
 
 func (a App) resolveReviewLoopSettings(context reviewContext, options reviewLoopOptions) (reviewLoopSettings, error) {
-	config, err := a.readConfig(context.Paths.Config)
+	config, err := readConfig(context.Paths.Config)
 	if err != nil {
 		return reviewLoopSettings{}, err
 	}
@@ -547,7 +547,7 @@ func reviewLoopCapturedTokenTotal(runPaths contractRunPathSet) (int64, error) {
 }
 
 func (a App) resolveReviewLoopReviewers(context reviewContext, reviewerName string) ([]reviewLoopReviewer, error) {
-	config, err := a.readConfig(context.Paths.Config)
+	config, err := readConfig(context.Paths.Config)
 	if err != nil {
 		return nil, err
 	}

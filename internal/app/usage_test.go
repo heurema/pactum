@@ -31,11 +31,13 @@ func TestRunAgentAttemptLifecycleAppendsUsageRecord(t *testing.T) {
 		t.Fatalf("usage record count = %d, want 1: %#v", len(records), records)
 	}
 	record := records[0]
-	if record.RunID != runID || record.AttemptID != "attempt_001" || record.Stage != "execute" || record.Agent != "helper" || record.AgentName != "helper" {
+	// agent records the engine inferred from the entry's model; agent_name the
+	// registry name.
+	if record.RunID != runID || record.AttemptID != "attempt_001" || record.Stage != "execute" || record.Agent != "claude" || record.AgentName != "helper" {
 		t.Fatalf("unexpected usage record identity: %#v", record)
 	}
 	if record.Captured {
-		t.Fatalf("custom helper usage should be uncaptured: %#v", record)
+		t.Fatalf("helper output carries no parsable usage, so it stays uncaptured: %#v", record)
 	}
 }
 
@@ -76,7 +78,7 @@ func TestExecuteRunUsageRecordsRegistryAgentName(t *testing.T) {
 	app, paths, runID := setupApprovedPromptContract(t, root)
 	// "pinned-codex" runs on the codex built-in: the usage record keeps the
 	// underlying agent for cross-model comparison and adds the registry name.
-	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "pinned-codex", Agent: "codex"})
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "pinned-codex", Model: "gpt-5"})
 	app.AgentRegistry = testAgentRegistry(codexHelperAgentDescriptor())
 	runReviewCommand(t, app, "map", "refresh")
 	runReviewCommand(t, app, "prompt", "build", runID)

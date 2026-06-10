@@ -38,6 +38,7 @@ func TestReadConfigParsesClarifySection(t *testing.T) {
 		"schema: pactum.config.v1",
 		"agents:",
 		"  - name: claude",
+		"    model: claude-opus-4-8",
 		"clarify:",
 		"  max_rounds: 5",
 	}, "\n")
@@ -69,9 +70,10 @@ func TestValidateAgentRegistry(t *testing.T) {
 		{
 			name: "valid entries pass",
 			entries: []agentRegistryEntry{
-				{Name: "claude"},
-				{Name: "fable", Agent: "claude", Model: "claude-fable-5"},
-				{Name: "codex"},
+				{Name: "claude", Model: "claude-opus-4-8"},
+				{Name: "fable", Model: "claude-fable-5"},
+				{Name: "codex", Model: "gpt-5"},
+				{Name: "deep", Model: "o3"},
 			},
 		},
 		{
@@ -86,18 +88,18 @@ func TestValidateAgentRegistry(t *testing.T) {
 		},
 		{
 			name:    "duplicate name is rejected",
-			entries: []agentRegistryEntry{{Name: "claude"}, {Name: "claude", Model: "other"}},
+			entries: []agentRegistryEntry{{Name: "claude", Model: "claude-opus-4-8"}, {Name: "claude", Model: "claude-fable-5"}},
 			wantErr: `config agents: duplicate name "claude"`,
 		},
 		{
-			name:    "unknown built-in is rejected",
-			entries: []agentRegistryEntry{{Name: "writer", Agent: "gpt6"}},
-			wantErr: `config agents: entry "writer": unknown agent "gpt6" (built-ins: codex, claude)`,
+			name:    "missing model is rejected naming the entry",
+			entries: []agentRegistryEntry{{Name: "writer"}},
+			wantErr: `config agents: entry "writer": model is required (the engine is inferred from the model)`,
 		},
 		{
-			name:    "name defaulting to the underlying agent must be a built-in",
-			entries: []agentRegistryEntry{{Name: "gpt6"}},
-			wantErr: `config agents: entry "gpt6": unknown agent "gpt6" (built-ins: codex, claude)`,
+			name:    "unknown model form is rejected naming the entry and the recognized forms",
+			entries: []agentRegistryEntry{{Name: "writer", Model: "gemini-2.5-pro"}},
+			wantErr: `config agents: entry "writer": cannot infer the engine from model "gemini-2.5-pro" (recognized: claude* or opus/sonnet/haiku/fable run on claude; gpt*, codex*, or o<digit>* run on codex)`,
 		},
 		{
 			name:    "colon in model points at the effort key",
@@ -107,7 +109,7 @@ func TestValidateAgentRegistry(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateAgentRegistry(tc.entries, agents.ListBuiltins())
+			err := validateAgentRegistry(tc.entries)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -121,21 +123,21 @@ func TestValidateAgentRegistry(t *testing.T) {
 	}
 }
 
-func TestValidateAgentRegistryDefaultsUnderlyingAgentToName(t *testing.T) {
-	entries := []agentRegistryEntry{{Name: " claude "}}
-	if err := validateAgentRegistry(entries, agents.ListBuiltins()); err != nil {
+func TestValidateAgentRegistryNormalizesNames(t *testing.T) {
+	entries := []agentRegistryEntry{{Name: " claude ", Model: "claude-opus-4-8"}}
+	if err := validateAgentRegistry(entries); err != nil {
 		t.Fatalf("validateAgentRegistry: %v", err)
 	}
-	if entries[0].Name != "claude" || entries[0].Agent != "claude" {
-		t.Fatalf("entry should normalize name and default the underlying agent: %#v", entries[0])
+	if entries[0].Name != "claude" {
+		t.Fatalf("entry should normalize the name in place: %#v", entries[0])
 	}
 }
 
 func TestValidateReviewPanel(t *testing.T) {
 	registry := []agentRegistryEntry{
-		{Name: "claude", Agent: "claude"},
-		{Name: "fable", Agent: "claude"},
-		{Name: "codex", Agent: "codex"},
+		{Name: "claude", Model: "claude-opus-4-8"},
+		{Name: "fable", Model: "claude-fable-5"},
+		{Name: "codex", Model: "gpt-5"},
 	}
 	cases := []struct {
 		name    string
@@ -207,11 +209,16 @@ func TestDefaultConfigRoundTripsStrictReader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readConfig: %v", err)
 	}
-	if len(config.Agents) != 1 || config.Agents[0].Name != "claude" || config.Agents[0].Agent != "claude" {
+	if len(config.Agents) != 1 || config.Agents[0].Name != "claude" {
 		t.Fatalf("default config should register the single claude entry: %#v", config.Agents)
 	}
-	if config.Agents[0].Model != "" || config.Agents[0].Effort != "" {
-		t.Fatalf("default claude entry should be unpinned: %#v", config.Agents[0])
+	// The model must be pinned (the engine is inferred from it) and infer the
+	// claude engine, so the generated default round-trips inference.
+	if config.Agents[0].Model != "claude-opus-4-8" || config.Agents[0].Effort != "" {
+		t.Fatalf("default claude entry should pin claude-opus-4-8 with no effort: %#v", config.Agents[0])
+	}
+	if engine, ok := agents.InferAgentFromModel(config.Agents[0].Model); !ok || engine != agents.BuiltinClaude {
+		t.Fatalf("default entry model should infer the claude engine: %q", config.Agents[0].Model)
 	}
 	if len(config.Review.Panel) != 0 {
 		t.Fatalf("default review panel should be empty: %#v", config.Review.Panel)
@@ -225,11 +232,48 @@ func TestAgentRegistryEntryModelSpecTrims(t *testing.T) {
 	}
 }
 
+// TestResolveAgentForRoleUsesInferredEngine pins that a free-named entry
+// resolves the descriptors of the engine inferred from its model — the name
+// itself carries no engine.
+func TestResolveAgentForRoleUsesInferredEngine(t *testing.T) {
+	reviewer, err := App{}.resolveAgentForRole(agentRegistryEntry{Name: "deep", Model: "o3"}, agentRoleReviewer)
+	if err != nil {
+		t.Fatalf("resolveAgentForRole reviewer: %v", err)
+	}
+	if reviewer.Name != "deep" || reviewer.Agent.Name != agents.BuiltinCodex || reviewer.Agent.Command != "codex" {
+		t.Fatalf("o3 entry should resolve the codex reviewer descriptor: %#v", reviewer)
+	}
+	if !containsString(reviewer.Agent.Args, "read-only") {
+		t.Fatalf("reviewer role should resolve the read-only codex descriptor: %#v", reviewer.Agent.Args)
+	}
+
+	executor, err := App{}.resolveAgentForRole(agentRegistryEntry{Name: "writer", Model: "claude-fable-5"}, agentRoleExecutor)
+	if err != nil {
+		t.Fatalf("resolveAgentForRole executor: %v", err)
+	}
+	if executor.Name != "writer" || executor.Agent.Name != agents.BuiltinClaude || executor.Agent.Command != "claude" {
+		t.Fatalf("claude-model entry should resolve the claude executor descriptor: %#v", executor)
+	}
+	if !containsString(executor.Agent.Args, "--model") || !containsString(executor.Agent.Args, "claude-fable-5") {
+		t.Fatalf("entry model pin should be applied to the descriptor: %#v", executor.Agent.Args)
+	}
+}
+
+// TestResolveAgentForRoleFailsOnUninferableModel pins the resolution-layer
+// guard: an entry whose model infers no engine errors out instead of falling
+// back to the agents-package default resolver.
+func TestResolveAgentForRoleFailsOnUninferableModel(t *testing.T) {
+	_, err := App{}.resolveAgentForRole(agentRegistryEntry{Name: "mystery", Model: "gemini-2.5-pro"}, agentRoleExecutor)
+	if err == nil || !strings.Contains(err.Error(), `agent "mystery"`) || !strings.Contains(err.Error(), "gemini-2.5-pro") {
+		t.Fatalf("uninferable model should fail naming the entry: %v", err)
+	}
+}
+
 // TestFindRegistryEntryRejectsUnregisteredBuiltIn pins the source-of-truth
 // rule: a bare built-in name that is not registered does not resolve — the
 // registry is the only namespace, and built-ins are not implicitly available.
 func TestFindRegistryEntryRejectsUnregisteredBuiltIn(t *testing.T) {
-	config := configFile{Agents: []agentRegistryEntry{{Name: "claude", Agent: "claude"}}}
+	config := configFile{Agents: []agentRegistryEntry{{Name: "claude", Model: "claude-opus-4-8"}}}
 	_, err := findRegistryEntry(config, "codex")
 	if err == nil || !strings.Contains(err.Error(), `unknown agent "codex": not registered in config agents`) {
 		t.Fatalf("unregistered built-in must not resolve: %v", err)
@@ -237,8 +281,9 @@ func TestFindRegistryEntryRejectsUnregisteredBuiltIn(t *testing.T) {
 }
 
 // TestReadConfigRejectsPreRegistryShapes pins that the strict parser rejects
-// the pre-M18.0 config shapes loudly: the removed execute section and the old
-// review.panel object entries both fail naming the offending key.
+// the removed config shapes loudly: the old execute section, the old
+// review.panel object entries, and the removed per-entry agent key all fail
+// naming the offending key.
 func TestReadConfigRejectsPreRegistryShapes(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -251,6 +296,7 @@ func TestReadConfigRejectsPreRegistryShapes(t *testing.T) {
 				"schema: pactum.config.v1",
 				"agents:",
 				"  - name: claude",
+				"    model: claude-opus-4-8",
 				"execute:",
 				"  models: []",
 			}, "\n"),
@@ -262,12 +308,24 @@ func TestReadConfigRejectsPreRegistryShapes(t *testing.T) {
 				"schema: pactum.config.v1",
 				"agents:",
 				"  - name: claude",
+				"    model: claude-opus-4-8",
 				"review:",
 				"  panel:",
 				"    - agent: claude",
 				"      model: claude-fable-5",
 			}, "\n"),
 			wantErr: "panel",
+		},
+		{
+			name: "old registry entries with the removed agent key",
+			contents: strings.Join([]string{
+				"schema: pactum.config.v1",
+				"agents:",
+				"  - name: fable",
+				"    agent: claude",
+				"    model: claude-fable-5",
+			}, "\n"),
+			wantErr: "field agent not found",
 		},
 	}
 	for _, tc := range cases {
@@ -289,12 +347,12 @@ func TestReadConfigRejectsPreRegistryShapes(t *testing.T) {
 // path-safe: they flow into per-member review-lens prompt artifact paths.
 func TestValidateAgentRegistryRejectsPathUnsafeNames(t *testing.T) {
 	for _, name := range []string{"a/b", `a\b`, "a:b", "a b"} {
-		err := validateAgentRegistry([]agentRegistryEntry{{Name: name, Agent: "claude"}}, agents.ListBuiltins())
+		err := validateAgentRegistry([]agentRegistryEntry{{Name: name, Model: "claude-opus-4-8"}})
 		if err == nil || !strings.Contains(err.Error(), "must contain only letters") {
 			t.Fatalf("name %q should be rejected as path-unsafe: %v", name, err)
 		}
 	}
-	if err := validateAgentRegistry([]agentRegistryEntry{{Name: "fable-5.x_ok", Agent: "claude"}}, agents.ListBuiltins()); err != nil {
+	if err := validateAgentRegistry([]agentRegistryEntry{{Name: "fable-5.x_ok", Model: "claude-fable-5"}}); err != nil {
 		t.Fatalf("path-safe name should pass: %v", err)
 	}
 }

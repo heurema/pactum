@@ -127,7 +127,7 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 	if len(commands) > 0 && !allowCommands {
 		return errors.New("refusing to run validation commands without --allow-commands")
 	}
-	config, err := a.readConfig(context.Paths.Config)
+	config, err := readConfig(context.Paths.Config)
 	if err != nil {
 		return err
 	}
@@ -346,7 +346,7 @@ func (a App) buildGateChangeReport(root string, paths artifacts.Paths) gateChang
 		report.Reasons = append(report.Reasons, "cannot read project map hashes: "+err.Error())
 		return report
 	}
-	config, err := a.readConfig(paths.Config)
+	config, err := readConfig(paths.Config)
 	if err != nil {
 		report.Status = "unknown"
 		report.Reasons = append(report.Reasons, "cannot read project map config: "+err.Error())

@@ -303,7 +303,7 @@ func (a App) prepareContractDrafter(context runContext, reviewerName string) (co
 	if err != nil {
 		return contractDraftPreparation{}, err
 	}
-	config, err := a.readConfig(context.Paths.Config)
+	config, err := readConfig(context.Paths.Config)
 	if err != nil {
 		return contractDraftPreparation{}, err
 	}
