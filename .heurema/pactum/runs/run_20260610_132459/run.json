@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260610_132459",
+  "status": "contract_approved",
+  "task": "Per-panel-member review lenses (review-prompt-design follow-up): a registry entry may carry an optional review lens, focusing that reviewer's prompt on one of the five M19.0 lens checklists, so a panel can run complementary specialists instead of identical generalists",
+  "created_at": "2026-06-10T13:24:59.019773Z",
+  "updated_at": "2026-06-10T13:39:54.480169Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260610_132458",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

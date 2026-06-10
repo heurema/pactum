@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260610_115509",
+  "status": "contract_approved",
+  "task": "Executor prompt house style (review-prompt-design slice 2): bake the house-style and discipline ruleset into both write-stage prompts (executor and fixer) via one shared section, mirroring what the hardened reviewer now enforces",
+  "created_at": "2026-06-10T11:55:09.745939Z",
+  "updated_at": "2026-06-10T11:55:35.006213Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260610_115509",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}
