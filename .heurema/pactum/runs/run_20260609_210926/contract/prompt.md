@@ -1,0 +1,83 @@
+# Executor Prompt
+
+This prompt is prepared from an approved Pactum contract.
+This prompt is prepared for the selected built-in agent when `pactum execute run` is used.
+Pactum records execution artifacts and validates contract, map, and memory boundaries before execution.
+
+## Contract status
+- Run: run_20260609_210926
+- Approval: approved
+- Contract hash: 65cee8a8c0fd3898208e797d7498d50b5442a41b5ce898544eba1507f1661825
+
+## Goal
+Fix the model-pinning design flaw: a model id is agent-specific (a Claude model cannot run on codex), but agents.executor_model / agents.reviewer_model are global strings applied to whichever agent runs the stage — so pinning a model breaks every other agent in the review panel and forced narrowing the panel to one agent. Replace the two global strings with a per-agent map: agents.models: {<agent-name>: {executor: model[:effort], reviewer: model[:effort]}}. A pin applies only when that agent runs that role; an agent without a pin inherits its CLI default; a foreign model can never reach the wrong agent; and a multi-agent review panel composes with per-agent models. No backward compatibility shim — the old keys are removed outright (the project has no users).
+
+## In scope
+- internal/agents/types.go: in AgentConfig, remove ExecutorModel and ReviewerModel; add Models map[string]AgentModelPins (yaml/json 'models'), with type AgentModelPins {Executor string (yaml 'executor'); Reviewer string (yaml 'reviewer')} — values are the existing model[:effort] spec format parsed by ParseModelSpec.
+- Add a small helper (in internal/agents or internal/app) that, given the AgentConfig, an agent name, and a role ('executor' or 'reviewer'), returns the pinned spec string (empty when no pin). Update ALL SIX read sites to resolve the pin per resolved agent name: execute.go (executor), review_fix.go (fixer uses the executor pin), review.go, review_loop.go, contract_draft.go, clarify_suggest.go (reviewer roles). In review_loop.go's resolveReviewLoopReviewers the spec must now be resolved PER PANEL MEMBER inside the loop (each reviewLoopReviewer already carries its own ModelSpec), not once before it.
+- Validation: an agents.models key that is not a resolvable agent name must fail loudly, not silently never-apply — when the helper/read sites consume the config, validate the map keys against the agent registry (mirroring how review_panel rejects unknown reviewer names) and return a clear error naming the bad key.
+- Update tests that set ExecutorModel/ReviewerModel on the config to the new per-agent map, preserving their assertions (e.g. claude gets --model/--effort, codex gets -c model=...); add coverage that (a) with a two-agent panel and a pin only on claude, claude runs with the pinned model and codex runs unpinned, and (b) an unknown agents.models key produces the clear error.
+- Docs: update docs/agents.md (the executor_model/reviewer_model sections and the resolved-config mention) to document agents.models with an example pinning different models per agent in a two-agent panel; update docs/backlog.md — the 'panel member model pins (all members share agents.reviewer_model today)' note is resolved by this change.
+
+## Out of scope
+- No backward compatibility for executor_model/reviewer_model (remove them; a config still carrying them simply has unknown keys per yaml parsing — do not add migration code). Do not change ApplyModelSpec/ParseModelSpec formatting, the CLI flags, the review panel semantics, cross_model_review, or the workspace config.yaml itself (committed separately). Do not add per-stage pins beyond executor/reviewer.
+
+## Paths in scope
+- internal/agents/*.go
+- internal/app/*.go
+- docs/agents.md
+- docs/backlog.md
+
+
+## Acceptance criteria
+- AgentConfig no longer has ExecutorModel/ReviewerModel; agents.models map drives all six stage read-sites, resolved per agent name; with review_panel [codex, claude] and models.claude.reviewer set, claude reviewers get the pin and codex reviewers run unpinned (covered by a test).
+- An agents.models key naming an unknown agent fails with a clear error naming the key (covered by a test).
+- go build ./..., go vet ./..., and the deadcode gate are clean; go test -race ./... passes; docs/agents.md documents agents.models and docs/backlog.md drops the shared-reviewer-model limitation.
+
+## Validation commands
+- go build ./...
+- go test ./internal/agents/... ./internal/app/...
+- go vet ./...
+- go test -race ./...
+
+## Assumptions
+- Scoping pins to the agent name is the correct invariant because model ids are agent-specific; the panel stays a plain name list and composes with per-agent pins.
+- The fixer intentionally uses the executor-role pin (it writes code, like the executor), preserving today's pairing.
+
+## Clarifications
+- None
+
+## Project context
+- Executor context: context/executor-context.md
+- Repo map: .heurema/pactum/map/repo-map.md
+- Search results: context/search-results.json
+- Accepted memory context: context/memory-context.md
+
+## Accepted memory
+
+Memory context:
+- context/memory-context.md
+
+Selected memory:
+- total: 0
+- fresh: 0
+- stale: 0
+- unknown: 0
+
+Items:
+- none
+
+Rules:
+- Accepted memory is context, not semantic truth.
+- Stale memory may be outdated; verify before using.
+- Use `pactum search "<term>"` and inspect current source files before relying on memory.
+- Do not implement from memory alone.
+
+## Instructions for future executor
+- Follow the approved contract.
+- Do not implement out-of-scope work.
+- Search before creating new code.
+- Prefer existing code items when applicable.
+- If the contract is ambiguous, stop and request clarification.
+- Use the listed validation commands as expected checks.
+- Pactum gate can run approved validation commands after execution.
