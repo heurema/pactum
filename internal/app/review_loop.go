@@ -81,23 +81,24 @@ type reviewLoopArtifacts struct {
 }
 
 type reviewLoopRoundSummary struct {
-	Round                      int      `json:"round"`
-	ReviewerAttemptID          string   `json:"reviewer_attempt_id"`
-	ReviewerAttemptIDs         []string `json:"reviewer_attempt_ids,omitempty"`
-	ProposalsCreated           int      `json:"proposals_created"`
-	ProposalsAccepted          int      `json:"proposals_accepted"`
-	OpenFindings               int      `json:"open_findings"`
-	OpenBlockingFindings       int      `json:"open_blocking_findings"`
-	Warnings                   []string `json:"warnings,omitempty"`
-	CleanStreak                int      `json:"clean_streak"`
-	UnchangedFingerprintStreak int      `json:"unchanged_fingerprint_streak"`
-	WorkingTreeFingerprint     string   `json:"working_tree_fingerprint,omitempty"`
-	FixerAttemptID             string   `json:"fixer_attempt_id,omitempty"`
-	FixOutcomesResolved        int      `json:"fix_outcomes_resolved,omitempty"`
-	FixOutcomesRebutted        int      `json:"fix_outcomes_rebutted,omitempty"`
-	FixOutcomesBlocked         int      `json:"fix_outcomes_blocked,omitempty"`
-	GateStatus                 string   `json:"gate_status,omitempty"`
-	GateReportArtifact         string   `json:"gate_report_artifact,omitempty"`
+	Round                      int                    `json:"round"`
+	ReviewerAttemptID          string                 `json:"reviewer_attempt_id"`
+	ReviewerAttemptIDs         []string               `json:"reviewer_attempt_ids,omitempty"`
+	ReviewerAttempts           []reviewLoopAttemptRef `json:"reviewer_attempts,omitempty"`
+	ProposalsCreated           int                    `json:"proposals_created"`
+	ProposalsAccepted          int                    `json:"proposals_accepted"`
+	OpenFindings               int                    `json:"open_findings"`
+	OpenBlockingFindings       int                    `json:"open_blocking_findings"`
+	Warnings                   []string               `json:"warnings,omitempty"`
+	CleanStreak                int                    `json:"clean_streak"`
+	UnchangedFingerprintStreak int                    `json:"unchanged_fingerprint_streak"`
+	WorkingTreeFingerprint     string                 `json:"working_tree_fingerprint,omitempty"`
+	FixerAttemptID             string                 `json:"fixer_attempt_id,omitempty"`
+	FixOutcomesResolved        int                    `json:"fix_outcomes_resolved,omitempty"`
+	FixOutcomesRebutted        int                    `json:"fix_outcomes_rebutted,omitempty"`
+	FixOutcomesBlocked         int                    `json:"fix_outcomes_blocked,omitempty"`
+	GateStatus                 string                 `json:"gate_status,omitempty"`
+	GateReportArtifact         string                 `json:"gate_report_artifact,omitempty"`
 }
 
 // reviewLoopReviewer is one resolved panel member: the registry name it was
@@ -113,7 +114,16 @@ type reviewLoopReviewer struct {
 type reviewLoopReviewRoundResult struct {
 	Reviewers  []string
 	AttemptIDs []string
+	Attempts   []reviewLoopAttemptRef
 	Proposals  reviewLoopProposalBatch
+}
+
+// reviewLoopAttemptRef ties one lens attempt to the panel member (registry
+// name) and lens it ran under, so the round summary surfaces the fan-out.
+type reviewLoopAttemptRef struct {
+	AttemptID string `json:"attempt_id"`
+	Reviewer  string `json:"reviewer"`
+	Lens      string `json:"lens"`
 }
 
 type reviewLoopProposalBatch struct {
@@ -269,6 +279,7 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 		if len(reviewerResult.AttemptIDs) > 1 {
 			roundSummary.ReviewerAttemptIDs = append([]string{}, reviewerResult.AttemptIDs...)
 		}
+		roundSummary.ReviewerAttempts = append([]reviewLoopAttemptRef{}, reviewerResult.Attempts...)
 		// A round with no accepted or duplicate proposals ends the loop, but only a
 		// round that reported NOTHING is a clean pass. If the reviewer reported
 		// findings that could not be parsed into proposals (warnings), the code was
@@ -594,28 +605,28 @@ func (a App) runReviewLoopReviewRound(context reviewContext, liveOutput io.Write
 	if err != nil {
 		return reviewLoopReviewRoundResult{}, err
 	}
-	if err := writeReviewerPromptAndContext(prep); err != nil {
+	if err := writeReviewerPromptsAndContext(prep, reviewLoopReviewerNames(reviewers)); err != nil {
 		return reviewLoopReviewRoundResult{}, err
 	}
 
-	results := make([]reviewerResultDocument, len(reviewers))
+	memberResults := make([][]reviewerResultDocument, len(reviewers))
 	errs := make([]error, len(reviewers))
 	var wg sync.WaitGroup
 	var sharedLive io.Writer = liveOutput
-	if liveOutput != nil && len(reviewers) > 1 {
+	if liveOutput != nil {
 		sharedLive = &synchronizedWriter{w: liveOutput}
 	}
 	for index, reviewer := range reviewers {
 		wg.Add(1)
 		go func(index int, reviewer reviewLoopReviewer) {
 			defer wg.Done()
-			results[index], errs[index] = a.runReviewLoopReviewerWithAgent(sharedLive, runID, prep, reviewer, timeout)
+			memberResults[index], errs[index] = a.runReviewerLensAttempts(sharedLive, runID, prep, reviewer, timeout)
 		}(index, reviewer)
 	}
 	wg.Wait()
-	for index, err := range errs {
+	for _, err := range errs {
 		if err != nil {
-			return reviewLoopReviewRoundResult{}, fmt.Errorf("reviewer %s: %w", reviewers[index].Name, err)
+			return reviewLoopReviewRoundResult{}, err
 		}
 	}
 
@@ -623,41 +634,84 @@ func (a App) runReviewLoopReviewRound(context reviewContext, liveOutput io.Write
 		Created:  []reviewProposalRecord{},
 		Warnings: []string{},
 	}
-	attemptIDs := make([]string, 0, len(results))
-	for _, result := range results {
-		attemptIDs = append(attemptIDs, result.AttemptID)
-		proposals, err := a.runReviewLoopProposeFindings(runID, result.AttemptID)
-		if err != nil {
-			return reviewLoopReviewRoundResult{}, err
+	attemptIDs := make([]string, 0, len(reviewers)*len(reviewLenses))
+	attempts := make([]reviewLoopAttemptRef, 0, len(reviewers)*len(reviewLenses))
+	for index, reviewer := range reviewers {
+		for _, result := range memberResults[index] {
+			attemptIDs = append(attemptIDs, result.AttemptID)
+			attempts = append(attempts, reviewLoopAttemptRef{
+				AttemptID: result.AttemptID,
+				Reviewer:  reviewer.Name,
+				Lens:      result.Lens,
+			})
+			proposals, err := a.runReviewLoopProposeFindings(runID, result.AttemptID)
+			if err != nil {
+				return reviewLoopReviewRoundResult{}, err
+			}
+			batch.Created = append(batch.Created, proposals.Created...)
+			batch.Warnings = append(batch.Warnings, proposals.Warnings...)
 		}
-		batch.Created = append(batch.Created, proposals.Created...)
-		batch.Warnings = append(batch.Warnings, proposals.Warnings...)
 	}
 	return reviewLoopReviewRoundResult{
 		Reviewers:  reviewLoopReviewerNames(reviewers),
 		AttemptIDs: attemptIDs,
+		Attempts:   attempts,
 		Proposals:  batch,
 	}, nil
 }
 
-func (a App) runReviewLoopReviewerWithAgent(liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, timeout time.Duration) (reviewerResultDocument, error) {
-	var stdout bytes.Buffer
-	if err := a.runReviewerAttempt(&stdout, liveOutput, runID, prep, reviewer, timeout, true, true, false); err != nil {
-		return reviewerResultDocument{}, err
+// runReviewerLensAttempts spawns the fixed lens fan-out for one resolved
+// reviewer: five concurrent attempts, one per lens, each reading its own
+// per-member, per-lens prompt artifact (written before the launch). Results
+// keep the lens order even when an attempt fails, so callers can render
+// whatever completed.
+func (a App) runReviewerLensAttempts(liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, timeout time.Duration) ([]reviewerResultDocument, error) {
+	results := make([]reviewerResultDocument, len(reviewLenses))
+	errs := make([]error, len(reviewLenses))
+	var wg sync.WaitGroup
+	var sharedLive io.Writer = liveOutput
+	if liveOutput != nil {
+		sharedLive = &synchronizedWriter{w: liveOutput}
 	}
-	var result reviewerResultDocument
-	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
-		return reviewerResultDocument{}, err
+	for index, lens := range reviewLenses {
+		wg.Add(1)
+		go func(index int, lens reviewLens) {
+			defer wg.Done()
+			results[index], errs[index] = a.runReviewLoopReviewerWithAgent(sharedLive, runID, prep, reviewer, lens, timeout)
+		}(index, lens)
 	}
-	return result, nil
+	wg.Wait()
+	for index, err := range errs {
+		if err != nil {
+			return results, fmt.Errorf("reviewer %s lens %s: %w", reviewer.Name, reviewLenses[index].Key, err)
+		}
+	}
+	return results, nil
 }
 
-func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, timeout time.Duration, confirm bool, jsonOutput bool, writeDryRunArtifacts bool) error {
-	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[reviewerDryRunDocument, reviewerRequestDocument, reviewerResultDocument, struct{}]{
-		Stdout:          stdout,
-		LiveOutput:      liveOutput,
-		JSONOutput:      jsonOutput,
-		Confirm:         confirm,
+func (a App) runReviewLoopReviewerWithAgent(liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration) (reviewerResultDocument, error) {
+	var stdout bytes.Buffer
+	runErr := a.runReviewerAttempt(&stdout, liveOutput, runID, prep, reviewer, lens, timeout)
+	var result reviewerResultDocument
+	if stdout.Len() > 0 {
+		if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+			if runErr != nil {
+				return reviewerResultDocument{}, runErr
+			}
+			return reviewerResultDocument{}, err
+		}
+	}
+	return result, runErr
+}
+
+func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration) error {
+	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[reviewerLensAttemptPlan, reviewerRequestDocument, reviewerResultDocument, struct{}]{
+		Stdout:     stdout,
+		LiveOutput: liveOutput,
+		JSONOutput: true,
+		// Callers confirm before the lens fan-out; a per-attempt prompt would
+		// ask five times.
+		Confirm:         true,
 		CancelMessage:   "review cancelled",
 		Root:            prep.Context.Root,
 		EventsJSONL:     prep.Context.Paths.EventsJSONL,
@@ -669,7 +723,7 @@ func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID st
 		AgentName:       reviewer.Name,
 		Agent:           reviewer.Agent,
 		Model:           reviewer.ModelSpec,
-		PromptRepoPath:  reviewerPromptRepoPath(runID),
+		PromptRepoPath:  runArtifactRepoRel(runID, reviewerLensPromptArtifact(reviewer.Name, lens)),
 		ArtifactDir:     reviewerAttemptsArtifact,
 		Timeout:         timeout,
 		ReadOnly:        true,
@@ -679,37 +733,39 @@ func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID st
 		TimeoutMessage: func(timeout time.Duration) string {
 			return fmt.Sprintf("reviewer process produced no output for %s", timeout)
 		},
-		Prepare: func(createdAt string) (reviewerDryRunDocument, error) {
-			if writeDryRunArtifacts {
-				return ensureReviewerDryRunArtifacts(prep, createdAt)
-			}
-			return buildReviewerDryRunDocument(runID, createdAt, reviewer.Agent)
+		Prepare: func(createdAt string) (reviewerLensAttemptPlan, error) {
+			return buildReviewerLensPlan(runID, reviewer.Name, lens, reviewer.Agent)
 		},
-		BuildRequest: func(context agentAttemptContext[reviewerDryRunDocument]) (reviewerRequestDocument, error) {
+		BuildRequest: func(context agentAttemptContext[reviewerLensAttemptPlan]) (reviewerRequestDocument, error) {
 			return reviewerRequestDocument{
 				Schema:    reviewerRequestSchema,
 				RunID:     runID,
 				AttemptID: context.AttemptID,
 				CreatedAt: context.CreatedAt,
 				Reviewer:  agentDescriptorDocument(reviewer.Agent),
+				Lens:      lens.Key,
 				Artifacts: context.Prepared.Artifacts,
 				WouldRun:  context.Prepared.WouldRun,
 			}, nil
 		},
-		BuildResult: func(context agentAttemptContext[reviewerDryRunDocument], runResult agents.RunResult) reviewerResultDocument {
+		BuildResult: func(context agentAttemptContext[reviewerLensAttemptPlan], runResult agents.RunResult) reviewerResultDocument {
 			return reviewerResultDocument{
 				Schema:        reviewerResultSchema,
 				RunID:         runID,
 				AttemptID:     context.AttemptID,
 				Reviewer:      reviewer.Agent.Name,
+				Lens:          lens.Key,
 				processResult: processResultFromRunResult(runResult),
 			}
 		},
 		ProcessResult: func(result reviewerResultDocument) processResult {
 			return result.processResult
 		},
+		// Unreachable in practice: JSONOutput is hardcoded true above, and the
+		// lifecycle renders run-only output only when JSONOutput is false. Kept
+		// because the lifecycle field is required; do not add logic here.
 		RenderRunOnly: func(stdout io.Writer, request reviewerRequestDocument, result reviewerResultDocument) {
-			writeReviewRun(stdout, request, result, reviewer.Name, reviewer.ModelSpec)
+			fmt.Fprintf(stdout, "reviewer attempt %s [%s] exit code %d\n", result.AttemptID, result.Lens, result.ExitCode)
 		},
 	})
 }
@@ -967,8 +1023,8 @@ func writeReviewLoopSummary(stdout io.Writer, summary reviewLoopSummaryDocument)
 	fmt.Fprintln(stdout, "Round results:")
 	for _, round := range summary.Rounds {
 		reviewerAttempts := round.ReviewerAttemptID
-		if len(round.ReviewerAttemptIDs) > 0 {
-			reviewerAttempts = strings.Join(round.ReviewerAttemptIDs, ",")
+		if len(round.ReviewerAttemptIDs) > 1 {
+			reviewerAttempts = fmt.Sprintf("%d lens attempts", len(round.ReviewerAttemptIDs))
 		}
 		fmt.Fprintf(stdout, "  - round %d: open findings %d (blocking %d), proposals accepted %d, reviewer %s", round.Round, round.OpenFindings, round.OpenBlockingFindings, round.ProposalsAccepted, reviewerAttempts)
 		if round.FixerAttemptID != "" {

@@ -75,14 +75,16 @@ block for `clarify suggest`, `contract draft`, `review dry-run`, and
 
 `review.panel` is the review-loop roster: a list of registry names. When
 `pactum review loop` runs without `--reviewer`, each review round runs all
-panel members concurrently against the same reviewer prompt, then parses their
-finding proposals in the configured order; each member runs with its own
+panel members concurrently — every member expanding into the five built-in
+lens attempts described under [Review: dry-run vs run](#review-dry-run-vs-run),
+so a round spawns members × lenses attempts — then parses their finding
+proposals in the configured order; each member runs with its own
 entry's `model`/`effort`, and two names backed by the same built-in run as
 separate members. Duplicate proposals still collapse through the normal finding
 fingerprint, and duplicate findings keep the maximum severity. An explicit
 `--reviewer <name>` disables the roster for that invocation and runs only that
-entry. When the panel is empty or absent, review falls back to the cross-model
-single-reviewer selection above.
+entry (still as five lens attempts). When the panel is empty or absent, review
+falls back to the cross-model single-reviewer selection above.
 
 For `codex`, pins emit `-c model=...` and `-c model_reasoning_effort=...`; for
 `claude`, `--model ...` and `--effort ...`. Reviewer pins are appended to the
@@ -421,20 +423,40 @@ agent output to stderr, honors `--timeout` as an idle no-output timeout, support
 Reviewer agents are optional, and Pactum never trusts their output
 automatically.
 
-- `pactum review dry-run <run_id> --reviewer codex` prepares the reviewer prompt
-  and context (`review/reviewer-prompt.md`, `review/reviewer-context.md`,
-  `review/reviewer-dry-run.json`) without launching a reviewer.
-- `pactum review run <run_id> --reviewer codex` launches the reviewer subprocess
-  (same direct-subprocess model as execution, with the idle `--timeout`) and
-  captures its attempt under `review/reviewer-attempts/`. Like `execute run`, it is
+Every review spawns five built-in specialist reviewers — one per review lens:
+`correctness`, `implementation`, `tests`, `over_engineering`, `docs`. The lens
+set is fixed in code and deliberately not configurable. Each resolved reviewer
+(the explicit `--reviewer` or each panel member) expands into five concurrent
+lens attempts, each reading its own per-member, per-lens prompt
+(`review/reviewer-prompt-<name>-<lens>.md`). A lens prompt carries only that
+lens's checklist plus a focus note — the attempt is told it is the `<lens>`
+reviewer, that the other lenses are covered by reviewers running in parallel,
+and to report only findings within its lens without silently expanding scope.
+Five attempts per reviewer per round cost five subprocess runs and five usage
+records (all under the reviewer's registry name as `agent_name`); that cost is
+a deliberate default in exchange for focused, higher-recall reviews.
+Cross-lens duplicate findings collapse through the normal finding fingerprint
+dedup, keeping the maximum severity.
+
+- `pactum review dry-run <run_id> --reviewer codex` prepares the reviewer
+  context and the five per-lens prompts (`review/reviewer-context.md`,
+  `review/reviewer-prompt-<name>-<lens>.md`, `review/reviewer-dry-run.json`)
+  without launching a reviewer; its output lists the five lens attempts that
+  would run.
+- `pactum review run <run_id> --reviewer codex` launches the five lens
+  attempts concurrently (same direct-subprocess model as execution, with the
+  idle `--timeout` per attempt) and captures each attempt under
+  `review/reviewer-attempts/`, with the lens recorded in the attempt's
+  request and result. Like `execute run`, it is
   unsandboxed agent execution, so it asks for confirmation on an interactive
   terminal and **requires `--yes`** for non-interactive/automated use; `review
-  dry-run` never needs `--yes`.
+  dry-run` never needs `--yes`. All lens attempts run to completion, but if any
+  attempt fails the command (and a review-loop round) fails as a whole — the
+  completed lenses' output stays on disk in their attempt artifacts.
 
-The built-in reviewer prompt encodes a hardened review methodology: findings
-must be certain-or-silent (with an explicit NOT-to-flag list), five review
-lenses (correctness, implementation-vs-contract, test quality,
-over-engineering, documentation), a verify-then-report pass that emits only
+Beyond the lens checklist, every lens prompt shares the same hardened review
+methodology: findings must be certain-or-silent (with an explicit NOT-to-flag
+list), a verify-then-report pass that emits only
 CONFIRMED candidates, findings-first output with honest empties, pre-existing
 issues as non-blocking advisories, and a per-finding `confidence`
 (high/medium/low — recorded and displayed, not yet gating anything). The
@@ -442,8 +464,10 @@ design sources are condensed in
 [`review-prompt-design.md`](review-prompt-design.md).
 
 A reviewer can emit optional structured finding proposals as a fenced JSON block.
-`pactum review propose-findings <run_id>` parses the captured reviewer stdout
-into **pending proposals** — it does not create findings. In the manual flow, a
+`pactum review propose-findings <run_id>` parses the captured reviewer stdout of
+**every completed reviewer attempt** (all lenses) into **pending proposals** — it
+does not create findings; pass `--attempt <id>` to parse a single attempt, and
+with several attempts each warning is prefixed with its attempt id. In the manual flow, a
 human then decides each one with `pactum review accept-proposal <run_id> p_001`
 (which creates a real review finding) or `pactum review reject-proposal <run_id>
 p_001 --reason "..."`. Outside the explicit `review loop` command, proposals
@@ -474,7 +498,10 @@ findings, or re-run the gate.
 ## Review loop
 
 `pactum review loop <run_id> --reviewer codex --agent codex --yes` runs the
-reviewer, parses structured finding proposals, accepts the proposals into review
+reviewer round — five concurrent lens attempts per resolved reviewer, with each
+member's per-lens prompts written before the round launches and the lens
+surfaced per attempt in the round summary — parses structured finding
+proposals, accepts the proposals into review
 findings, and runs the fixer when the current round creates open findings. After
 each fixer attempt, Pactum re-runs the gate with the approved validation
 commands, then starts another reviewer round.

@@ -470,7 +470,9 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 		t.Fatalf("review dry-run exited %d, stderr: %s", code, stderr.String())
 	}
 	assertFile(t, runPaths.ReviewContextMD)
-	assertFile(t, runPaths.ReviewPromptMD)
+	for _, lens := range reviewLenses {
+		assertFile(t, reviewerLensPromptPath(runPaths, "claude", lens))
+	}
 	assertFile(t, runPaths.ReviewDryRunJSON)
 	got := stdout.String()
 	// No execution attempt exists, so cross-model selection treats the first
@@ -478,8 +480,9 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 	for _, want := range []string{
 		"Reviewer dry-run prepared",
 		"Resolved:",
-		"Would run:",
-		"claude -p --output-format json < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt.md",
+		"Would run (one attempt per lens):",
+		"claude -p --output-format json < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt-claude-correctness.md",
+		"claude -p --output-format json < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt-claude-docs.md",
 		".heurema/pactum/runs/" + runID + "/review/reviewer-context.md",
 	} {
 		if !strings.Contains(got, want) {
@@ -491,12 +494,22 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 	if plan.Schema != reviewerDryRunSchema || plan.RunID != runID || plan.Reviewer.Name != "claude" {
 		t.Fatalf("unexpected reviewer dry-run plan: %#v", plan)
 	}
-	wantPrompt := runArtifactRepoRel(runID, reviewerPromptArtifact)
-	if plan.WouldRun.Command != "claude" || strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json" || plan.WouldRun.Stdin != wantPrompt {
-		t.Fatalf("unexpected would_run command: %#v", plan.WouldRun)
+	if len(plan.Attempts) != len(reviewLenses) {
+		t.Fatalf("dry-run should list one attempt per lens: %#v", plan.Attempts)
 	}
-	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, reviewerPromptArtifact, wantPrompt)
-	prompt := mustReadFile(t, runPaths.ReviewPromptMD)
+	for index, lens := range reviewLenses {
+		attempt := plan.Attempts[index]
+		wantArtifact := reviewerLensPromptArtifact("claude", lens)
+		wantPrompt := runArtifactRepoRel(runID, wantArtifact)
+		if attempt.Lens != lens.Key || attempt.Artifacts.ReviewerPrompt != wantArtifact {
+			t.Fatalf("unexpected lens attempt plan: %#v", attempt)
+		}
+		if attempt.WouldRun.Command != "claude" || strings.Join(attempt.WouldRun.Args, " ") != "-p --output-format json" || attempt.WouldRun.Stdin != wantPrompt {
+			t.Fatalf("unexpected would_run command: %#v", attempt.WouldRun)
+		}
+		assertCommandArgsDoNotContain(t, attempt.WouldRun.Args, wantArtifact, wantPrompt)
+	}
+	prompt := mustReadFile(t, reviewerLensPromptPath(runPaths, "claude", reviewLenses[0]))
 	for _, want := range []string{
 		"Reviewer context: .heurema/pactum/runs/" + runID + "/review/reviewer-context.md",
 		"Contract: .heurema/pactum/runs/" + runID + "/contract/contract.json",
@@ -523,12 +536,17 @@ func TestReviewDryRunJSONOutput(t *testing.T) {
 	if plan.Reviewer.Name != "claude" || !plan.Checks.ReviewPrepared || !plan.Checks.GateReportReady || !plan.Checks.ContractApproved {
 		t.Fatalf("unexpected reviewer dry-run json: %#v", plan)
 	}
-	if plan.Artifacts.ReviewerPrompt != reviewerPromptArtifact ||
-		plan.Artifacts.ReviewerContext != reviewerContextArtifact ||
-		plan.WouldRun.Command != "claude" ||
-		strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json" ||
-		plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
-		t.Fatalf("reviewer dry-run json missing artifacts/would_run: %#v", plan)
+	if len(plan.Attempts) != len(reviewLenses) {
+		t.Fatalf("reviewer dry-run json should list the lens fan-out: %#v", plan)
+	}
+	first := plan.Attempts[0]
+	if first.Lens != "correctness" ||
+		first.Artifacts.ReviewerPrompt != reviewerLensPromptArtifact("claude", reviewLenses[0]) ||
+		first.Artifacts.ReviewerContext != reviewerContextArtifact ||
+		first.WouldRun.Command != "claude" ||
+		strings.Join(first.WouldRun.Args, " ") != "-p --output-format json" ||
+		first.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerLensPromptArtifact("claude", reviewLenses[0])) {
+		t.Fatalf("reviewer dry-run json missing artifacts/would_run: %#v", first)
 	}
 	if strings.Contains(stdout.String(), "Reviewer dry-run prepared") {
 		t.Fatalf("json output should not include human output:\n%s", stdout.String())
@@ -550,8 +568,9 @@ func TestReviewDryRunUsesDefaultReviewer(t *testing.T) {
 	if plan.Reviewer.Name != "claude" || plan.Reviewer.Command != "claude" {
 		t.Fatalf("default reviewer mismatch: %#v", plan.Reviewer)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
-		t.Fatalf("default reviewer would_run mismatch: %#v", plan.WouldRun)
+	wouldRun := plan.Attempts[0].WouldRun
+	if strings.Join(wouldRun.Args, " ") != "-p --output-format json" || wouldRun.Stdin != runArtifactRepoRel(runID, reviewerLensPromptArtifact("claude", reviewLenses[0])) {
+		t.Fatalf("default reviewer would_run mismatch: %#v", wouldRun)
 	}
 }
 
@@ -656,20 +675,24 @@ func TestReviewDryRunExplicitReviewers(t *testing.T) {
 	if plan.Reviewer.Name != "codex" || plan.Reviewer.Command != "codex" {
 		t.Fatalf("codex reviewer mismatch: %#v", plan.Reviewer)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "exec --json --sandbox read-only" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
-		t.Fatalf("codex would_run mismatch: %#v", plan.WouldRun)
+	codexPromptArtifact := reviewerLensPromptArtifact("codex", reviewLenses[0])
+	wouldRun := plan.Attempts[0].WouldRun
+	if strings.Join(wouldRun.Args, " ") != "exec --json --sandbox read-only" || wouldRun.Stdin != runArtifactRepoRel(runID, codexPromptArtifact) {
+		t.Fatalf("codex would_run mismatch: %#v", wouldRun)
 	}
-	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, reviewerPromptArtifact, runArtifactRepoRel(runID, reviewerPromptArtifact))
+	assertCommandArgsDoNotContain(t, wouldRun.Args, codexPromptArtifact, runArtifactRepoRel(runID, codexPromptArtifact))
 
 	runReviewCommand(t, app, "review", "dry-run", runID, "--reviewer", "claude")
 	plan = readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	if plan.Reviewer.Name != "claude" || plan.Reviewer.Command != "claude" {
 		t.Fatalf("claude reviewer mismatch: %#v", plan.Reviewer)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json" || plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
-		t.Fatalf("claude would_run mismatch: %#v", plan.WouldRun)
+	claudePromptArtifact := reviewerLensPromptArtifact("claude", reviewLenses[0])
+	wouldRun = plan.Attempts[0].WouldRun
+	if strings.Join(wouldRun.Args, " ") != "-p --output-format json" || wouldRun.Stdin != runArtifactRepoRel(runID, claudePromptArtifact) {
+		t.Fatalf("claude would_run mismatch: %#v", wouldRun)
 	}
-	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, reviewerPromptArtifact, runArtifactRepoRel(runID, reviewerPromptArtifact))
+	assertCommandArgsDoNotContain(t, wouldRun.Args, claudePromptArtifact, runArtifactRepoRel(runID, claudePromptArtifact))
 }
 
 func TestReviewDryRunAppliesPanelEntryPinToCodex(t *testing.T) {
@@ -687,11 +710,11 @@ func TestReviewDryRunAppliesPanelEntryPinToCodex(t *testing.T) {
 	}
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	wantArgs := []string{"exec", "--json", "--sandbox", "read-only", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"}
-	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
-		t.Fatalf("codex reviewer would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
+	if !sameStringSlice(plan.Attempts[0].WouldRun.Args, wantArgs) {
+		t.Fatalf("codex reviewer would_run args = %#v, want %#v", plan.Attempts[0].WouldRun.Args, wantArgs)
 	}
-	if plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerPromptArtifact) {
-		t.Fatalf("codex reviewer stdin = %q", plan.WouldRun.Stdin)
+	if plan.Attempts[0].WouldRun.Stdin != runArtifactRepoRel(runID, reviewerLensPromptArtifact("codex", reviewLenses[0])) {
+		t.Fatalf("codex reviewer stdin = %q", plan.Attempts[0].WouldRun.Stdin)
 	}
 	assertResolvedBlock(t, stdout.String(), "codex", "gpt-5", "high", "pinned")
 
@@ -705,8 +728,8 @@ func TestReviewDryRunAppliesPanelEntryPinToCodex(t *testing.T) {
 	}
 	plan = readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	wantArgs = []string{"-p", "--output-format", "json"}
-	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
-		t.Fatalf("claude reviewer would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
+	if !sameStringSlice(plan.Attempts[0].WouldRun.Args, wantArgs) {
+		t.Fatalf("claude reviewer would_run args = %#v, want %#v", plan.Attempts[0].WouldRun.Args, wantArgs)
 	}
 	assertResolvedBlock(t, stdout.String(), "claude", "inherit", "inherit", "inherit")
 }
@@ -723,10 +746,10 @@ func TestReviewDryRunAppliesPanelEntryPinToClaude(t *testing.T) {
 	}
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	wantArgs := []string{"-p", "--output-format", "json", "--model", "claude-sonnet-4", "--effort", "high"}
-	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
-		t.Fatalf("claude reviewer would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
+	if !sameStringSlice(plan.Attempts[0].WouldRun.Args, wantArgs) {
+		t.Fatalf("claude reviewer would_run args = %#v, want %#v", plan.Attempts[0].WouldRun.Args, wantArgs)
 	}
-	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "--dangerously-skip-permissions")
+	assertCommandArgsDoNotContain(t, plan.Attempts[0].WouldRun.Args, "--dangerously-skip-permissions")
 	assertResolvedBlock(t, stdout.String(), "claude", "claude-sonnet-4", "high", "pinned")
 }
 
@@ -793,11 +816,14 @@ func TestReviewDryRunArtifactsArePortable(t *testing.T) {
 	runReviewCommand(t, app, "review", "add-finding", runID, "portable reviewer context", "--file", "internal/app/review.go")
 
 	runReviewCommand(t, app, "review", "dry-run", runID)
-	for name, content := range map[string]string{
+	contents := map[string]string{
 		"review/reviewer-context.md":   mustReadFile(t, runPaths.ReviewContextMD),
-		"review/reviewer-prompt.md":    mustReadFile(t, runPaths.ReviewPromptMD),
 		"review/reviewer-dry-run.json": mustReadFile(t, runPaths.ReviewDryRunJSON),
-	} {
+	}
+	for _, lens := range reviewLenses {
+		contents[reviewerLensPromptArtifact("claude", lens)] = mustReadFile(t, reviewerLensPromptPath(runPaths, "claude", lens))
+	}
+	for name, content := range contents {
 		assertDoesNotContainRoot(t, name, content, root)
 	}
 }
@@ -977,7 +1003,7 @@ func TestReviewRunStreamsLiveOutputToStderr(t *testing.T) {
 	}
 	// Stdout stays the clean human summary; agent output never leaks there.
 	out := stdout.String()
-	if !strings.Contains(out, "Reviewer attempt finished") {
+	if !strings.Contains(out, "Reviewer attempts finished") {
 		t.Fatalf("stdout missing human summary:\n%s", out)
 	}
 	if strings.Contains(out, "cwd_is_repo=") || strings.Contains(out, "reviewer-stderr-line") {
@@ -1001,55 +1027,67 @@ func TestReviewRunWritesAttemptArtifacts(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Reviewer attempt finished") || !strings.Contains(got, "reviewer_attempt_001") {
+	if got := stdout.String(); !strings.Contains(got, "Reviewer attempts finished") || !strings.Contains(got, "reviewer_attempt_001") {
 		t.Fatalf("review run output mismatch:\n%s", got)
 	} else {
 		assertResolvedBlock(t, got, "helper", "inherit", "inherit", "inherit")
 	}
 
-	attemptPaths := reviewerAttemptPaths(runPaths, "reviewer_attempt_001")
-	assertFile(t, attemptPaths.RequestJSON)
-	assertFile(t, attemptPaths.StdoutLog)
-	assertFile(t, attemptPaths.StderrLog)
-	assertFile(t, attemptPaths.ResultJSON)
+	// Five concurrent lens attempts: the lens-to-attempt-ID mapping depends on
+	// scheduling, so collect the lens per attempt and require the full fixed set.
+	seenLenses := map[string]bool{}
+	for index := 1; index <= len(reviewLenses); index++ {
+		attemptID := fmt.Sprintf("reviewer_attempt_%03d", index)
+		attemptPaths := reviewerAttemptPaths(runPaths, attemptID)
+		assertFile(t, attemptPaths.RequestJSON)
+		assertFile(t, attemptPaths.StdoutLog)
+		assertFile(t, attemptPaths.StderrLog)
+		assertFile(t, attemptPaths.ResultJSON)
+
+		var request reviewerRequestDocument
+		assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.RequestJSON)), &request))
+		if request.Schema != reviewerRequestSchema || request.RunID != runID || request.AttemptID != attemptID {
+			t.Fatalf("unexpected request: %#v", request)
+		}
+		if request.Reviewer.Name != "helper" || request.Reviewer.Command != os.Args[0] || request.Reviewer.Input != agents.InputPromptFile {
+			t.Fatalf("unexpected request reviewer: %#v", request.Reviewer)
+		}
+		if request.Lens == "" || seenLenses[request.Lens] {
+			t.Fatalf("request lens missing or duplicated: %#v", request)
+		}
+		seenLenses[request.Lens] = true
+		wantPrompt := ".heurema/pactum/runs/" + runID + "/review/reviewer-prompt-helper-" + request.Lens + ".md"
+		if request.WouldRun.Stdin != wantPrompt {
+			t.Fatalf("unexpected would_run stdin = %q, want %q", request.WouldRun.Stdin, wantPrompt)
+		}
+		if got := strings.Join(request.WouldRun.Args, " "); strings.Contains(got, wantPrompt) {
+			t.Fatalf("would_run args should not pass prompt path positionally: %#v", request.WouldRun.Args)
+		}
+		if request.Artifacts.ReviewerPrompt != "review/reviewer-prompt-helper-"+request.Lens+".md" || request.Artifacts.GateReport != gateReportArtifact {
+			t.Fatalf("unexpected request artifacts: %#v", request.Artifacts)
+		}
+
+		var result reviewerResultDocument
+		assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.ResultJSON)), &result))
+		if result.Schema != reviewerResultSchema || result.Reviewer != "helper" || result.Lens != request.Lens || result.ExitCode != 0 || result.TimedOut {
+			t.Fatalf("unexpected result: %#v", result)
+		}
+		if result.Stdout != "review/reviewer-attempts/"+attemptID+"/stdout.log" || result.Stderr != "review/reviewer-attempts/"+attemptID+"/stderr.log" {
+			t.Fatalf("unexpected output artifact paths: %#v", result)
+		}
+		if got := mustReadFile(t, attemptPaths.StdoutLog); !strings.Contains(got, "cwd_is_repo=true") || !strings.Contains(got, "stdin_has_reviewer_prompt=true") {
+			t.Fatalf("stdout log mismatch:\n%s", got)
+		}
+		if got := mustReadFile(t, attemptPaths.StderrLog); !strings.Contains(got, "reviewer-stderr-line") {
+			t.Fatalf("stderr log mismatch:\n%s", got)
+		}
+	}
+	for _, lens := range reviewLenses {
+		if !seenLenses[lens.Key] {
+			t.Fatalf("lens %s missing from attempts: %#v", lens.Key, seenLenses)
+		}
+	}
 	assertFile(t, runPaths.ReviewLastResultJSON)
-
-	var request reviewerRequestDocument
-	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.RequestJSON)), &request))
-	if request.Schema != reviewerRequestSchema || request.RunID != runID || request.AttemptID != "reviewer_attempt_001" {
-		t.Fatalf("unexpected request: %#v", request)
-	}
-	if request.Reviewer.Name != "helper" || request.Reviewer.Command != os.Args[0] || request.Reviewer.Input != agents.InputPromptFile {
-		t.Fatalf("unexpected request reviewer: %#v", request.Reviewer)
-	}
-	wantPrompt := ".heurema/pactum/runs/" + runID + "/review/reviewer-prompt.md"
-	if request.WouldRun.Stdin != wantPrompt {
-		t.Fatalf("unexpected would_run stdin = %q, want %q", request.WouldRun.Stdin, wantPrompt)
-	}
-	if got := strings.Join(request.WouldRun.Args, " "); strings.Contains(got, wantPrompt) {
-		t.Fatalf("would_run args should not pass prompt path positionally: %#v", request.WouldRun.Args)
-	}
-	if request.Artifacts.ReviewerPrompt != reviewerPromptArtifact || request.Artifacts.GateReport != gateReportArtifact {
-		t.Fatalf("unexpected request artifacts: %#v", request.Artifacts)
-	}
-
-	var result reviewerResultDocument
-	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.ResultJSON)), &result))
-	if result.Schema != reviewerResultSchema || result.Reviewer != "helper" || result.ExitCode != 0 || result.TimedOut {
-		t.Fatalf("unexpected result: %#v", result)
-	}
-	if result.Stdout != "review/reviewer-attempts/reviewer_attempt_001/stdout.log" || result.Stderr != "review/reviewer-attempts/reviewer_attempt_001/stderr.log" {
-		t.Fatalf("unexpected output artifact paths: %#v", result)
-	}
-	if got := mustReadFile(t, runPaths.ReviewLastResultJSON); got != mustReadFile(t, attemptPaths.ResultJSON) {
-		t.Fatalf("reviewer-last-result.json should copy result.json")
-	}
-	if got := mustReadFile(t, attemptPaths.StdoutLog); !strings.Contains(got, "cwd_is_repo=true") || !strings.Contains(got, "stdin_has_reviewer_prompt=true") {
-		t.Fatalf("stdout log mismatch:\n%s", got)
-	}
-	if got := mustReadFile(t, attemptPaths.StderrLog); !strings.Contains(got, "reviewer-stderr-line") {
-		t.Fatalf("stderr log mismatch:\n%s", got)
-	}
 	if got := mustReadFile(t, runPaths.ReviewJSON); got != beforeReview {
 		t.Fatalf("review run mutated review.json")
 	}
@@ -1065,6 +1103,9 @@ func TestReviewRunWritesAttemptArtifacts(t *testing.T) {
 	finishedIndex := indexOfEvent(eventTypes, "reviewer_attempt_finished")
 	if startedIndex == -1 || finishedIndex == -1 || startedIndex > finishedIndex {
 		t.Fatalf("events missing ordered reviewer attempt lifecycle:\n%v", eventTypes)
+	}
+	if countEvents(eventTypes, "reviewer_attempt_started") != len(reviewLenses) || countEvents(eventTypes, "reviewer_attempt_finished") != len(reviewLenses) {
+		t.Fatalf("review run should write one attempt lifecycle per lens:\n%v", eventTypes)
 	}
 }
 
@@ -1093,8 +1134,8 @@ func TestReviewRunNonZeroWritesArtifactsAndReturnsNonZero(t *testing.T) {
 		t.Fatalf("unexpected failing result: %#v", result)
 	}
 	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
-	if countEvents(eventTypes, "reviewer_attempt_started") != 1 || countEvents(eventTypes, "reviewer_attempt_finished") != 1 {
-		t.Fatalf("non-zero review run should write started and finished events:\n%v", eventTypes)
+	if countEvents(eventTypes, "reviewer_attempt_started") != len(reviewLenses) || countEvents(eventTypes, "reviewer_attempt_finished") != len(reviewLenses) {
+		t.Fatalf("non-zero review run should write started and finished events per lens:\n%v", eventTypes)
 	}
 }
 
@@ -1112,8 +1153,9 @@ func TestReviewRunCreatesIncrementingAttempts(t *testing.T) {
 			t.Fatalf("review run %d exited %d, stderr: %s", i+1, code, stderr.String())
 		}
 	}
-	for _, attemptID := range []string{"reviewer_attempt_001", "reviewer_attempt_002"} {
-		attemptPaths := reviewerAttemptPaths(runPaths, attemptID)
+	// Each run spawns one attempt per lens; the second run continues numbering.
+	for index := 1; index <= 2*len(reviewLenses); index++ {
+		attemptPaths := reviewerAttemptPaths(runPaths, fmt.Sprintf("reviewer_attempt_%03d", index))
 		assertFile(t, attemptPaths.RequestJSON)
 		assertFile(t, attemptPaths.ResultJSON)
 	}
@@ -1129,9 +1171,10 @@ func TestReviewRunStoresCrossReviewerAttempts(t *testing.T) {
 	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper-a", "--yes")
 	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper-b", "--yes")
 
+	// The first run's lens attempts come first, the second run's after them.
 	for attemptID, wantReviewer := range map[string]string{
 		"reviewer_attempt_001": "helper-a",
-		"reviewer_attempt_002": "helper-b",
+		fmt.Sprintf("reviewer_attempt_%03d", len(reviewLenses)+1): "helper-b",
 	} {
 		attemptPaths := reviewerAttemptPaths(runPaths, attemptID)
 		assertFile(t, attemptPaths.ResultJSON)
@@ -1150,13 +1193,14 @@ func TestReviewRunAutoBuildsDryRunArtifacts(t *testing.T) {
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 	_ = os.Remove(runPaths.ReviewDryRunJSON)
-	_ = os.Remove(runPaths.ReviewPromptMD)
 	_ = os.Remove(runPaths.ReviewContextMD)
 
 	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper", "--yes")
 	assertFile(t, runPaths.ReviewDryRunJSON)
-	assertFile(t, runPaths.ReviewPromptMD)
 	assertFile(t, runPaths.ReviewContextMD)
+	for _, lens := range reviewLenses {
+		assertFile(t, reviewerLensPromptPath(runPaths, "helper", lens))
+	}
 }
 
 func TestReviewRunRequestWouldRunMatchesDryRun(t *testing.T) {
@@ -1170,10 +1214,20 @@ func TestReviewRunRequestWouldRunMatchesDryRun(t *testing.T) {
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper", "--yes")
 
-	var request reviewerRequestDocument
-	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_001").RequestJSON)), &request))
-	if request.WouldRun.Command != plan.WouldRun.Command || request.WouldRun.Stdin != plan.WouldRun.Stdin || !sameStringSlice(request.WouldRun.Args, plan.WouldRun.Args) {
-		t.Fatalf("request would_run does not match dry-run:\nrequest=%#v\nplan=%#v", request.WouldRun, plan.WouldRun)
+	planByLens := map[string]reviewerLensAttemptPlan{}
+	for _, attempt := range plan.Attempts {
+		planByLens[attempt.Lens] = attempt
+	}
+	for index := 1; index <= len(reviewLenses); index++ {
+		var request reviewerRequestDocument
+		assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, reviewerAttemptPaths(runPaths, fmt.Sprintf("reviewer_attempt_%03d", index)).RequestJSON)), &request))
+		planned, ok := planByLens[request.Lens]
+		if !ok {
+			t.Fatalf("request lens %q missing from dry-run plan: %#v", request.Lens, plan.Attempts)
+		}
+		if request.WouldRun.Command != planned.WouldRun.Command || request.WouldRun.Stdin != planned.WouldRun.Stdin || !sameStringSlice(request.WouldRun.Args, planned.WouldRun.Args) {
+			t.Fatalf("request would_run does not match dry-run:\nrequest=%#v\nplan=%#v", request.WouldRun, planned.WouldRun)
+		}
 	}
 }
 
@@ -1225,12 +1279,21 @@ func TestReviewRunJSONOutput(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("review run --json exited %d, stderr: %s", code, stderr.String())
 	}
-	var result reviewerResultDocument
-	assertNoError(t, json.Unmarshal(stdout.Bytes(), &result))
-	if result.AttemptID != "reviewer_attempt_001" || result.Reviewer != "helper" || result.ExitCode != 0 {
-		t.Fatalf("unexpected review run json: %#v", result)
+	var response reviewerRunResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.Schema != reviewerRunSchema || response.RunID != runID || response.Reviewer != "helper" {
+		t.Fatalf("unexpected review run json: %#v", response)
 	}
-	if strings.Contains(stdout.String(), "Reviewer attempt finished") {
+	if len(response.Attempts) != len(reviewLenses) {
+		t.Fatalf("review run json should list one attempt per lens: %#v", response.Attempts)
+	}
+	for index, lens := range reviewLenses {
+		result := response.Attempts[index]
+		if result.Lens != lens.Key || result.AttemptID == "" || result.Reviewer != "helper" || result.ExitCode != 0 {
+			t.Fatalf("unexpected review run attempt json: %#v", result)
+		}
+	}
+	if strings.Contains(stdout.String(), "Reviewer attempts finished") {
 		t.Fatalf("json output should not include human output:\n%s", stdout.String())
 	}
 	if strings.Contains(stdout.String(), "Resolved:") {
@@ -2078,7 +2141,7 @@ func TestReviewPromptIncludesStructuredProposalContract(t *testing.T) {
 	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 
 	runReviewCommand(t, app, "review", "dry-run", runID)
-	prompt := mustReadFile(t, runPaths.ReviewPromptMD)
+	prompt := mustReadFile(t, reviewerLensPromptPath(runPaths, "claude", reviewLenses[0]))
 	for _, want := range []string{
 		"## Optional structured finding proposals",
 		`"schema": "pactum.reviewer_findings.v1"`,
@@ -2093,50 +2156,84 @@ func TestReviewPromptIncludesStructuredProposalContract(t *testing.T) {
 	}
 }
 
+// TestReviewerPromptIncludesReviewMethodology pins the shared hardened
+// sections: every lens prompt carries the identical high-signal contract,
+// verify-then-report pass, pre-existing policy, output ordering, and
+// confidence schema.
 func TestReviewerPromptIncludesReviewMethodology(t *testing.T) {
-	prompt := renderReviewerPrompt("run_x")
-	for _, want := range []string{
-		"## High-signal contract",
-		"If you are not certain an issue is real, do not flag it. False positives erode trust and waste reviewer time.",
-		"Report problems only. No positive observations, no praise.",
-		"- Do NOT flag:",
-		"Style or formatting preferences.",
-		"Anything the contract's validation commands already catch",
-		"Input-dependent hypotheticals without a concrete failure path.",
-		"Subjective redesign suggestions.",
-		"## Review lenses",
-		"### Correctness",
-		"### Implementation vs contract",
-		"### Test quality",
-		"Fake tests: always-pass tests, hardcoded-value checks",
-		"### Over-engineering",
-		"### Documentation",
-		"## Verify before reporting",
-		"Read the actual code at the file and line, plus 20-30 surrounding lines.",
-		"Classify the candidate CONFIRMED or FALSE POSITIVE.",
-		"Report only CONFIRMED findings. Discard FALSE POSITIVE candidates.",
-		"## Pre-existing issues",
-		"report them as non-blocking findings",
-		"Never mark a pre-existing issue blocking.",
-		"## Output ordering",
-		"Findings first, ordered by severity, each with file and line.",
-		"If there are no findings, say so explicitly and name residual risks or testing gaps.",
-		`"confidence": "high",`,
-		"- Use confidence: high, medium, low.",
-		"- A missing confidence defaults to medium.",
-		"blocking=true for findings introduced by this change",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("reviewer prompt missing %q:\n%s", want, prompt)
+	for _, lens := range reviewLenses {
+		prompt := renderReviewerPrompt("run_x", lens)
+		for _, want := range []string{
+			"## High-signal contract",
+			"If you are not certain an issue is real, do not flag it. False positives erode trust and waste reviewer time.",
+			"Report problems only. No positive observations, no praise.",
+			"- Do NOT flag:",
+			"Style or formatting preferences.",
+			"Anything the contract's validation commands already catch",
+			"Input-dependent hypotheticals without a concrete failure path.",
+			"Subjective redesign suggestions.",
+			"## Review lens",
+			"## Verify before reporting",
+			"Read the actual code at the file and line, plus 20-30 surrounding lines.",
+			"Classify the candidate CONFIRMED or FALSE POSITIVE.",
+			"Report only CONFIRMED findings. Discard FALSE POSITIVE candidates.",
+			"## Pre-existing issues",
+			"report them as non-blocking findings",
+			"Never mark a pre-existing issue blocking.",
+			"## Output ordering",
+			"Findings first, ordered by severity, each with file and line.",
+			"If there are no findings, say so explicitly and name residual risks or testing gaps.",
+			`"confidence": "high",`,
+			"- Use confidence: high, medium, low.",
+			"- A missing confidence defaults to medium.",
+			"blocking=true for findings introduced by this change",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Fatalf("reviewer prompt (%s) missing %q:\n%s", lens.Key, want, prompt)
+			}
+		}
+		for _, gone := range []string{
+			"If uncertain, recommend a blocking manual finding.",
+			"If uncertain, set blocking=true and explain uncertainty in evidence.",
+			"If uncertain, propose a blocking finding that asks for clarification.",
+		} {
+			if strings.Contains(prompt, gone) {
+				t.Fatalf("reviewer prompt (%s) still contains %q, which contradicts certain-or-silent:\n%s", lens.Key, gone, prompt)
+			}
 		}
 	}
-	for _, gone := range []string{
-		"If uncertain, recommend a blocking manual finding.",
-		"If uncertain, set blocking=true and explain uncertainty in evidence.",
-		"If uncertain, propose a blocking finding that asks for clarification.",
-	} {
-		if strings.Contains(prompt, gone) {
-			t.Fatalf("reviewer prompt still contains %q, which contradicts certain-or-silent:\n%s", gone, prompt)
+}
+
+// TestReviewerPromptIsLensFocused pins the lens fan-out prompt contract: each
+// lens prompt carries only its own checklist heading plus the panel focus
+// note; the other four lens headings are absent.
+func TestReviewerPromptIsLensFocused(t *testing.T) {
+	checklistSamples := map[string]string{
+		"correctness":      "Logic errors: off-by-one, wrong operators, inverted conditions.",
+		"implementation":   "Does the diff achieve the contract goal?",
+		"tests":            "Fake tests: always-pass tests, hardcoded-value checks",
+		"over_engineering": "Dual implementations where the old path has no callers.",
+		"docs":             "Internal-only changes need no documentation; do not flag them.",
+	}
+	for _, lens := range reviewLenses {
+		prompt := renderReviewerPrompt("run_x", lens)
+		focusNote := "You are the " + lens.Focus + " reviewer; other lenses are covered by other reviewers running in parallel — report only findings within your lens; do not silently expand scope."
+		if !strings.Contains(prompt, focusNote) {
+			t.Fatalf("reviewer prompt (%s) missing focus note:\n%s", lens.Key, prompt)
+		}
+		if !strings.Contains(prompt, "### "+lens.Heading) {
+			t.Fatalf("reviewer prompt (%s) missing its lens heading:\n%s", lens.Key, prompt)
+		}
+		if sample := checklistSamples[lens.Key]; !strings.Contains(prompt, sample) {
+			t.Fatalf("reviewer prompt (%s) missing checklist line %q:\n%s", lens.Key, sample, prompt)
+		}
+		for _, other := range reviewLenses {
+			if other.Key == lens.Key {
+				continue
+			}
+			if strings.Contains(prompt, "### "+other.Heading) {
+				t.Fatalf("reviewer prompt (%s) leaks lens heading %q:\n%s", lens.Key, other.Heading, prompt)
+			}
 		}
 	}
 }

@@ -129,7 +129,15 @@ also enforce:
    re-checks fixes against the same ruleset) — mirroring what the reviewer
    enforces. Prompt-content tests pin the section's key lines and that both
    prompts contain the identical section text.
-3. **Follow-up (recorded, not sliced)** — per-panel-member lenses: a registry
-   entry could carry an optional review `lens`, letting a panel run
-   quality+implementation+testing as separate members instead of one
-   everything-prompt. Composes with the M18.0 registry and the M12.4 panel.
+3. **Slice 3 — specialist review lenses** (shipped, M19.2). Shipped as
+   built-in default behavior rather than configuration: the lens set is fixed
+   in code, and every `review run` and every review-loop round expands each
+   resolved reviewer (the explicit `--reviewer` or each `review.panel` member)
+   into five concurrent lens attempts. Each attempt's prompt carries only its
+   own lens checklist plus a panel focus note ("you are the `<lens>` reviewer;
+   other lenses are covered by other reviewers running in parallel"), while
+   the shared hardened sections from slice 1 stay identical across lenses.
+   The combined all-five-lenses prompt no longer exists. Cross-lens duplicate
+   findings collapse through the existing finding fingerprint dedup with
+   severity-max; the cost of five attempts per reviewer per round is a
+   deliberate default, not a knob.

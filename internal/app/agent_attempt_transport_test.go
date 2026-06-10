@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/heurema/pactum/internal/agents"
@@ -13,14 +14,18 @@ import (
 // recordingAgentTransport is a fake agents.Transport: it captures each
 // RunRequest, writes the configured agent stdout into the same attempt layout
 // the real transports use (so post-run parsing keeps working), and returns a
-// successful RunResult without launching any subprocess.
+// successful RunResult without launching any subprocess. Concurrent lens
+// attempts share one transport, so the capture is mutex-guarded.
 type recordingAgentTransport struct {
+	mu       sync.Mutex
 	requests []agents.RunRequest
 	stdout   string
 }
 
 func (tr *recordingAgentTransport) Run(request agents.RunRequest) (agents.RunResult, error) {
+	tr.mu.Lock()
 	tr.requests = append(tr.requests, request)
+	tr.mu.Unlock()
 	artifactDir := request.ArtifactDir
 	if artifactDir == "" {
 		artifactDir = "execute/attempts"
@@ -115,12 +120,17 @@ func TestReviewRunMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
 	}
 
-	request := singleTransportRequest(t, transport)
-	if !request.ReadOnly {
-		t.Fatal("review run is a read-only stage and must set ReadOnly")
+	// One transport request per lens, every one read-only with the entry pin.
+	if len(transport.requests) != len(reviewLenses) {
+		t.Fatalf("transport request count = %d, want %d", len(transport.requests), len(reviewLenses))
 	}
-	if want := (agents.ModelSpec{Model: "gpt-5", Effort: "high"}); request.Model != want {
-		t.Fatalf("review run model spec = %+v, want %+v", request.Model, want)
+	for _, request := range transport.requests {
+		if !request.ReadOnly {
+			t.Fatal("review run is a read-only stage and must set ReadOnly")
+		}
+		if want := (agents.ModelSpec{Model: "gpt-5", Effort: "high"}); request.Model != want {
+			t.Fatalf("review run model spec = %+v, want %+v", request.Model, want)
+		}
 	}
 }
 

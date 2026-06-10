@@ -284,3 +284,17 @@ func TestReadConfigRejectsPreRegistryShapes(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateAgentRegistryRejectsPathUnsafeNames pins that registry names are
+// path-safe: they flow into per-member review-lens prompt artifact paths.
+func TestValidateAgentRegistryRejectsPathUnsafeNames(t *testing.T) {
+	for _, name := range []string{"a/b", `a\b`, "a:b", "a b"} {
+		err := validateAgentRegistry([]agentRegistryEntry{{Name: name, Agent: "claude"}}, agents.ListBuiltins())
+		if err == nil || !strings.Contains(err.Error(), "must contain only letters") {
+			t.Fatalf("name %q should be rejected as path-unsafe: %v", name, err)
+		}
+	}
+	if err := validateAgentRegistry([]agentRegistryEntry{{Name: "fable-5.x_ok", Agent: "claude"}}, agents.ListBuiltins()); err != nil {
+		t.Fatalf("path-safe name should pass: %v", err)
+	}
+}

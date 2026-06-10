@@ -21,14 +21,92 @@ const (
 	reviewFindingsArtifact     = "review/findings.jsonl"
 	reviewResolutionsArtifact  = "review/resolutions.jsonl"
 	reviewerContextArtifact    = "review/reviewer-context.md"
-	reviewerPromptArtifact     = "review/reviewer-prompt.md"
 	reviewerDryRunArtifact     = "review/reviewer-dry-run.json"
-	reviewerDryRunSchema       = "pactum.review_dry_run.v1"
+	reviewerDryRunSchema       = "pactum.review_dry_run.v2"
 	reviewerAttemptsArtifact   = "review/reviewer-attempts"
 	reviewerLastResultArtifact = "review/reviewer-last-result.json"
 	reviewerRequestSchema      = "pactum.reviewer_request.v1"
 	reviewerResultSchema       = "pactum.reviewer_result.v1"
+	reviewerRunSchema          = "pactum.reviewer_run.v1"
 )
+
+// reviewLens is one specialist review lens. The set below is fixed in code and
+// deliberately not configurable: every review spawns one reviewer attempt per
+// lens, each with a prompt holding only that lens's checklist.
+type reviewLens struct {
+	Key       string
+	Focus     string
+	Heading   string
+	Checklist []string
+}
+
+var reviewLenses = []reviewLens{
+	{
+		Key:     "correctness",
+		Focus:   "correctness",
+		Heading: "Correctness",
+		Checklist: []string{
+			"Logic errors: off-by-one, wrong operators, inverted conditions.",
+			"Edge cases: empty, nil, boundary, and concurrent inputs.",
+			"Error handling: no silent failures.",
+			"Resource cleanup: leaks, unclosed handles.",
+			"Races and deadlocks.",
+		},
+	},
+	{
+		Key:     "implementation",
+		Focus:   "implementation-vs-contract",
+		Heading: "Implementation vs contract",
+		Checklist: []string{
+			"Does the diff achieve the contract goal?",
+			"Is every in-scope item and acceptance criterion covered?",
+			"Is wiring and integration complete (components registered, configs updated)?",
+			"Are there missing pieces that prevent the change from working end to end?",
+		},
+	},
+	{
+		Key:     "tests",
+		Focus:   "test-quality",
+		Heading: "Test quality",
+		Checklist: []string{
+			"New code paths and error paths have tests.",
+			"Fake tests: always-pass tests, hardcoded-value checks, assertions on mock behavior instead of the code under test, ignored errors, commented-out cases.",
+		},
+	},
+	{
+		Key:     "over_engineering",
+		Focus:   "over-engineering",
+		Heading: "Over-engineering",
+		Checklist: []string{
+			"Wrappers that add nothing.",
+			"Factories or abstractions for a single case.",
+			"Premature generalization and unused extension points.",
+			"Dual implementations where the old path has no callers.",
+			"Silent fallbacks that hide failures.",
+		},
+	},
+	{
+		Key:     "docs",
+		Focus:   "documentation",
+		Heading: "Documentation",
+		Checklist: []string{
+			"User-visible changes missing documentation updates.",
+			"Internal-only changes need no documentation; do not flag them.",
+		},
+	},
+}
+
+// reviewerLensPromptArtifact is the per-member, per-lens prompt path. Panel
+// members run concurrently, so each (member, lens) attempt reads its own
+// prompt file; registry names are unique and the lens set is fixed, which
+// makes the path collision-free within a round.
+func reviewerLensPromptArtifact(member string, lens reviewLens) string {
+	return fmt.Sprintf("review/reviewer-prompt-%s-%s.md", member, lens.Key)
+}
+
+func reviewerLensPromptPath(runPaths contractRunPathSet, member string, lens reviewLens) string {
+	return filepath.Join(runPaths.ReviewDir, fmt.Sprintf("reviewer-prompt-%s-%s.md", member, lens.Key))
+}
 
 type reviewContext struct {
 	Root     string
@@ -176,11 +254,18 @@ type reviewerDryRunPreparation struct {
 }
 
 type reviewerDryRunDocument struct {
-	Schema    string                  `json:"schema"`
-	RunID     string                  `json:"run_id"`
-	CreatedAt string                  `json:"created_at"`
-	Reviewer  agents.AgentDescriptor  `json:"reviewer"`
-	Checks    reviewerDryRunChecks    `json:"checks"`
+	Schema    string                    `json:"schema"`
+	RunID     string                    `json:"run_id"`
+	CreatedAt string                    `json:"created_at"`
+	Reviewer  agents.AgentDescriptor    `json:"reviewer"`
+	Checks    reviewerDryRunChecks      `json:"checks"`
+	Attempts  []reviewerLensAttemptPlan `json:"attempts"`
+}
+
+// reviewerLensAttemptPlan is one lens attempt of the five every review spawns:
+// its prompt artifact and the exact command that would run against it.
+type reviewerLensAttemptPlan struct {
+	Lens      string                  `json:"lens"`
 	Artifacts reviewerDryRunArtifacts `json:"artifacts"`
 	WouldRun  agents.DryRunCommand    `json:"would_run"`
 }
@@ -208,6 +293,7 @@ type reviewerRequestDocument struct {
 	AttemptID string                  `json:"attempt_id"`
 	CreatedAt string                  `json:"created_at"`
 	Reviewer  agents.AgentDescriptor  `json:"reviewer"`
+	Lens      string                  `json:"lens"`
 	Artifacts reviewerDryRunArtifacts `json:"artifacts"`
 	WouldRun  agents.DryRunCommand    `json:"would_run"`
 }
@@ -217,7 +303,17 @@ type reviewerResultDocument struct {
 	RunID     string `json:"run_id"`
 	AttemptID string `json:"attempt_id"`
 	Reviewer  string `json:"reviewer"`
+	Lens      string `json:"lens"`
 	processResult
+}
+
+// reviewerRunResponse aggregates the five lens attempts a single review run
+// spawns for the resolved reviewer.
+type reviewerRunResponse struct {
+	Schema   string                   `json:"schema"`
+	RunID    string                   `json:"run_id"`
+	Reviewer string                   `json:"reviewer"`
+	Attempts []reviewerResultDocument `json:"attempts"`
 }
 
 func (a App) ReviewPrepare(stdout io.Writer, runID string, jsonOutput bool) error {
@@ -489,7 +585,7 @@ func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, j
 
 	now := a.nowUTC()
 	createdAt := now.Format(time.RFC3339)
-	plan, err := buildReviewerDryRunDocument(runID, createdAt, prep.Reviewer)
+	plan, err := buildReviewerDryRunDocument(runID, createdAt, prep.ReviewerName, prep.Reviewer)
 	if err != nil {
 		return err
 	}
@@ -516,7 +612,40 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, rev
 	if err != nil {
 		return err
 	}
-	return a.runReviewerAttempt(stdout, liveOutput, runID, prep, reviewLoopReviewer{Name: prep.ReviewerName, Agent: prep.Reviewer, ModelSpec: prep.ModelSpec}, timeout, confirm, jsonOutput, true)
+	// Confirm once before the fan-out: the five lens attempts run concurrently
+	// and must not each prompt the operator.
+	if !confirm {
+		proceed, err := confirmDirectExecution(stdout)
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			return fmt.Errorf("review cancelled")
+		}
+	}
+	plan, err := buildReviewerDryRunDocument(runID, a.nowUTC().Format(time.RFC3339), prep.ReviewerName, prep.Reviewer)
+	if err != nil {
+		return err
+	}
+	if err := writeReviewerDryRunArtifacts(prep, plan); err != nil {
+		return err
+	}
+	reviewer := reviewLoopReviewer{Name: prep.ReviewerName, Agent: prep.Reviewer, ModelSpec: prep.ModelSpec}
+	results, runErr := a.runReviewerLensAttempts(liveOutput, runID, prep, reviewer, timeout)
+	response := reviewerRunResponse{
+		Schema:   reviewerRunSchema,
+		RunID:    runID,
+		Reviewer: prep.ReviewerName,
+		Attempts: results,
+	}
+	if jsonOutput {
+		if err := writeJSONResponse(stdout, response); err != nil {
+			return err
+		}
+		return runErr
+	}
+	writeReviewRun(stdout, response, prep.Reviewer, prep.ReviewerName, prep.ModelSpec)
+	return runErr
 }
 
 func (a App) loadPreparedReviewState(stdout io.Writer, runID string, jsonOutput bool) (reviewStateResponse, bool, error) {
@@ -691,53 +820,31 @@ func latestExecutionExecutorName(context reviewContext) (string, bool) {
 }
 
 func writeReviewerDryRunArtifacts(prep reviewerDryRunPreparation, plan reviewerDryRunDocument) error {
-	if err := writeReviewerPromptAndContext(prep); err != nil {
+	if err := writeReviewerPromptsAndContext(prep, []string{prep.ReviewerName}); err != nil {
 		return err
 	}
 	return writeJSON(prep.Context.RunPaths.ReviewDryRunJSON, plan)
 }
 
-func writeReviewerPromptAndContext(prep reviewerDryRunPreparation) error {
+// writeReviewerPromptsAndContext writes the shared reviewer context plus one
+// lensed prompt per (member, lens) pair, so every concurrent attempt reads its
+// own prompt file.
+func writeReviewerPromptsAndContext(prep reviewerDryRunPreparation, members []string) error {
 	if err := activeStore.MkdirAll(prep.Context.RunPaths.ReviewDir); err != nil {
 		return err
 	}
 	if err := activeStore.WriteBytes(prep.Context.RunPaths.ReviewContextMD, []byte(renderReviewerContext(prep)), 0o644); err != nil {
 		return err
 	}
-	return activeStore.WriteBytes(prep.Context.RunPaths.ReviewPromptMD, []byte(renderReviewerPrompt(prep.Context.State.RunID)), 0o644)
-}
-
-func ensureReviewerDryRunArtifacts(prep reviewerDryRunPreparation, createdAt string) (reviewerDryRunDocument, error) {
-	expected, err := buildReviewerDryRunDocument(prep.Context.State.RunID, createdAt, prep.Reviewer)
-	if err != nil {
-		return reviewerDryRunDocument{}, err
-	}
-	if isRegularFile(prep.Context.RunPaths.ReviewContextMD) &&
-		isRegularFile(prep.Context.RunPaths.ReviewPromptMD) &&
-		isRegularFile(prep.Context.RunPaths.ReviewDryRunJSON) {
-		var existing reviewerDryRunDocument
-		if err := readJSON(prep.Context.RunPaths.ReviewDryRunJSON, &existing); err == nil && reviewerDryRunMatches(existing, expected) {
-			return existing, nil
+	for _, member := range members {
+		for _, lens := range reviewLenses {
+			path := reviewerLensPromptPath(prep.Context.RunPaths, member, lens)
+			if err := activeStore.WriteBytes(path, []byte(renderReviewerPrompt(prep.Context.State.RunID, lens)), 0o644); err != nil {
+				return err
+			}
 		}
 	}
-	if err := writeReviewerDryRunArtifacts(prep, expected); err != nil {
-		return reviewerDryRunDocument{}, err
-	}
-	return expected, nil
-}
-
-func reviewerDryRunMatches(got reviewerDryRunDocument, want reviewerDryRunDocument) bool {
-	return got.Schema == want.Schema &&
-		got.RunID == want.RunID &&
-		got.Reviewer.Name == want.Reviewer.Name &&
-		got.Reviewer.Command == want.Reviewer.Command &&
-		got.Reviewer.Input == want.Reviewer.Input &&
-		sameStringSlice(got.Reviewer.Args, want.Reviewer.Args) &&
-		got.Checks == want.Checks &&
-		got.Artifacts == want.Artifacts &&
-		got.WouldRun.Command == want.WouldRun.Command &&
-		sameStringSlice(got.WouldRun.Args, want.WouldRun.Args) &&
-		got.WouldRun.Stdin == want.WouldRun.Stdin
+	return nil
 }
 
 func readReviewGateReport(path string) (gateReportDocument, error) {
@@ -913,30 +1020,39 @@ func nextReviewID(prefix string, index int) string {
 	return fmt.Sprintf("%s_%03d", prefix, index)
 }
 
-func buildReviewerDryRunDocument(runID string, createdAt string, reviewer agents.AgentDescriptor) (reviewerDryRunDocument, error) {
-	agentArgs := append([]string{}, reviewer.Args...)
-	reviewerPromptPath := runArtifactRepoRel(runID, reviewerPromptArtifact)
-	wouldRun, err := agents.BuildCommand(reviewer, reviewerPromptPath)
-	if err != nil {
-		return reviewerDryRunDocument{}, err
+func buildReviewerDryRunDocument(runID string, createdAt string, member string, reviewer agents.AgentDescriptor) (reviewerDryRunDocument, error) {
+	attempts := make([]reviewerLensAttemptPlan, 0, len(reviewLenses))
+	for _, lens := range reviewLenses {
+		plan, err := buildReviewerLensPlan(runID, member, lens, reviewer)
+		if err != nil {
+			return reviewerDryRunDocument{}, err
+		}
+		attempts = append(attempts, plan)
 	}
 	return reviewerDryRunDocument{
 		Schema:    reviewerDryRunSchema,
 		RunID:     runID,
 		CreatedAt: createdAt,
-		Reviewer: agents.AgentDescriptor{
-			Name:    reviewer.Name,
-			Command: reviewer.Command,
-			Args:    agentArgs,
-			Input:   reviewer.Input,
-		},
+		Reviewer:  agentDescriptorDocument(reviewer),
 		Checks: reviewerDryRunChecks{
 			ReviewPrepared:   true,
 			GateReportReady:  true,
 			ContractApproved: true,
 		},
+		Attempts: attempts,
+	}, nil
+}
+
+func buildReviewerLensPlan(runID string, member string, lens reviewLens, reviewer agents.AgentDescriptor) (reviewerLensAttemptPlan, error) {
+	promptArtifact := reviewerLensPromptArtifact(member, lens)
+	wouldRun, err := agents.BuildCommand(reviewer, runArtifactRepoRel(runID, promptArtifact))
+	if err != nil {
+		return reviewerLensAttemptPlan{}, err
+	}
+	return reviewerLensAttemptPlan{
+		Lens: lens.Key,
 		Artifacts: reviewerDryRunArtifacts{
-			ReviewerPrompt:    reviewerPromptArtifact,
+			ReviewerPrompt:    promptArtifact,
 			ReviewerContext:   reviewerContextArtifact,
 			Review:            reviewArtifact,
 			Findings:          reviewFindingsArtifact,
@@ -951,10 +1067,6 @@ func buildReviewerDryRunDocument(runID string, createdAt string, reviewer agents
 			Stdin:   wouldRun.Stdin,
 		},
 	}, nil
-}
-
-func reviewerPromptRepoPath(runID string) string {
-	return runArtifactRepoRel(runID, reviewerPromptArtifact)
 }
 
 func reviewerAttemptPaths(runPaths contractRunPathSet, attemptID string) attemptPathSet {
@@ -1084,7 +1196,7 @@ func renderReviewerContext(prep reviewerDryRunPreparation) string {
 	return b.String()
 }
 
-func renderReviewerPrompt(runID string) string {
+func renderReviewerPrompt(runID string, lens reviewLens) string {
 	reviewerContextPath := runArtifactRepoRel(runID, reviewerContextArtifact)
 	contractPath := runArtifactRepoRel(runID, "contract/contract.json")
 	gateReportPath := runArtifactRepoRel(runID, gateReportArtifact)
@@ -1128,37 +1240,14 @@ func renderReviewerPrompt(runID string) string {
 	fmt.Fprintln(&b, "  - Input-dependent hypotheticals without a concrete failure path.")
 	fmt.Fprintln(&b, "  - Subjective redesign suggestions.")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "## Review lenses")
+	fmt.Fprintln(&b, "## Review lens")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "Check the change through every lens:")
+	fmt.Fprintf(&b, "You are the %s reviewer; other lenses are covered by other reviewers running in parallel — report only findings within your lens; do not silently expand scope.\n", lens.Focus)
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "### Correctness")
-	fmt.Fprintln(&b, "- Logic errors: off-by-one, wrong operators, inverted conditions.")
-	fmt.Fprintln(&b, "- Edge cases: empty, nil, boundary, and concurrent inputs.")
-	fmt.Fprintln(&b, "- Error handling: no silent failures.")
-	fmt.Fprintln(&b, "- Resource cleanup: leaks, unclosed handles.")
-	fmt.Fprintln(&b, "- Races and deadlocks.")
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "### Implementation vs contract")
-	fmt.Fprintln(&b, "- Does the diff achieve the contract goal?")
-	fmt.Fprintln(&b, "- Is every in-scope item and acceptance criterion covered?")
-	fmt.Fprintln(&b, "- Is wiring and integration complete (components registered, configs updated)?")
-	fmt.Fprintln(&b, "- Are there missing pieces that prevent the change from working end to end?")
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "### Test quality")
-	fmt.Fprintln(&b, "- New code paths and error paths have tests.")
-	fmt.Fprintln(&b, "- Fake tests: always-pass tests, hardcoded-value checks, assertions on mock behavior instead of the code under test, ignored errors, commented-out cases.")
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "### Over-engineering")
-	fmt.Fprintln(&b, "- Wrappers that add nothing.")
-	fmt.Fprintln(&b, "- Factories or abstractions for a single case.")
-	fmt.Fprintln(&b, "- Premature generalization and unused extension points.")
-	fmt.Fprintln(&b, "- Dual implementations where the old path has no callers.")
-	fmt.Fprintln(&b, "- Silent fallbacks that hide failures.")
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "### Documentation")
-	fmt.Fprintln(&b, "- User-visible changes missing documentation updates.")
-	fmt.Fprintln(&b, "- Internal-only changes need no documentation; do not flag them.")
+	fmt.Fprintf(&b, "### %s\n", lens.Heading)
+	for _, item := range lens.Checklist {
+		fmt.Fprintf(&b, "- %s\n", item)
+	}
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Verify before reporting")
 	fmt.Fprintln(&b, "For every candidate finding, before emitting it:")
@@ -1387,38 +1476,39 @@ func writeReviewDryRun(stdout io.Writer, plan reviewerDryRunDocument, reviewerNa
 	fmt.Fprintln(stdout, "  gate report: ready")
 	fmt.Fprintln(stdout, "  contract approved: yes")
 	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Would run:")
-	fmt.Fprintf(stdout, "  %s\n", formatAgentCommand(plan.WouldRun))
+	fmt.Fprintln(stdout, "Would run (one attempt per lens):")
+	for _, attempt := range plan.Attempts {
+		fmt.Fprintf(stdout, "  %s: %s\n", attempt.Lens, formatAgentCommand(attempt.WouldRun))
+	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Artifacts:")
-	fmt.Fprintf(stdout, "  reviewer prompt: %s\n", runArtifactRepoRel(plan.RunID, reviewerPromptArtifact))
+	for _, attempt := range plan.Attempts {
+		fmt.Fprintf(stdout, "  reviewer prompt (%s): %s\n", attempt.Lens, runArtifactRepoRel(plan.RunID, attempt.Artifacts.ReviewerPrompt))
+	}
 	fmt.Fprintf(stdout, "  reviewer context: %s\n", runArtifactRepoRel(plan.RunID, reviewerContextArtifact))
 	fmt.Fprintf(stdout, "  dry run: %s\n", runArtifactRepoRel(plan.RunID, reviewerDryRunArtifact))
 }
 
-func writeReviewRun(stdout io.Writer, request reviewerRequestDocument, result reviewerResultDocument, reviewerName string, modelSpec agents.ModelSpec) {
-	fmt.Fprintln(stdout, "Reviewer attempt finished")
+func writeReviewRun(stdout io.Writer, response reviewerRunResponse, reviewer agents.AgentDescriptor, reviewerName string, modelSpec agents.ModelSpec) {
+	fmt.Fprintln(stdout, "Reviewer attempts finished")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
-	fmt.Fprintf(stdout, "  id: %s\n", result.RunID)
+	fmt.Fprintf(stdout, "  id: %s\n", response.RunID)
 	fmt.Fprintln(stdout)
 	writeResolved(stdout, reviewerName, modelSpec)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Reviewer:")
-	fmt.Fprintf(stdout, "  name: %s\n", request.Reviewer.Name)
-	fmt.Fprintf(stdout, "  command: %s\n", request.Reviewer.Command)
+	fmt.Fprintf(stdout, "  name: %s\n", reviewer.Name)
+	fmt.Fprintf(stdout, "  command: %s\n", reviewer.Command)
 	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Attempt:")
-	fmt.Fprintf(stdout, "  id: %s\n", result.AttemptID)
-	fmt.Fprintf(stdout, "  exit code: %d\n", result.ExitCode)
-	fmt.Fprintf(stdout, "  timed out: %t\n", result.TimedOut)
+	fmt.Fprintln(stdout, "Attempts (one per lens):")
+	for _, result := range response.Attempts {
+		fmt.Fprintf(stdout, "  - %s [%s] exit code %d, timed out: %t\n", result.AttemptID, result.Lens, result.ExitCode, result.TimedOut)
+	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Artifacts:")
-	fmt.Fprintf(stdout, "  request: %s\n", runArtifactRepoRel(result.RunID, filepath.ToSlash(filepath.Join(reviewerAttemptsArtifact, result.AttemptID, "request.json"))))
-	fmt.Fprintf(stdout, "  result: %s\n", runArtifactRepoRel(result.RunID, filepath.ToSlash(filepath.Join(reviewerAttemptsArtifact, result.AttemptID, "result.json"))))
-	fmt.Fprintf(stdout, "  stdout: %s\n", runArtifactRepoRel(result.RunID, result.Stdout))
-	fmt.Fprintf(stdout, "  stderr: %s\n", runArtifactRepoRel(result.RunID, result.Stderr))
-	fmt.Fprintf(stdout, "  last result: %s\n", runArtifactRepoRel(result.RunID, reviewerLastResultArtifact))
+	fmt.Fprintf(stdout, "  attempts: %s\n", runArtifactRepoRel(response.RunID, reviewerAttemptsArtifact))
+	fmt.Fprintf(stdout, "  last result: %s\n", runArtifactRepoRel(response.RunID, reviewerLastResultArtifact))
 }
 
 func writeReviewRunAndGate(stdout io.Writer, state reviewStateResponse) {

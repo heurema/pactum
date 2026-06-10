@@ -75,10 +75,14 @@ type reviewerFindingProposalInput struct {
 }
 
 type reviewProposeFindingsResponse struct {
-	RunID             string                 `json:"run_id"`
-	ReviewerAttemptID string                 `json:"reviewer_attempt_id"`
-	Created           []reviewProposalRecord `json:"created"`
-	Warnings          []string               `json:"warnings"`
+	RunID string `json:"run_id"`
+	// ReviewerAttemptIDs lists every attempt whose stdout was parsed: the
+	// explicit --attempt when given, otherwise ALL completed reviewer attempts —
+	// a review fans out into five lens attempts per reviewer, so the default
+	// must cover the whole review, not just the latest attempt.
+	ReviewerAttemptIDs []string               `json:"reviewer_attempt_ids"`
+	Created            []reviewProposalRecord `json:"created"`
+	Warnings           []string               `json:"warnings"`
 }
 
 type reviewAcceptProposalResponse struct {
@@ -103,15 +107,8 @@ func (a App) ReviewProposeFindings(stdout io.Writer, runID string, reviewerAttem
 		return err
 	}
 
-	attemptID, attemptPaths, err := resolveReviewerAttemptForProposals(context.RunPaths, reviewerAttemptID)
+	attemptIDs, err := resolveReviewerAttemptsForProposals(context.RunPaths, reviewerAttemptID)
 	if err != nil {
-		return err
-	}
-	stdoutBytes, err := activeStore.ReadBytes(attemptPaths.StdoutLog)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("reviewer attempt stdout not found: %s", attemptID)
-		}
 		return err
 	}
 
@@ -119,30 +116,44 @@ func (a App) ReviewProposeFindings(stdout io.Writer, runID string, reviewerAttem
 	if err != nil {
 		return err
 	}
-	blocks, warnings := parseReviewerFindingBlocks(string(stdoutBytes))
 	now := a.nowUTC()
 	created := make([]reviewProposalRecord, 0)
-	for _, block := range blocks {
-		for _, rawFinding := range block.Findings {
-			var input reviewerFindingProposalInput
-			if err := json.Unmarshal(rawFinding, &input); err != nil {
-				warnings = append(warnings, "proposal skipped: invalid finding object")
-				continue
+	warnings := []string{}
+	for _, attemptID := range attemptIDs {
+		attemptPaths := reviewerAttemptPaths(context.RunPaths, attemptID)
+		stdoutBytes, err := activeStore.ReadBytes(attemptPaths.StdoutLog)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("reviewer attempt stdout not found: %s", attemptID)
 			}
-			proposal, warning := proposalRecordFromReviewerInput(context.Root, runID, attemptID, len(proposals)+len(created)+1, input, now)
-			if warning != "" {
-				warnings = append(warnings, warning)
-				continue
+			return err
+		}
+		blocks, attemptWarnings := parseReviewerFindingBlocks(string(stdoutBytes))
+		for _, warning := range attemptWarnings {
+			warnings = append(warnings, prefixAttemptWarning(attemptIDs, attemptID, warning))
+		}
+		for _, block := range blocks {
+			for _, rawFinding := range block.Findings {
+				var input reviewerFindingProposalInput
+				if err := json.Unmarshal(rawFinding, &input); err != nil {
+					warnings = append(warnings, prefixAttemptWarning(attemptIDs, attemptID, "proposal skipped: invalid finding object"))
+					continue
+				}
+				proposal, warning := proposalRecordFromReviewerInput(context.Root, runID, attemptID, len(proposals)+len(created)+1, input, now)
+				if warning != "" {
+					warnings = append(warnings, prefixAttemptWarning(attemptIDs, attemptID, warning))
+					continue
+				}
+				created = append(created, proposal)
 			}
-			created = append(created, proposal)
 		}
 	}
 
 	response := reviewProposeFindingsResponse{
-		RunID:             runID,
-		ReviewerAttemptID: attemptID,
-		Created:           created,
-		Warnings:          warnings,
+		RunID:              runID,
+		ReviewerAttemptIDs: attemptIDs,
+		Created:            created,
+		Warnings:           warnings,
 	}
 	if len(created) == 0 {
 		if jsonOutput {
@@ -328,29 +339,33 @@ func readReviewProposalRecords(runPaths contractRunPathSet) ([]reviewProposalRec
 	return proposals, decisions, nil
 }
 
-func resolveReviewerAttemptForProposals(runPaths contractRunPathSet, reviewerAttemptID string) (string, attemptPathSet, error) {
+// resolveReviewerAttemptsForProposals resolves which reviewer attempts to
+// parse: the explicit attempt when given, otherwise EVERY completed attempt in
+// ascending order — a review fans out into five lens attempts per reviewer, so
+// defaulting to one attempt would silently cover a fraction of the review.
+func resolveReviewerAttemptsForProposals(runPaths contractRunPathSet, reviewerAttemptID string) ([]string, error) {
 	if strings.TrimSpace(reviewerAttemptID) != "" {
 		attemptID := strings.TrimSpace(reviewerAttemptID)
 		paths := reviewerAttemptPaths(runPaths, attemptID)
 		dirExists, err := storeDirExists(paths.Dir)
 		if err != nil {
-			return "", attemptPathSet{}, err
+			return nil, err
 		}
 		if !dirExists {
-			return "", attemptPathSet{}, fmt.Errorf("reviewer attempt not found: %s", attemptID)
+			return nil, fmt.Errorf("reviewer attempt not found: %s", attemptID)
 		}
 		if !isRegularFile(paths.ResultJSON) {
-			return "", attemptPathSet{}, fmt.Errorf("reviewer attempt is not completed: %s", attemptID)
+			return nil, fmt.Errorf("reviewer attempt is not completed: %s", attemptID)
 		}
-		return attemptID, paths, nil
+		return []string{attemptID}, nil
 	}
 
 	entries, err := activeStore.ReadDir(runPaths.ReviewAttemptsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", attemptPathSet{}, fmt.Errorf("no completed reviewer attempts found")
+			return nil, fmt.Errorf("no completed reviewer attempts found")
 		}
-		return "", attemptPathSet{}, err
+		return nil, err
 	}
 	attemptIDs := make([]string, 0, len(entries))
 	for _, entry := range entries {
@@ -368,11 +383,20 @@ func resolveReviewerAttemptForProposals(runPaths contractRunPathSet, reviewerAtt
 		}
 	}
 	if len(attemptIDs) == 0 {
-		return "", attemptPathSet{}, fmt.Errorf("no completed reviewer attempts found")
+		return nil, fmt.Errorf("no completed reviewer attempts found")
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(attemptIDs)))
-	attemptID := attemptIDs[0]
-	return attemptID, reviewerAttemptPaths(runPaths, attemptID), nil
+	sort.Strings(attemptIDs)
+	return attemptIDs, nil
+}
+
+// prefixAttemptWarning prefixes a parse warning with its attempt id when more
+// than one attempt is being parsed, so the operator can tell which lens
+// attempt produced it; a single explicit attempt keeps bare warnings.
+func prefixAttemptWarning(attemptIDs []string, attemptID string, warning string) string {
+	if len(attemptIDs) <= 1 {
+		return warning
+	}
+	return attemptID + ": " + warning
 }
 
 func parseReviewerFindingBlocks(output string) ([]reviewerFindingBlock, []string) {
@@ -625,8 +649,8 @@ func writeReviewProposalsCreated(stdout io.Writer, response reviewProposeFinding
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", response.RunID)
 	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Reviewer attempt:")
-	fmt.Fprintf(stdout, "  id: %s\n", response.ReviewerAttemptID)
+	fmt.Fprintln(stdout, "Reviewer attempts:")
+	fmt.Fprintf(stdout, "  ids: %s\n", strings.Join(response.ReviewerAttemptIDs, ", "))
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Proposals:")
 	fmt.Fprintf(stdout, "  created: %d\n", len(response.Created))

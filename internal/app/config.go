@@ -183,6 +183,19 @@ func (a App) readConfig(path string) (configFile, error) {
 // and model pins carrying no ':' effort suffix (effort is its own key). Names
 // and underlying agents are normalized in place so resolution can rely on a
 // trimmed Name and a non-empty Agent.
+// agentNameIsPathSafe reports whether a registry name is safe to embed in
+// artifact file names (no path separators or other special characters).
+func agentNameIsPathSafe(name string) bool {
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func validateAgentRegistry(entries []agentRegistryEntry, builtins []agents.AgentDescriptor) error {
 	if len(entries) == 0 {
 		return errors.New("config agents: at least one agent must be registered")
@@ -203,6 +216,11 @@ func validateAgentRegistry(entries []agentRegistryEntry, builtins []agents.Agent
 			return fmt.Errorf("config agents: duplicate name %q", name)
 		}
 		seen[name] = true
+		// Registry names flow into per-member artifact paths (the review lens
+		// prompts), so they must be path-safe.
+		if !agentNameIsPathSafe(name) {
+			return fmt.Errorf("config agents: name %q must contain only letters, digits, '.', '_', or '-'", name)
+		}
 		agent := strings.TrimSpace(entries[i].Agent)
 		if agent == "" {
 			agent = name
