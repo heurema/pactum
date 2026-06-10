@@ -57,9 +57,20 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var idleTimedOut atomic.Bool
 	stopIdle := func() {}
+	// Over ACP, streamed text is only one liveness signal: an agent can work
+	// silently through tool calls for minutes. Every inbound client callback
+	// ticks the same activity channel (same non-blocking send semantics as
+	// activityWriter) so silent protocol traffic also resets the idle timer.
+	var clientActivity func()
 	if request.Timeout > 0 {
 		activity := make(chan struct{}, 1)
 		stdoutWriter = activityWriter{w: stdoutWriter, activity: activity}
+		clientActivity = func() {
+			select {
+			case activity <- struct{}{}:
+			default:
+			}
+		}
 		stopIdle = startIdleTimeout(request.Timeout, activity, cancel, &idleTimedOut)
 	}
 	defer cancel()
@@ -88,7 +99,7 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 		return RunResult{}, err
 	}
 
-	client := &acpClient{out: stdoutWriter, repoRoot: request.RepoRoot, writePathAllowed: request.WritePathAllowed, readOnly: request.ReadOnly}
+	client := &acpClient{out: stdoutWriter, activity: clientActivity, repoRoot: request.RepoRoot, writePathAllowed: request.WritePathAllowed, readOnly: request.ReadOnly}
 	conn := acp.NewClientSideConnection(client, adapterIn, adapterOut)
 	runErr := driveACPSession(ctx, conn, request.RepoRoot, string(prompt), client)
 
@@ -200,6 +211,14 @@ func acpAdapterCommand(agentName string, spec ModelSpec, readOnly bool) (string,
 type acpClient struct {
 	out io.Writer
 
+	// activity is the idle-watchdog tick, invoked at the top of every inbound
+	// client method: any protocol traffic from the agent (session updates of
+	// every kind, permission requests, file reads/writes, terminal calls)
+	// proves it is alive, even when nothing is streamed to the output. Nil
+	// when no timeout is armed (and for the CLI transport, which never builds
+	// an acpClient); ticking is signal-only and never writes to the log.
+	activity func()
+
 	// repoRoot and writePathAllowed implement the real-time write scope guard.
 	// repoRoot anchors the conversion of an absolute ACP path to a repo-relative
 	// path; writePathAllowed (nil = allow all) reports whether that path is in
@@ -219,6 +238,12 @@ type acpClient struct {
 }
 
 var _ acp.Client = (*acpClient)(nil)
+
+func (c *acpClient) tick() {
+	if c.activity != nil {
+		c.activity()
+	}
+}
 
 func (c *acpClient) recordResult(resp acp.PromptResponse) {
 	c.mu.Lock()
@@ -267,6 +292,7 @@ func derefIntToInt64(p *int) int64 {
 }
 
 func (c *acpClient) RequestPermission(ctx context.Context, p acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
+	c.tick()
 	// On a read-only stage the agent's write/exec tool calls are refused: pick a
 	// reject option when the agent offers one, otherwise cancel the request.
 	// The cancelled outcome is spec-reserved for prompt-turn cancellation, but
@@ -292,6 +318,9 @@ func (c *acpClient) RequestPermission(ctx context.Context, p acp.RequestPermissi
 }
 
 func (c *acpClient) SessionUpdate(ctx context.Context, p acp.SessionNotification) error {
+	// Every update kind ticks the watchdog; only agent message text is written
+	// to the output — tool calls, thoughts, and plans leave the log untouched.
+	c.tick()
 	u := p.Update
 	if u.AgentMessageChunk != nil && u.AgentMessageChunk.Content.Text != nil {
 		c.mu.Lock()
@@ -302,6 +331,7 @@ func (c *acpClient) SessionUpdate(ctx context.Context, p acp.SessionNotification
 }
 
 func (c *acpClient) WriteTextFile(ctx context.Context, p acp.WriteTextFileRequest) (acp.WriteTextFileResponse, error) {
+	c.tick()
 	if c.readOnly {
 		return acp.WriteTextFileResponse{}, fmt.Errorf("acp write denied: read-only stage: %s", p.Path)
 	}
@@ -346,6 +376,7 @@ func (c *acpClient) checkWriteScope(absPath string) error {
 }
 
 func (c *acpClient) ReadTextFile(ctx context.Context, p acp.ReadTextFileRequest) (acp.ReadTextFileResponse, error) {
+	c.tick()
 	if !filepath.IsAbs(p.Path) {
 		return acp.ReadTextFileResponse{}, fmt.Errorf("acp read: path must be absolute: %s", p.Path)
 	}
@@ -357,21 +388,26 @@ func (c *acpClient) ReadTextFile(ctx context.Context, p acp.ReadTextFileRequest)
 }
 
 func (c *acpClient) CreateTerminal(ctx context.Context, p acp.CreateTerminalRequest) (acp.CreateTerminalResponse, error) {
+	c.tick()
 	return acp.CreateTerminalResponse{}, fmt.Errorf("acp terminals are not supported")
 }
 
 func (c *acpClient) KillTerminal(ctx context.Context, p acp.KillTerminalRequest) (acp.KillTerminalResponse, error) {
+	c.tick()
 	return acp.KillTerminalResponse{}, nil
 }
 
 func (c *acpClient) TerminalOutput(ctx context.Context, p acp.TerminalOutputRequest) (acp.TerminalOutputResponse, error) {
+	c.tick()
 	return acp.TerminalOutputResponse{}, nil
 }
 
 func (c *acpClient) ReleaseTerminal(ctx context.Context, p acp.ReleaseTerminalRequest) (acp.ReleaseTerminalResponse, error) {
+	c.tick()
 	return acp.ReleaseTerminalResponse{}, nil
 }
 
 func (c *acpClient) WaitForTerminalExit(ctx context.Context, p acp.WaitForTerminalExitRequest) (acp.WaitForTerminalExitResponse, error) {
+	c.tick()
 	return acp.WaitForTerminalExitResponse{}, nil
 }

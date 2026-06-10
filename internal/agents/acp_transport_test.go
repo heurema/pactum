@@ -223,12 +223,17 @@ func TestACPClientReadOnlyDeniesWrites(t *testing.T) {
 	repoRoot := t.TempDir()
 
 	// A read-only client denies the write before touching disk, even when the
-	// scope predicate would allow it.
-	c := &acpClient{repoRoot: repoRoot, readOnly: true, writePathAllowed: func(string) bool { return true }}
+	// scope predicate would allow it. The denied write still ticks the idle
+	// watchdog — a refused tool call proves the agent is alive.
+	ticks := 0
+	c := &acpClient{repoRoot: repoRoot, readOnly: true, writePathAllowed: func(string) bool { return true }, activity: func() { ticks++ }}
 	target := filepath.Join(repoRoot, "internal", "app", "denied.go")
 	_, err := c.WriteTextFile(context.Background(), acp.WriteTextFileRequest{Path: target, Content: "deny"})
 	if err == nil {
 		t.Fatal("read-only client should deny write")
+	}
+	if ticks != 1 {
+		t.Fatalf("denied write must still tick the watchdog: ticks = %d", ticks)
 	}
 	if !strings.Contains(err.Error(), "acp write denied: read-only stage") {
 		t.Fatalf("read-only denial error mismatch: %v", err)
@@ -245,6 +250,136 @@ func TestACPClientReadOnlyDeniesWrites(t *testing.T) {
 	read, err := c.ReadTextFile(context.Background(), acp.ReadTextFileRequest{Path: source})
 	if err != nil || read.Content != "# readme" {
 		t.Fatalf("read-only client should read: content=%q err=%v", read.Content, err)
+	}
+}
+
+func TestACPClientActivityTicksOnAllInboundCalls(t *testing.T) {
+	repoRoot := t.TempDir()
+	var out strings.Builder
+	ticks := 0
+	c := &acpClient{out: &out, activity: func() { ticks++ }, repoRoot: repoRoot}
+	ctx := context.Background()
+
+	// Silent session updates — a tool call, a tool-call update, a thought
+	// chunk, a plan — tick the watchdog and write nothing to the output.
+	silent := []acp.SessionNotification{
+		{Update: acp.SessionUpdate{ToolCall: &acp.SessionUpdateToolCall{}}},
+		{Update: acp.SessionUpdate{ToolCallUpdate: &acp.SessionToolCallUpdate{}}},
+		{Update: acp.SessionUpdate{AgentThoughtChunk: &acp.SessionUpdateAgentThoughtChunk{Content: acp.TextBlock("thinking")}}},
+		{Update: acp.SessionUpdate{Plan: &acp.SessionUpdatePlan{}}},
+	}
+	for i, n := range silent {
+		before := ticks
+		if err := c.SessionUpdate(ctx, n); err != nil {
+			t.Fatalf("silent update %d: %v", i, err)
+		}
+		if ticks != before+1 {
+			t.Fatalf("silent update %d must tick exactly once, ticks %d -> %d", i, before, ticks)
+		}
+	}
+	if out.String() != "" {
+		t.Fatalf("silent updates must write nothing to the output, got %q", out.String())
+	}
+
+	// An agent message chunk ticks and writes its text.
+	before := ticks
+	err := c.SessionUpdate(ctx, acp.SessionNotification{Update: acp.SessionUpdate{
+		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Content: acp.TextBlock("hello")},
+	}})
+	if err != nil {
+		t.Fatalf("message chunk: %v", err)
+	}
+	if ticks != before+1 {
+		t.Fatalf("message chunk must tick, ticks %d -> %d", before, ticks)
+	}
+	if out.String() != "hello" {
+		t.Fatalf("message chunk must write its text, got %q", out.String())
+	}
+
+	// Permission requests, client-serviced file reads/writes, and the terminal
+	// methods all tick: any inbound protocol traffic proves the agent is alive.
+	source := filepath.Join(repoRoot, "read.txt")
+	if err := os.WriteFile(source, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before = ticks
+	if _, err := c.RequestPermission(ctx, acp.RequestPermissionRequest{}); err != nil {
+		t.Fatalf("permission: %v", err)
+	}
+	if _, err := c.ReadTextFile(ctx, acp.ReadTextFileRequest{Path: source}); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if _, err := c.WriteTextFile(ctx, acp.WriteTextFileRequest{Path: filepath.Join(repoRoot, "write.txt"), Content: "y"}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, _ = c.CreateTerminal(ctx, acp.CreateTerminalRequest{}) // errs (unsupported) but must still tick
+	if _, err := c.KillTerminal(ctx, acp.KillTerminalRequest{}); err != nil {
+		t.Fatalf("kill terminal: %v", err)
+	}
+	if _, err := c.TerminalOutput(ctx, acp.TerminalOutputRequest{}); err != nil {
+		t.Fatalf("terminal output: %v", err)
+	}
+	if _, err := c.ReleaseTerminal(ctx, acp.ReleaseTerminalRequest{}); err != nil {
+		t.Fatalf("release terminal: %v", err)
+	}
+	if _, err := c.WaitForTerminalExit(ctx, acp.WaitForTerminalExitRequest{}); err != nil {
+		t.Fatalf("wait terminal: %v", err)
+	}
+	if ticks != before+8 {
+		t.Fatalf("each inbound call must tick exactly once, ticks %d -> %d (want +8)", before, ticks)
+	}
+	// Ticking is signal-only: across everything, only the streamed text landed.
+	if out.String() != "hello" {
+		t.Fatalf("output must hold only streamed agent text, got %q", out.String())
+	}
+}
+
+func TestACPClientNilActivityIsSafe(t *testing.T) {
+	// Without an armed timeout the callback is nil; every inbound method must
+	// be a safe no-op tick (no panic), preserving its normal behavior.
+	repoRoot := t.TempDir()
+	var out strings.Builder
+	c := &acpClient{out: &out, repoRoot: repoRoot}
+	ctx := context.Background()
+
+	err := c.SessionUpdate(ctx, acp.SessionNotification{Update: acp.SessionUpdate{ToolCall: &acp.SessionUpdateToolCall{}}})
+	if err != nil {
+		t.Fatalf("tool call: %v", err)
+	}
+	err = c.SessionUpdate(ctx, acp.SessionNotification{Update: acp.SessionUpdate{
+		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Content: acp.TextBlock("hi")},
+	}})
+	if err != nil {
+		t.Fatalf("message chunk: %v", err)
+	}
+	if out.String() != "hi" {
+		t.Fatalf("nil callback must not change writes, got %q", out.String())
+	}
+	source := filepath.Join(repoRoot, "read.txt")
+	if err := os.WriteFile(source, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RequestPermission(ctx, acp.RequestPermissionRequest{}); err != nil {
+		t.Fatalf("permission: %v", err)
+	}
+	if _, err := c.ReadTextFile(ctx, acp.ReadTextFileRequest{Path: source}); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if _, err := c.WriteTextFile(ctx, acp.WriteTextFileRequest{Path: filepath.Join(repoRoot, "write.txt"), Content: "y"}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, _ = c.CreateTerminal(ctx, acp.CreateTerminalRequest{})
+	if _, err := c.KillTerminal(ctx, acp.KillTerminalRequest{}); err != nil {
+		t.Fatalf("kill terminal: %v", err)
+	}
+	if _, err := c.TerminalOutput(ctx, acp.TerminalOutputRequest{}); err != nil {
+		t.Fatalf("terminal output: %v", err)
+	}
+	if _, err := c.ReleaseTerminal(ctx, acp.ReleaseTerminalRequest{}); err != nil {
+		t.Fatalf("release terminal: %v", err)
+	}
+	if _, err := c.WaitForTerminalExit(ctx, acp.WaitForTerminalExitRequest{}); err != nil {
+		t.Fatalf("wait terminal: %v", err)
 	}
 }
 

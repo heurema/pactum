@@ -20,6 +20,13 @@ reviews across M8–M10. Rough priority in parentheses.
   hang (bad). Surfaced in the M12.9 dogfood (claude silent ~30 min, finished cleanly, never
   killed). Fix: run the claude executor with `--output-format stream-json` (streams events
   → resets the idle timer, like codex), and/or arm the idle watchdog from process start.
+- **ACP tool-call progress in the live output** (small). Over ACP, silent agent
+  activity (tool calls, thoughts, plans) now ticks the idle watchdog (M17.1), but
+  the live output still shows only streamed agent text — a tool-heavy run can
+  look frozen for minutes while it is healthily working. Surface a compact
+  progress trace (e.g. one short line per tool call / tool-call update) in the
+  live output, without polluting the attempt `stdout.log` whose content stays
+  text-only.
 - **Workspace config leaks across runs/branches** — structurally resolved by the
   M16.0 config redesign: model pins are per-agent entries (`execute.models` /
   `review.panel`), so a pin can no longer reach a different agent (the M10.2
