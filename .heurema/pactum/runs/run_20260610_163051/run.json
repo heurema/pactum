@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260610_163051",
+  "status": "contract_approved",
+  "task": "Completion-aware timeout finalize: when the idle watchdog kills an agent whose terminal output shows the work already completed, the attempt is reported as completed-with-warning instead of a failed timed-out run",
+  "created_at": "2026-06-10T16:30:51.295156Z",
+  "updated_at": "2026-06-10T16:31:22.758314Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260610_163050",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}
