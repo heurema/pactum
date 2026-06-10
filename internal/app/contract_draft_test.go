@@ -170,7 +170,8 @@ func TestContractShowDraftAndAcceptAppliesProposalThroughRevision(t *testing.T) 
 	}
 	var draftResponse contractDraftResponse
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &draftResponse))
-	if draftResponse.RunStatus != "contract_approved" || draftResponse.Proposal.Status != "pending" || draftResponse.Proposal.Drafter != "helper" {
+	// The proposal records the engine inferred from the helper entry's model.
+	if draftResponse.RunStatus != "contract_approved" || draftResponse.Proposal.Status != "pending" || draftResponse.Proposal.Drafter != "claude" {
 		t.Fatalf("unexpected draft json: %#v", draftResponse)
 	}
 	if strings.Contains(stdout.String(), "Contract draft proposal recorded") || strings.Contains(stdout.String(), "Resolved:") {
@@ -237,16 +238,7 @@ func TestContractShowDraftAndAcceptAppliesProposalThroughRevision(t *testing.T) 
 func configureHelperContractDrafters(t *testing.T, app App, paths artifacts.Paths, names ...string) App {
 	t.Helper()
 	registerTestAgents(t, paths, names...)
-	descriptors := make([]agents.AgentDescriptor, 0, len(names))
-	for _, name := range names {
-		descriptors = append(descriptors, agents.AgentDescriptor{
-			Name:    name,
-			Command: os.Args[0],
-			Args:    []string{"-test.run=TestContractDrafterHelperProcess"},
-			Input:   agents.InputPromptFile,
-		})
-	}
-	app.AgentRegistry = testAgentRegistry(descriptors...)
+	app.AgentRegistry = testAgentRegistry(testHelperDescriptors(names, "TestContractDrafterHelperProcess")...)
 	return app
 }
 

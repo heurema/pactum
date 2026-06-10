@@ -172,7 +172,8 @@ func TestClarifySuggestJSONOutput(t *testing.T) {
 	}
 	var response clarifySuggestResponse
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
-	if response.AttemptID != "clarifier_attempt_001" || response.Clarifier != "helper" || len(response.Created) != 2 {
+	// The response records the engine inferred from the helper entry's model.
+	if response.AttemptID != "clarifier_attempt_001" || response.Clarifier != "claude" || len(response.Created) != 2 {
 		t.Fatalf("unexpected clarify suggest json: %#v", response)
 	}
 	// The run was never approved, so approval_reset stays false and is omitted.
@@ -622,16 +623,7 @@ func clarifyQuestionStatusByID(t *testing.T, status clarifyStatusResponse, id st
 func configureHelperClarifiers(t *testing.T, app App, paths artifacts.Paths, names ...string) App {
 	t.Helper()
 	registerTestAgents(t, paths, names...)
-	descriptors := make([]agents.AgentDescriptor, 0, len(names))
-	for _, name := range names {
-		descriptors = append(descriptors, agents.AgentDescriptor{
-			Name:    name,
-			Command: os.Args[0],
-			Args:    []string{"-test.run=TestClarifierHelperProcess"},
-			Input:   agents.InputPromptFile,
-		})
-	}
-	app.AgentRegistry = testAgentRegistry(descriptors...)
+	app.AgentRegistry = testAgentRegistry(testHelperDescriptors(names, "TestClarifierHelperProcess")...)
 	return app
 }
 

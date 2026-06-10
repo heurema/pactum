@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/heurema/pactum/internal/agents"
 	"github.com/heurema/pactum/internal/artifacts"
 )
 
@@ -68,7 +67,8 @@ func TestClarifyLoopConvergesOnHighConfidenceAnswers(t *testing.T) {
 	if summary.MaxRounds != 3 {
 		t.Fatalf("max rounds = %d, want clarify.max_rounds default 3", summary.MaxRounds)
 	}
-	if summary.Clarifier != "helper" {
+	// The summary records the engine inferred from the helper entry's model.
+	if summary.Clarifier != "claude" {
 		t.Fatalf("summary should record the resolved clarifier: %#v", summary)
 	}
 	if summary.RunStatus != "contract_draft" {
@@ -325,12 +325,7 @@ func setClarifyLoopMaxRoundsConfig(t *testing.T, paths artifacts.Paths, maxRound
 func configureClarifyLoopHelpers(t *testing.T, app App, paths artifacts.Paths) App {
 	t.Helper()
 	registerTestAgents(t, paths, clarifyLoopClarifierName)
-	app.AgentRegistry = testAgentRegistry(agents.AgentDescriptor{
-		Name:    clarifyLoopClarifierName,
-		Command: os.Args[0],
-		Args:    []string{"-test.run=TestClarifyLoopHelperProcess"},
-		Input:   agents.InputPromptFile,
-	})
+	app.AgentRegistry = testAgentRegistry(testHelperDescriptors([]string{clarifyLoopClarifierName}, "TestClarifyLoopHelperProcess")...)
 	return app
 }
 

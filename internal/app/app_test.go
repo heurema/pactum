@@ -87,11 +87,11 @@ func helper() {}
 	if config.Review.Budget.Mode != budgetModeBlock || config.Review.Budget.MaxTokens != nil {
 		t.Fatalf("config review.budget mismatch: %#v", config.Review.Budget)
 	}
-	if len(config.Agents) != 1 || config.Agents[0].Name != "claude" || config.Agents[0].Agent != "claude" {
-		t.Fatalf("config agents should register the single claude entry: %#v", config.Agents)
+	if len(config.Agents) != 1 || config.Agents[0].Name != "claude" || config.Agents[0].Model != "claude-opus-4-8" {
+		t.Fatalf("config agents should register the single pinned claude entry: %#v", config.Agents)
 	}
 	configYAML := mustReadFile(t, paths.Config)
-	for _, want := range []string{"agents:", "- name: claude", "map:", "gate:", "scope_enforcement: block", "review:", "budget:", "mode: block", "max_tokens:", "panel: []"} {
+	for _, want := range []string{"agents:", "- name: claude", "model: claude-opus-4-8", "map:", "gate:", "scope_enforcement: block", "review:", "budget:", "mode: block", "max_tokens:", "panel: []"} {
 		if !strings.Contains(configYAML, want) {
 			t.Fatalf("config.yaml missing %q:\n%s", want, configYAML)
 		}
@@ -296,7 +296,7 @@ func TestReadConfigNormalizesGateScopeEnforcement(t *testing.T) {
 	}{
 		{
 			name:    "missing",
-			content: "schema: pactum.config.v1\nagents:\n  - name: claude\n",
+			content: "schema: pactum.config.v1\nagents:\n  - name: claude\n    model: claude-opus-4-8\n",
 			want:    gateScopeEnforcementBlock,
 		},
 		{
@@ -304,6 +304,7 @@ func TestReadConfigNormalizesGateScopeEnforcement(t *testing.T) {
 			content: `schema: pactum.config.v1
 agents:
   - name: claude
+    model: claude-opus-4-8
 gate:
   scope_enforcement: ""
 `,
@@ -314,6 +315,7 @@ gate:
 			content: `schema: pactum.config.v1
 agents:
   - name: claude
+    model: claude-opus-4-8
 gate:
   scope_enforcement: block
 `,
@@ -324,6 +326,7 @@ gate:
 			content: `schema: pactum.config.v1
 agents:
   - name: claude
+    model: claude-opus-4-8
 gate:
   scope_enforcement: warn
 `,
@@ -372,7 +375,7 @@ func TestReadConfigNormalizesBudgetMode(t *testing.T) {
 	}{
 		{
 			name:    "missing",
-			content: "schema: pactum.config.v1\nagents:\n  - name: claude\n",
+			content: "schema: pactum.config.v1\nagents:\n  - name: claude\n    model: claude-opus-4-8\n",
 			want:    budgetModeBlock,
 		},
 		{
@@ -380,6 +383,7 @@ func TestReadConfigNormalizesBudgetMode(t *testing.T) {
 			content: `schema: pactum.config.v1
 agents:
   - name: claude
+    model: claude-opus-4-8
 review:
   budget:
     mode: ""
@@ -391,6 +395,7 @@ review:
 			content: `schema: pactum.config.v1
 agents:
   - name: claude
+    model: claude-opus-4-8
 review:
   budget:
     mode: block
@@ -402,6 +407,7 @@ review:
 			content: `schema: pactum.config.v1
 agents:
   - name: claude
+    model: claude-opus-4-8
 review:
   budget:
     mode: warn
@@ -2514,39 +2520,68 @@ func testApp(root string) App {
 	}
 }
 
+// fixedAgentRegistry mirrors the production registry shape after engine
+// inference: resolution is keyed by engine name ("codex"/"claude"), with
+// separate descriptor tables per role so a test can run a reviewer helper and
+// a fixer helper on the same engine.
 type fixedAgentRegistry struct {
 	defaultExecutor string
 	defaultReviewer string
 	order           []string
-	descriptors     map[string]agents.AgentDescriptor
+	executors       map[string]agents.AgentDescriptor
+	reviewers       map[string]agents.AgentDescriptor
 }
 
+// testAgentRegistry overrides an engine's descriptor for both roles; extra
+// descriptors must carry an engine name ("codex"/"claude") because resolution
+// only ever asks for inferred engines.
 func testAgentRegistry(extra ...agents.AgentDescriptor) agents.Registry {
-	descriptors := map[string]agents.AgentDescriptor{}
+	return testAgentRegistryRoles(extra, extra)
+}
+
+// testAgentRegistryRoles overrides executor-role and reviewer-role descriptors
+// independently, keyed by engine name.
+func testAgentRegistryRoles(executors []agents.AgentDescriptor, reviewers []agents.AgentDescriptor) agents.Registry {
+	executorTable := map[string]agents.AgentDescriptor{}
+	reviewerTable := map[string]agents.AgentDescriptor{}
 	order := []string{}
 	for _, descriptor := range agents.ListBuiltins() {
-		descriptors[descriptor.Name] = descriptor
+		executorTable[descriptor.Name] = descriptor
+		reviewerTable[descriptor.Name] = descriptor
 		order = append(order, descriptor.Name)
 	}
-	for _, descriptor := range extra {
-		if _, ok := descriptors[descriptor.Name]; !ok {
+	for _, descriptor := range executors {
+		if _, ok := executorTable[descriptor.Name]; !ok {
 			order = append(order, descriptor.Name)
 		}
-		descriptors[descriptor.Name] = descriptor
+		executorTable[descriptor.Name] = descriptor
+	}
+	for _, descriptor := range reviewers {
+		if _, ok := executorTable[descriptor.Name]; !ok {
+			if _, seen := reviewerTable[descriptor.Name]; !seen {
+				order = append(order, descriptor.Name)
+			}
+		}
+		reviewerTable[descriptor.Name] = descriptor
 	}
 	return fixedAgentRegistry{
 		defaultExecutor: agents.DefaultExecutor(),
 		defaultReviewer: agents.DefaultReviewer(),
 		order:           order,
-		descriptors:     descriptors,
+		executors:       executorTable,
+		reviewers:       reviewerTable,
 	}
 }
 
-func helperAgentDescriptor(name string) agents.AgentDescriptor {
+// helperAgentDescriptor builds an execution helper descriptor registered under
+// an engine name. The trailing "--" terminates test-binary flag parsing so the
+// registry entry's model/effort pins (always appended now that the model is
+// required) are ignored as positional arguments.
+func helperAgentDescriptor(engine string) agents.AgentDescriptor {
 	return agents.AgentDescriptor{
-		Name:    name,
+		Name:    engine,
 		Command: os.Args[0],
-		Args:    []string{"-test.run=TestExecutionHelperProcess"},
+		Args:    []string{"-test.run=TestExecutionHelperProcess", "--"},
 		Input:   agents.InputPromptFile,
 	}
 }
@@ -2560,27 +2595,31 @@ func (r fixedAgentRegistry) DefaultReviewer() string {
 }
 
 func (r fixedAgentRegistry) ResolveExecutor(name string) (agents.AgentDescriptor, error) {
-	return r.resolve(name, r.defaultExecutor)
+	return resolveTestAgent(r.executors, name, r.defaultExecutor)
 }
 
 func (r fixedAgentRegistry) ResolveReviewer(name string) (agents.AgentDescriptor, error) {
-	return r.resolve(name, r.defaultReviewer)
+	return resolveTestAgent(r.reviewers, name, r.defaultReviewer)
 }
 
 func (r fixedAgentRegistry) ListBuiltins() []agents.AgentDescriptor {
 	descriptors := make([]agents.AgentDescriptor, 0, len(r.order))
 	for _, name := range r.order {
-		descriptors = append(descriptors, cloneTestAgentDescriptor(r.descriptors[name]))
+		descriptor, ok := r.executors[name]
+		if !ok {
+			descriptor = r.reviewers[name]
+		}
+		descriptors = append(descriptors, cloneTestAgentDescriptor(descriptor))
 	}
 	return descriptors
 }
 
-func (r fixedAgentRegistry) resolve(name string, defaultName string) (agents.AgentDescriptor, error) {
+func resolveTestAgent(descriptors map[string]agents.AgentDescriptor, name string, defaultName string) (agents.AgentDescriptor, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = defaultName
 	}
-	descriptor, ok := r.descriptors[name]
+	descriptor, ok := descriptors[name]
 	if !ok {
 		return agents.AgentDescriptor{}, fmt.Errorf("unsupported agent: %s", name)
 	}
@@ -2606,16 +2645,9 @@ func testAppSequence(root string) App {
 	}
 }
 
-// readConfig keeps the historical free-function test call sites working; the
-// production reader is an App method so registry validation can consult the
-// injected agent registry.
-func readConfig(path string) (configFile, error) {
-	return App{}.readConfig(path)
-}
-
 // readConfigForTest decodes a workspace config without registry validation so
 // config-mutating helpers stay order-independent: a config may temporarily
-// reference helper agents the plain built-in registry does not know.
+// hold partial entries while a test composes its registry.
 func readConfigForTest(t *testing.T, path string) configFile {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -2637,7 +2669,9 @@ func setAgentRegistryConfig(t *testing.T, paths artifacts.Paths, entries ...agen
 
 // registerTestAgents appends names to the config agents registry (skipping
 // already-registered names) so registry-name resolution finds the helper
-// agents tests inject through App.AgentRegistry.
+// agents tests inject through App.AgentRegistry. Each entry gets a model whose
+// inferred engine is testAgentEngine(name), the engine the helper descriptor
+// must be registered under.
 func registerTestAgents(t *testing.T, paths artifacts.Paths, names ...string) {
 	t.Helper()
 	config := readConfigForTest(t, paths.Config)
@@ -2647,11 +2681,53 @@ func registerTestAgents(t *testing.T, paths artifacts.Paths, names ...string) {
 	}
 	for _, name := range names {
 		if !registered[name] {
-			config.Agents = append(config.Agents, agentRegistryEntry{Name: name})
+			config.Agents = append(config.Agents, agentRegistryEntry{Name: name, Model: testAgentModel(name)})
 			registered[name] = true
 		}
 	}
 	assertNoError(t, writeYAML(paths.Config, config))
+}
+
+// testAgentEngine maps a helper-agent name to the engine its registry entry
+// infers to: codex-flavored names run on codex, everything else on claude.
+func testAgentEngine(name string) string {
+	if strings.Contains(name, "codex") {
+		return agents.BuiltinCodex
+	}
+	return agents.BuiltinClaude
+}
+
+// testHelperDescriptors builds one helper-process descriptor per distinct
+// engine the given helper names infer to. Engine-keyed resolution cannot tell
+// two same-engine helper names apart, so they share one descriptor — which
+// matches how the configure helpers always built them (identical commands).
+// The trailing "--" keeps the appended model/effort pins out of the test
+// binary's flag parsing.
+func testHelperDescriptors(names []string, helperTest string) []agents.AgentDescriptor {
+	seen := map[string]bool{}
+	descriptors := []agents.AgentDescriptor{}
+	for _, name := range names {
+		engine := testAgentEngine(name)
+		if seen[engine] {
+			continue
+		}
+		seen[engine] = true
+		descriptors = append(descriptors, agents.AgentDescriptor{
+			Name:    engine,
+			Command: os.Args[0],
+			Args:    []string{"-test.run=" + helperTest, "--"},
+			Input:   agents.InputPromptFile,
+		})
+	}
+	return descriptors
+}
+
+// testAgentModel returns a model that infers to testAgentEngine(name).
+func testAgentModel(name string) string {
+	if testAgentEngine(name) == agents.BuiltinCodex {
+		return "gpt-5"
+	}
+	return "claude-opus-4-8"
 }
 
 func setupContractRun(t *testing.T, root string) (App, artifacts.Paths, string) {
@@ -2664,10 +2740,13 @@ func setupContractRun(t *testing.T, root string) (App, artifacts.Paths, string) 
 	if code != 0 {
 		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
 	}
-	// Register both built-ins so tests can invoke either by name; codex first
+	// Register both engines so tests can invoke either by name; codex first
 	// keeps the pre-registry default-executor behavior (first entry wins). The
 	// config edit invalidates the just-built project map, so refresh it.
-	setAgentRegistryConfig(t, artifacts.New(root), agentRegistryEntry{Name: "codex"}, agentRegistryEntry{Name: "claude"})
+	setAgentRegistryConfig(t, artifacts.New(root),
+		agentRegistryEntry{Name: "codex", Model: "gpt-5"},
+		agentRegistryEntry{Name: "claude", Model: "claude-opus-4-8"},
+	)
 	stdout.Reset()
 	stderr.Reset()
 	code = app.Run([]string{"map", "refresh"}, &stdout, &stderr)

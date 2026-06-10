@@ -170,7 +170,7 @@ func (a App) prepareReviewFixer(context reviewContext, agentName string) (review
 	if len(findings) == 0 {
 		return reviewFixPreparation{}, fmt.Errorf("cannot run review fix: no review findings found")
 	}
-	config, err := a.readConfig(context.Paths.Config)
+	config, err := readConfig(context.Paths.Config)
 	if err != nil {
 		return reviewFixPreparation{}, err
 	}

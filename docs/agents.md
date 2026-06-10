@@ -23,35 +23,55 @@ review); Pactum feeds that file to the agent process on standard input.
 The top-level `agents` list in `.heurema/pactum/config.yaml` is the config's
 source of truth for agents: every reference — `--agent`, `--reviewer`, and
 `review.panel` — resolves a registry **name**, and a name carries its
-agent+model+effort wherever it is used. Each entry has:
+model+effort wherever it is used. Each entry has:
 
-- `name` (required) — how the entry is referenced everywhere.
-- `agent` (optional) — the built-in it runs on (`claude` or `codex`),
-  defaulting to `name`.
-- `model` / `effort` (optional) — pins applied wherever the name is invoked.
+- `name` (required) — how the entry is referenced everywhere; a free,
+  path-safe label.
+- `model` (required) — the model the entry runs; the underlying engine is
+  inferred solely from it (see below).
+- `effort` (optional) — a reasoning-effort pin applied wherever the name is
+  invoked.
 
 ```yaml
 agents:
-  - name: claude          # runs the claude built-in, unpinned
-  - name: fable           # a second claude-backed entry with its own pin
-    agent: claude
-    model: claude-fable-5
+  - name: fable
+    model: claude-fable-5   # infers the claude engine
   - name: codex
+    model: gpt-5.5          # infers the codex engine
+    effort: high
 
 review:
   panel: [fable, codex]   # registry names; empty = cross-model single reviewer
 ```
 
-The registry is required: an empty or missing `agents` list is a loud error
-("at least one agent must be registered"), and `pactum init` generates
-`agents: [{name: claude}]`. Bare built-in names are not implicitly available —
-referencing an unregistered name (including a built-in that is not registered)
-is an error. Validation is strict: blank or duplicate names, an `agent` that is
-not a built-in, a `model` containing `:` (use the separate `effort` key), or a
-panel name that is not registered are configuration errors.
+There is no `agent` key: the engine is inferred from the model alone, by
+prefix-distinct vendor families:
 
-A name is decoupled from the built-in it runs on, so two entries can run the
-same built-in with different models — for example an `opus` writer and a
+- a model starting with `claude`, or equal to one of the claude aliases
+  (`opus`, `sonnet`, `haiku`, `fable`), runs on **claude**;
+- a model starting with `gpt` or `codex`, or starting with `o` followed by a
+  digit (`o3`, `o4-mini`, ...), runs on **codex**;
+- anything else fails loudly at config read with an error naming the entry and
+  the recognized forms.
+
+Matching is case-insensitive on the trimmed model; the aliases are exact
+matches. Pactum does not validate that the model exists — a recognizable but
+wrong model id still fails at the provider, as before.
+
+The registry is required: an empty or missing `agents` list is a loud error
+("at least one agent must be registered"), and `pactum init` generates a
+single claude entry pinned to a current model (`agents: [{name: claude,
+model: claude-opus-4-8}]`). Because the engine is inferred from the model, an
+entry that inherits the agent CLI's own default model cannot exist — every
+entry pins its model. Bare engine names are not implicitly available —
+referencing an unregistered name (including an engine that is not registered)
+is an error. Validation is strict: blank or duplicate names, a missing model,
+a model the engine cannot be inferred from, a `model` containing `:` (use the
+separate `effort` key), a leftover `agent:` key from the previous config
+shape, or a panel name that is not registered are configuration errors.
+
+A name is decoupled from the engine it runs on, so two entries can run the
+same engine with different models — for example an `opus` writer and a
 `fable` reviewer, or a panel holding two claude-backed entries that run as
 separate panel members.
 
@@ -63,10 +83,10 @@ reviewer/clarifier/drafter with `--reviewer <name>` on the clarify, contract
 draft, and review commands. Both flags accept registry names only.
 
 When `--agent` is omitted, the **first registry entry** is the executor. When
-`--reviewer` is omitted, selection is cross-model against **underlying**
-agents: Pactum reads the latest execution attempt's built-in and picks the
-first registry entry whose underlying agent differs, falling back to the first
-registry entry when every entry runs on the executor's built-in. Before any
+`--reviewer` is omitted, selection is cross-model against **inferred
+engines**: Pactum reads the latest execution attempt's engine and picks the
+first registry entry whose inferred engine differs, falling back to the first
+registry entry when every entry runs on the executor's engine. Before any
 execution attempt exists (`clarify suggest`, `contract draft`), the would-be
 executor is the first registry entry, so the same rule applies against it. An
 explicit `--reviewer` always wins. Check the selected entry in the `Resolved`
@@ -79,7 +99,7 @@ panel members concurrently — every member expanding into the five built-in
 lens attempts described under [Review: dry-run vs run](#review-dry-run-vs-run),
 so a round spawns members × lenses attempts — then parses their finding
 proposals in the configured order; each member runs with its own
-entry's `model`/`effort`, and two names backed by the same built-in run as
+entry's `model`/`effort`, and two names backed by the same engine run as
 separate members. Duplicate proposals still collapse through the normal finding
 fingerprint, and duplicate findings keep the maximum severity. An explicit
 `--reviewer <name>` disables the roster for that invocation and runs only that
@@ -89,18 +109,18 @@ falls back to the cross-model single-reviewer selection above.
 For `codex`, pins emit `-c model=...` and `-c model_reasoning_effort=...`; for
 `claude`, `--model ...` and `--effort ...`. Reviewer pins are appended to the
 read-only reviewer command and do not add executor write-bypass flags. The
-usage ledger records both the registry name (`agent_name`) and the underlying
-built-in (`agent`); execution and attempt artifacts keep recording the
-underlying built-in, so cross-model comparison semantics are unchanged.
+usage ledger records both the registry name (`agent_name`) and the inferred
+engine (`agent`); execution and attempt artifacts keep recording the engine,
+so cross-model comparison semantics are unchanged.
 
 The human output for `clarify suggest`, `contract draft`, `execute dry-run`,
 `execute run`, `review dry-run`, and `review run` includes a `Resolved` block
 once per command. It shows the selected registry name plus the model and
 effort values Pactum applied from its entry: pinned values are shown directly,
-and empty values are shown as `inherit` because Pactum does not read the agent
-CLI's own config. A `pinning` summary reads `pinned` (model and effort both
-set), `partial` (only one set), or `inherit` (neither). The underlying built-in
-appears in the Agent/Attempt sections below it.
+and an empty effort is shown as `inherit` because Pactum does not read the
+agent CLI's own config. A `pinning` summary reads `pinned` (model and effort
+both set) or `partial` (model only — the model is always pinned now that it is
+required). The engine appears in the Agent/Attempt sections below it.
 
 Pactum does **not** install, bundle, configure, or authenticate these CLIs. You
 must install and configure each agent CLI separately and make its command

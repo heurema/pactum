@@ -18,8 +18,10 @@ import (
 
 const (
 	reviewLoopReviewerName = "loop-reviewer"
-	// Panel members must be resolvable built-in agent names (config validation);
-	// the test registry overrides their descriptors with helper processes.
+	// The panel members are named after the two engines so they infer to
+	// distinct engines (engine-keyed resolution cannot tell two same-engine
+	// reviewers apart); the test registry overrides each engine's reviewer
+	// descriptor with the matching helper process.
 	reviewLoopPanelLowName  = "codex"
 	reviewLoopPanelHighName = "claude"
 	reviewLoopFixerName     = "loop-fixer"
@@ -73,7 +75,10 @@ func TestReviewLoopFindingsThenCleanUsesConfigMaxRounds(t *testing.T) {
 	if summary.CleanRoundsRequired != 1 || summary.StalematePatience != 2 {
 		t.Fatalf("default loop limits mismatch: %#v", summary)
 	}
-	if summary.Reviewer != reviewLoopReviewerName || summary.Agent != reviewLoopFixerName {
+	// The reviewer is recorded by registry name; the fixer agent comes from the
+	// fix result document, which records the engine inferred from the entry's
+	// model.
+	if summary.Reviewer != reviewLoopReviewerName || summary.Agent != testAgentEngine(reviewLoopFixerName) {
 		t.Fatalf("summary should record resolved agents: %#v", summary)
 	}
 	if len(summary.Rounds) != 2 {
@@ -648,8 +653,11 @@ func TestReviewLoopExplicitReviewerDisablesConfiguredPanel(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
 	runReviewCommand(t, app, "review", "prepare", runID)
+	// The loop helpers (not the panel helpers) back this registry: the panel is
+	// configured but must not run, and the explicit reviewer resolves the
+	// loop-reviewer helper on its inferred engine.
+	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewPanelConfig(t, paths, reviewLoopPanelLowName, reviewLoopPanelHighName)
-	app = configureReviewLoopPanelHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
@@ -707,8 +715,8 @@ func TestResolveReviewLoopReviewersPanelAllowsSameBuiltInTwice(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
 	setAgentRegistryConfig(t, paths,
-		agentRegistryEntry{Name: "fable", Agent: "claude", Model: "claude-fable-5"},
-		agentRegistryEntry{Name: "sonnet", Agent: "claude", Model: "claude-sonnet-4-6"},
+		agentRegistryEntry{Name: "fable", Model: "claude-fable-5"},
+		agentRegistryEntry{Name: "sonnet", Model: "claude-sonnet-4-6"},
 	)
 	setReviewPanelConfig(t, paths, "fable", "sonnet")
 
@@ -1101,33 +1109,38 @@ func TestReviewLoopStreamsSubRunOutputToStderrWithCleanStdout(t *testing.T) {
 }
 
 // registerReviewLoopAgents adds the loop helper agents to the config registry
-// so registry-name resolution finds them; the injected test agent registry
-// lists them as built-ins, so the config still validates.
+// so registry-name resolution finds them. The loop reviewer and fixer both
+// infer the claude engine; the injected registries keep them apart by role.
 func registerReviewLoopAgents(t *testing.T, paths artifacts.Paths) {
 	t.Helper()
 	setAgentRegistryConfig(t, paths,
-		agentRegistryEntry{Name: "codex"},
-		agentRegistryEntry{Name: "claude"},
-		agentRegistryEntry{Name: reviewLoopReviewerName},
-		agentRegistryEntry{Name: reviewLoopFixerName},
+		agentRegistryEntry{Name: "codex", Model: "gpt-5"},
+		agentRegistryEntry{Name: "claude", Model: "claude-opus-4-8"},
+		agentRegistryEntry{Name: reviewLoopReviewerName, Model: testAgentModel(reviewLoopReviewerName)},
+		agentRegistryEntry{Name: reviewLoopFixerName, Model: testAgentModel(reviewLoopFixerName)},
 	)
+}
+
+// reviewLoopHelperDescriptor routes one engine's role resolution to a review
+// loop helper process.
+func reviewLoopHelperDescriptor(engine string, helperTest string) agents.AgentDescriptor {
+	return agents.AgentDescriptor{
+		Name:    engine,
+		Command: os.Args[0],
+		Args:    []string{"-test.run=" + helperTest, "--"},
+		Input:   agents.InputPromptFile,
+	}
 }
 
 func configureReviewLoopHelpers(t *testing.T, app App, paths artifacts.Paths) App {
 	t.Helper()
 	registerReviewLoopAgents(t, paths)
-	app.AgentRegistry = testAgentRegistry(
-		agents.AgentDescriptor{
-			Name:    reviewLoopReviewerName,
-			Command: os.Args[0],
-			Args:    []string{"-test.run=TestReviewLoopReviewerHelperProcess"},
-			Input:   agents.InputPromptFile,
+	app.AgentRegistry = testAgentRegistryRoles(
+		[]agents.AgentDescriptor{
+			reviewLoopHelperDescriptor(testAgentEngine(reviewLoopFixerName), "TestReviewLoopFixerHelperProcess"),
 		},
-		agents.AgentDescriptor{
-			Name:    reviewLoopFixerName,
-			Command: os.Args[0],
-			Args:    []string{"-test.run=TestReviewLoopFixerHelperProcess"},
-			Input:   agents.InputPromptFile,
+		[]agents.AgentDescriptor{
+			reviewLoopHelperDescriptor(testAgentEngine(reviewLoopReviewerName), "TestReviewLoopReviewerHelperProcess"),
 		},
 	)
 	return app
@@ -1136,30 +1149,13 @@ func configureReviewLoopHelpers(t *testing.T, app App, paths artifacts.Paths) Ap
 func configureReviewLoopPanelHelpers(t *testing.T, app App, paths artifacts.Paths) App {
 	t.Helper()
 	registerReviewLoopAgents(t, paths)
-	app.AgentRegistry = testAgentRegistry(
-		agents.AgentDescriptor{
-			Name:    reviewLoopReviewerName,
-			Command: os.Args[0],
-			Args:    []string{"-test.run=TestReviewLoopReviewerHelperProcess"},
-			Input:   agents.InputPromptFile,
+	app.AgentRegistry = testAgentRegistryRoles(
+		[]agents.AgentDescriptor{
+			reviewLoopHelperDescriptor(testAgentEngine(reviewLoopFixerName), "TestReviewLoopFixerHelperProcess"),
 		},
-		agents.AgentDescriptor{
-			Name:    reviewLoopPanelLowName,
-			Command: os.Args[0],
-			Args:    []string{"-test.run=TestReviewLoopPanelLowReviewerHelperProcess"},
-			Input:   agents.InputPromptFile,
-		},
-		agents.AgentDescriptor{
-			Name:    reviewLoopPanelHighName,
-			Command: os.Args[0],
-			Args:    []string{"-test.run=TestReviewLoopPanelHighReviewerHelperProcess"},
-			Input:   agents.InputPromptFile,
-		},
-		agents.AgentDescriptor{
-			Name:    reviewLoopFixerName,
-			Command: os.Args[0],
-			Args:    []string{"-test.run=TestReviewLoopFixerHelperProcess"},
-			Input:   agents.InputPromptFile,
+		[]agents.AgentDescriptor{
+			reviewLoopHelperDescriptor(testAgentEngine(reviewLoopPanelLowName), "TestReviewLoopPanelLowReviewerHelperProcess"),
+			reviewLoopHelperDescriptor(testAgentEngine(reviewLoopPanelHighName), "TestReviewLoopPanelHighReviewerHelperProcess"),
 		},
 	)
 	return app

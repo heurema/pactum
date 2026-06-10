@@ -80,21 +80,21 @@ func TestExecuteDryRunSucceedsAfterPromptBuild(t *testing.T) {
 		"Execution dry-run prepared",
 		"Resolved:",
 		"Would run:",
-		"codex exec --json --dangerously-bypass-approvals-and-sandbox < .heurema/pactum/runs/" + runID + "/contract/prompt.md",
+		"codex exec --json --dangerously-bypass-approvals-and-sandbox -c model=\"gpt-5\" < .heurema/pactum/runs/" + runID + "/contract/prompt.md",
 		".heurema/pactum/runs/" + runID + "/execute/dry-run.json",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("execute dry-run output missing %q:\n%s", want, got)
 		}
 	}
-	assertResolvedBlock(t, got, "codex", "inherit", "inherit", "inherit")
+	assertResolvedBlock(t, got, "codex", "gpt-5", "inherit", "partial")
 
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
 	if plan.Schema != agents.DryRunSchema || plan.RunID != runID || plan.Agent.Name != "codex" {
 		t.Fatalf("unexpected dry-run plan: %#v", plan)
 	}
 	wantPrompt := executionPromptRepoPath(runID)
-	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec --json --dangerously-bypass-approvals-and-sandbox" || plan.WouldRun.Stdin != wantPrompt {
+	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != `exec --json --dangerously-bypass-approvals-and-sandbox -c model="gpt-5"` || plan.WouldRun.Stdin != wantPrompt {
 		t.Fatalf("unexpected would_run command: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", wantPrompt)
@@ -114,7 +114,7 @@ func TestExecuteDryRunJSONOutput(t *testing.T) {
 	if plan.Agent.Name != "codex" || !plan.Checks.PromptManifestReady || plan.Artifacts.Prompt != "contract/prompt.md" {
 		t.Fatalf("unexpected dry-run json: %#v", plan)
 	}
-	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != "exec --json --dangerously-bypass-approvals-and-sandbox" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
+	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != `exec --json --dangerously-bypass-approvals-and-sandbox -c model="gpt-5"` || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
 		t.Fatalf("missing would_run json: %#v", plan.WouldRun)
 	}
 	if strings.Contains(stdout.String(), "Execution dry-run prepared") {
@@ -169,7 +169,7 @@ func TestExecuteDryRunExplicitCodex(t *testing.T) {
 	if plan.Agent.Name != "codex" || plan.Agent.Command != "codex" {
 		t.Fatalf("codex agent mismatch: %#v", plan.Agent)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "exec --json --dangerously-bypass-approvals-and-sandbox" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
+	if strings.Join(plan.WouldRun.Args, " ") != `exec --json --dangerously-bypass-approvals-and-sandbox -c model="gpt-5"` || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
 		t.Fatalf("codex would_run mismatch: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", executionPromptRepoPath(runID))
@@ -189,7 +189,7 @@ func TestExecuteDryRunExplicitClaude(t *testing.T) {
 	if plan.Agent.Name != "claude" || plan.Agent.Command != "claude" {
 		t.Fatalf("claude agent mismatch: %#v", plan.Agent)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json --dangerously-skip-permissions" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
+	if strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json --dangerously-skip-permissions --model claude-opus-4-8" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
 		t.Fatalf("claude would_run mismatch: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", executionPromptRepoPath(runID))
@@ -215,7 +215,7 @@ func TestExecuteDryRunAppliesExecutorModelConfigToCodex(t *testing.T) {
 
 func TestExecuteDryRunAppliesExecutorModelConfigToClaude(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"}, agentRegistryEntry{Name: "codex"})
+	app, paths, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"}, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "claude"}, &stdout, &stderr)
@@ -233,21 +233,22 @@ func TestExecuteDryRunAppliesExecutorModelConfigToClaude(t *testing.T) {
 
 func TestExecuteDryRunResolvedPartialPin(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "codex", Effort: "high"})
+	app, _, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "codex"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute dry-run codex exited %d, stderr: %s", code, stderr.String())
 	}
-	// Effort-only pin: the model still inherits, so pinning is "partial", not "pinned".
-	assertResolvedBlock(t, stdout.String(), "codex", "inherit", "high", "partial")
+	// Model-only pin: the effort still inherits, so pinning is "partial", not "pinned".
+	assertResolvedBlock(t, stdout.String(), "codex", "gpt-5", "inherit", "partial")
 }
 
 func TestExecuteDryRunPinAppliesOnlyToMatchingAgent(t *testing.T) {
 	root := t.TempDir()
-	// Only claude is pinned; invoking codex must run unpinned.
-	app, paths, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"}, agentRegistryEntry{Name: "codex"})
+	// Each entry carries only its own pins: invoking codex must not pick up
+	// claude's effort pin.
+	app, paths, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"}, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "codex"}, &stdout, &stderr)
@@ -256,11 +257,11 @@ func TestExecuteDryRunPinAppliesOnlyToMatchingAgent(t *testing.T) {
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
-	wantArgs := []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}
+	wantArgs := []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=\"gpt-5\""}
 	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
 		t.Fatalf("codex would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
 	}
-	assertResolvedBlock(t, stdout.String(), "codex", "inherit", "inherit", "inherit")
+	assertResolvedBlock(t, stdout.String(), "codex", "gpt-5", "inherit", "partial")
 }
 
 func TestExecuteDryRunDefaultsToFirstRegistryEntry(t *testing.T) {
@@ -268,8 +269,8 @@ func TestExecuteDryRunDefaultsToFirstRegistryEntry(t *testing.T) {
 	// claude first: an omitted --agent must pick the first registry entry, not
 	// a hardcoded built-in default.
 	app, paths, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root,
-		agentRegistryEntry{Name: "claude"},
-		agentRegistryEntry{Name: "codex"},
+		agentRegistryEntry{Name: "claude", Model: "claude-opus-4-8"},
+		agentRegistryEntry{Name: "codex", Model: "gpt-5"},
 	)
 
 	var stdout, stderr bytes.Buffer
@@ -282,14 +283,14 @@ func TestExecuteDryRunDefaultsToFirstRegistryEntry(t *testing.T) {
 	if plan.Agent.Name != "claude" || plan.Agent.Command != "claude" {
 		t.Fatalf("default executor should be the first registry entry: %#v", plan.Agent)
 	}
-	assertResolvedBlock(t, stdout.String(), "claude", "inherit", "inherit", "inherit")
+	assertResolvedBlock(t, stdout.String(), "claude", "claude-opus-4-8", "inherit", "partial")
 }
 
 func TestExecuteDryRunTwoEntriesOnSameBuiltInCarryDistinctPins(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root,
-		agentRegistryEntry{Name: "fable", Agent: "claude", Model: "claude-fable-5"},
-		agentRegistryEntry{Name: "opus", Agent: "claude", Model: "claude-opus-4-8"},
+		agentRegistryEntry{Name: "fable", Model: "claude-fable-5"},
+		agentRegistryEntry{Name: "opus", Model: "claude-opus-4-8"},
 	)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
@@ -447,7 +448,7 @@ func TestExecuteDryRunUnsupportedInputModeFails(t *testing.T) {
 	app, paths, runID := setupApprovedPromptContract(t, root)
 	registerTestAgents(t, paths, "bad-input")
 	app.AgentRegistry = testAgentRegistry(agents.AgentDescriptor{
-		Name:    "bad-input",
+		Name:    testAgentEngine("bad-input"),
 		Command: "bad-agent",
 		Args:    []string{"dry-run"},
 		Input:   "stdin",
@@ -511,7 +512,7 @@ func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
 	if got := stdout.String(); !strings.Contains(got, "Execution attempt finished") || !strings.Contains(got, "attempt_001") {
 		t.Fatalf("execute run output mismatch:\n%s", got)
 	} else {
-		assertResolvedBlock(t, got, "helper", "inherit", "inherit", "inherit")
+		assertResolvedBlock(t, got, "helper", "claude-opus-4-8", "inherit", "partial")
 	}
 
 	attemptPaths := executionAttemptPaths(runPaths, "attempt_001")
@@ -526,7 +527,8 @@ func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
 	if request.Schema != executionRequestSchema || request.RunID != runID || request.AttemptID != "attempt_001" {
 		t.Fatalf("unexpected request: %#v", request)
 	}
-	if request.Agent.Name != "helper" || request.Agent.Command != os.Args[0] || request.Agent.Input != agents.InputPromptFile {
+	// The request records the engine inferred from the helper entry's model.
+	if request.Agent.Name != "claude" || request.Agent.Command != os.Args[0] || request.Agent.Input != agents.InputPromptFile {
 		t.Fatalf("unexpected request agent: %#v", request.Agent)
 	}
 	wantPrompt := executionPromptRepoPath(runID)
@@ -805,8 +807,10 @@ func countEvents(events []string, eventType string) int {
 	return count
 }
 
+// configureHelperAgent routes the engine a helper name infers to (see
+// testAgentEngine) to the execution helper process.
 func configureHelperAgent(app App, name string) App {
-	app.AgentRegistry = testAgentRegistry(helperAgentDescriptor(name))
+	app.AgentRegistry = testAgentRegistry(helperAgentDescriptor(testAgentEngine(name)))
 	return app
 }
 

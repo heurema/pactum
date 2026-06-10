@@ -723,7 +723,7 @@ func (a App) prepareReviewer(context reviewContext, reviewerName string, action 
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
-	config, err := a.readConfig(context.Paths.Config)
+	config, err := readConfig(context.Paths.Config)
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
@@ -800,9 +800,9 @@ func (a App) prepareReviewerForAgent(context reviewContext, reviewer agents.Agen
 	}, nil
 }
 
-// latestExecutionExecutorName reads the underlying built-in agent recorded by
-// the run's latest execution attempt. Cross-model reviewer selection compares
-// against it.
+// latestExecutionExecutorName reads the engine recorded by the run's latest
+// execution attempt. Cross-model reviewer selection compares the registry
+// entries' inferred engines against it.
 func latestExecutionExecutorName(context reviewContext) (string, bool) {
 	attempt, ok, err := loadExecutionAttempt(executeReportContext{
 		RunPaths: context.RunPaths,

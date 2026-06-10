@@ -481,15 +481,15 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 		"Reviewer dry-run prepared",
 		"Resolved:",
 		"Would run (one attempt per lens):",
-		"claude -p --output-format json < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt-claude-correctness.md",
-		"claude -p --output-format json < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt-claude-docs.md",
+		"claude -p --output-format json --model claude-opus-4-8 < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt-claude-correctness.md",
+		"claude -p --output-format json --model claude-opus-4-8 < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt-claude-docs.md",
 		".heurema/pactum/runs/" + runID + "/review/reviewer-context.md",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("review dry-run output missing %q:\n%s", want, got)
 		}
 	}
-	assertResolvedBlock(t, got, "claude", "inherit", "inherit", "inherit")
+	assertResolvedBlock(t, got, "claude", "claude-opus-4-8", "inherit", "partial")
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	if plan.Schema != reviewerDryRunSchema || plan.RunID != runID || plan.Reviewer.Name != "claude" {
 		t.Fatalf("unexpected reviewer dry-run plan: %#v", plan)
@@ -504,7 +504,7 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 		if attempt.Lens != lens.Key || attempt.Artifacts.ReviewerPrompt != wantArtifact {
 			t.Fatalf("unexpected lens attempt plan: %#v", attempt)
 		}
-		if attempt.WouldRun.Command != "claude" || strings.Join(attempt.WouldRun.Args, " ") != "-p --output-format json" || attempt.WouldRun.Stdin != wantPrompt {
+		if attempt.WouldRun.Command != "claude" || strings.Join(attempt.WouldRun.Args, " ") != "-p --output-format json --model claude-opus-4-8" || attempt.WouldRun.Stdin != wantPrompt {
 			t.Fatalf("unexpected would_run command: %#v", attempt.WouldRun)
 		}
 		assertCommandArgsDoNotContain(t, attempt.WouldRun.Args, wantArtifact, wantPrompt)
@@ -544,7 +544,7 @@ func TestReviewDryRunJSONOutput(t *testing.T) {
 		first.Artifacts.ReviewerPrompt != reviewerLensPromptArtifact("claude", reviewLenses[0]) ||
 		first.Artifacts.ReviewerContext != reviewerContextArtifact ||
 		first.WouldRun.Command != "claude" ||
-		strings.Join(first.WouldRun.Args, " ") != "-p --output-format json" ||
+		strings.Join(first.WouldRun.Args, " ") != "-p --output-format json --model claude-opus-4-8" ||
 		first.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerLensPromptArtifact("claude", reviewLenses[0])) {
 		t.Fatalf("reviewer dry-run json missing artifacts/would_run: %#v", first)
 	}
@@ -569,18 +569,19 @@ func TestReviewDryRunUsesDefaultReviewer(t *testing.T) {
 		t.Fatalf("default reviewer mismatch: %#v", plan.Reviewer)
 	}
 	wouldRun := plan.Attempts[0].WouldRun
-	if strings.Join(wouldRun.Args, " ") != "-p --output-format json" || wouldRun.Stdin != runArtifactRepoRel(runID, reviewerLensPromptArtifact("claude", reviewLenses[0])) {
+	if strings.Join(wouldRun.Args, " ") != "-p --output-format json --model claude-opus-4-8" || wouldRun.Stdin != runArtifactRepoRel(runID, reviewerLensPromptArtifact("claude", reviewLenses[0])) {
 		t.Fatalf("default reviewer would_run mismatch: %#v", wouldRun)
 	}
 }
 
 func TestReviewDryRunCrossModelReviewSelectsOppositeBuiltIn(t *testing.T) {
 	for _, tc := range []struct {
-		executor string
-		want     string
+		executor  string
+		want      string
+		wantModel string
 	}{
-		{executor: agents.BuiltinCodex, want: agents.BuiltinClaude},
-		{executor: agents.BuiltinClaude, want: agents.BuiltinCodex},
+		{executor: agents.BuiltinCodex, want: agents.BuiltinClaude, wantModel: "claude-opus-4-8"},
+		{executor: agents.BuiltinClaude, want: agents.BuiltinCodex, wantModel: "gpt-5"},
 	} {
 		t.Run(tc.executor, func(t *testing.T) {
 			root := t.TempDir()
@@ -596,7 +597,7 @@ func TestReviewDryRunCrossModelReviewSelectsOppositeBuiltIn(t *testing.T) {
 			if plan.Reviewer.Name != tc.want {
 				t.Fatalf("cross-model reviewer = %q, want %q; plan: %#v", plan.Reviewer.Name, tc.want, plan.Reviewer)
 			}
-			assertResolvedBlock(t, stdout.String(), tc.want, "inherit", "inherit", "inherit")
+			assertResolvedBlock(t, stdout.String(), tc.want, tc.wantModel, "inherit", "partial")
 		})
 	}
 }
@@ -615,7 +616,7 @@ func TestReviewDryRunCrossModelReviewExplicitReviewerWins(t *testing.T) {
 	if plan.Reviewer.Name != agents.BuiltinCodex {
 		t.Fatalf("explicit reviewer should win, got: %#v", plan.Reviewer)
 	}
-	assertResolvedBlock(t, stdout.String(), agents.BuiltinCodex, "inherit", "inherit", "inherit")
+	assertResolvedBlock(t, stdout.String(), agents.BuiltinCodex, "gpt-5", "inherit", "partial")
 }
 
 func TestReviewDryRunCrossModelSkipsSameUnderlyingEntries(t *testing.T) {
@@ -624,9 +625,9 @@ func TestReviewDryRunCrossModelSkipsSameUnderlyingEntries(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	setAgentRegistryConfig(t, paths,
-		agentRegistryEntry{Name: "claude"},
-		agentRegistryEntry{Name: "fable", Agent: "claude", Model: "claude-fable-5"},
-		agentRegistryEntry{Name: "codex"},
+		agentRegistryEntry{Name: "claude", Model: "claude-opus-4-8"},
+		agentRegistryEntry{Name: "fable", Model: "claude-fable-5"},
+		agentRegistryEntry{Name: "codex", Model: "gpt-5"},
 	)
 	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", mustResolveExecutorForTest(t, agents.BuiltinClaude))
 
@@ -642,7 +643,7 @@ func TestReviewDryRunCrossModelFallsBackToFirstEntryWhenNoOtherBuiltIn(t *testin
 	// selection falls back to the first registry entry.
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "codex"})
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
 	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", mustResolveExecutorForTest(t, agents.BuiltinCodex))
 
 	runReviewCommand(t, app, "review", "dry-run", runID)
@@ -677,7 +678,7 @@ func TestReviewDryRunExplicitReviewers(t *testing.T) {
 	}
 	codexPromptArtifact := reviewerLensPromptArtifact("codex", reviewLenses[0])
 	wouldRun := plan.Attempts[0].WouldRun
-	if strings.Join(wouldRun.Args, " ") != "exec --json --sandbox read-only" || wouldRun.Stdin != runArtifactRepoRel(runID, codexPromptArtifact) {
+	if strings.Join(wouldRun.Args, " ") != `exec --json --sandbox read-only -c model="gpt-5"` || wouldRun.Stdin != runArtifactRepoRel(runID, codexPromptArtifact) {
 		t.Fatalf("codex would_run mismatch: %#v", wouldRun)
 	}
 	assertCommandArgsDoNotContain(t, wouldRun.Args, codexPromptArtifact, runArtifactRepoRel(runID, codexPromptArtifact))
@@ -689,7 +690,7 @@ func TestReviewDryRunExplicitReviewers(t *testing.T) {
 	}
 	claudePromptArtifact := reviewerLensPromptArtifact("claude", reviewLenses[0])
 	wouldRun = plan.Attempts[0].WouldRun
-	if strings.Join(wouldRun.Args, " ") != "-p --output-format json" || wouldRun.Stdin != runArtifactRepoRel(runID, claudePromptArtifact) {
+	if strings.Join(wouldRun.Args, " ") != "-p --output-format json --model claude-opus-4-8" || wouldRun.Stdin != runArtifactRepoRel(runID, claudePromptArtifact) {
 		t.Fatalf("claude would_run mismatch: %#v", wouldRun)
 	}
 	assertCommandArgsDoNotContain(t, wouldRun.Args, claudePromptArtifact, runArtifactRepoRel(runID, claudePromptArtifact))
@@ -700,7 +701,7 @@ func TestReviewDryRunAppliesPanelEntryPinToCodex(t *testing.T) {
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	setAgentRegistryConfig(t, paths,
 		agentRegistryEntry{Name: "codex", Model: "gpt-5", Effort: "high"},
-		agentRegistryEntry{Name: "claude"},
+		agentRegistryEntry{Name: "claude", Model: "claude-opus-4-8"},
 	)
 
 	var stdout, stderr bytes.Buffer
@@ -718,8 +719,8 @@ func TestReviewDryRunAppliesPanelEntryPinToCodex(t *testing.T) {
 	}
 	assertResolvedBlock(t, stdout.String(), "codex", "gpt-5", "high", "pinned")
 
-	// The pin is per panel member: the other member has no model/effort in its
-	// entry, so it runs unpinned.
+	// The pin is per panel member: the other member carries only its own model
+	// pin, not the codex entry's effort.
 	stdout.Reset()
 	stderr.Reset()
 	code = app.Run([]string{"review", "dry-run", runID, "--reviewer", "claude"}, &stdout, &stderr)
@@ -727,11 +728,11 @@ func TestReviewDryRunAppliesPanelEntryPinToCodex(t *testing.T) {
 		t.Fatalf("review dry-run claude exited %d, stderr: %s", code, stderr.String())
 	}
 	plan = readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
-	wantArgs = []string{"-p", "--output-format", "json"}
+	wantArgs = []string{"-p", "--output-format", "json", "--model", "claude-opus-4-8"}
 	if !sameStringSlice(plan.Attempts[0].WouldRun.Args, wantArgs) {
 		t.Fatalf("claude reviewer would_run args = %#v, want %#v", plan.Attempts[0].WouldRun.Args, wantArgs)
 	}
-	assertResolvedBlock(t, stdout.String(), "claude", "inherit", "inherit", "inherit")
+	assertResolvedBlock(t, stdout.String(), "claude", "claude-opus-4-8", "inherit", "partial")
 }
 
 func TestReviewDryRunAppliesPanelEntryPinToClaude(t *testing.T) {
@@ -772,7 +773,7 @@ func TestReviewDryRunUnsupportedInputModeFails(t *testing.T) {
 	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
 	registerTestAgents(t, paths, "bad-input")
 	app.AgentRegistry = testAgentRegistry(agents.AgentDescriptor{
-		Name:    "bad-input",
+		Name:    testAgentEngine("bad-input"),
 		Command: "bad-reviewer",
 		Args:    []string{"dry-run"},
 		Input:   "stdin",
@@ -968,7 +969,7 @@ func TestReviewRunUnsupportedInputModeFails(t *testing.T) {
 	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
 	registerTestAgents(t, paths, "bad-input")
 	app.AgentRegistry = testAgentRegistry(agents.AgentDescriptor{
-		Name:    "bad-input",
+		Name:    testAgentEngine("bad-input"),
 		Command: "bad-reviewer",
 		Args:    []string{"run"},
 		Input:   "stdin",
@@ -1030,7 +1031,7 @@ func TestReviewRunWritesAttemptArtifacts(t *testing.T) {
 	if got := stdout.String(); !strings.Contains(got, "Reviewer attempts finished") || !strings.Contains(got, "reviewer_attempt_001") {
 		t.Fatalf("review run output mismatch:\n%s", got)
 	} else {
-		assertResolvedBlock(t, got, "helper", "inherit", "inherit", "inherit")
+		assertResolvedBlock(t, got, "helper", "claude-opus-4-8", "inherit", "partial")
 	}
 
 	// Five concurrent lens attempts: the lens-to-attempt-ID mapping depends on
@@ -1049,7 +1050,8 @@ func TestReviewRunWritesAttemptArtifacts(t *testing.T) {
 		if request.Schema != reviewerRequestSchema || request.RunID != runID || request.AttemptID != attemptID {
 			t.Fatalf("unexpected request: %#v", request)
 		}
-		if request.Reviewer.Name != "helper" || request.Reviewer.Command != os.Args[0] || request.Reviewer.Input != agents.InputPromptFile {
+		// The request records the engine inferred from the helper entry's model.
+		if request.Reviewer.Name != "claude" || request.Reviewer.Command != os.Args[0] || request.Reviewer.Input != agents.InputPromptFile {
 			t.Fatalf("unexpected request reviewer: %#v", request.Reviewer)
 		}
 		if request.Lens == "" || seenLenses[request.Lens] {
@@ -1069,7 +1071,7 @@ func TestReviewRunWritesAttemptArtifacts(t *testing.T) {
 
 		var result reviewerResultDocument
 		assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.ResultJSON)), &result))
-		if result.Schema != reviewerResultSchema || result.Reviewer != "helper" || result.Lens != request.Lens || result.ExitCode != 0 || result.TimedOut {
+		if result.Schema != reviewerResultSchema || result.Reviewer != "claude" || result.Lens != request.Lens || result.ExitCode != 0 || result.TimedOut {
 			t.Fatalf("unexpected result: %#v", result)
 		}
 		if result.Stdout != "review/reviewer-attempts/"+attemptID+"/stdout.log" || result.Stderr != "review/reviewer-attempts/"+attemptID+"/stderr.log" {
@@ -1172,9 +1174,11 @@ func TestReviewRunStoresCrossReviewerAttempts(t *testing.T) {
 	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper-b", "--yes")
 
 	// The first run's lens attempts come first, the second run's after them.
+	// Attempt artifacts record the engine, and both helper entries infer the
+	// claude engine.
 	for attemptID, wantReviewer := range map[string]string{
-		"reviewer_attempt_001": "helper-a",
-		fmt.Sprintf("reviewer_attempt_%03d", len(reviewLenses)+1): "helper-b",
+		"reviewer_attempt_001": "claude",
+		fmt.Sprintf("reviewer_attempt_%03d", len(reviewLenses)+1): "claude",
 	} {
 		attemptPaths := reviewerAttemptPaths(runPaths, attemptID)
 		assertFile(t, attemptPaths.ResultJSON)
@@ -1289,7 +1293,8 @@ func TestReviewRunJSONOutput(t *testing.T) {
 	}
 	for index, lens := range reviewLenses {
 		result := response.Attempts[index]
-		if result.Lens != lens.Key || result.AttemptID == "" || result.Reviewer != "helper" || result.ExitCode != 0 {
+		// Attempt documents record the engine inferred from the entry's model.
+		if result.Lens != lens.Key || result.AttemptID == "" || result.Reviewer != "claude" || result.ExitCode != 0 {
 			t.Fatalf("unexpected review run attempt json: %#v", result)
 		}
 	}
@@ -1335,14 +1340,20 @@ func TestReviewFixDryRunArtifactsUseWriteEnabledExecutorAndPrompt(t *testing.T) 
 		},
 		{
 			agent:    "claude",
-			wantArgs: "-p --output-format json --dangerously-skip-permissions --model gpt-5 --effort high",
+			wantArgs: "-p --output-format json --dangerously-skip-permissions --model claude-sonnet-4 --effort high",
 			forbid:   "--sandbox read-only",
 		},
 	} {
 		t.Run(tc.agent, func(t *testing.T) {
 			root := t.TempDir()
 			app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-			setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: tc.agent, Model: "gpt-5", Effort: "high"})
+			// The model decides the engine, so each case pins a model of the
+			// matching family.
+			model := "gpt-5"
+			if tc.agent == "claude" {
+				model = "claude-sonnet-4"
+			}
+			setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: tc.agent, Model: model, Effort: "high"})
 			runReviewCommand(t, app, "review", "add-finding", runID, "Fix prompt should include accepted review finding", "--file", "internal/app/review.go", "--line", "42", "--blocking", "--category", "correctness")
 
 			var stdout bytes.Buffer
@@ -1452,7 +1463,7 @@ func TestReviewFixRunWritesAttemptArtifacts(t *testing.T) {
 	if got := stdout.String(); !strings.Contains(got, "Review fix attempt finished") || !strings.Contains(got, "attempt_001") {
 		t.Fatalf("review fix output mismatch:\n%s", got)
 	} else {
-		assertResolvedBlock(t, got, "helper", "inherit", "inherit", "inherit")
+		assertResolvedBlock(t, got, "helper", "claude-opus-4-8", "inherit", "partial")
 	}
 
 	attemptPaths := reviewFixAttemptPaths(runPaths, "attempt_001")
@@ -1470,7 +1481,8 @@ func TestReviewFixRunWritesAttemptArtifacts(t *testing.T) {
 	if request.Schema != reviewFixRequestSchema || request.RunID != runID || request.AttemptID != "attempt_001" {
 		t.Fatalf("unexpected request: %#v", request)
 	}
-	if request.Fixer.Name != "helper" || request.Fixer.Command != os.Args[0] || request.Fixer.Input != agents.InputPromptFile {
+	// The request records the engine inferred from the helper entry's model.
+	if request.Fixer.Name != "claude" || request.Fixer.Command != os.Args[0] || request.Fixer.Input != agents.InputPromptFile {
 		t.Fatalf("unexpected request fixer: %#v", request.Fixer)
 	}
 	wantPrompt := ".heurema/pactum/runs/" + runID + "/review/fix/fixer-prompt.md"
@@ -1483,7 +1495,7 @@ func TestReviewFixRunWritesAttemptArtifacts(t *testing.T) {
 
 	var result reviewFixResultDocument
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.ResultJSON)), &result))
-	if result.Schema != reviewFixResultSchema || result.Fixer != "helper" || result.ExitCode != 0 || result.TimedOut {
+	if result.Schema != reviewFixResultSchema || result.Fixer != "claude" || result.ExitCode != 0 || result.TimedOut {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 	if result.Stdout != "review/fix/attempts/attempt_001/stdout.log" || result.Stderr != "review/fix/attempts/attempt_001/stderr.log" {
@@ -1593,7 +1605,8 @@ func TestReviewFixJSONOutput(t *testing.T) {
 	}
 	var result reviewFixResultDocument
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &result))
-	if result.AttemptID != "attempt_001" || result.Fixer != "helper" || result.ExitCode != 0 {
+	// The result records the engine inferred from the helper entry's model.
+	if result.AttemptID != "attempt_001" || result.Fixer != "claude" || result.ExitCode != 0 {
 		t.Fatalf("unexpected review fix json: %#v", result)
 	}
 	if strings.Contains(stdout.String(), "Review fix attempt finished") || strings.Contains(stdout.String(), "Resolved:") {
@@ -2619,32 +2632,14 @@ func readReviewerDryRunPlan(t *testing.T, path string) reviewerDryRunDocument {
 func configureHelperReviewers(t *testing.T, app App, paths artifacts.Paths, names ...string) App {
 	t.Helper()
 	registerTestAgents(t, paths, names...)
-	descriptors := make([]agents.AgentDescriptor, 0, len(names))
-	for _, name := range names {
-		descriptors = append(descriptors, agents.AgentDescriptor{
-			Name:    name,
-			Command: os.Args[0],
-			Args:    []string{"-test.run=TestReviewerHelperProcess"},
-			Input:   agents.InputPromptFile,
-		})
-	}
-	app.AgentRegistry = testAgentRegistry(descriptors...)
+	app.AgentRegistry = testAgentRegistry(testHelperDescriptors(names, "TestReviewerHelperProcess")...)
 	return app
 }
 
 func configureHelperFixers(t *testing.T, app App, paths artifacts.Paths, names ...string) App {
 	t.Helper()
 	registerTestAgents(t, paths, names...)
-	descriptors := make([]agents.AgentDescriptor, 0, len(names))
-	for _, name := range names {
-		descriptors = append(descriptors, agents.AgentDescriptor{
-			Name:    name,
-			Command: os.Args[0],
-			Args:    []string{"-test.run=TestReviewFixerHelperProcess"},
-			Input:   agents.InputPromptFile,
-		})
-	}
-	app.AgentRegistry = testAgentRegistry(descriptors...)
+	app.AgentRegistry = testAgentRegistry(testHelperDescriptors(names, "TestReviewFixerHelperProcess")...)
 	return app
 }
 
