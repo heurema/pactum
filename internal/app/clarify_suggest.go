@@ -24,11 +24,15 @@ const (
 )
 
 type clarifierPreparation struct {
-	Context   clarifyContext
-	Contract  draftContract
-	Status    clarifyStatusResponse
-	Clarifier agents.AgentDescriptor
-	ModelSpec agents.ModelSpec
+	Context  clarifyContext
+	Contract draftContract
+	Status   clarifyStatusResponse
+	// ClarifierName is the registry name the clarifier was invoked under;
+	// Clarifier is the underlying built-in's read-only descriptor with the
+	// entry's pins applied.
+	ClarifierName string
+	Clarifier     agents.AgentDescriptor
+	ModelSpec     agents.ModelSpec
 }
 
 type clarifierArtifacts struct {
@@ -119,6 +123,7 @@ func (a App) ClarifySuggest(stdout io.Writer, liveOutput io.Writer, runID string
 		AttemptsDir:     context.RunPaths.ClarifierAttemptsDir,
 		AttemptIDPrefix: "clarifier_attempt",
 		LastResultJSON:  context.RunPaths.ClarifierLastResultJSON,
+		AgentName:       prep.ClarifierName,
 		Agent:           prep.Clarifier,
 		Model:           prep.ModelSpec,
 		PromptRepoPath:  clarifierPromptRepoPath(runID),
@@ -161,7 +166,7 @@ func (a App) ClarifySuggest(stdout io.Writer, liveOutput io.Writer, runID string
 			return result.processResult
 		},
 		RenderRunOnly: func(stdout io.Writer, request clarifierRequestDocument, result clarifierResultDocument) {
-			writeClarifySuggestRunOnly(stdout, request, result, prep.ModelSpec)
+			writeClarifySuggestRunOnly(stdout, request, result, prep.ClarifierName, prep.ModelSpec)
 		},
 		AfterSuccess: func(attempt agentAttemptContext[agents.DryRunCommand], request clarifierRequestDocument, result clarifierResultDocument, now time.Time) (clarifySuggestResponse, error) {
 			created, warnings, status, approvalReset, err := a.recordClarifierSuggestions(context, attempt.AttemptID, attempt.AttemptPaths.StdoutLog, now)
@@ -180,7 +185,7 @@ func (a App) ClarifySuggest(stdout io.Writer, liveOutput io.Writer, runID string
 			}, nil
 		},
 		RenderSuccess: func(stdout io.Writer, response clarifySuggestResponse, request clarifierRequestDocument) {
-			writeClarifySuggest(stdout, response, request, prep.ModelSpec)
+			writeClarifySuggest(stdout, response, request, prep.ClarifierName, prep.ModelSpec)
 		},
 	})
 }
@@ -197,57 +202,34 @@ func (a App) prepareClarifier(context clarifyContext, reviewerName string) (clar
 	if err != nil {
 		return clarifierPreparation{}, err
 	}
-	config, err := readConfig(context.Paths.Config)
+	config, err := a.readConfig(context.Paths.Config)
 	if err != nil {
 		return clarifierPreparation{}, err
 	}
-	clarifier, err := a.agentRegistry().ResolveReviewer(resolveClarifierName(context, reviewerName))
-	if err != nil {
-		return clarifierPreparation{}, err
-	}
-	// The clarifier is a reviewer-role agent: it takes pins from its
-	// review.panel entry when present; an agent without an entry runs unpinned.
-	modelSpec := modelSpecFor(config.Review.Panel, clarifier.Name)
-	clarifier, err = agents.ApplyModelSpec(clarifier, modelSpec)
-	if err != nil {
-		return clarifierPreparation{}, err
-	}
-	if clarifier.Input != agents.InputPromptFile {
-		return clarifierPreparation{}, fmt.Errorf("unsupported agent input mode: %s", clarifier.Input)
-	}
-	return clarifierPreparation{
-		Context:   context,
-		Contract:  contract,
-		Status:    status,
-		Clarifier: clarifier,
-		ModelSpec: modelSpec,
-	}, nil
-}
-
-// resolveClarifierName picks the clarifier: an explicit name wins; otherwise
-// the cross-model default — the agent other than the run's executor — applies.
-// An empty result falls through to the registry default.
-func resolveClarifierName(context clarifyContext, reviewerName string) string {
-	if strings.TrimSpace(reviewerName) != "" {
-		return reviewerName
-	}
-	executorName, ok := latestExecutionExecutorName(reviewContext{
+	// The clarifier is a reviewer-role agent: an explicit --reviewer resolves a
+	// registry name, an omitted one applies the cross-model rule against the
+	// registry, and the entry's pins travel with the name.
+	entry, err := resolveReviewerEntry(config, reviewContext{
 		Root:     context.Root,
 		Paths:    context.Paths,
 		RunPaths: context.RunPaths,
 		State:    context.State,
-	})
-	if !ok {
-		return ""
+	}, reviewerName)
+	if err != nil {
+		return clarifierPreparation{}, err
 	}
-	switch executorName {
-	case agents.BuiltinCodex:
-		return agents.BuiltinClaude
-	case agents.BuiltinClaude:
-		return agents.BuiltinCodex
-	default:
-		return ""
+	resolved, err := a.resolveAgentForRole(entry, agentRoleReviewer)
+	if err != nil {
+		return clarifierPreparation{}, err
 	}
+	return clarifierPreparation{
+		Context:       context,
+		Contract:      contract,
+		Status:        status,
+		ClarifierName: resolved.Name,
+		Clarifier:     resolved.Agent,
+		ModelSpec:     resolved.ModelSpec,
+	}, nil
 }
 
 func writeClarifierPromptArtifacts(prep clarifierPreparation) error {
@@ -647,7 +629,7 @@ func renderClarifierPrompt(runID string) string {
 	return b.String()
 }
 
-func writeClarifySuggest(stdout io.Writer, response clarifySuggestResponse, request clarifierRequestDocument, modelSpec agents.ModelSpec) {
+func writeClarifySuggest(stdout io.Writer, response clarifySuggestResponse, request clarifierRequestDocument, clarifierName string, modelSpec agents.ModelSpec) {
 	fmt.Fprintln(stdout, "Clarification suggestions recorded")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
@@ -657,7 +639,7 @@ func writeClarifySuggest(stdout io.Writer, response clarifySuggestResponse, requ
 		writeApprovalResetWarning(stdout, response.RunID, response.RunStatus)
 	}
 	fmt.Fprintln(stdout)
-	writeResolved(stdout, request.Clarifier.Name, modelSpec)
+	writeResolved(stdout, clarifierName, modelSpec)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Attempt:")
 	fmt.Fprintf(stdout, "  id: %s\n", response.AttemptID)
@@ -689,13 +671,13 @@ func writeClarifySuggest(stdout io.Writer, response clarifySuggestResponse, requ
 	fmt.Fprintf(stdout, "  last result: %s\n", runArtifactRepoRel(response.RunID, clarifierLastResultArtifact))
 }
 
-func writeClarifySuggestRunOnly(stdout io.Writer, request clarifierRequestDocument, result clarifierResultDocument, modelSpec agents.ModelSpec) {
+func writeClarifySuggestRunOnly(stdout io.Writer, request clarifierRequestDocument, result clarifierResultDocument, clarifierName string, modelSpec agents.ModelSpec) {
 	fmt.Fprintln(stdout, "Clarifier attempt finished")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", result.RunID)
 	fmt.Fprintln(stdout)
-	writeResolved(stdout, request.Clarifier.Name, modelSpec)
+	writeResolved(stdout, clarifierName, modelSpec)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Attempt:")
 	fmt.Fprintf(stdout, "  id: %s\n", result.AttemptID)

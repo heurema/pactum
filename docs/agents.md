@@ -6,84 +6,99 @@ it does not wrap the agent in any isolation.
 
 ## Built-in agents
 
-Two agents are built in. There are **no custom agents in the MVP**: you select
-one of these two by name.
+Two agents are built in. There are **no custom agents in the MVP**.
 
 | Name | Command run | Role |
 | --- | --- | --- |
-| `codex` | `codex exec --dangerously-bypass-approvals-and-sandbox` | default executor and default reviewer |
+| `codex` | `codex exec --dangerously-bypass-approvals-and-sandbox` | executor / reviewer |
 | `claude` | `claude -p` | executor / reviewer |
 
 Both agents receive their prompt from a prompt file that Pactum prepares (the
 built executor prompt for execution, the clarifier prompt for `clarify suggest`,
 the contract drafter prompt for `contract draft`, or the reviewer prompt for
-review); Pactum feeds that file to the agent process on standard input. Pick the
-executor with `--agent <name>` on the execute commands and the
-reviewer/clarifier/drafter with `--reviewer <name>` on the clarify, contract
-draft, and review commands.
+review); Pactum feeds that file to the agent process on standard input.
 
-Reviewer selection is cross-model by default: when `--reviewer` is omitted,
-Pactum reads the latest execution attempt and chooses the other built-in agent
-(`codex` execution -> `claude` review, `claude` execution -> `codex` review).
-The same rule is used by `clarify suggest` and `contract draft`; before any
-execution attempt exists they fall back to the default built-in reviewer. An
-explicit `--reviewer` always wins. If the executor cannot be determined or is
-not one of the two built-ins, Pactum falls back to the default built-in reviewer
-(`codex`) — in that case cross-model review may not be achieved, so check the
-selected reviewer in the `Resolved` block for `clarify suggest`,
-`contract draft`, `review dry-run`, and `review run`.
+## The agents registry
 
-Agents and their models are configured per stage in
-`.heurema/pactum/config.yaml`. Both `execute.models` and `review.panel` are
-lists of the same entry shape — `agent` (required, a built-in name), `model`
-and `effort` (optional pins):
+The top-level `agents` list in `.heurema/pactum/config.yaml` is the config's
+source of truth for agents: every reference — `--agent`, `--reviewer`, and
+`review.panel` — resolves a registry **name**, and a name carries its
+agent+model+effort wherever it is used. Each entry has:
+
+- `name` (required) — how the entry is referenced everywhere.
+- `agent` (optional) — the built-in it runs on (`claude` or `codex`),
+  defaulting to `name`.
+- `model` / `effort` (optional) — pins applied wherever the name is invoked.
 
 ```yaml
-execute:
-  models:               # pins for whichever agent --agent invokes
-    - agent: claude
-      model: claude-opus-4-8
-      effort: high
+agents:
+  - name: claude          # runs the claude built-in, unpinned
+  - name: fable           # a second claude-backed entry with its own pin
+    agent: claude
+    model: claude-fable-5
+  - name: codex
 
 review:
-  panel:                # review roster + reviewer-role model registry
-    - agent: claude
-      model: claude-fable-5
-    - agent: codex
+  panel: [fable, codex]   # registry names; empty = cross-model single reviewer
 ```
 
-`execute.models` is a pure lookup: when `pactum execute run --agent <name>`
-invokes an agent that has an entry, its `model`/`effort` are applied; an agent
-without an entry inherits the agent CLI's own defaults. A model pin can never
-reach a different agent. The fixer (`review fix`) writes code like the executor
-and uses the same `execute.models` lookup.
+The registry is required: an empty or missing `agents` list is a loud error
+("at least one agent must be registered"), and `pactum init` generates
+`agents: [{name: claude}]`. Bare built-in names are not implicitly available —
+referencing an unregistered name (including a built-in that is not registered)
+is an error. Validation is strict: blank or duplicate names, an `agent` that is
+not a built-in, a `model` containing `:` (use the separate `effort` key), or a
+panel name that is not registered are configuration errors.
 
-`review.panel` is both the review-loop roster and the reviewer-role model
-registry. When `pactum review loop` runs without `--reviewer`, each review round
-runs all panel entries concurrently against the same reviewer prompt, then
-parses their finding proposals in the configured order; each member runs with
-its own entry's `model`/`effort`. Duplicate proposals still collapse through the
-normal finding fingerprint, and duplicate findings keep the maximum severity. An
-explicit `--reviewer <name>` disables the roster for that invocation and runs
-only that reviewer, taking pins from its panel entry when one exists. When the
-panel is empty or absent, review falls back to the cross-model single-reviewer
-selection above. `clarify suggest` and `contract draft` resolve their reviewer
-the same way and take pins from that agent's panel entry when present.
+A name is decoupled from the built-in it runs on, so two entries can run the
+same built-in with different models — for example an `opus` writer and a
+`fable` reviewer, or a panel holding two claude-backed entries that run as
+separate panel members.
 
-Entry validation is strict: an unknown agent name, a duplicate agent within one
-list, or a `model` containing `:` (use the separate `effort` key) are
-configuration errors. For `codex`, pins emit `-c model=...` and
-`-c model_reasoning_effort=...`; for `claude`, `--model ...` and `--effort ...`.
-Reviewer pins are appended to the read-only reviewer command and do not add
-executor write-bypass flags.
+## Name resolution
+
+Pick the executor with `--agent <name>` on the execute commands (the fixer in
+`review fix` and `review loop` resolves the same way) and the
+reviewer/clarifier/drafter with `--reviewer <name>` on the clarify, contract
+draft, and review commands. Both flags accept registry names only.
+
+When `--agent` is omitted, the **first registry entry** is the executor. When
+`--reviewer` is omitted, selection is cross-model against **underlying**
+agents: Pactum reads the latest execution attempt's built-in and picks the
+first registry entry whose underlying agent differs, falling back to the first
+registry entry when every entry runs on the executor's built-in. Before any
+execution attempt exists (`clarify suggest`, `contract draft`), the would-be
+executor is the first registry entry, so the same rule applies against it. An
+explicit `--reviewer` always wins. Check the selected entry in the `Resolved`
+block for `clarify suggest`, `contract draft`, `review dry-run`, and
+`review run`.
+
+`review.panel` is the review-loop roster: a list of registry names. When
+`pactum review loop` runs without `--reviewer`, each review round runs all
+panel members concurrently against the same reviewer prompt, then parses their
+finding proposals in the configured order; each member runs with its own
+entry's `model`/`effort`, and two names backed by the same built-in run as
+separate members. Duplicate proposals still collapse through the normal finding
+fingerprint, and duplicate findings keep the maximum severity. An explicit
+`--reviewer <name>` disables the roster for that invocation and runs only that
+entry. When the panel is empty or absent, review falls back to the cross-model
+single-reviewer selection above.
+
+For `codex`, pins emit `-c model=...` and `-c model_reasoning_effort=...`; for
+`claude`, `--model ...` and `--effort ...`. Reviewer pins are appended to the
+read-only reviewer command and do not add executor write-bypass flags. The
+usage ledger records both the registry name (`agent_name`) and the underlying
+built-in (`agent`); execution and attempt artifacts keep recording the
+underlying built-in, so cross-model comparison semantics are unchanged.
 
 The human output for `clarify suggest`, `contract draft`, `execute dry-run`,
 `execute run`, `review dry-run`, and `review run` includes a `Resolved` block
-once per command. It shows the selected agent plus the stage model and effort
-values Pactum applied: pinned values are shown directly, and empty values are
-shown as `inherit` because Pactum does not read the agent CLI's own config. A
-`pinning` summary reads `pinned` (model and effort both set), `partial` (only
-one set), or `inherit` (neither).
+once per command. It shows the selected registry name plus the model and
+effort values Pactum applied from its entry: pinned values are shown directly,
+and empty values are shown as `inherit` because Pactum does not read the agent
+CLI's own config. A `pinning` summary reads `pinned` (model and effort both
+set), `partial` (only one set), or `inherit` (neither). The underlying built-in
+appears in the Agent/Attempt sections below it.
 
 Pactum does **not** install, bundle, configure, or authenticate these CLIs. You
 must install and configure each agent CLI separately and make its command
@@ -93,11 +108,15 @@ the CLI is present.
 
 ## `pactum agents doctor`
 
-`pactum agents doctor` diagnoses the built-in agents **without launching them**.
-It reports the default executor and reviewer, and for each agent its command,
-input mode, resolved path on your `PATH`, and a status of `on_path` or
-`missing_command` (with the issue listed when the command is not found). Pass
-`--agent <name>` to inspect a single agent.
+`pactum agents doctor` diagnoses the built-in agent CLIs **without launching
+them**: for each built-in it reports the command, input mode, resolved path on
+your `PATH`, and a status of `on_path` or `missing_command` (with the issue
+listed when the command is not found). Pass `--agent <name>` to inspect a
+single built-in. Note: doctor predates the agent registry — it inspects the
+underlying built-in CLIs by their built-in names (not registry names), and the
+default executor/reviewer lines it prints reflect the built-in fallbacks, not
+the registry's first entry; a registry-aware doctor view is a recorded
+follow-up.
 
 Run it before executing to confirm the agent CLIs are installed and visible:
 
@@ -159,9 +178,9 @@ liveness ticks carry no content.
 
 #### Model pins over ACP
 
-The per-agent model pins from `execute.models` / `review.panel` reach the agent
-over ACP the same way they reach the agent CLIs. The resolved pin travels with
-the run request, and the transport threads it the way each adapter accepts it:
+The per-entry model pins from the agents registry reach the agent over ACP the
+same way they reach the agent CLIs. The resolved pin travels with the run
+request, and the transport threads it the way each adapter accepts it:
 
 - **codex** — `codex-acp` accepts the same `-c` config overrides as the codex
   CLI, so the adapter is launched with `-c model="<model>"` (TOML-quoted) and
@@ -422,7 +441,8 @@ code, fix valid findings in place, and explain a rebuttal for false positives.
 This is write-enabled agent execution, not reviewer execution: `codex` uses
 `codex exec --dangerously-bypass-approvals-and-sandbox`, and `claude` uses the
 executor command with `--dangerously-skip-permissions`. The command honors the
-executor model pin (the fixer's agent entry in `execute.models`), prints the same `Resolved` block
+fixer's registry-entry pins (an omitted `--agent` defaults to the first
+registry entry), prints the same `Resolved` block
 as execution, captures request/result/stdout/stderr artifacts under
 `review/fix/attempts/`, and writes `review/fix/fixer-prompt.md`,
 `review/fix/fixer-context.md`, `review/fix/fixer-dry-run.json`, and

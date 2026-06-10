@@ -32,7 +32,11 @@ type agentAttemptLifecycle[Prepared any, Request any, Result any, Response any] 
 	AttemptIDPrefix string
 	LastResultJSON  string
 
-	Agent agents.AgentDescriptor
+	// AgentName is the registry name the stage was invoked under; it feeds the
+	// usage record's agent_name. Agent is the underlying built-in's descriptor,
+	// which attempt artifacts keep recording.
+	AgentName string
+	Agent     agents.AgentDescriptor
 	// Model is the stage's resolved model pin (the same spec shown in the
 	// Resolved block). It feeds the usage record and is passed through to the
 	// RunRequest so the ACP transport can thread the pin to the adapter.
@@ -228,7 +232,7 @@ func appendUsageRecordBestEffort[Prepared any, Request any, Result any, Response
 	if strings.TrimSpace(createdAt) == "" {
 		createdAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	if err := appendUsageRecord(cfg.Root, cfg.RunID, attemptID, cfg.Stage, cfg.Model.Model, cfg.Agent, runResult.Usage, createdAt); err != nil && cfg.LiveOutput != nil {
+	if err := appendUsageRecord(cfg.Root, cfg.RunID, attemptID, cfg.Stage, cfg.AgentName, cfg.Model.Model, cfg.Agent, runResult.Usage, createdAt); err != nil && cfg.LiveOutput != nil {
 		_, _ = fmt.Fprintf(cfg.LiveOutput, "usage capture warning: append usage ledger: %v\n", err)
 	}
 }

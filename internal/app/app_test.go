@@ -16,6 +16,7 @@ import (
 	"github.com/heurema/pactum/internal/codeindex"
 	"github.com/heurema/pactum/internal/projectmap"
 	searchpkg "github.com/heurema/pactum/internal/search"
+	"gopkg.in/yaml.v3"
 )
 
 func TestInitCreatesExpectedLayoutAndProjectMap(t *testing.T) {
@@ -86,13 +87,16 @@ func helper() {}
 	if config.Review.Budget.Mode != budgetModeBlock || config.Review.Budget.MaxTokens != nil {
 		t.Fatalf("config review.budget mismatch: %#v", config.Review.Budget)
 	}
+	if len(config.Agents) != 1 || config.Agents[0].Name != "claude" || config.Agents[0].Agent != "claude" {
+		t.Fatalf("config agents should register the single claude entry: %#v", config.Agents)
+	}
 	configYAML := mustReadFile(t, paths.Config)
-	for _, want := range []string{"map:", "gate:", "scope_enforcement: block", "execute:", "models: []", "review:", "budget:", "mode: block", "max_tokens:", "panel: []"} {
+	for _, want := range []string{"agents:", "- name: claude", "map:", "gate:", "scope_enforcement: block", "review:", "budget:", "mode: block", "max_tokens:", "panel: []"} {
 		if !strings.Contains(configYAML, want) {
 			t.Fatalf("config.yaml missing %q:\n%s", want, configYAML)
 		}
 	}
-	for _, forbidden := range []string{"agents:", "adapters:", "default_executor:", "default_reviewer:", "include_go_ast", "tree_sitter", "tree_sitter_languages", "entrypoints", "default_profile:", "project_map:", "limits:", "memory:", "max_usd"} {
+	for _, forbidden := range []string{"execute:", "models:", "adapters:", "default_executor:", "default_reviewer:", "include_go_ast", "tree_sitter", "tree_sitter_languages", "entrypoints", "default_profile:", "project_map:", "limits:", "memory:", "max_usd"} {
 		if strings.Contains(configYAML, forbidden) {
 			t.Fatalf("config.yaml should not contain %q:\n%s", forbidden, configYAML)
 		}
@@ -292,12 +296,14 @@ func TestReadConfigNormalizesGateScopeEnforcement(t *testing.T) {
 	}{
 		{
 			name:    "missing",
-			content: "schema: pactum.config.v1\n",
+			content: "schema: pactum.config.v1\nagents:\n  - name: claude\n",
 			want:    gateScopeEnforcementBlock,
 		},
 		{
 			name: "empty",
 			content: `schema: pactum.config.v1
+agents:
+  - name: claude
 gate:
   scope_enforcement: ""
 `,
@@ -306,6 +312,8 @@ gate:
 		{
 			name: "block",
 			content: `schema: pactum.config.v1
+agents:
+  - name: claude
 gate:
   scope_enforcement: block
 `,
@@ -314,6 +322,8 @@ gate:
 		{
 			name: "warn",
 			content: `schema: pactum.config.v1
+agents:
+  - name: claude
 gate:
   scope_enforcement: warn
 `,
@@ -362,12 +372,14 @@ func TestReadConfigNormalizesBudgetMode(t *testing.T) {
 	}{
 		{
 			name:    "missing",
-			content: "schema: pactum.config.v1\n",
+			content: "schema: pactum.config.v1\nagents:\n  - name: claude\n",
 			want:    budgetModeBlock,
 		},
 		{
 			name: "empty",
 			content: `schema: pactum.config.v1
+agents:
+  - name: claude
 review:
   budget:
     mode: ""
@@ -377,6 +389,8 @@ review:
 		{
 			name: "block",
 			content: `schema: pactum.config.v1
+agents:
+  - name: claude
 review:
   budget:
     mode: block
@@ -386,6 +400,8 @@ review:
 		{
 			name: "warn",
 			content: `schema: pactum.config.v1
+agents:
+  - name: claude
 review:
   budget:
     mode: warn
@@ -2590,6 +2606,54 @@ func testAppSequence(root string) App {
 	}
 }
 
+// readConfig keeps the historical free-function test call sites working; the
+// production reader is an App method so registry validation can consult the
+// injected agent registry.
+func readConfig(path string) (configFile, error) {
+	return App{}.readConfig(path)
+}
+
+// readConfigForTest decodes a workspace config without registry validation so
+// config-mutating helpers stay order-independent: a config may temporarily
+// reference helper agents the plain built-in registry does not know.
+func readConfigForTest(t *testing.T, path string) configFile {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	assertNoError(t, err)
+	var config configFile
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	assertNoError(t, decoder.Decode(&config))
+	return config
+}
+
+// setAgentRegistryConfig replaces the config agents registry.
+func setAgentRegistryConfig(t *testing.T, paths artifacts.Paths, entries ...agentRegistryEntry) {
+	t.Helper()
+	config := readConfigForTest(t, paths.Config)
+	config.Agents = append([]agentRegistryEntry{}, entries...)
+	assertNoError(t, writeYAML(paths.Config, config))
+}
+
+// registerTestAgents appends names to the config agents registry (skipping
+// already-registered names) so registry-name resolution finds the helper
+// agents tests inject through App.AgentRegistry.
+func registerTestAgents(t *testing.T, paths artifacts.Paths, names ...string) {
+	t.Helper()
+	config := readConfigForTest(t, paths.Config)
+	registered := map[string]bool{}
+	for _, entry := range config.Agents {
+		registered[entry.Name] = true
+	}
+	for _, name := range names {
+		if !registered[name] {
+			config.Agents = append(config.Agents, agentRegistryEntry{Name: name})
+			registered[name] = true
+		}
+	}
+	assertNoError(t, writeYAML(paths.Config, config))
+}
+
 func setupContractRun(t *testing.T, root string) (App, artifacts.Paths, string) {
 	t.Helper()
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
@@ -2599,6 +2663,16 @@ func setupContractRun(t *testing.T, root string) (App, artifacts.Paths, string) 
 	code := app.Run([]string{"init"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+	// Register both built-ins so tests can invoke either by name; codex first
+	// keeps the pre-registry default-executor behavior (first entry wins). The
+	// config edit invalidates the just-built project map, so refresh it.
+	setAgentRegistryConfig(t, artifacts.New(root), agentRegistryEntry{Name: "codex"}, agentRegistryEntry{Name: "claude"})
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"map", "refresh"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()

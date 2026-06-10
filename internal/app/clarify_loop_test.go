@@ -22,7 +22,7 @@ func TestClarifyLoopRequiresYes(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-	app = configureHelperClarifiers(app, "helper", "helper")
+	app = configureHelperClarifiers(t, app, paths, "helper")
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"clarify", "loop", runID, "--reviewer", "helper"}, &stdout, &stderr)
@@ -45,7 +45,7 @@ func TestClarifyLoopConvergesOnHighConfidenceAnswers(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-	app = configureHelperClarifiers(app, "helper", "helper")
+	app = configureHelperClarifiers(t, app, paths, "helper")
 
 	t.Setenv("PACTUM_CLARIFIER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", root)
@@ -143,7 +143,7 @@ func TestClarifyLoopStopsNeedsHuman(t *testing.T) {
 	stateDir := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-	app = configureClarifyLoopHelpers(app)
+	app = configureClarifyLoopHelpers(t, app, paths)
 	setClarifyLoopHelperEnv(t, filepath.Join(stateDir, "sequence"), "medium_then_empty")
 
 	var stdout, stderr bytes.Buffer
@@ -187,7 +187,7 @@ func TestClarifyLoopStopsAtMaxRounds(t *testing.T) {
 	stateDir := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-	app = configureClarifyLoopHelpers(app)
+	app = configureClarifyLoopHelpers(t, app, paths)
 	setClarifyLoopHelperEnv(t, filepath.Join(stateDir, "sequence"), "always_medium")
 
 	var stdout, stderr bytes.Buffer
@@ -219,7 +219,7 @@ func TestClarifyLoopUsesConfigMaxRounds(t *testing.T) {
 	root := t.TempDir()
 	stateDir := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
-	app = configureClarifyLoopHelpers(app)
+	app = configureClarifyLoopHelpers(t, app, paths)
 	setClarifyLoopMaxRoundsConfig(t, paths, 1)
 	setClarifyLoopHelperEnv(t, filepath.Join(stateDir, "sequence"), "always_medium")
 
@@ -237,8 +237,8 @@ func TestClarifyLoopUsesConfigMaxRounds(t *testing.T) {
 
 func TestClarifyLoopRejectsNegativeMaxRounds(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID := setupContractRun(t, root)
-	app = configureHelperClarifiers(app, "helper", "helper")
+	app, paths, runID := setupContractRun(t, root)
+	app = configureHelperClarifiers(t, app, paths, "helper")
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"clarify", "loop", runID, "--reviewer", "helper", "--max-rounds=-1", "--yes"}, &stdout, &stderr)
@@ -254,7 +254,7 @@ func TestClarifyLoopSurfacesApprovalResetOnApprovedRun(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-	app = configureHelperClarifiers(app, "helper", "helper")
+	app = configureHelperClarifiers(t, app, paths, "helper")
 	approveRunForTest(t, app, runID)
 
 	t.Setenv("PACTUM_CLARIFIER_HELPER_PROCESS", "1")
@@ -317,13 +317,14 @@ func readClarifyLoopSummary(t *testing.T, path string) clarifyLoopSummaryDocumen
 
 func setClarifyLoopMaxRoundsConfig(t *testing.T, paths artifacts.Paths, maxRounds int) {
 	t.Helper()
-	config, err := readConfig(paths.Config)
-	assertNoError(t, err)
+	config := readConfigForTest(t, paths.Config)
 	config.Clarify.MaxRounds = maxRounds
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 
-func configureClarifyLoopHelpers(app App) App {
+func configureClarifyLoopHelpers(t *testing.T, app App, paths artifacts.Paths) App {
+	t.Helper()
+	registerTestAgents(t, paths, clarifyLoopClarifierName)
 	app.AgentRegistry = testAgentRegistry(agents.AgentDescriptor{
 		Name:    clarifyLoopClarifierName,
 		Command: os.Args[0],

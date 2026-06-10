@@ -40,7 +40,7 @@ func (a App) ExecuteDryRun(stdout io.Writer, runID string, agentName string, jso
 	if jsonOutput {
 		return writeJSONResponse(stdout, plan)
 	}
-	writeExecuteDryRun(stdout, prep.State, plan, prep.ModelSpec)
+	writeExecuteDryRun(stdout, prep.State, plan, prep.AgentName, prep.ModelSpec)
 	return nil
 }
 
@@ -69,6 +69,7 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 		AttemptsDir:      prep.RunPaths.AttemptsDir,
 		AttemptIDPrefix:  "attempt",
 		LastResultJSON:   prep.RunPaths.LastResultJSON,
+		AgentName:        prep.AgentName,
 		Agent:            prep.Agent,
 		Model:            prep.ModelSpec,
 		PromptRepoPath:   promptRepoPath,
@@ -111,7 +112,7 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 			return result.processResult
 		},
 		RenderRunOnly: func(stdout io.Writer, request executionRequestDocument, result executionResultDocument) {
-			writeExecuteRun(stdout, prep.State, request, result, prep.ModelSpec)
+			writeExecuteRun(stdout, prep.State, request, result, prep.AgentName, prep.ModelSpec)
 		},
 	})
 }
@@ -123,8 +124,11 @@ type executionPreparation struct {
 	State          contractRunState
 	Contract       draftContract
 	ContractSHA256 string
-	Agent          agents.AgentDescriptor
-	ModelSpec      agents.ModelSpec
+	// AgentName is the registry name the run was invoked under; Agent is the
+	// underlying built-in's descriptor with the entry's pins applied.
+	AgentName string
+	Agent     agents.AgentDescriptor
+	ModelSpec agents.ModelSpec
 }
 
 func (a App) prepareExecution(root string, runID string, agentName string) (executionPreparation, error) {
@@ -191,18 +195,15 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 		return executionPreparation{}, err
 	}
 
-	agent, err := a.agentRegistry().ResolveExecutor(agentName)
+	config, err := a.readConfig(paths.Config)
 	if err != nil {
 		return executionPreparation{}, err
 	}
-	config, err := readConfig(paths.Config)
+	entry, err := resolveExecutorEntry(config, agentName)
 	if err != nil {
 		return executionPreparation{}, err
 	}
-	// The invoked agent's pin comes from its execute.models entry; an agent
-	// without an entry runs unpinned.
-	modelSpec := modelSpecFor(config.Execute.Models, agent.Name)
-	agent, err = agents.ApplyModelSpec(agent, modelSpec)
+	resolved, err := a.resolveAgentForRole(entry, agentRoleExecutor)
 	if err != nil {
 		return executionPreparation{}, err
 	}
@@ -213,8 +214,9 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 		State:          state,
 		Contract:       contract,
 		ContractSHA256: hash,
-		Agent:          agent,
-		ModelSpec:      modelSpec,
+		AgentName:      resolved.Name,
+		Agent:          resolved.Agent,
+		ModelSpec:      resolved.ModelSpec,
 	}, nil
 }
 
@@ -250,14 +252,14 @@ func verifyExecutionMemoryBoundary(paths artifacts.Paths, runPaths contractRunPa
 	return nil
 }
 
-func writeExecuteDryRun(stdout io.Writer, state contractRunState, plan agents.DryRunPlan, modelSpec agents.ModelSpec) {
+func writeExecuteDryRun(stdout io.Writer, state contractRunState, plan agents.DryRunPlan, agentName string, modelSpec agents.ModelSpec) {
 	fmt.Fprintln(stdout, "Execution dry-run prepared")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", plan.RunID)
 	fmt.Fprintf(stdout, "  status: %s\n", state.Status)
 	fmt.Fprintln(stdout)
-	writeResolved(stdout, plan.Agent.Name, modelSpec)
+	writeResolved(stdout, agentName, modelSpec)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Agent:")
 	fmt.Fprintf(stdout, "  name: %s\n", plan.Agent.Name)
@@ -390,14 +392,14 @@ func executionPromptRepoPath(runID string) string {
 	return filepath.ToSlash(filepath.Join(artifacts.WorkspaceRel, "runs", runID, agents.DryRunArtifactPrompt))
 }
 
-func writeExecuteRun(stdout io.Writer, state contractRunState, request executionRequestDocument, result executionResultDocument, modelSpec agents.ModelSpec) {
+func writeExecuteRun(stdout io.Writer, state contractRunState, request executionRequestDocument, result executionResultDocument, agentName string, modelSpec agents.ModelSpec) {
 	fmt.Fprintln(stdout, "Execution attempt finished")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", result.RunID)
 	fmt.Fprintf(stdout, "  status: %s\n", state.Status)
 	fmt.Fprintln(stdout)
-	writeResolved(stdout, request.Agent.Name, modelSpec)
+	writeResolved(stdout, agentName, modelSpec)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Attempt:")
 	fmt.Fprintf(stdout, "  id: %s\n", result.AttemptID)

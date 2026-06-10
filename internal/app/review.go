@@ -164,8 +164,12 @@ type reviewerDryRunPreparation struct {
 	Resolutions       []reviewResolutionRecord
 	Proposals         []reviewProposalRecord
 	ProposalDecisions []reviewProposalDecisionRecord
-	Reviewer          agents.AgentDescriptor
-	ModelSpec         agents.ModelSpec
+	// ReviewerName is the registry name the reviewer was invoked under;
+	// Reviewer is the underlying built-in's read-only descriptor with the
+	// entry's pins applied.
+	ReviewerName string
+	Reviewer     agents.AgentDescriptor
+	ModelSpec    agents.ModelSpec
 }
 
 type reviewerDryRunDocument struct {
@@ -496,7 +500,7 @@ func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, j
 	if jsonOutput {
 		return writeJSONResponse(stdout, plan)
 	}
-	writeReviewDryRun(stdout, plan, prep.ModelSpec)
+	writeReviewDryRun(stdout, plan, prep.ReviewerName, prep.ModelSpec)
 	return nil
 }
 
@@ -509,7 +513,7 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, rev
 	if err != nil {
 		return err
 	}
-	return a.runReviewerAttempt(stdout, liveOutput, runID, prep, reviewLoopReviewer{Agent: prep.Reviewer, ModelSpec: prep.ModelSpec}, timeout, confirm, jsonOutput, true)
+	return a.runReviewerAttempt(stdout, liveOutput, runID, prep, reviewLoopReviewer{Name: prep.ReviewerName, Agent: prep.Reviewer, ModelSpec: prep.ModelSpec}, timeout, confirm, jsonOutput, true)
 }
 
 func (a App) loadPreparedReviewState(stdout io.Writer, runID string, jsonOutput bool) (reviewStateResponse, bool, error) {
@@ -587,23 +591,20 @@ func (a App) prepareReviewer(context reviewContext, reviewerName string, action 
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
-	config, err := readConfig(context.Paths.Config)
+	config, err := a.readConfig(context.Paths.Config)
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
-	reviewer, err := a.agentRegistry().ResolveReviewer(resolveReviewerNameForReview(context, reviewerName))
+	// An explicit --reviewer resolves a registry name; an omitted one applies
+	// the cross-model rule against the registry. The entry's pins travel with
+	// the name.
+	entry, err := resolveReviewerEntry(config, context, reviewerName)
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
-	// The resolved reviewer takes pins from its review.panel entry when
-	// present; an agent without an entry runs unpinned.
-	modelSpec := modelSpecFor(config.Review.Panel, reviewer.Name)
-	reviewer, err = agents.ApplyModelSpec(reviewer, modelSpec)
+	resolved, err := a.resolveAgentForRole(entry, agentRoleReviewer)
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
-	}
-	if reviewer.Input != agents.InputPromptFile {
-		return reviewerDryRunPreparation{}, fmt.Errorf("unsupported agent input mode: %s", reviewer.Input)
 	}
 	review = refreshReviewDocument(review, context.State.RunID, gateReport.Status, findings, resolutions, "")
 	return reviewerDryRunPreparation{
@@ -615,8 +616,9 @@ func (a App) prepareReviewer(context reviewContext, reviewerName string, action 
 		Resolutions:       resolutions,
 		Proposals:         proposals,
 		ProposalDecisions: proposalDecisions,
-		Reviewer:          reviewer,
-		ModelSpec:         modelSpec,
+		ReviewerName:      resolved.Name,
+		Reviewer:          resolved.Agent,
+		ModelSpec:         resolved.ModelSpec,
 	}, nil
 }
 
@@ -666,27 +668,9 @@ func (a App) prepareReviewerForAgent(context reviewContext, reviewer agents.Agen
 	}, nil
 }
 
-// resolveReviewerNameForReview picks the reviewer for a run: an explicit name
-// wins; otherwise the cross-model default — the agent other than the run's
-// executor — applies. An empty result falls through to the registry default.
-func resolveReviewerNameForReview(context reviewContext, reviewerName string) string {
-	if strings.TrimSpace(reviewerName) != "" {
-		return reviewerName
-	}
-	executorName, ok := latestExecutionExecutorName(context)
-	if !ok {
-		return ""
-	}
-	switch executorName {
-	case agents.BuiltinCodex:
-		return agents.BuiltinClaude
-	case agents.BuiltinClaude:
-		return agents.BuiltinCodex
-	default:
-		return ""
-	}
-}
-
+// latestExecutionExecutorName reads the underlying built-in agent recorded by
+// the run's latest execution attempt. Cross-model reviewer selection compares
+// against it.
 func latestExecutionExecutorName(context reviewContext) (string, bool) {
 	attempt, ok, err := loadExecutionAttempt(executeReportContext{
 		RunPaths: context.RunPaths,
@@ -1319,13 +1303,13 @@ func writeReviewApproved(stdout io.Writer, state reviewStateResponse) {
 	}
 }
 
-func writeReviewDryRun(stdout io.Writer, plan reviewerDryRunDocument, modelSpec agents.ModelSpec) {
+func writeReviewDryRun(stdout io.Writer, plan reviewerDryRunDocument, reviewerName string, modelSpec agents.ModelSpec) {
 	fmt.Fprintln(stdout, "Reviewer dry-run prepared")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", plan.RunID)
 	fmt.Fprintln(stdout)
-	writeResolved(stdout, plan.Reviewer.Name, modelSpec)
+	writeResolved(stdout, reviewerName, modelSpec)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Reviewer:")
 	fmt.Fprintf(stdout, "  name: %s\n", plan.Reviewer.Name)
@@ -1345,13 +1329,13 @@ func writeReviewDryRun(stdout io.Writer, plan reviewerDryRunDocument, modelSpec 
 	fmt.Fprintf(stdout, "  dry run: %s\n", runArtifactRepoRel(plan.RunID, reviewerDryRunArtifact))
 }
 
-func writeReviewRun(stdout io.Writer, request reviewerRequestDocument, result reviewerResultDocument, modelSpec agents.ModelSpec) {
+func writeReviewRun(stdout io.Writer, request reviewerRequestDocument, result reviewerResultDocument, reviewerName string, modelSpec agents.ModelSpec) {
 	fmt.Fprintln(stdout, "Reviewer attempt finished")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", result.RunID)
 	fmt.Fprintln(stdout)
-	writeResolved(stdout, request.Reviewer.Name, modelSpec)
+	writeResolved(stdout, reviewerName, modelSpec)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Reviewer:")
 	fmt.Fprintf(stdout, "  name: %s\n", request.Reviewer.Name)

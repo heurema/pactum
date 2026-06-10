@@ -210,7 +210,7 @@ func (a App) ClarifyLoop(stdout io.Writer, liveOutput io.Writer, runID string, o
 }
 
 func (a App) resolveClarifyLoopMaxRounds(configPath string, override int) (int, error) {
-	config, err := readConfig(configPath)
+	config, err := a.readConfig(configPath)
 	if err != nil {
 		return 0, err
 	}

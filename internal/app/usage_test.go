@@ -31,7 +31,7 @@ func TestRunAgentAttemptLifecycleAppendsUsageRecord(t *testing.T) {
 		t.Fatalf("usage record count = %d, want 1: %#v", len(records), records)
 	}
 	record := records[0]
-	if record.RunID != runID || record.AttemptID != "attempt_001" || record.Stage != "execute" || record.Agent != "helper" {
+	if record.RunID != runID || record.AttemptID != "attempt_001" || record.Stage != "execute" || record.Agent != "helper" || record.AgentName != "helper" {
 		t.Fatalf("unexpected usage record identity: %#v", record)
 	}
 	if record.Captured {
@@ -60,7 +60,7 @@ func TestExecuteRunRecordsCapturedCodexUsage(t *testing.T) {
 		t.Fatalf("usage record count = %d, want 1: %#v", len(records), records)
 	}
 	record := records[0]
-	if !record.Captured || record.Provider != "codex" || record.Agent != "codex" {
+	if !record.Captured || record.Provider != "codex" || record.Agent != "codex" || record.AgentName != "codex" {
 		t.Fatalf("codex usage should be captured with provider identity: %#v", record)
 	}
 	if record.InputTokens != 120 || record.OutputTokens != 50 || record.TotalTokens != 170 {
@@ -68,6 +68,37 @@ func TestExecuteRunRecordsCapturedCodexUsage(t *testing.T) {
 	}
 	if record.CacheReadTokens != 30 || record.ReasoningTokens != 10 || len(record.Raw) == 0 {
 		t.Fatalf("codex usage classes/raw mismatch: %#v", record)
+	}
+}
+
+func TestExecuteRunUsageRecordsRegistryAgentName(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedPromptContract(t, root)
+	// "pinned-codex" runs on the codex built-in: the usage record keeps the
+	// underlying agent for cross-model comparison and adds the registry name.
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "pinned-codex", Agent: "codex"})
+	app.AgentRegistry = testAgentRegistry(codexHelperAgentDescriptor())
+	runReviewCommand(t, app, "map", "refresh")
+	runReviewCommand(t, app, "prompt", "build", runID)
+	t.Setenv("PACTUM_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_HELPER_CODEX_USAGE", "1")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "run", runID, "--agent", "pinned-codex", "--yes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
+	}
+
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	records, err := readUsageRecords(runPaths.UsageJSONL)
+	assertNoError(t, err)
+	if len(records) != 1 {
+		t.Fatalf("usage record count = %d, want 1: %#v", len(records), records)
+	}
+	record := records[0]
+	if record.AgentName != "pinned-codex" || record.Agent != "codex" || record.Provider != "codex" {
+		t.Fatalf("usage record should carry the registry name alongside the underlying agent: %#v", record)
 	}
 }
 

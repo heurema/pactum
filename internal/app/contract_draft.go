@@ -27,10 +27,14 @@ const (
 )
 
 type contractDraftPreparation struct {
-	Context   runContext
-	Status    clarifyStatusResponse
-	Drafter   agents.AgentDescriptor
-	ModelSpec agents.ModelSpec
+	Context runContext
+	Status  clarifyStatusResponse
+	// DrafterName is the registry name the drafter was invoked under; Drafter
+	// is the underlying built-in's read-only descriptor with the entry's pins
+	// applied.
+	DrafterName string
+	Drafter     agents.AgentDescriptor
+	ModelSpec   agents.ModelSpec
 }
 
 type contractDraftArtifacts struct {
@@ -139,6 +143,7 @@ func (a App) ContractDraft(stdout io.Writer, liveOutput io.Writer, runID string,
 		AttemptsDir:     context.RunPaths.ContractDrafterAttemptsDir,
 		AttemptIDPrefix: "drafter_attempt",
 		LastResultJSON:  context.RunPaths.ContractDrafterLastResultJSON,
+		AgentName:       prep.DrafterName,
 		Agent:           prep.Drafter,
 		Model:           prep.ModelSpec,
 		PromptRepoPath:  contractDrafterPromptRepoPath(runID),
@@ -181,7 +186,7 @@ func (a App) ContractDraft(stdout io.Writer, liveOutput io.Writer, runID string,
 			return result.processResult
 		},
 		RenderRunOnly: func(stdout io.Writer, request contractDrafterRequestDocument, result contractDrafterResultDocument) {
-			writeContractDraftRunOnly(stdout, request, result, prep.ModelSpec)
+			writeContractDraftRunOnly(stdout, request, result, prep.DrafterName, prep.ModelSpec)
 		},
 		AfterSuccess: func(attempt agentAttemptContext[agents.DryRunCommand], request contractDrafterRequestDocument, result contractDrafterResultDocument, now time.Time) (contractDraftResponse, error) {
 			proposal, warnings, err := a.recordContractDraftProposal(context, attempt.AttemptID, prep.Drafter.Name, attempt.AttemptPaths.StdoutLog, now)
@@ -199,7 +204,7 @@ func (a App) ContractDraft(stdout io.Writer, liveOutput io.Writer, runID string,
 			}, nil
 		},
 		RenderSuccess: func(stdout io.Writer, response contractDraftResponse, request contractDrafterRequestDocument) {
-			writeContractDraft(stdout, response, request, prep.ModelSpec)
+			writeContractDraft(stdout, response, request, prep.DrafterName, prep.ModelSpec)
 		},
 	})
 }
@@ -298,35 +303,32 @@ func (a App) prepareContractDrafter(context runContext, reviewerName string) (co
 	if err != nil {
 		return contractDraftPreparation{}, err
 	}
-	config, err := readConfig(context.Paths.Config)
+	config, err := a.readConfig(context.Paths.Config)
 	if err != nil {
 		return contractDraftPreparation{}, err
 	}
-	reviewContext := reviewContext{
+	// The drafter is a reviewer-role agent: an explicit --reviewer resolves a
+	// registry name, an omitted one applies the cross-model rule against the
+	// registry, and the entry's pins travel with the name.
+	entry, err := resolveReviewerEntry(config, reviewContext{
 		Root:     context.Root,
 		Paths:    context.Paths,
 		RunPaths: context.RunPaths,
 		State:    context.State,
-	}
-	drafter, err := a.agentRegistry().ResolveReviewer(resolveReviewerNameForReview(reviewContext, reviewerName))
+	}, reviewerName)
 	if err != nil {
 		return contractDraftPreparation{}, err
 	}
-	// The drafter is a reviewer-role agent: it takes pins from its
-	// review.panel entry when present; an agent without an entry runs unpinned.
-	modelSpec := modelSpecFor(config.Review.Panel, drafter.Name)
-	drafter, err = agents.ApplyModelSpec(drafter, modelSpec)
+	resolved, err := a.resolveAgentForRole(entry, agentRoleReviewer)
 	if err != nil {
 		return contractDraftPreparation{}, err
-	}
-	if drafter.Input != agents.InputPromptFile {
-		return contractDraftPreparation{}, fmt.Errorf("unsupported agent input mode: %s", drafter.Input)
 	}
 	return contractDraftPreparation{
-		Context:   context,
-		Status:    status,
-		Drafter:   drafter,
-		ModelSpec: modelSpec,
+		Context:     context,
+		Status:      status,
+		DrafterName: resolved.Name,
+		Drafter:     resolved.Agent,
+		ModelSpec:   resolved.ModelSpec,
 	}, nil
 }
 
@@ -603,14 +605,14 @@ func writeContractDraftProposalList(b *strings.Builder, heading string, values [
 	fmt.Fprintln(b)
 }
 
-func writeContractDraft(stdout io.Writer, response contractDraftResponse, request contractDrafterRequestDocument, modelSpec agents.ModelSpec) {
+func writeContractDraft(stdout io.Writer, response contractDraftResponse, request contractDrafterRequestDocument, drafterName string, modelSpec agents.ModelSpec) {
 	fmt.Fprintln(stdout, "Contract draft proposal recorded")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", response.RunID)
 	fmt.Fprintf(stdout, "  status: %s\n", response.RunStatus)
 	fmt.Fprintln(stdout)
-	writeResolved(stdout, request.Drafter.Name, modelSpec)
+	writeResolved(stdout, drafterName, modelSpec)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Attempt:")
 	fmt.Fprintf(stdout, "  id: %s\n", response.AttemptID)
@@ -630,13 +632,13 @@ func writeContractDraft(stdout io.Writer, response contractDraftResponse, reques
 	fmt.Fprintf(stdout, "  last result: %s\n", runArtifactRepoRel(response.RunID, contractDrafterLastResultArtifact))
 }
 
-func writeContractDraftRunOnly(stdout io.Writer, request contractDrafterRequestDocument, result contractDrafterResultDocument, modelSpec agents.ModelSpec) {
+func writeContractDraftRunOnly(stdout io.Writer, request contractDrafterRequestDocument, result contractDrafterResultDocument, drafterName string, modelSpec agents.ModelSpec) {
 	fmt.Fprintln(stdout, "Contract drafter attempt finished")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", result.RunID)
 	fmt.Fprintln(stdout)
-	writeResolved(stdout, request.Drafter.Name, modelSpec)
+	writeResolved(stdout, drafterName, modelSpec)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Attempt:")
 	fmt.Fprintf(stdout, "  id: %s\n", result.AttemptID)

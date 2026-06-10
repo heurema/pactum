@@ -454,7 +454,7 @@ func TestStatusDerivesLifecycleAndNextStep(t *testing.T) {
 	if status.Runs.LatestStatus != "prompt_built" {
 		t.Fatalf("latest status = %q, want prompt_built", status.Runs.LatestStatus)
 	}
-	if status.Runs.NextCommand != "pactum execute dry-run --agent codex" {
+	if status.Runs.NextCommand != "pactum execute dry-run" {
 		t.Fatalf("next command = %q", status.Runs.NextCommand)
 	}
 }
@@ -606,7 +606,7 @@ func TestExecuteRunWithoutYesFailsNonInteractive(t *testing.T) {
 func TestReviewRunWithoutYesFailsNonInteractive(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperReviewers(t, app, paths, "helper", "helper")
+	app = configureHelperReviewers(t, app, paths, "helper")
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper"}, &stdout, &stderr)
@@ -622,8 +622,8 @@ func TestReviewRunWithoutYesFailsNonInteractive(t *testing.T) {
 
 func TestReviewFixWithoutYesFailsNonInteractive(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperFixers(t, app, "helper")
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	app = configureHelperFixers(t, app, paths, "helper")
 	runReviewCommand(t, app, "review", "add-finding", runID, "fixer requires explicit yes")
 
 	var stdout, stderr bytes.Buffer
