@@ -10,13 +10,12 @@ run Pactum in** — an agent can do whatever your shell user can do there.
 
 The agent-launching commands are:
 
-- `pactum clarify suggest` and `pactum clarify run` (also run by
-  `pactum task new --clarify`)
+- `pactum clarify run` (also run by `pactum task new --clarify`)
 - `pactum contract draft`
 - `pactum execute run`
-- `pactum review run`
+- `pactum review run` (reviewer rounds, plus the write-enabled fixer unless
+  `--no-fix` is set)
 - `pactum review fix run`
-- `pactum review loop`
 
 Every one of these launches external agent tooling, either through the default
 ACP transport — external npm adapter packages downloaded and run via `npx`,
@@ -28,10 +27,11 @@ transport (`PACTUM_AGENT_TRANSPORT=cli`), where the executor runs
 in your repository, inherit your environment, and execute with your user's
 permissions.
 
-The read-only stages (`clarify suggest`, `clarify run`, `contract draft`,
-`review run`) constrain *file writes*, not the process: reviewer, drafter, and
-clarifier agents still run as external tooling that inherits your environment
-variables. Do not treat any agent-launching stage as safe for secrets.
+The read-only stages (`clarify run`, `contract draft`, and the reviewer rounds
+of `review run`) constrain *file writes*, not the process: reviewer, drafter,
+and clarifier agents still run as external tooling that inherits your
+environment variables. Do not treat any agent-launching stage as safe for
+secrets.
 
 ## Safe usage
 
