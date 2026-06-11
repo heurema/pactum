@@ -72,6 +72,10 @@ func TestSkillInlinesSafetyAndStop(t *testing.T) {
 		"references/workflow.md", // explicitly tells the agent to read references
 		".heurema",
 		"source of truth",
+		// Agents read the affordances instead of memorizing stage order.
+		"`next`",
+		"error.fix",
+		"--by",
 	} {
 		if !strings.Contains(skill, want) {
 			t.Fatalf("SKILL.md missing %q:\n%s", want, skill)
@@ -129,6 +133,9 @@ func TestSkillSafetyReference(t *testing.T) {
 		"pactum review run",
 		"explicit",
 		"not sandboxed",
+		"unsandboxed",
+		"write-enabled fixer",
+		"SECURITY.md",
 		".heurema",
 	} {
 		if !strings.Contains(safety, want) {
@@ -210,6 +217,10 @@ func TestSkillDocsAvoidStaleAndPrematureClaims(t *testing.T) {
 		"contract show-draft",
 		"contract accept-draft",
 		"pactum task current",
+		// M24.1 removed these command spellings.
+		"pactum clarify suggest",
+		"pactum review prepare",
+		"pactum review loop",
 	}
 	for _, rel := range files {
 		content := readRepoFile(t, rel)

@@ -106,7 +106,7 @@ func TestExecuteRunPlainTimeoutStillFailsWithTimeoutMessage(t *testing.T) {
 	}
 }
 
-func TestClarifySuggestCompletedDespiteTimeoutRunsAfterSuccess(t *testing.T) {
+func TestClarifierRoundCompletedDespiteTimeoutRunsAfterSuccess(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
 	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4"})
@@ -125,13 +125,13 @@ func TestClarifySuggestCompletedDespiteTimeoutRunsAfterSuccess(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "claude"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "run", runID, "--no-auto", "--max-rounds", "1", "--reviewer", "claude"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("completed-despite-timeout clarify suggest should succeed, exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("completed-despite-timeout clarifier round should succeed, exited %d, stderr: %s", code, stderr.String())
 	}
-	// AfterSuccess ran: the clarifier stdout was parsed and the suggestion recorded.
+	// AfterSuccess ran: the clarifier stdout was parsed and the question recorded.
 	out := stdout.String()
-	if !strings.Contains(out, "Clarification suggestions recorded") || !strings.Contains(out, "Does the timeout finalize keep the record honest?") {
-		t.Fatalf("AfterSuccess should record the suggestion:\n%s", out)
+	if !strings.Contains(out, "Clarify loop finished") || !strings.Contains(out, "questions created 1") {
+		t.Fatalf("AfterSuccess should record the question:\n%s", out)
 	}
 }

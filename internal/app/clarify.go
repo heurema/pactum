@@ -182,8 +182,47 @@ func (a App) ClarifyAnswer(stdout io.Writer, runID string, questionID string, an
 	if !hasClarificationQuestion(questions, questionID) {
 		return fmt.Errorf("question not found: %s", questionID)
 	}
+	return a.recordAndReportClarifyAnswer(stdout, context, questionID, answer, "manual", "manual_answer", decidedBy, jsonOutput)
+}
+
+// ClarifyAnswerRecommended records a question's stored recommended answer as
+// its answer. It is a decision verb: the human relays the clarifier's own
+// recommendation, so the question must be open, carry a non-empty
+// recommendation, and not be blocked by unanswered prerequisites. A typed
+// `clarify answer` remains the escape hatch for revisions and blocked
+// questions.
+func (a App) ClarifyAnswerRecommended(stdout io.Writer, runID string, questionID string, decidedBy string, jsonOutput bool) error {
+	context, ok, err := a.loadClarifyContext(stdout, runID, jsonOutput)
+	if err != nil || !ok {
+		return err
+	}
+	status, err := buildClarificationStatus(context.RunPaths, context.State)
+	if err != nil {
+		return err
+	}
+	question, ok := findClarifyQuestionStatus(status.Questions, questionID)
+	if !ok {
+		return fmt.Errorf("question not found: %s", questionID)
+	}
+	if question.Status != "open" {
+		return fmt.Errorf("cannot record recommended answer: question is already answered: %s", questionID)
+	}
+	if strings.TrimSpace(question.RecommendedAnswer) == "" {
+		return fmt.Errorf("cannot record recommended answer: question has no recommended answer: %s", questionID)
+	}
+	if question.Blocked {
+		return fmt.Errorf("cannot record recommended answer: %s depends on unanswered questions (inspect with: pactum clarify show %s)", questionID, runID)
+	}
+	return a.recordAndReportClarifyAnswer(stdout, context, questionID, question.RecommendedAnswer, "manual_recommended", "manual_recommended_answer", decidedBy, jsonOutput)
+}
+
+// recordAndReportClarifyAnswer is the shared tail of the single-question answer
+// verbs: record the answer and its decision, refresh the clarification
+// artifacts, append the ledger events, and emit the answer response.
+func (a App) recordAndReportClarifyAnswer(stdout io.Writer, context clarifyContext, questionID string, answer string, answerSource string, decisionSource string, decidedBy string, jsonOutput bool) error {
+	runID := context.State.RunID
 	now := a.nowUTC()
-	answerRecord, decisionRecord, err := recordClarificationAnswer(context.RunPaths, runID, questionID, answer, "manual", "manual_answer", normalizePrincipal(context.Root, decidedBy), now)
+	answerRecord, decisionRecord, err := recordClarificationAnswer(context.RunPaths, runID, questionID, answer, answerSource, decisionSource, normalizePrincipal(context.Root, decidedBy), now)
 	if err != nil {
 		return err
 	}
@@ -204,6 +243,142 @@ func (a App) ClarifyAnswer(stdout io.Writer, runID string, questionID string, an
 	}
 	writeClarifyAnswerResponse(stdout, response)
 	return nil
+}
+
+// clarifyRecommendedAnswer pairs one recorded answer with its mirroring
+// decision in the --all-recommended response.
+type clarifyRecommendedAnswer struct {
+	Answer   clarificationAnswerRecord   `json:"answer"`
+	Decision clarificationDecisionRecord `json:"decision"`
+}
+
+// clarifyRecommendedSkip names an open question --all-recommended could not
+// answer and why (no_recommendation or dependencies_unanswered).
+type clarifyRecommendedSkip struct {
+	QuestionID string `json:"question_id"`
+	Reason     string `json:"reason"`
+}
+
+type clarifyAnswerAllRecommendedResponse struct {
+	RunID     string                     `json:"run_id"`
+	RunStatus string                     `json:"run_status"`
+	Answered  []clarifyRecommendedAnswer `json:"answered"`
+	Skipped   []clarifyRecommendedSkip   `json:"skipped"`
+	// ApprovalReset reports that recording these answers regressed an
+	// already-approved run back to clarifying (approval reset to pending). It is
+	// omitted (false) when the run was not approved.
+	ApprovalReset bool     `json:"approval_reset,omitempty"`
+	Next          []string `json:"next"`
+}
+
+// ClarifyAnswerAllRecommended records the stored recommended answer for every
+// currently open question that has one. Questions are answered in record order
+// (foundational-first), so a prerequisite answered earlier in the same pass
+// unblocks its dependents; open questions without a recommendation and
+// dependency-blocked questions are skipped and reported. It errors when nothing
+// was recorded and at least one open question had to be skipped.
+func (a App) ClarifyAnswerAllRecommended(stdout io.Writer, runID string, decidedBy string, jsonOutput bool) error {
+	context, ok, err := a.loadClarifyContext(stdout, runID, jsonOutput)
+	if err != nil || !ok {
+		return err
+	}
+	questions, err := readClarificationQuestions(context.RunPaths.QuestionsJSONL)
+	if err != nil {
+		return err
+	}
+	answers, err := readClarificationAnswers(context.RunPaths.AnswersJSONL)
+	if err != nil {
+		return err
+	}
+	latestAnswers := latestAnswersByQuestion(answers)
+
+	now := a.nowUTC()
+	decidedBy = normalizePrincipal(context.Root, decidedBy)
+	answered := []clarifyRecommendedAnswer{}
+	skipped := []clarifyRecommendedSkip{}
+	for _, question := range questions {
+		if _, alreadyAnswered := latestAnswers[question.ID]; alreadyAnswered {
+			continue
+		}
+		if strings.TrimSpace(question.RecommendedAnswer) == "" {
+			skipped = append(skipped, clarifyRecommendedSkip{QuestionID: question.ID, Reason: "no_recommendation"})
+			continue
+		}
+		blocked := false
+		for _, prerequisiteID := range question.DependsOn {
+			if _, prerequisiteAnswered := latestAnswers[prerequisiteID]; !prerequisiteAnswered {
+				blocked = true
+				break
+			}
+		}
+		if blocked {
+			skipped = append(skipped, clarifyRecommendedSkip{QuestionID: question.ID, Reason: "dependencies_unanswered"})
+			continue
+		}
+		answerRecord, decisionRecord, err := recordClarificationAnswer(context.RunPaths, runID, question.ID, question.RecommendedAnswer, "manual_all_recommended", "manual_all_recommended_answer", decidedBy, now)
+		if err != nil {
+			return err
+		}
+		if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "clarification_answer_recorded", Timestamp: now, RunID: runID}); err != nil {
+			return err
+		}
+		if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "clarification_decision_recorded", Timestamp: now, RunID: runID}); err != nil {
+			return err
+		}
+		latestAnswers[question.ID] = answerRecord
+		answered = append(answered, clarifyRecommendedAnswer{Answer: answerRecord, Decision: decisionRecord})
+	}
+	if len(answered) == 0 && len(skipped) > 0 {
+		return fmt.Errorf("no recommended answers recorded: %s (inspect with: pactum clarify show %s)", formatClarifyRecommendedSkips(skipped), runID)
+	}
+
+	var status clarifyStatusResponse
+	approvalReset := false
+	if len(answered) > 0 {
+		status, approvalReset, err = a.refreshClarificationArtifacts(context, now)
+		if err != nil {
+			return err
+		}
+	} else {
+		status, err = buildClarificationStatus(context.RunPaths, context.State)
+		if err != nil {
+			return err
+		}
+		if context.State.Status == "contract_approved" && status.BlockingOpen == 0 {
+			status.RunStatus = "contract_approved"
+		}
+	}
+
+	response := clarifyAnswerAllRecommendedResponse{
+		RunID:         runID,
+		RunStatus:     status.RunStatus,
+		Answered:      answered,
+		Skipped:       skipped,
+		ApprovalReset: approvalReset,
+		Next:          nextCommandsForRun(context.Paths, runID),
+	}
+	if jsonOutput {
+		return writeJSONResponse(stdout, response)
+	}
+	writeClarifyAnswerAllRecommendedResponse(stdout, response)
+	return nil
+}
+
+func formatClarifyRecommendedSkips(skipped []clarifyRecommendedSkip) string {
+	parts := make([]string, 0, len(skipped))
+	for _, skip := range skipped {
+		parts = append(parts, fmt.Sprintf("%s (%s)", skip.QuestionID, skip.Reason))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func findClarifyQuestionStatus(questions []clarifyQuestionStatus, questionID string) (clarifyQuestionStatus, bool) {
+	for _, question := range questions {
+		if question.ID == questionID {
+			return question, true
+		}
+	}
+	return clarifyQuestionStatus{}, false
 }
 
 // recordClarificationAnswer creates and appends the answer record and its
@@ -574,6 +749,26 @@ func writeClarifyAnswerResponse(stdout io.Writer, response clarifyAnswerResponse
 	fmt.Fprintln(stdout, "Answer:")
 	fmt.Fprintf(stdout, "  id: %s\n", response.Answer.ID)
 	fmt.Fprintf(stdout, "  question: %s\n", response.Answer.QuestionID)
+}
+
+func writeClarifyAnswerAllRecommendedResponse(stdout io.Writer, response clarifyAnswerAllRecommendedResponse) {
+	fmt.Fprintln(stdout, "Recommended answers recorded")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Run:")
+	fmt.Fprintf(stdout, "  id: %s\n", response.RunID)
+	fmt.Fprintf(stdout, "  status: %s\n", response.RunStatus)
+	if response.ApprovalReset {
+		writeApprovalResetWarning(stdout, response.RunID, response.RunStatus)
+	}
+	fmt.Fprintln(stdout)
+	fmt.Fprintf(stdout, "Answered: %d\n", len(response.Answered))
+	for _, entry := range response.Answered {
+		fmt.Fprintf(stdout, "  - %s: %s\n", entry.Answer.QuestionID, entry.Answer.Answer)
+	}
+	fmt.Fprintf(stdout, "Skipped: %d\n", len(response.Skipped))
+	for _, skip := range response.Skipped {
+		fmt.Fprintf(stdout, "  - %s: %s\n", skip.QuestionID, skip.Reason)
+	}
 }
 
 func writeClarifyStatus(stdout io.Writer, status clarifyStatusResponse) {

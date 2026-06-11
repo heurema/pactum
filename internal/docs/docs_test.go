@@ -60,6 +60,12 @@ var forbiddenDocPhrases = []string{
 	// command-allow flag.
 	"--yes",
 	"--allow-commands",
+	// M24.1 smoothed the pipeline: review run absorbed the loop, review
+	// scaffolds implicitly, and the clarifier round lives inside clarify run.
+	"pactum review prepare",
+	"pactum review loop",
+	"pactum clarify suggest",
+	"review_not_prepared",
 }
 
 // requiredDocMentions are current commands the user-facing docs must describe.
@@ -67,9 +73,17 @@ var requiredDocMentions = []string{
 	"pactum execute plan",
 	"pactum execute run",
 	"pactum gate run",
+	"pactum review run",
 	"pactum review proposal collect",
+	"pactum clarify run",
 	"pactum memory refresh",
 	"pactum doctor",
+	// M24.1 surface.
+	"--no-fix",
+	"--no-auto",
+	"--recommended",
+	"--all-recommended",
+	"map_refresh",
 	// Packaging / install surface (M5.2).
 	"make build",
 	"go install ./cmd/pactum",
@@ -136,13 +150,11 @@ var requiredSecurityPolicyMentions = []string{
 	"not a sandbox",
 	"security boundary",
 	// Every agent-launching command.
-	"pactum clarify suggest",
 	"pactum clarify run",
 	"pactum contract draft",
 	"pactum execute run",
 	"pactum review run",
 	"pactum review fix run",
-	"pactum review loop",
 	// Safe usage.
 	"Trusted repositories only",
 	"pactum execute plan",

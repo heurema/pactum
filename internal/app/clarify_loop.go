@@ -21,8 +21,11 @@ const (
 )
 
 type clarifyLoopOptions struct {
-	Reviewer   string
-	MaxRounds  int
+	Reviewer  string
+	MaxRounds int
+	// NoAuto disables auto-resolution: created questions stay open for the
+	// human, so any open blocking question ends the loop as needs_human.
+	NoAuto     bool
 	Timeout    time.Duration
 	JSONOutput bool
 }
@@ -60,13 +63,14 @@ type clarifyLoopRoundSummary struct {
 	Warnings           []string `json:"warnings,omitempty"`
 }
 
-// ClarifyLoop runs autonomous clarification rounds: suggest (the clarifier
-// proposes questions exactly as clarify suggest does), auto-resolve (every open
-// question whose confidence is high and whose recommended answer is non-empty
-// gets that recommendation recorded as its answer), then re-suggest — until the
-// clarification converges (no open blocking questions), a round makes no
-// progress without a human, or the round cap is reached. The loop automates
-// only the question-and-answer churn; contract approval stays manual.
+// ClarifyLoop runs autonomous clarification rounds: a clarifier round proposes
+// questions, auto-resolve (every open question whose confidence is high and
+// whose recommended answer is non-empty gets that recommendation recorded as
+// its answer), then the next round — until the clarification converges (no
+// open blocking questions), a round makes no progress without a human, or the
+// round cap is reached. With --no-auto, auto-resolution is skipped entirely.
+// The loop automates only the question-and-answer churn; contract approval
+// stays manual.
 func (a App) ClarifyLoop(stdout io.Writer, liveOutput io.Writer, runID string, options clarifyLoopOptions) error {
 	context, ok, err := a.loadClarifyContext(io.Discard, runID, options.JSONOutput)
 	if err != nil || !ok {
@@ -122,10 +126,13 @@ func (a App) ClarifyLoop(stdout io.Writer, liveOutput io.Writer, runID string, o
 		context.State = state
 
 		now := a.nowUTC()
-		autoResolved, err := a.autoResolveClarifications(context, now)
-		if err != nil {
-			loopErr = err
-			break
+		autoResolved := []clarificationAnswerRecord{}
+		if !options.NoAuto {
+			autoResolved, err = a.autoResolveClarifications(context, now)
+			if err != nil {
+				loopErr = err
+				break
+			}
 		}
 		// Refresh the clarification artifacts once after the round's
 		// auto-resolves; a round that resolved nothing only recomputes the
@@ -166,6 +173,12 @@ func (a App) ClarifyLoop(stdout io.Writer, liveOutput io.Writer, runID string, o
 
 		if status.BlockingOpen == 0 {
 			summary.TerminalReason = clarifyLoopTerminalConverged
+			break
+		}
+		// With auto-resolution disabled, an open blocking question can only be
+		// answered by the human, so further rounds cannot make progress.
+		if options.NoAuto {
+			summary.TerminalReason = clarifyLoopTerminalNeedsHuman
 			break
 		}
 		// A round that created no new questions and auto-resolved nothing means
@@ -223,17 +236,17 @@ func (a App) resolveClarifyLoopMaxRounds(configPath string, override int) (int, 
 	return resolveReviewLoopLimit("max rounds", override, config.Clarify.MaxRounds, defaultConfigFile().Clarify.MaxRounds)
 }
 
-// runClarifyLoopSuggestRound runs one clarifier round through the same code
-// path as clarify suggest (same prompt, artifacts, recording, and prompt-level
-// dedupe via the existing-questions context) and parses its JSON response.
-func (a App) runClarifyLoopSuggestRound(liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration) (clarifySuggestResponse, error) {
+// runClarifyLoopSuggestRound runs one clarifier round (same prompt, artifacts,
+// recording, and prompt-level dedupe via the existing-questions context) and
+// parses its JSON response.
+func (a App) runClarifyLoopSuggestRound(liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration) (clarifierRoundResponse, error) {
 	var stdout bytes.Buffer
-	if err := a.ClarifySuggest(&stdout, liveOutput, runID, reviewerName, timeout, true); err != nil {
-		return clarifySuggestResponse{}, err
+	if err := a.runClarifierRound(&stdout, liveOutput, runID, reviewerName, timeout); err != nil {
+		return clarifierRoundResponse{}, err
 	}
-	var response clarifySuggestResponse
+	var response clarifierRoundResponse
 	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
-		return clarifySuggestResponse{}, err
+		return clarifierRoundResponse{}, err
 	}
 	return response, nil
 }

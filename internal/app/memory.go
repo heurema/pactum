@@ -304,10 +304,9 @@ func (a App) prepareMemoryCandidate(context runContext) (preparedMemoryCandidate
 	if err != nil {
 		return preparedMemoryCandidate{}, err
 	}
-	if !isRegularFile(context.RunPaths.ReviewJSON) {
-		return preparedMemoryCandidate{}, reviewNotPreparedError("cannot propose memory: review is not prepared", context.State.RunID)
-	}
-	review, err := readReviewDocument(context.RunPaths.ReviewJSON)
+	// A gated run with no review artifact is an unapproved review: same
+	// precondition, derived state.
+	review, err := loadOrDeriveReviewDocument(context.RunPaths, context.State.RunID, gateReport.Status)
 	if err != nil {
 		return preparedMemoryCandidate{}, err
 	}

@@ -230,7 +230,7 @@ type acpClient struct {
 	// the contract scope. See WriteTextFile.
 	repoRoot         string
 	writePathAllowed func(repoRelPath string) bool
-	// readOnly marks a read-only stage (review, clarify suggest, contract
+	// readOnly marks a read-only stage (review, clarifier round, contract
 	// draft): WriteTextFile is denied regardless of writePathAllowed, and
 	// RequestPermission rejects instead of auto-approving. The write capability
 	// stays advertised either way — the agent must route writes through the

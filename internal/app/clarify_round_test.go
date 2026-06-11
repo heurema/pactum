@@ -15,7 +15,7 @@ import (
 	"github.com/heurema/pactum/internal/artifacts"
 )
 
-func TestClarifySuggestRunsClarifierAndRecordsOpenQuestions(t *testing.T) {
+func TestClarifyRunNoAutoRunsOneRoundAndRecordsOpenQuestions(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
@@ -28,25 +28,24 @@ func TestClarifySuggestRunsClarifierAndRecordsOpenQuestions(t *testing.T) {
 	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "suggest", runID}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "run", runID, "--no-auto", "--max-rounds", "1"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify suggest exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify run --no-auto exited %d, stderr: %s", code, stderr.String())
 	}
 	got := stdout.String()
 	for _, want := range []string{
-		"Clarification suggestions recorded",
-		"agent: claude",
-		"created: 2",
-		"q_001 [blocking] Should generated clarification questions reset contract approval?",
+		"Clarify loop finished",
+		"terminal reason: needs_human",
+		"questions created 2, auto-resolved 0, open blocking 1",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("clarify suggest output missing %q:\n%s", want, got)
+			t.Fatalf("clarify run output missing %q:\n%s", want, got)
 		}
 	}
 	if strings.Contains(got, "stdin_has_clarifier_prompt=") || strings.Contains(got, "clarifier-stderr-line") {
 		t.Fatalf("agent output leaked into stdout:\n%s", got)
 	}
-	// The run was never approved, so recording suggestions must not warn about an
+	// The run was never approved, so recording questions must not warn about an
 	// approval reset.
 	if strings.Contains(got, "this run was approved") {
 		t.Fatalf("non-approved run should not warn about approval reset:\n%s", got)
@@ -78,11 +77,12 @@ func TestClarifySuggestRunsClarifierAndRecordsOpenQuestions(t *testing.T) {
 	if questions[1].RecommendedAnswer != "Yes — keep them open and non-blocking so progress is not gated." || questions[1].Confidence != "medium" {
 		t.Fatalf("second question missing recommended answer/confidence: %#v", questions[1])
 	}
+	// --no-auto: even the high-confidence recommendation stays open.
 	if answers := readLines(t, runPaths.AnswersJSONL); len(answers) != 0 {
-		t.Fatalf("clarify suggest should not answer questions: %v", answers)
+		t.Fatalf("clarify run --no-auto should not answer questions: %v", answers)
 	}
 	if decisions := readLines(t, runPaths.DecisionsJSONL); len(decisions) != 0 {
-		t.Fatalf("clarify suggest should not write decisions: %v", decisions)
+		t.Fatalf("clarify run --no-auto should not write decisions: %v", decisions)
 	}
 
 	state := readRunState(t, runPaths.RunJSON)
@@ -106,6 +106,7 @@ func TestClarifySuggestRunsClarifierAndRecordsOpenQuestions(t *testing.T) {
 	assertFile(t, attemptPaths.StderrLog)
 	assertFile(t, attemptPaths.ResultJSON)
 	assertFile(t, runPaths.ClarifierLastResultJSON)
+	assertFile(t, runPaths.ClarifyLoopSummaryJSON)
 
 	var request clarifierRequestDocument
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.RequestJSON)), &request))
@@ -127,18 +128,18 @@ func TestClarifySuggestRunsClarifierAndRecordsOpenQuestions(t *testing.T) {
 		t.Fatalf("stdout log missing structured suggestions:\n%s", got)
 	}
 	if got := mustReadFile(t, filepath.Join(root, "README.md")); got != readmeBefore {
-		t.Fatalf("clarify suggest should not edit repository files")
+		t.Fatalf("clarify run should not edit repository files")
 	}
 
 	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
-	for _, want := range []string{"clarifier_attempt_started", "clarifier_attempt_finished", "clarification_questions_suggested"} {
+	for _, want := range []string{"clarification_loop_started", "clarifier_attempt_started", "clarifier_attempt_finished", "clarification_questions_suggested", "clarification_loop_finished"} {
 		if indexOfEvent(eventTypes, want) == -1 {
 			t.Fatalf("events missing %s:\n%v", want, eventTypes)
 		}
 	}
 }
 
-func TestClarifySuggestJSONOutput(t *testing.T) {
+func TestClarifyRunNoAutoJSONOutput(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
 	app = configureHelperClarifiers(t, app, paths, "helper")
@@ -147,15 +148,28 @@ func TestClarifySuggestJSONOutput(t *testing.T) {
 	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "helper", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "run", runID, "--no-auto", "--max-rounds", "1", "--reviewer", "helper", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify suggest --json exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify run --no-auto --json exited %d, stderr: %s", code, stderr.String())
 	}
-	var response clarifySuggestResponse
+	var response struct {
+		clarifyLoopSummaryDocument
+		Next []string `json:"next"`
+	}
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
-	// The response records the engine inferred from the helper entry's model.
-	if response.AttemptID != "clarifier_attempt_001" || response.Clarifier != "claude" || len(response.Created) != 2 {
-		t.Fatalf("unexpected clarify suggest json: %#v", response)
+	if response.Schema != clarifyLoopSummarySchema || response.RunID != runID || response.Clarifier != "claude" {
+		t.Fatalf("unexpected clarify run json: %#v", response)
+	}
+	// One open blocking question and no auto-resolution: the human is the only
+	// way forward, so the single round reports needs_human, not max_rounds.
+	if response.TerminalReason != clarifyLoopTerminalNeedsHuman || response.Converged {
+		t.Fatalf("clarify run --no-auto terminal = %q converged=%t, want needs_human", response.TerminalReason, response.Converged)
+	}
+	if len(response.Rounds) != 1 || response.Rounds[0].QuestionsCreated != 2 || response.Rounds[0].AutoResolved != 0 {
+		t.Fatalf("unexpected round summary: %#v", response.Rounds)
+	}
+	if !equalStrings(response.Next, []string{"pactum clarify show " + runID}) {
+		t.Fatalf("clarify run next = %v, want clarify show", response.Next)
 	}
 	// The run was never approved, so approval_reset stays false and is omitted.
 	if response.ApprovalReset {
@@ -164,12 +178,12 @@ func TestClarifySuggestJSONOutput(t *testing.T) {
 	if strings.Contains(stdout.String(), "approval_reset") {
 		t.Fatalf("non-approved run should omit approval_reset from JSON:\n%s", stdout.String())
 	}
-	if strings.Contains(stdout.String(), "Clarification suggestions recorded") || strings.Contains(stdout.String(), "Resolved:") {
+	if strings.Contains(stdout.String(), "Clarify loop finished") {
 		t.Fatalf("json output should not include human output:\n%s", stdout.String())
 	}
 }
 
-func TestClarifySuggestSurfacesApprovalResetOnApprovedRun(t *testing.T) {
+func TestClarifyRunNoAutoSurfacesApprovalResetOnApprovedRun(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
@@ -180,9 +194,9 @@ func TestClarifySuggestSurfacesApprovalResetOnApprovedRun(t *testing.T) {
 	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "helper"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "run", runID, "--no-auto", "--max-rounds", "1", "--reviewer", "helper"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify suggest exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify run --no-auto exited %d, stderr: %s", code, stderr.String())
 	}
 	got := stdout.String()
 	for _, want := range []string{
@@ -193,7 +207,7 @@ func TestClarifySuggestSurfacesApprovalResetOnApprovedRun(t *testing.T) {
 		"pactum contract approve " + runID,
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("clarify suggest output missing approval-reset warning %q:\n%s", want, got)
+			t.Fatalf("clarify run output missing approval-reset warning %q:\n%s", want, got)
 		}
 	}
 	if approval := readApproval(t, runPaths.ApprovalJSON); approval.Status != "pending" || approval.ContractSHA256 != nil {
@@ -212,10 +226,10 @@ func TestClarifySuggestSurfacesApprovalResetOnApprovedRun(t *testing.T) {
 	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", jsonRoot)
 
 	var jsonOut, jsonErr bytes.Buffer
-	if code := jsonApp.Run([]string{"clarify", "suggest", jsonRunID, "--reviewer", "helper", "--json"}, &jsonOut, &jsonErr); code != 0 {
-		t.Fatalf("clarify suggest --json exited %d, stderr: %s", code, jsonErr.String())
+	if code := jsonApp.Run([]string{"clarify", "run", jsonRunID, "--no-auto", "--max-rounds", "1", "--reviewer", "helper", "--json"}, &jsonOut, &jsonErr); code != 0 {
+		t.Fatalf("clarify run --no-auto --json exited %d, stderr: %s", code, jsonErr.String())
 	}
-	var response clarifySuggestResponse
+	var response clarifyLoopSummaryDocument
 	assertNoError(t, json.Unmarshal(jsonOut.Bytes(), &response))
 	if !response.ApprovalReset {
 		t.Fatalf("approved run should report approval_reset=true: %#v", response)

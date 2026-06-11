@@ -267,9 +267,9 @@ func nextCommandsForRun(paths artifacts.Paths, runID string) []string {
 		return []string{"pactum execute plan " + runID + " --agent codex"}
 	case "executed":
 		return []string{"pactum gate run " + runID}
-	case "gated":
-		return []string{"pactum review prepare " + runID}
-	case "review_prepared":
+	case "gated", "review_prepared":
+		// A gated run needs no separate preparation step: the mutating review
+		// commands self-scaffold, so both stages share the review affordance.
 		return nextReviewCommands(runPaths, runID)
 	case "review_approved":
 		// Proposals collected after approval re-block memory propose, so the
@@ -316,7 +316,7 @@ func pendingReviewProposalCount(runPaths contractRunPathSet) (int, error) {
 	return summarizeReviewProposals(buildReviewProposalViews(proposals, decisions)).Pending, nil
 }
 
-// nextReviewCommands picks the affordance for a prepared review: approval is
+// nextReviewCommands picks the review affordance for a gated run: approval is
 // only legal when the gate did not fail, every proposal is decided, and no
 // blocking finding is open, so until then the safe move is inspecting the
 // review.
@@ -353,7 +353,7 @@ func nextCommandForStatus(status string) string {
 	case "executed":
 		return "pactum gate run"
 	case "gated":
-		return "pactum review prepare"
+		return "pactum review show"
 	case "review_prepared":
 		return "pactum review approve"
 	case "review_approved":

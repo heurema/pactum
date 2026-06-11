@@ -288,11 +288,13 @@ decision the agent relayed — attribution without ceremony.
   (`reason` + `fix`), a `next` array in every mutating command's `--json`
   output and in `pactum status`, so the skill never encodes the stage state
   machine.
-- **Slice 4 — pipeline smoothing + skill rewrite** (med): `review run`
-  absorbs prepare (and possibly the loop as the canonical entry),
-  `prompt build` self-heals a stale map, fold `clarify suggest` semantics
-  into `clarify run --rounds`, then rewrite `agent-skill.md` against the
-  final grammar.
+- **Slice 4 — pipeline smoothing + skill rewrite** (M24.1, shipped):
+  `review run` absorbed the loop and the implicit review scaffold (prepare and
+  the loop spelling removed), `prompt build` self-heals a stale map
+  (`map_refresh`), the clarifier round folded into
+  `clarify run --no-auto --max-rounds 1`, recommended-answer decision verbs
+  (`clarify answer --recommended` / `--all-recommended`), and the skill
+  rewritten against the final grammar.
 
 ## Agent file-navigation arc (research-backed)
 
@@ -330,6 +332,23 @@ distillation lives in
   hunk — targets the multi-million-token review leg directly.
 
 ## Hardening / cleanup
+
+- **Gate validation command parsing + negative-match semantics** (med). The
+  gate runner tokenizes validation commands with `strings.Fields` — quote
+  blind, so a quoted pattern argument shatters into garbage args (the M24.1
+  dogfood hit this live: a quoted `rg` command exited 2 as a malformed
+  invocation). And there is no way to express the common "this pattern must
+  NOT appear" validation: `rg`/`grep` exit 1 on a clean tree, which the gate
+  reads as failure. Fix both: shell-style quote-aware tokenization, plus a
+  validation form for expected-no-match commands (or document that such
+  checks belong in test suites the gate already runs).
+- **`contract revise` removal parity** (small). Revise is append-only: a
+  broken validation command (or stale scope entry) cannot be removed through
+  the CLI — the M24.1 dogfood had to hand-edit `contract.json` and re-approve
+  to drop an unrunnable validation command, which also orphaned the completed
+  execution attempt (the approval SHA changed) and forced a re-execution.
+  Add `--remove-validation`/`--remove-*` (by index or exact text) so contract
+  repair stays inside the recorded pipeline.
 
 - **Security truth in docs + SECURITY.md** (small, P0). README still describes
   the codex builtin as plain `codex exec` while `docs/agents.md` documents the

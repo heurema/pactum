@@ -109,9 +109,6 @@ func (a App) ReviewProposeFindings(stdout io.Writer, runID string, reviewerAttem
 	if err != nil || !ok {
 		return err
 	}
-	if _, err := requireReviewPrepared(context.RunPaths, runID); err != nil {
-		return err
-	}
 
 	attemptIDs, err := resolveReviewerAttemptsForProposals(context.RunPaths, reviewerAttemptID)
 	if err != nil {
@@ -205,13 +202,9 @@ func (a App) ReviewAcceptProposal(stdout io.Writer, runID string, proposalID str
 
 // acceptReviewProposal is the shared accept write path. Provenance is explicit:
 // the CLI verb passes source "manual" with the normalized principal, the
-// review loop's auto-accept passes source "review_loop" with no principal —
+// review run's auto-accept passes source "review_loop" with no principal —
 // automatic decisions carry only their source.
 func (a App) acceptReviewProposal(stdout io.Writer, context reviewContext, runID string, proposalID string, source string, decidedBy string, jsonOutput bool) error {
-	review, err := requireReviewPrepared(context.RunPaths, runID)
-	if err != nil {
-		return err
-	}
 	proposals, decisions, err := readReviewProposalRecords(context.RunPaths)
 	if err != nil {
 		return err
@@ -228,6 +221,10 @@ func (a App) acceptReviewProposal(stdout io.Writer, context reviewContext, runID
 		return err
 	}
 	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
+	if err != nil {
+		return err
+	}
+	review, err := loadOrDeriveReviewDocument(context.RunPaths, runID, gateReport.Status)
 	if err != nil {
 		return err
 	}
@@ -298,10 +295,6 @@ func (a App) ReviewRejectProposal(stdout io.Writer, runID string, proposalID str
 	if err != nil || !ok {
 		return err
 	}
-	review, err := requireReviewPrepared(context.RunPaths, runID)
-	if err != nil {
-		return err
-	}
 	proposals, decisions, err := readReviewProposalRecords(context.RunPaths)
 	if err != nil {
 		return err
@@ -311,6 +304,14 @@ func (a App) ReviewRejectProposal(stdout io.Writer, runID string, proposalID str
 	}
 	if isProposalDecided(proposalID, decisions) {
 		return fmt.Errorf("review proposal already decided: %s", proposalID)
+	}
+	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
+	if err != nil {
+		return err
+	}
+	review, err := loadOrDeriveReviewDocument(context.RunPaths, runID, gateReport.Status)
+	if err != nil {
+		return err
 	}
 
 	now := a.nowUTC()

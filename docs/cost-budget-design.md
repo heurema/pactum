@@ -7,7 +7,7 @@ Status: **draft for review**. Supersedes the one-paragraph "Budget stop" sketch 
 ## Why
 
 pactum orchestrates paid agent CLIs (`codex`, `claude`) in one-shot runs and in an
-autonomous review loop. Today it has **zero visibility** into what a task consumes:
+autonomous review rounds (`review run`). Today it has **zero visibility** into what a task consumes:
 `ledger/usage.jsonl` is written empty, `ledger/cost.json` is hardcoded zeros,
 `budget.max_usd` is never read, and `status` prints `estimated cost: $0.00` as a
 constant.
@@ -201,7 +201,7 @@ These read the same records; no schema change.
   block. Prefer an agent-reported cost where trustworthy; otherwise compute. (claude's
   headless `-p` becomes cleanly $-denominated once Anthropic's separate Agent-SDK
   credit takes effect.)
-- **Budget stop (implemented for the review loop):** primitive is **`max_tokens` per
+- **Budget stop (implemented for the review rounds):** primitive is **`max_tokens` per
   run** (exact, no price table). Truth = post-call accumulation of the run's
   **captured** usage records; uncaptured records do not count toward the stop. At the
   start of rounds after the first, when the captured total reaches the configured

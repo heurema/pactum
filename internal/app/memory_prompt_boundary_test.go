@@ -339,7 +339,6 @@ func TestReviewerContextIncludesMemorySummaryWhenPromptBuilt(t *testing.T) {
 	runMemorySelectionCommand(t, app, "prompt", "build", runID)
 
 	writeReviewGateReportForTest(t, runPaths, runID, "passed")
-	runReviewCommand(t, app, "review", "prepare", runID)
 	runReviewCommand(t, app, "review", "plan", runID)
 
 	context := mustReadFile(t, runPaths.ReviewContextMD)
@@ -375,7 +374,6 @@ func TestMemoryBoundaryArtifactsArePortable(t *testing.T) {
 	})
 	runMemorySelectionCommand(t, app, "prompt", "build", runID)
 	writeReviewGateReportForTest(t, runPaths, runID, "passed")
-	runReviewCommand(t, app, "review", "prepare", runID)
 	runReviewCommand(t, app, "review", "plan", runID)
 
 	for name, content := range map[string]string{

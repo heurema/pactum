@@ -23,16 +23,20 @@ const (
 	reviewLoopSummaryArtifact = "review/loop-summary.json"
 
 	reviewLoopTerminalBudgetExceeded = "budget_exceeded"
+	reviewLoopTerminalFindingsOpen   = "findings_open"
 )
 
-type reviewLoopOptions struct {
+type reviewRunOptions struct {
 	Reviewer    string
 	Agent       string
 	MaxRounds   int
 	Patience    int
 	CleanRounds int
-	Timeout     time.Duration
-	JSONOutput  bool
+	// NoFix never invokes the fixer: the first round that leaves open blocking
+	// findings ends the run as findings_open instead of starting a fix round.
+	NoFix      bool
+	Timeout    time.Duration
+	JSONOutput bool
 }
 
 type reviewLoopSettings struct {
@@ -141,12 +145,17 @@ func (w *synchronizedWriter) Write(p []byte) (int, error) {
 	return w.w.Write(p)
 }
 
-func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, options reviewLoopOptions) error {
+// ReviewRun drives reviewer/fixer rounds until convergence: each round fans the
+// reviewer panel out across the fixed lenses, accepts parsed proposals into
+// review findings, and — while open blocking findings remain — runs the fixer,
+// applies its outcomes, and re-gates. The review record is scaffolded
+// implicitly when the gate report exists.
+func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, options reviewRunOptions) error {
 	context, ok, err := a.loadReviewContext(io.Discard, runID)
 	if err != nil || !ok {
 		return err
 	}
-	if _, err := requireReviewPrepared(context.RunPaths, runID); err != nil {
+	if _, err := a.ensureReviewRecord(context, "run review"); err != nil {
 		return err
 	}
 	options.Timeout, err = resolveIdleTimeout(context.Paths.Config, options.Timeout)
@@ -331,6 +340,23 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 			break
 		}
 
+		// With --no-fix nothing can change the tree, so further reviewer-only
+		// rounds would only churn: stop at the first round that leaves open
+		// blocking findings and hand the review to the human.
+		if options.NoFix {
+			roundSummary.UnchangedFingerprintStreak = unchangedFingerprintStreak
+			fingerprint, err := a.reviewLoopWorkingTreeFingerprint(context)
+			if err != nil {
+				summary.Rounds = append(summary.Rounds, roundSummary)
+				loopErr = err
+				break
+			}
+			roundSummary.WorkingTreeFingerprint = fingerprint
+			summary.Rounds = append(summary.Rounds, roundSummary)
+			summary.TerminalReason = reviewLoopTerminalFindingsOpen
+			break
+		}
+
 		fingerprintBefore, err := a.reviewLoopWorkingTreeFingerprint(context)
 		if err != nil {
 			summary.Rounds = append(summary.Rounds, roundSummary)
@@ -457,7 +483,7 @@ type reviewLoopResponse struct {
 	Next []string `json:"next"`
 }
 
-func (a App) resolveReviewLoopSettings(context reviewContext, options reviewLoopOptions) (reviewLoopSettings, error) {
+func (a App) resolveReviewLoopSettings(context reviewContext, options reviewRunOptions) (reviewLoopSettings, error) {
 	config, err := readConfig(context.Paths.Config)
 	if err != nil {
 		return reviewLoopSettings{}, err
@@ -605,7 +631,7 @@ func reviewLoopReviewerNames(reviewers []reviewLoopReviewer) []string {
 
 func (a App) runReviewLoopReviewRound(context reviewContext, liveOutput io.Writer, runID string, reviewers []reviewLoopReviewer, timeout time.Duration) (reviewLoopReviewRoundResult, error) {
 	if len(reviewers) == 0 {
-		return reviewLoopReviewRoundResult{}, fmt.Errorf("review loop requires at least one reviewer")
+		return reviewLoopReviewRoundResult{}, fmt.Errorf("review run requires at least one reviewer")
 	}
 	prep, err := a.prepareReviewerForAgent(context, reviewers[0].Agent, reviewers[0].ModelSpec, "run reviewer")
 	if err != nil {
@@ -1008,7 +1034,7 @@ func reviewLoopGitHead(root string) string {
 }
 
 func writeReviewLoopSummary(stdout io.Writer, summary reviewLoopSummaryDocument) {
-	fmt.Fprintln(stdout, "Review loop finished")
+	fmt.Fprintln(stdout, "Review run finished")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", summary.RunID)

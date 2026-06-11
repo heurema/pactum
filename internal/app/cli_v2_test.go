@@ -334,11 +334,6 @@ func TestReviewResolvePrefixRouting(t *testing.T) {
 	app, _, runID, _ := setupRunWithGateReport(t, root, "passed")
 
 	var stdout, stderr bytes.Buffer
-	if code := app.Run([]string{"review", "prepare", runID}, &stdout, &stderr); code != 0 {
-		t.Fatalf("review prepare exited %d, stderr: %s", code, stderr.String())
-	}
-	stdout.Reset()
-	stderr.Reset()
 	if code := app.Run([]string{"review", "finding", "add", runID, "needs work", "--blocking"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("review add-finding exited %d, stderr: %s", code, stderr.String())
 	}
@@ -594,8 +589,6 @@ func TestRemovedConfirmationFlagsAreRejected(t *testing.T) {
 		{"execute run", []string{"execute", "run", "--yes"}, "--yes"},
 		{"review run", []string{"review", "run", "--yes"}, "--yes"},
 		{"review fix run", []string{"review", "fix", "run", "--yes"}, "--yes"},
-		{"review loop", []string{"review", "loop", "--yes"}, "--yes"},
-		{"clarify suggest", []string{"clarify", "suggest", "--yes"}, "--yes"},
 		{"clarify run", []string{"clarify", "run", "--yes"}, "--yes"},
 		{"contract draft", []string{"contract", "draft", "--yes"}, "--yes"},
 		{"task new --clarify", []string{"task", "new", "some task", "--clarify", "--yes"}, "--yes"},
@@ -622,8 +615,6 @@ func TestHelpDoesNotMentionRemovedConfirmationFlags(t *testing.T) {
 		{"execute", "run", "--help"},
 		{"review", "run", "--help"},
 		{"review", "fix", "run", "--help"},
-		{"review", "loop", "--help"},
-		{"clarify", "suggest", "--help"},
 		{"clarify", "run", "--help"},
 		{"contract", "draft", "--help"},
 		{"task", "new", "--help"},

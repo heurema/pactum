@@ -49,7 +49,7 @@ func resolveExecutorEntry(config configFile, name string) (agentRegistryEntry, e
 }
 
 // resolveReviewerEntry picks the registry entry for a reviewer-role
-// invocation (review, clarify suggest, contract draft): an explicit name
+// invocation (review, clarifier round, contract draft): an explicit name
 // resolves against the registry; an omitted name keeps cross-model semantics
 // against inferred engines — the first entry whose engine differs from the
 // run executor's, falling back to the first entry.
@@ -59,7 +59,7 @@ func resolveReviewerEntry(config configFile, context reviewContext, name string)
 	}
 	executorEngine, ok := latestExecutionExecutorName(context)
 	if !ok {
-		// No execution attempt yet (clarify suggest and contract draft run
+		// No execution attempt yet (clarifier rounds and contract draft run
 		// before execution): the executor that would run is the default — the
 		// first registry entry.
 		engine, err := registryEntryEngine(config.Agents[0])

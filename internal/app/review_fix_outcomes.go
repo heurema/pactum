@@ -45,7 +45,14 @@ func (a App) ReviewApplyFixOutcomes(stdout io.Writer, runID string, fixerAttempt
 	if err != nil || !ok {
 		return err
 	}
-	review, err := requireReviewPrepared(context.RunPaths, runID)
+	if !isRegularFile(context.RunPaths.GateReportJSON) {
+		return gateReportMissingError("apply review fix outcomes", runID)
+	}
+	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
+	if err != nil {
+		return err
+	}
+	review, err := loadOrDeriveReviewDocument(context.RunPaths, runID, gateReport.Status)
 	if err != nil {
 		return err
 	}

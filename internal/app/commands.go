@@ -65,6 +65,33 @@ func (c *clarifyAddCmd) Run(r *runner) error {
 
 func (c *clarifyAnswerCmd) Run(r *runner) error {
 	explicitRun, rest := splitLeadingRunID(c.Args)
+	if c.Recommended && c.AllRecommended {
+		return errors.New("pass either --recommended or --all-recommended, not both")
+	}
+	if c.AllRecommended {
+		if len(rest) != 0 {
+			return errors.New("usage: pactum clarify answer [run_id] --all-recommended")
+		}
+		runID, err := r.App.resolveRunArgMutating(explicitRun, false)
+		if err != nil {
+			return err
+		}
+		return r.App.ClarifyAnswerAllRecommended(r.Stdout, runID, c.By, c.JSONOutput)
+	}
+	if c.Recommended {
+		if len(rest) != 1 {
+			return errors.New("usage: pactum clarify answer [run_id] <question_id> --recommended")
+		}
+		questionID := rest[0]
+		if !strings.HasPrefix(questionID, "q_") {
+			return fmt.Errorf("expected a question id (q_...), got %q", questionID)
+		}
+		runID, err := r.App.resolveRunArgMutating(explicitRun, false)
+		if err != nil {
+			return err
+		}
+		return r.App.ClarifyAnswerRecommended(r.Stdout, runID, questionID, c.By, c.JSONOutput)
+	}
 	if len(rest) != 2 {
 		return errors.New("usage: pactum clarify answer [run_id] <question_id> <answer>")
 	}
@@ -79,14 +106,6 @@ func (c *clarifyAnswerCmd) Run(r *runner) error {
 	return r.App.ClarifyAnswer(r.Stdout, runID, questionID, answer, c.By, c.JSONOutput)
 }
 
-func (c *clarifySuggestCmd) Run(r *runner) error {
-	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
-	if err != nil {
-		return err
-	}
-	return r.App.ClarifySuggest(r.Stdout, r.Stderr, runID, c.Reviewer, c.Timeout, c.JSONOutput)
-}
-
 func (c *clarifyRunCmd) Run(r *runner) error {
 	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
 	if err != nil {
@@ -95,6 +114,7 @@ func (c *clarifyRunCmd) Run(r *runner) error {
 	return r.App.ClarifyLoop(r.Stdout, r.Stderr, runID, clarifyLoopOptions{
 		Reviewer:   c.Reviewer,
 		MaxRounds:  c.MaxRounds,
+		NoAuto:     c.NoAuto,
 		Timeout:    c.Timeout,
 		JSONOutput: c.JSONOutput,
 	})
@@ -233,14 +253,6 @@ func (c *gateShowCmd) Run(r *runner) error {
 	return r.App.GateShow(r.Stdout, runID, c.JSONOutput)
 }
 
-func (c *reviewPrepareCmd) Run(r *runner) error {
-	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
-	if err != nil {
-		return err
-	}
-	return r.App.ReviewPrepare(r.Stdout, runID, c.JSONOutput)
-}
-
 func (c *reviewStatusCmd) Run(r *runner) error {
 	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
 	if err != nil || !ok {
@@ -314,7 +326,16 @@ func (c *reviewRunCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	return r.App.ReviewRun(r.Stdout, r.Stderr, runID, c.Reviewer, c.Timeout, c.JSONOutput)
+	return r.App.ReviewRun(r.Stdout, r.Stderr, runID, reviewRunOptions{
+		Reviewer:    c.Reviewer,
+		Agent:       c.Agent,
+		MaxRounds:   c.MaxRounds,
+		Patience:    c.Patience,
+		CleanRounds: c.CleanRounds,
+		NoFix:       c.NoFix,
+		Timeout:     c.Timeout,
+		JSONOutput:  c.JSONOutput,
+	})
 }
 
 func (c *reviewFixRunCmd) Run(r *runner) error {
@@ -323,22 +344,6 @@ func (c *reviewFixRunCmd) Run(r *runner) error {
 		return err
 	}
 	return r.App.ReviewFix(r.Stdout, r.Stderr, runID, c.Agent, c.Timeout, c.JSONOutput)
-}
-
-func (c *reviewLoopCmd) Run(r *runner) error {
-	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
-	if err != nil {
-		return err
-	}
-	return r.App.ReviewLoop(r.Stdout, r.Stderr, runID, reviewLoopOptions{
-		Reviewer:    c.Reviewer,
-		Agent:       c.Agent,
-		MaxRounds:   c.MaxRounds,
-		Patience:    c.Patience,
-		CleanRounds: c.CleanRounds,
-		Timeout:     c.Timeout,
-		JSONOutput:  c.JSONOutput,
-	})
 }
 
 func (c *reviewProposalCollectCmd) Run(r *runner) error {

@@ -80,7 +80,7 @@ type RunRequest struct {
 	// transport ignores it — the pin is already applied to the agent CLI args
 	// via ApplyModelSpec. A zero spec means unpinned.
 	Model ModelSpec
-	// ReadOnly marks the attempt as a read-only stage (review, clarify suggest,
+	// ReadOnly marks the attempt as a read-only stage (review, clarifier round,
 	// contract draft). The ACP transport denies WriteTextFile and refuses
 	// permission requests instead of auto-approving; the CLI transport ignores
 	// it — read-only-ness is already baked into the reviewer descriptors (e.g.

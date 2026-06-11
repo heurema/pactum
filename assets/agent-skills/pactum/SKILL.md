@@ -31,17 +31,19 @@ reference files next to it — **read them with your file tools before acting**:
   `references/install.md`; do not continue until `which pactum` succeeds.
 - **Do not run `pactum execute run` by default.** The default stop point is
   `pactum execute plan`.
-- **Do not run `pactum review run` by default.**
+- **Do not run `pactum review run` by default.** It drives reviewer rounds and,
+  unless `--no-fix` is set, a **write-enabled fixer**.
 - Agent-running commands never prompt: running one IS the approval. Run them
   only after the user has explicitly approved unsandboxed, direct agent
-  execution. Pactum runs agents as real subprocesses; this is not sandboxed.
+  execution. Pactum runs agents as real subprocesses; this is not sandboxed
+  (see `SECURITY.md` in the Pactum repository).
 - Do not commit `.heurema/` — it is generated, machine-specific workspace state.
 - Source files are the source of truth. Pactum's map, wiki, code-items, and
   memory are navigation and audit context, not semantic truth — verify against
   the actual files before relying on them.
 - Never hide a non-zero command exit; report failures with their output.
 
-## Machine affordances (read `next` and `fix`, don't memorize stage order)
+## Machine affordances (read `next` and `error.fix`, don't memorize stage order)
 
 With `--json`, Pactum announces the legal moves:
 
@@ -50,13 +52,16 @@ With `--json`, Pactum announces the legal moves:
   commands for the run's current stage. `next: []` means the next move needs
   a human (for example, real execution approval).
 - Failures emit a `pactum.error.v1` envelope: `error.code` is a stable reason
-  (`contract_not_approved`, `prompt_not_built`, ...), and `error.fix`, when
-  present, is the exact remedial command to run. Some envelopes also carry
-  `next` with safe inspection commands.
+  (`contract_not_approved`, `prompt_not_built`, `gate_report_missing`, ...),
+  and `error.fix`, when present, is the exact remedial command to run. Some
+  envelopes also carry `next` with safe inspection commands.
 - Exit-0 "not ready" responses (`pactum.not_ready.v1`) carry the remedial
-  command in `fix` (and the older `suggested_command`).
+  command in `fix`.
 
-Prefer `fix`/`next` over the older `suggested_command`/`next_command` fields.
+Decision verbs (`clarify answer`, `contract accept`, `contract approve`,
+`review proposal accept`/`reject`, `review approve`, `memory accept`) relay an
+explicit human decision — pass `--by <principal>` to record whose decision you
+are relaying.
 
 ## Safe workflow (skeleton)
 
@@ -69,12 +74,15 @@ Read `references/workflow.md` for the detailed version. The safe default flow:
 5. Targeted `pactum search "<term>"` (identifiers, paths, domain terms; with
    `--kind wiki`, `--kind code_item`, `--kind import`) and read the relevant
    `map/wiki/` pages and source files.
-6. `pactum clarify add "..." --blocking` / `pactum clarify answer q_001 "..."`
-   if anything is ambiguous.
+6. `pactum clarify add "..." --blocking`, then answer: a typed
+   `pactum clarify answer q_001 "..."`, or relay the clarifier's stored
+   recommendation with `pactum clarify answer q_001 --recommended`
+   (`--all-recommended` answers every open recommended question).
 7. `pactum contract revise` with goal, in-scope, out-of-scope, acceptance
    criteria, and validation commands.
 8. `pactum contract approve --by manual` — only after the scope is clear.
-9. `pactum prompt build` then `pactum prompt show`.
+9. `pactum prompt build` then `pactum prompt show`. A stale project map is
+   self-healed: `prompt build` refreshes it and reports the refresh.
 10. `pactum execute plan --agent codex` — the safe stop point.
 11. Report: current run id, relevant files, contract summary, the plan
     command, and the recommended next action.

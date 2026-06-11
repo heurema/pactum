@@ -74,7 +74,7 @@ func TestMemoryProposeBlocksIfGateReportMissing(t *testing.T) {
 	}
 }
 
-func TestMemoryProposeBlocksIfReviewNotPrepared(t *testing.T) {
+func TestMemoryProposeBlocksIfNoReviewRecordExists(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedPromptContract(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
@@ -83,10 +83,10 @@ func TestMemoryProposeBlocksIfReviewNotPrepared(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"memory", "propose", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("memory propose should fail before review is prepared")
+		t.Fatalf("memory propose should fail on a gated run with no review record")
 	}
-	if got := stderr.String(); !strings.Contains(got, "cannot propose memory: review is not prepared") {
-		t.Fatalf("review prepared stderr mismatch:\n%s", got)
+	if got := stderr.String(); !strings.Contains(got, "cannot propose memory: review is not approved") {
+		t.Fatalf("derived unapproved review stderr mismatch:\n%s", got)
 	}
 }
 
@@ -304,7 +304,6 @@ func TestMemoryArtifactsArePortable(t *testing.T) {
 	app, paths, runID := runSuccessfulHelperAttempt(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	writeMemoryGateReportForTest(t, runPaths, runID)
-	runMemoryCommand(t, app, "review", "prepare", runID)
 	runMemoryCommand(t, app, "review", "finding", "add", runID, "path should be sanitized from "+root, "--file", "internal/app/memory.go", "--line", "42")
 	runMemoryCommand(t, app, "review", "finding", "resolve", runID, "f_001", "--note", "fixed in "+root)
 	runMemoryCommand(t, app, "review", "approve", runID)
@@ -347,7 +346,6 @@ func setupApprovedReviewedMemoryRun(t *testing.T, root string) (App, artifacts.P
 	app, paths, runID := runSuccessfulHelperAttempt(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	writeMemoryGateReportForTest(t, runPaths, runID)
-	runMemoryCommand(t, app, "review", "prepare", runID)
 	runMemoryCommand(t, app, "review", "finding", "add", runID, "memory candidate should include resolved findings", "--file", "internal/app/memory.go", "--line", "12")
 	runMemoryCommand(t, app, "review", "finding", "resolve", runID, "f_001", "--note", "covered by deterministic memory tests")
 	appendReviewProposalForTest(t, runPaths, runID, "p_001", "accepted proposal summary", false)
