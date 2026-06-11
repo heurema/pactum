@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1",
+  "id": "command_003",
+  "command": "rg \"review loop|review prepare|clarify suggest|review_not_prepared|project_map_stale\" docs assets/agent-skills README.md internal/app",
+  "started_at": "2026-06-11T17:30:46.008189Z",
+  "finished_at": "2026-06-11T17:30:46.025797Z",
+  "duration_ms": 17,
+  "exit_code": 2,
+  "timed_out": false,
+  "stdout": "gate/validation/command_003/stdout.log",
+  "stderr": "gate/validation/command_003/stderr.log"
+}

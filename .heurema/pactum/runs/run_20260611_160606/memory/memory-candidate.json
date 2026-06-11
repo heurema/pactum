@@ -1,0 +1,459 @@
+{
+  "schema": "pactum.memory_candidate.v1",
+  "run_id": "run_20260611_160606",
+  "created_at": "2026-06-11T17:48:50Z",
+  "source": "deterministic",
+  "status": "proposed",
+  "contract": {
+    "goal": "Smooth the pipeline so no command is pure ritual, then compress the agent skill against the final grammar. This is the last grammar break; hard removals, no aliases. (1) review run absorbs the loop: pactum review run becomes today's review loop semantics — implicit prepare when the gate report exists, panel-times-lenses rounds, fixer, severity-gated convergence; the single panel round without a fixer remains available as review run --no-fix --max-rounds 1; the review loop command is removed (parser error). (2) review prepare is removed: review run prepares implicitly, and manual review mutations (review finding add) self-scaffold the review when a gate report exists; the review_not_prepared error code disappears — the remaining precondition is gate_report_missing, and affordance fix/next values must reflect that. (3) prompt build self-heals a stale project map: when the map is stale it runs the refresh itself, says so in human output, exposes it in --json, and records it in the prompt manifest; the project_map_stale failure disappears from prompt build (other commands keep it). (4) clarify suggest is removed: its semantics fold into clarify run --no-auto --max-rounds 1 (new --no-auto flag disables auto-resolution of high-confidence recommendations). (5) clarify answer gains --recommended: pactum clarify answer \u003cq_id\u003e --recommended records that question's stored recommended answer as the answer (error when the question has no recommendation), and pactum clarify answer --all-recommended answers every open question that carries a recommendation, skipping and reporting those without; both are decision verbs honoring --by and recording answer provenance distinguishable from a typed answer. (6) The skill is rewritten against the final grammar: assets/agent-skills/pactum/SKILL.md, references/workflow.md, references/safety.md, and docs/agent-skill.md compress to the final convention — every stage exposes run and show, decision verbs relay explicit human decisions with --by, agents read next and error.fix instead of memorizing stage order, execute run is unsandboxed per SECURITY.md. (7) All Next: hints, affordance next/fix command strings, docs (flow.md, agents.md, README if affected), and tests speak only the new surface; negative parser coverage for the removed spellings (review loop, review prepare, clarify suggest) and forbidden-phrase guards in the docs/skill tests. Existing JSON schema names and artifact paths unchanged; review plan and review fix run/apply stay as surgical commands.",
+    "in_scope": [
+      "Remove the `pactum review loop`, `pactum review prepare`, and `pactum clarify suggest` command spellings from the CLI grammar so they fail as parser errors with no aliases.",
+      "Make `pactum review run` absorb the existing review loop behavior, including reviewer panel and lenses rounds, fixer invocation, convergence over open blocking findings, and support for `--reviewer`, `--agent`, `--max-rounds`, `--patience`, `--clean-rounds`, `--timeout`, `--json`, and new `--no-fix`.",
+      "Make `review run`, `review finding add`, and `review approve` auto-scaffold `review/review.json` when `gate/report.json` exists; keep `review status/show` read-only and show a derived empty pending review state when no review artifact exists.",
+      "Remove `review_not_prepared` as a user-facing error path and update remaining review preconditions, affordance `next`, and affordance `fix` values to use `gate_report_missing` or ordinary missing-record errors as appropriate.",
+      "Make `pactum prompt build` refresh a stale project map itself, report the refresh in human output, expose a `map_refresh` object in `--json`, and write the same additive object to `contract/prompt-manifest.json` while preserving existing schema names and artifact paths.",
+      "Replace `clarify suggest` behavior with `pactum clarify run --no-auto --max-rounds 1`, using the clarify-loop output and `clarify/loop-summary.json` artifact surface.",
+      "Add `pactum clarify answer \u003cq_id\u003e --recommended` and `pactum clarify answer --all-recommended` decision verbs that honor `--by`, record recommended answers, preserve typed/manual and auto-loop provenance, and persist distinguishable recommended-answer provenance.",
+      "Rewrite `assets/agent-skills/pactum/SKILL.md`, `assets/agent-skills/pactum/references/workflow.md`, `assets/agent-skills/pactum/references/safety.md`, and `docs/agent-skill.md` to describe only the final grammar and current safety model.",
+      "Update `docs/flow.md`, `docs/agents.md`, `README.md` if affected, CLI help, `Next:` hints, affordance command strings, and tests so they mention only the new command surface."
+    ],
+    "out_of_scope": [
+      "Do not add broad new stage aliases or unrelated command families such as `pactum contract run`, `pactum prompt run`, or `pactum memory run`.",
+      "Do not rename unrelated existing stage verbs such as `prompt build`, `execute plan`, `gate run`, `memory propose`, or `memory accept`.",
+      "Do not change existing JSON schema names or artifact paths except for additive fields required by this contract.",
+      "Do not introduce a new severity threshold for review convergence; convergence and fixer invocation remain based on open findings with `blocking=true`.",
+      "Do not change `review plan` or the surgical `review fix run/apply` commands except where needed for help text, precondition errors, and removed `review prepare` references.",
+      "Do not preserve compatibility aliases for `review loop`, `review prepare`, or `clarify suggest`."
+    ],
+    "acceptance_criteria": [
+      "`pactum review loop`, `pactum review prepare`, and `pactum clarify suggest` fail at parse time, and negative CLI grammar tests cover all three removed spellings.",
+      "`pactum review run` accepts the former loop control flags plus `--no-fix`, runs loop semantics by default, writes the loop summary, and converges based on open blocking findings rather than raw severity values.",
+      "`pactum review run --no-fix --max-rounds 1` runs one reviewer panel/lenses pass, accepts valid finding proposals into review findings, skips fixer execution, exits 0 when findings remain open, records a terminal reason such as `findings_open` or `no_fix`, and points `next` to `pactum review show \u003crun_id\u003e`.",
+      "`pactum review run --no-fix --max-rounds 2` stops after the first round that leaves open blocking findings instead of continuing reviewer-only churn.",
+      "`review run`, `review finding add`, and `review approve` create the review scaffold when `gate/report.json` exists; `review finding resolve`, proposal accept/reject, and `review fix run/apply` still require relevant existing review records.",
+      "`review status` and `review show` do not mutate files and show a derived empty pending review state for a gated run with no review artifact.",
+      "`project_map_stale` is no longer a `prompt build` failure; when a stale map is detected, `prompt build` refreshes the map, human output names the refresh and new map run id, `--json` includes `map_refresh`, and `contract/prompt-manifest.json` includes the same additive `map_refresh` object.",
+      "`map_refresh` is `{ \"triggered\": false }` when no prompt-build refresh was needed, and `{ \"triggered\": true, \"reason\": \"project_map_stale\", \"previous_map_run_id\": \"...\", \"run_id\": \"...\" }` when a refresh occurred.",
+      "`pactum clarify run --no-auto --max-rounds 1` runs one clarifier round, records created questions, performs no auto-resolution, writes `clarify/loop-summary.json`, and reports `terminal_reason: needs_human` when open blocking questions remain.",
+      "`pactum clarify answer \u003cq_id\u003e --recommended` errors when the question is not currently open, has no non-empty stored recommendation, or is blocked by unanswered dependencies; it records `source: manual_recommended` in `answers.jsonl` and `source: manual_recommended_answer` in `decisions.jsonl` when successful.",
+      "`pactum clarify answer --all-recommended` answers currently open recommended questions in dependency order, skips open questions without recommendations and dependency-blocked questions, reports skipped IDs in human and JSON output, and records `source: manual_all_recommended` / `manual_all_recommended_answer` for each recorded answer.",
+      "All recommended-answer decision paths normalize and persist `decided_by` from `--by`.",
+      "Docs and agent skill files contain no instructions to use `review loop`, `review prepare`, or `clarify suggest`, and describe agents reading `next` and `error.fix` rather than memorizing stage order.",
+      "`execute run` safety language in the skill and docs matches `SECURITY.md` and states that real agent execution is unsandboxed."
+    ],
+    "validation_commands": [
+      "make check",
+      "go test ./..."
+    ]
+  },
+  "outcome": {
+    "gate_status": "passed",
+    "review_status": "approved",
+    "execution_exit_code": 0,
+    "validation_passed": true,
+    "changes_need_review": false
+  },
+  "changes": {
+    "changed_files": [],
+    "new_files": [],
+    "missing_files": []
+  },
+  "clarifications": [
+    {
+      "question_id": "q_001",
+      "question": "When `review prepare` is removed, which review commands should auto-create `review/review.json` when a gate report exists: only `review run` and `review finding add`, or all mutating review commands that currently call `requireReviewPrepared` such as `review approve`, `review finding resolve`, proposal decisions, and `review fix run/apply`?",
+      "answer": "Auto-scaffold the review for `review run`, `review finding add`, and `review approve` whenever `gate/report.json` exists; keep commands that require existing records, such as `review finding resolve`, proposal accept/reject, and `review fix run/apply`, failing with ordinary record/precondition errors if there is no relevant review data. `review status/show` should not mutate; on a gated run with no review artifact they should show the derived empty pending review state rather than suggesting `review prepare`."
+    },
+    {
+      "question_id": "q_002",
+      "question": "What does `severity-gated convergence` mean in concrete repository terms: should convergence and fixer invocation be gated by the existing `finding.blocking` boolean, by `severity` values (`low`, `medium`, `high`, `critical`), or by a new severity threshold that maps severities to blocking behavior?",
+      "answer": "Keep convergence and fixer invocation gated by open blocking findings, not raw severity. Preserve severity as finding metadata and allow reviewer/proposal logic to set `blocking=true` for findings severe enough to block. Do not introduce a new severity threshold in this grammar break."
+    },
+    {
+      "question_id": "q_003",
+      "question": "For `review run --no-fix --max-rounds 1`, if the reviewer panel finds new blocking findings, should the command accept those proposals into `findings.jsonl` and exit successfully with an open-review terminal reason, or should it fail nonzero because convergence was not reached?",
+      "answer": "`review run --no-fix --max-rounds 1` should run the panel/lenses, parse and accept valid proposals into review findings, skip fixer execution, write the loop summary, and exit 0 with a terminal reason such as `findings_open`/`no_fix`. Its `next` should point to `pactum review show \u003crun_id\u003e` while blocking findings remain."
+    },
+    {
+      "question_id": "q_004",
+      "question": "For `clarify answer --all-recommended`, what should happen when the run has a mix of open questions with recommendations, open questions without recommendations, already answered questions, and questions whose `depends_on` prerequisites are still unanswered?",
+      "answer": "`--all-recommended` should consider only currently open questions. It should answer open questions with a non-empty stored recommendation in dependency order, skip open questions without recommendations, skip dependency-blocked questions until prerequisites are answered, report all skipped IDs in human and JSON output, and exit 0 unless no answers were recorded and at least one requested single-question operation would have been an error."
+    },
+    {
+      "question_id": "q_005",
+      "question": "How exactly should `prompt build` record that it self-healed a stale project map in machine-readable output and `contract/prompt-manifest.json` while keeping existing schema names and artifact paths unchanged?",
+      "answer": "Keep `schema: pactum.executor_prompt.v1` and all artifact paths unchanged, but add an additive `map_refresh` object to the prompt manifest and `prompt build --json` response: `{ \"triggered\": true, \"reason\": \"project_map_stale\", \"previous_map_run_id\": \"...\", \"run_id\": \"...\" }`; use `{ \"triggered\": false }` when no refresh was needed. Human output should state that the stale project map was refreshed and show the new map run id."
+    },
+    {
+      "question_id": "q_006",
+      "question": "In the skill rewrite phrase “every stage exposes run and show,” what concrete CLI scope is intended: a docs-only convention using the actual final verbs, or literal new command families such as `pactum contract run`, `pactum prompt run`, and `pactum memory run`?",
+      "answer": "Do not add broad new `run/show` aliases or rename unrelated stage verbs in this grammar break. Scope the CLI changes to the explicitly listed surface: `review run` absorbs loop behavior, `clarify run --no-auto --max-rounds 1` replaces `clarify suggest`, removed commands become parser errors, and docs/skill text should describe each stage using its actual final commands."
+    },
+    {
+      "question_id": "q_007",
+      "question": "For the concrete replacement scenario `pactum clarify run --no-auto --max-rounds 1` where the clarifier creates one open blocking medium-confidence question, should the command report a clarify-loop summary or preserve the old `clarify suggest` top-level response shape?",
+      "answer": "`clarify run --no-auto --max-rounds 1` should use the existing clarify-loop output and artifact surface, not preserve a separate suggest response. It should run one clarifier round, record created questions, skip all auto-resolution, write `clarify/loop-summary.json`, and report `terminal_reason: needs_human` when open blocking questions remain rather than reporting `max_rounds` merely because the one-round cap was reached."
+    },
+    {
+      "question_id": "q_008",
+      "question": "What exact provenance values should `clarify answer \u003cq_id\u003e --recommended` and `clarify answer --all-recommended` persist in `answers.jsonl` and `decisions.jsonl`?",
+      "answer": "Keep typed manual and auto-loop provenance unchanged. For `--recommended`, write answer `source: manual_recommended` and decision `source: manual_recommended_answer` with normalized `decided_by` from `--by`. For `--all-recommended`, write answer `source: manual_all_recommended` and decision `source: manual_all_recommended_answer` for each recorded answer, also with normalized `decided_by` from `--by`."
+    },
+    {
+      "question_id": "q_009",
+      "question": "For `pactum review run --no-fix --max-rounds 2`, if round 1 accepts an open blocking finding, should it stop immediately because no fixer can change the tree, continue reviewer-only rounds until `max_rounds`, or reject that flag combination?",
+      "answer": "Allow the combination, but define `--no-fix` as never invoking the fixer and stopping after the first round that leaves open blocking findings, with a terminal reason such as `findings_open` or `no_fix`. If the round has no open blocking findings, use the normal clean/resolved behavior. Document `--no-fix --max-rounds 1` as the intended manual panel-pass spelling."
+    },
+    {
+      "question_id": "q_010",
+      "question": "When `review run` absorbs `review loop`, which loop controls should move onto `review run`: the full existing loop control surface (`--agent`, `--max-rounds`, `--patience`, `--clean-rounds`, `--timeout`, `--reviewer`, `--json`) plus new `--no-fix`, or only the flags explicitly named in the draft (`--no-fix` and `--max-rounds`)?",
+      "answer": "Move the existing `review loop` control surface onto `review run`: support `--reviewer`, `--agent`, `--max-rounds`, `--patience`, `--clean-rounds`, `--timeout`, and `--json`, and add `--no-fix`. Remove `review loop` entirely as a parser error. Keep `review plan` as the safe reviewer-only preparation command and keep `review fix run/apply` as surgical commands."
+    },
+    {
+      "question_id": "q_011",
+      "question": "For `pactum clarify answer \u003cq_id\u003e --recommended`, what should happen when the target question already has an answer, or when it has a stored recommended answer but its `depends_on` prerequisites are still unanswered?",
+      "answer": "`--recommended` should require the question to be currently open, have a non-empty stored `recommended_answer`, and not be blocked by unanswered `depends_on` prerequisites. If the question is already answered, return an error rather than creating a revision. If dependencies are unanswered, return an error pointing the user to `pactum clarify show \u003crun_id\u003e`; a typed `clarify answer` remains the escape hatch for an explicit human-authored answer."
+    }
+  ],
+  "review": {
+    "findings": [
+      {
+        "id": "f_001",
+        "message": "Gate validation runner tokenizes commands with strings.Fields (quote-blind), so the contract's quoted rg validation command executes as pattern '\"review' with the remaining pattern fragments treated as nonexistent paths. rg exits 2 every time, the gate permanently reports failed for this contract, and review approval is blocked. The intended forbidden-phrase check never actually ran.",
+        "severity": "medium",
+        "category": "validation",
+        "file": "internal/app/gate.go",
+        "line": 535,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_002",
+        "message": "Gate validation command_003 never tested the contract's intent: the gate splits commands with strings.Fields (no shell-quote handling), so the quoted rg pattern fragmented — rg searched for the literal pattern '\"review' and treated 'loop|review', 'prepare|clarify', 'suggest|review_not_prepared|project_map_stale\"' as file paths, exiting 2 with 'No such file or directory'. Independently, the command's intent is zero matches, but rg exits 1 on zero matches and the gate treats nonzero exit as failure — so this command structurally fails on a clean tree. The run cannot converge through a passing gate with this command as written; replace it (e.g. invert the exit code) or accept the gate manually.",
+        "severity": "medium",
+        "category": "validation",
+        "file": "internal/app/gate.go",
+        "line": 535,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_003",
+        "message": "Removed-grammar phrases remain in docs outside the test guards: docs/real-agent-execution-dogfood.md lines 65/119/122 still name 'pactum review prepare' and 'review prepare' (file untouched by this change), and docs/backlog.md lines 154/190/379/559/562 keep 'clarify suggest' plus 'review loop' concept mentions (file edited by this change, mentions kept as historical record). The contract's rg validation sweeps all of docs and contract assumption 3 expects a human review of remaining matches — which never happened because command_003 misfired. Human should accept these as intentional historical fixtures or scope the validation command to the guarded doc set.",
+        "severity": "low",
+        "category": "scope",
+        "file": "docs/real-agent-execution-dogfood.md",
+        "line": 65,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_004",
+        "message": "Acceptance criterion 'review finding resolve, proposal accept/reject, and review fix run/apply still require relevant existing review records' has no test at the new boundary. requireReviewPrepared was removed from these paths and the old *BeforeReviewPreparedFails tests were deleted without replacements that run these commands on a gated run with no review artifacts. All current tests pre-scaffold via scaffoldReviewForTest, so nothing pins that these commands fail with ordinary missing-record errors and do not self-scaffold review/review.json; switching them to ensureReviewRecord would regress the criterion with tests green.",
+        "severity": "medium",
+        "category": "quality",
+        "file": "internal/app/review.go",
+        "line": 483,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_005",
+        "message": "Four new hand-written CLI error paths in clarifyAnswerCmd.Run are untested: the --recommended/--all-recommended conflict (line 69), the --all-recommended usage string (line 73), the --recommended usage string (line 83), and the q_ prefix check in the --recommended branch (line 87). TestUsageErrorsAdvertiseNewGrammar (cli_grammar_test.go:169) exists to pin every hand-written usage-error string but was not extended with the new strings.",
+        "severity": "low",
+        "category": "quality",
+        "file": "internal/app/commands.go",
+        "line": 69,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_006",
+        "message": "Constant reviewerLastResultArtifact is dead code: its only consumer (writeReviewRun, deleted with the old reviewer-only ReviewRun) is gone. Unused package-level constants are not caught by go vet or the deadcode gate, so it will linger silently. Delete it.",
+        "severity": "low",
+        "category": "quality",
+        "file": "internal/app/review.go",
+        "line": 27,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_007",
+        "message": "Constant clarifierLastResultArtifact is dead code: its only consumer (writeClarifySuggest, deleted when clarify suggest was removed and the round primitive became JSON-only) is gone. Delete it.",
+        "severity": "low",
+        "category": "quality",
+        "file": "internal/app/clarify_round.go",
+        "line": 20,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_008",
+        "message": "README quick-start says 'Mutating review commands self-scaffold the review record once the gate report exists', but only review run, review finding add, and review approve scaffold (ensureReviewRecord call sites in internal/app/review.go); review finding resolve — shown one line below — and proposal accept/reject require existing records per the contract's q_001 answer and acceptance criteria. docs/flow.md:197-199 states the precise list; the README contradicts it.",
+        "severity": "low",
+        "category": "quality",
+        "file": "README.md",
+        "line": 173,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_009",
+        "message": "The agent-skill workflow reference says 'the mutating review commands self-scaffold the review record' and then lists review finding resolve among them; resolve does not scaffold and requires existing records. Agents act on this file, so the overgeneralization can mislead an agent into expecting resolve/proposal-accept to work on a gated run with no review data.",
+        "severity": "low",
+        "category": "quality",
+        "file": "assets/agent-skills/pactum/references/workflow.md",
+        "line": 85,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_010",
+        "message": "prompt build human output still prints `pactum execute plan --agent codex` without the run id, while the final affordance surface requires concrete runnable Next commands such as `pactum execute plan \u003crun_id\u003e --agent codex`.",
+        "severity": "medium",
+        "category": "correctness",
+        "file": "internal/app/prompt.go",
+        "line": 556,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "writePromptBuild (internal/app/prompt.go:556) now prints the Next: hint as 'pactum execute plan \u003crun_id\u003e --agent codex' via Fprintf with response.RunID, matching the affordance string in errors.go:87. Updated the two assertions pinning the old output: affordances_test.go:237 and prompt_test.go:199. go test ./... and make check pass."
+      },
+      {
+        "id": "f_011",
+        "message": "`clarify run` still routes its only internal clarifier round through a stdout JSON serialization/unmarshal adapter after removing the user-facing `clarify suggest` command.",
+        "severity": "low",
+        "category": "quality",
+        "file": "internal/app/clarify_loop.go",
+        "line": 242,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      }
+    ],
+    "proposal_summary": {
+      "pending": 0,
+      "accepted": 11,
+      "rejected": 0
+    }
+  },
+  "decisions": [
+    {
+      "kind": "scope",
+      "text": "in scope: Remove the `pactum review loop`, `pactum review prepare`, and `pactum clarify suggest` command spellings from the CLI grammar so they fail as parser errors with no aliases."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Make `pactum review run` absorb the existing review loop behavior, including reviewer panel and lenses rounds, fixer invocation, convergence over open blocking findings, and support for `--reviewer`, `--agent`, `--max-rounds`, `--patience`, `--clean-rounds`, `--timeout`, `--json`, and new `--no-fix`."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Make `review run`, `review finding add`, and `review approve` auto-scaffold `review/review.json` when `gate/report.json` exists; keep `review status/show` read-only and show a derived empty pending review state when no review artifact exists."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Remove `review_not_prepared` as a user-facing error path and update remaining review preconditions, affordance `next`, and affordance `fix` values to use `gate_report_missing` or ordinary missing-record errors as appropriate."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Make `pactum prompt build` refresh a stale project map itself, report the refresh in human output, expose a `map_refresh` object in `--json`, and write the same additive object to `contract/prompt-manifest.json` while preserving existing schema names and artifact paths."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Replace `clarify suggest` behavior with `pactum clarify run --no-auto --max-rounds 1`, using the clarify-loop output and `clarify/loop-summary.json` artifact surface."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Add `pactum clarify answer \u003cq_id\u003e --recommended` and `pactum clarify answer --all-recommended` decision verbs that honor `--by`, record recommended answers, preserve typed/manual and auto-loop provenance, and persist distinguishable recommended-answer provenance."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Rewrite `assets/agent-skills/pactum/SKILL.md`, `assets/agent-skills/pactum/references/workflow.md`, `assets/agent-skills/pactum/references/safety.md`, and `docs/agent-skill.md` to describe only the final grammar and current safety model."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Update `docs/flow.md`, `docs/agents.md`, `README.md` if affected, CLI help, `Next:` hints, affordance command strings, and tests so they mention only the new command surface."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not add broad new stage aliases or unrelated command families such as `pactum contract run`, `pactum prompt run`, or `pactum memory run`."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not rename unrelated existing stage verbs such as `prompt build`, `execute plan`, `gate run`, `memory propose`, or `memory accept`."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not change existing JSON schema names or artifact paths except for additive fields required by this contract."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not introduce a new severity threshold for review convergence; convergence and fixer invocation remain based on open findings with `blocking=true`."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not change `review plan` or the surgical `review fix run/apply` commands except where needed for help text, precondition errors, and removed `review prepare` references."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not preserve compatibility aliases for `review loop`, `review prepare`, or `clarify suggest`."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_001: When `review prepare` is removed, which review commands should auto-create `review/review.json` when a gate report exists: only `review run` and `review finding add`, or all mutating review commands that currently call `requireReviewPrepared` such as `review approve`, `review finding resolve`, proposal decisions, and `review fix run/apply`? Answer: Auto-scaffold the review for `review run`, `review finding add`, and `review approve` whenever `gate/report.json` exists; keep commands that require existing records, such as `review finding resolve`, proposal accept/reject, and `review fix run/apply`, failing with ordinary record/precondition errors if there is no relevant review data. `review status/show` should not mutate; on a gated run with no review artifact they should show the derived empty pending review state rather than suggesting `review prepare`."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_002: What does `severity-gated convergence` mean in concrete repository terms: should convergence and fixer invocation be gated by the existing `finding.blocking` boolean, by `severity` values (`low`, `medium`, `high`, `critical`), or by a new severity threshold that maps severities to blocking behavior? Answer: Keep convergence and fixer invocation gated by open blocking findings, not raw severity. Preserve severity as finding metadata and allow reviewer/proposal logic to set `blocking=true` for findings severe enough to block. Do not introduce a new severity threshold in this grammar break."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_003: For `review run --no-fix --max-rounds 1`, if the reviewer panel finds new blocking findings, should the command accept those proposals into `findings.jsonl` and exit successfully with an open-review terminal reason, or should it fail nonzero because convergence was not reached? Answer: `review run --no-fix --max-rounds 1` should run the panel/lenses, parse and accept valid proposals into review findings, skip fixer execution, write the loop summary, and exit 0 with a terminal reason such as `findings_open`/`no_fix`. Its `next` should point to `pactum review show \u003crun_id\u003e` while blocking findings remain."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_004: For `clarify answer --all-recommended`, what should happen when the run has a mix of open questions with recommendations, open questions without recommendations, already answered questions, and questions whose `depends_on` prerequisites are still unanswered? Answer: `--all-recommended` should consider only currently open questions. It should answer open questions with a non-empty stored recommendation in dependency order, skip open questions without recommendations, skip dependency-blocked questions until prerequisites are answered, report all skipped IDs in human and JSON output, and exit 0 unless no answers were recorded and at least one requested single-question operation would have been an error."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_005: How exactly should `prompt build` record that it self-healed a stale project map in machine-readable output and `contract/prompt-manifest.json` while keeping existing schema names and artifact paths unchanged? Answer: Keep `schema: pactum.executor_prompt.v1` and all artifact paths unchanged, but add an additive `map_refresh` object to the prompt manifest and `prompt build --json` response: `{ \"triggered\": true, \"reason\": \"project_map_stale\", \"previous_map_run_id\": \"...\", \"run_id\": \"...\" }`; use `{ \"triggered\": false }` when no refresh was needed. Human output should state that the stale project map was refreshed and show the new map run id."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_006: In the skill rewrite phrase “every stage exposes run and show,” what concrete CLI scope is intended: a docs-only convention using the actual final verbs, or literal new command families such as `pactum contract run`, `pactum prompt run`, and `pactum memory run`? Answer: Do not add broad new `run/show` aliases or rename unrelated stage verbs in this grammar break. Scope the CLI changes to the explicitly listed surface: `review run` absorbs loop behavior, `clarify run --no-auto --max-rounds 1` replaces `clarify suggest`, removed commands become parser errors, and docs/skill text should describe each stage using its actual final commands."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_007: For the concrete replacement scenario `pactum clarify run --no-auto --max-rounds 1` where the clarifier creates one open blocking medium-confidence question, should the command report a clarify-loop summary or preserve the old `clarify suggest` top-level response shape? Answer: `clarify run --no-auto --max-rounds 1` should use the existing clarify-loop output and artifact surface, not preserve a separate suggest response. It should run one clarifier round, record created questions, skip all auto-resolution, write `clarify/loop-summary.json`, and report `terminal_reason: needs_human` when open blocking questions remain rather than reporting `max_rounds` merely because the one-round cap was reached."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_008: What exact provenance values should `clarify answer \u003cq_id\u003e --recommended` and `clarify answer --all-recommended` persist in `answers.jsonl` and `decisions.jsonl`? Answer: Keep typed manual and auto-loop provenance unchanged. For `--recommended`, write answer `source: manual_recommended` and decision `source: manual_recommended_answer` with normalized `decided_by` from `--by`. For `--all-recommended`, write answer `source: manual_all_recommended` and decision `source: manual_all_recommended_answer` for each recorded answer, also with normalized `decided_by` from `--by`."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_009: For `pactum review run --no-fix --max-rounds 2`, if round 1 accepts an open blocking finding, should it stop immediately because no fixer can change the tree, continue reviewer-only rounds until `max_rounds`, or reject that flag combination? Answer: Allow the combination, but define `--no-fix` as never invoking the fixer and stopping after the first round that leaves open blocking findings, with a terminal reason such as `findings_open` or `no_fix`. If the round has no open blocking findings, use the normal clean/resolved behavior. Document `--no-fix --max-rounds 1` as the intended manual panel-pass spelling."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_010: When `review run` absorbs `review loop`, which loop controls should move onto `review run`: the full existing loop control surface (`--agent`, `--max-rounds`, `--patience`, `--clean-rounds`, `--timeout`, `--reviewer`, `--json`) plus new `--no-fix`, or only the flags explicitly named in the draft (`--no-fix` and `--max-rounds`)? Answer: Move the existing `review loop` control surface onto `review run`: support `--reviewer`, `--agent`, `--max-rounds`, `--patience`, `--clean-rounds`, `--timeout`, and `--json`, and add `--no-fix`. Remove `review loop` entirely as a parser error. Keep `review plan` as the safe reviewer-only preparation command and keep `review fix run/apply` as surgical commands."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_011: For `pactum clarify answer \u003cq_id\u003e --recommended`, what should happen when the target question already has an answer, or when it has a stored recommended answer but its `depends_on` prerequisites are still unanswered? Answer: `--recommended` should require the question to be currently open, have a non-empty stored `recommended_answer`, and not be blocked by unanswered `depends_on` prerequisites. If the question is already answered, return an error rather than creating a revision. If dependencies are unanswered, return an error pointing the user to `pactum clarify show \u003crun_id\u003e`; a typed `clarify answer` remains the escape hatch for an explicit human-authored answer."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_001 resolved: Gate validation runner tokenizes commands with strings.Fields (quote-blind), so the contract's quoted rg validation command executes as pattern '\"review' with the remaining pattern fragments treated as nonexistent paths. rg exits 2 every time, the gate permanently reports failed for this contract, and review approval is blocked. The intended forbidden-phrase check never actually ran."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_002 resolved: Gate validation command_003 never tested the contract's intent: the gate splits commands with strings.Fields (no shell-quote handling), so the quoted rg pattern fragmented — rg searched for the literal pattern '\"review' and treated 'loop|review', 'prepare|clarify', 'suggest|review_not_prepared|project_map_stale\"' as file paths, exiting 2 with 'No such file or directory'. Independently, the command's intent is zero matches, but rg exits 1 on zero matches and the gate treats nonzero exit as failure — so this command structurally fails on a clean tree. The run cannot converge through a passing gate with this command as written; replace it (e.g. invert the exit code) or accept the gate manually."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_003 resolved: Removed-grammar phrases remain in docs outside the test guards: docs/real-agent-execution-dogfood.md lines 65/119/122 still name 'pactum review prepare' and 'review prepare' (file untouched by this change), and docs/backlog.md lines 154/190/379/559/562 keep 'clarify suggest' plus 'review loop' concept mentions (file edited by this change, mentions kept as historical record). The contract's rg validation sweeps all of docs and contract assumption 3 expects a human review of remaining matches — which never happened because command_003 misfired. Human should accept these as intentional historical fixtures or scope the validation command to the guarded doc set."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_004 resolved: Acceptance criterion 'review finding resolve, proposal accept/reject, and review fix run/apply still require relevant existing review records' has no test at the new boundary. requireReviewPrepared was removed from these paths and the old *BeforeReviewPreparedFails tests were deleted without replacements that run these commands on a gated run with no review artifacts. All current tests pre-scaffold via scaffoldReviewForTest, so nothing pins that these commands fail with ordinary missing-record errors and do not self-scaffold review/review.json; switching them to ensureReviewRecord would regress the criterion with tests green."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_005 resolved: Four new hand-written CLI error paths in clarifyAnswerCmd.Run are untested: the --recommended/--all-recommended conflict (line 69), the --all-recommended usage string (line 73), the --recommended usage string (line 83), and the q_ prefix check in the --recommended branch (line 87). TestUsageErrorsAdvertiseNewGrammar (cli_grammar_test.go:169) exists to pin every hand-written usage-error string but was not extended with the new strings."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_006 resolved: Constant reviewerLastResultArtifact is dead code: its only consumer (writeReviewRun, deleted with the old reviewer-only ReviewRun) is gone. Unused package-level constants are not caught by go vet or the deadcode gate, so it will linger silently. Delete it."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_007 resolved: Constant clarifierLastResultArtifact is dead code: its only consumer (writeClarifySuggest, deleted when clarify suggest was removed and the round primitive became JSON-only) is gone. Delete it."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_008 resolved: README quick-start says 'Mutating review commands self-scaffold the review record once the gate report exists', but only review run, review finding add, and review approve scaffold (ensureReviewRecord call sites in internal/app/review.go); review finding resolve — shown one line below — and proposal accept/reject require existing records per the contract's q_001 answer and acceptance criteria. docs/flow.md:197-199 states the precise list; the README contradicts it."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_009 resolved: The agent-skill workflow reference says 'the mutating review commands self-scaffold the review record' and then lists review finding resolve among them; resolve does not scaffold and requires existing records. Agents act on this file, so the overgeneralization can mislead an agent into expecting resolve/proposal-accept to work on a gated run with no review data."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_010 resolved: prompt build human output still prints `pactum execute plan --agent codex` without the run id, while the final affordance surface requires concrete runnable Next commands such as `pactum execute plan \u003crun_id\u003e --agent codex`.; resolution: writePromptBuild (internal/app/prompt.go:556) now prints the Next: hint as 'pactum execute plan \u003crun_id\u003e --agent codex' via Fprintf with response.RunID, matching the affordance string in errors.go:87. Updated the two assertions pinning the old output: affordances_test.go:237 and prompt_test.go:199. go test ./... and make check pass."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_011 resolved: `clarify run` still routes its only internal clarifier round through a stdout JSON serialization/unmarshal adapter after removing the user-facing `clarify suggest` command."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_001 accepted as f_001"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_002 accepted as f_002"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_003 accepted as f_003"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_004 accepted as f_004"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_005 accepted as f_005"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_006 accepted as f_006"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_007 accepted as f_007"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_008 accepted as f_008"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_009 accepted as f_009"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_010 accepted as f_010"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_011 accepted as f_011"
+    },
+    {
+      "kind": "validation",
+      "text": "make check passed"
+    },
+    {
+      "kind": "validation",
+      "text": "go test ./... passed"
+    }
+  ],
+  "artifacts": {
+    "contract": "contract/contract.json",
+    "gate_report": "gate/gate-report.json",
+    "review": "review/review.json",
+    "findings": "review/findings.jsonl",
+    "resolutions": "review/resolutions.jsonl",
+    "proposals": "review/proposals.jsonl",
+    "proposal_decisions": "review/proposal-decisions.jsonl"
+  }
+}
