@@ -260,14 +260,16 @@ reviews across M8–M10. Rough priority in parentheses.
 
 ## Hardening / cleanup
 
-- **Lens fan-out test flakiness under full-suite race load** (small). Two
+- **Lens fan-out test flakiness under full-suite race load** (small). Three
   different review tests (`TestReviewRunStoresCrossReviewerAttempts`,
-  `TestReviewLoopDedupsReproposedOpenFindingAcrossRounds`) have each flaked once
-  during a full `go test -race ./...` run while passing repeatedly in isolation
-  (`-count=3 -race`). The M19.2 lens fan-out multiplied concurrent helper
-  subprocesses per test, so under full-suite load timing assumptions
-  occasionally slip. Diagnose the shared cause (helper-process sequencing or
-  output-collection timing) rather than retry-masking it.
+  `TestReviewLoopDedupsReproposedOpenFindingAcrossRounds`,
+  `TestReviewRunCreatesIncrementingAttempts`) have each flaked once during a
+  full `go test -race ./...` run while passing repeatedly in isolation
+  (`-count=3 -race`) and on the package re-run. The M19.2 lens fan-out
+  multiplied concurrent helper subprocesses per test, so under full-suite load
+  timing assumptions occasionally slip. Diagnose the shared cause
+  (helper-process sequencing or output-collection timing) rather than
+  retry-masking it.
 
 - **ACP shell-command / tool-call scope gating on write stages** (med). The
   M13.5 real-time write scope guard enforces the contract path-scope only at the

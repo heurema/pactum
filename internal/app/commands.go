@@ -223,6 +223,14 @@ func (c *executeShowCmd) Run(r *runner) error {
 	return r.App.ExecuteShow(r.Stdout, runID, attemptID, c.Logs, c.JSONOutput)
 }
 
+func (c *exportCmd) Run(r *runner) error {
+	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
+	if err != nil || !ok {
+		return err
+	}
+	return r.App.Export(r.Stdout, runID, c.Output, c.JSONOutput)
+}
+
 func (c *gateRunCmd) Run(r *runner) error {
 	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
 	if err != nil {

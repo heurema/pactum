@@ -22,6 +22,7 @@ report, the review, and the accepted memory are all files you can read.
 | Review | `pactum review prepare`, `pactum review add-finding`, `pactum review resolve`, `pactum review approve`, `pactum review status/show` | `review/review.json`, `review/findings.jsonl`, `review/resolutions.jsonl` | mutating subcommands: Yes; `status`/`show`: No |
 | Reviewer proposals | `pactum review dry-run`, `pactum review run`, `pactum review propose-findings`, `pactum review accept-proposal`, `pactum review reject-proposal` | `review/reviewer-context.md`, `review/reviewer-prompt-<name>-<lens>.md`, `review/reviewer-dry-run.json`, `review/reviewer-attempts/...`, `review/proposals.jsonl`, `review/proposal-decisions.jsonl` | Yes |
 | Memory | `pactum memory propose`, `pactum memory show`, `pactum memory accept`, `pactum memory search`, `pactum memory refresh`, `pactum memory stale` | `runs/<id>/memory/{memory-candidate.json,memory-candidate.md,memory-acceptance.json}`, `memory/items.jsonl`, `memory/project-memory.md`, `memory/refreshes.jsonl` | `propose`/`accept`/`refresh`: Yes; `show`/`search`/`stale`: No |
+| Export | `pactum export [run_id] --output <path>` | the ZIP archive at `--output` (outside the exported run directory) | No |
 
 "Mutates state?" means the command writes durable artifacts and/or appends to
 the workspace ledger (`ledger/events.jsonl`). Read-only commands (`status`,
@@ -241,3 +242,22 @@ and no pending reviewer proposals). `pactum memory show <run_id>` previews it.
 `pactum memory accept <run_id> --by manual` appends an accepted item to project
 memory. `pactum memory search`, `pactum memory refresh`, and `pactum memory
 stale` are covered in [memory.md](memory.md).
+
+### Export
+
+`pactum export [run_id] --output <path> [--json]` packs a run's full record
+into a single deterministic ZIP archive. An omitted `run_id` resolves like the
+other read-only run commands (current run, else the sole active run). The
+archive contains every regular file under `runs/<run_id>/` — including `.log`
+transcripts when present — rooted at `pactum-run-<run_id>/`, plus a generated
+`ledger/events.filtered.jsonl` sidecar holding only the workspace ledger
+events for that run. Entries are sorted, slash-separated, and normalized
+(fixed timestamps, `0644`/`0755` modes), so repeated exports of an unchanged
+run are byte-for-byte identical.
+
+Export is read-only Pactum state: the only write is the archive itself,
+created via a temporary sibling file and an atomic rename. The command fails —
+removing any partial archive — if the output path already exists, its parent
+directory is missing, the path points inside the exported run directory, a
+selected file cannot be read, the workspace ledger is missing or malformed, or
+the run record contains symlinks or other non-regular entries.

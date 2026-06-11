@@ -7,6 +7,7 @@ type cli struct {
 	Clarify  clarifyCmd  `cmd:"" help:"Manage manual clarification artifacts."`
 	Contract contractCmd `cmd:"" help:"Inspect, revise, and approve run contracts."`
 	Execute  executeCmd  `cmd:"" help:"Prepare deterministic execution artifacts."`
+	Export   exportCmd   `cmd:"" help:"Export a run's full record as a single archive."`
 	Gate     gateCmd     `cmd:"" help:"Run deterministic validation and scope gates."`
 	Init     initCmd     `cmd:"" help:"Create a Pactum workspace and project map."`
 	Map      mapCmd      `cmd:"" help:"Advanced project map commands."`
@@ -200,6 +201,12 @@ type executeShowCmd struct {
 	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] [attempt_id]"`
 	Logs       bool     `name:"logs" help:"Include bounded stdout/stderr excerpts."`
 	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type exportCmd struct {
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to export."`
+	Output     string `name:"output" required:"" help:"Archive file to create (must not already exist)."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type gateRunCmd struct {
