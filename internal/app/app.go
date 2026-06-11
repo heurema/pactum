@@ -109,6 +109,16 @@ func (a App) Run(args []string, stdout, stderr io.Writer) (code int) {
 			if errors.As(err, &gateErr) {
 				return 1
 			}
+			// A failed agent attempt already wrote its run-only result JSON;
+			// appending an envelope would put two documents on one stdout.
+			// A preconditionError wrapping the attempt failure wins: there the
+			// attempt ran inside a larger flow (e.g. the clarify loop) whose
+			// own envelope is the single payload.
+			var attemptErr agentAttemptFailedError
+			var precondition *preconditionError
+			if errors.As(err, &attemptErr) && !errors.As(err, &precondition) {
+				return 1
+			}
 			if encErr := writeErrorEnvelope(stdout, err); encErr == nil {
 				return 1
 			}

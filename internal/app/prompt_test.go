@@ -238,10 +238,10 @@ func TestPromptShowBeforeBuildJSONOutput(t *testing.T) {
 	}
 	var response promptShowNotBuiltResponse
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
-	if response.RunID != runID || response.RunStatus == "" || response.Ready {
+	if response.Schema != notReadySchema || response.RunID != runID || response.RunStatus == "" || response.Ready {
 		t.Fatalf("unexpected prompt show before build json: %#v", response)
 	}
-	if !strings.Contains(response.Message, "Executor prompt has not been built") || response.SuggestedCommand != "pactum prompt build "+runID {
+	if !strings.Contains(response.Message, "Executor prompt has not been built") || response.SuggestedCommand != "pactum prompt build "+runID || response.Fix != response.SuggestedCommand {
 		t.Fatalf("unexpected prompt show before build guidance: %#v", response)
 	}
 }

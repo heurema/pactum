@@ -202,10 +202,17 @@ func (a App) ClarifyLoop(stdout io.Writer, liveOutput io.Writer, runID string, o
 	}
 
 	if options.JSONOutput {
-		return writeJSONResponse(stdout, summary)
+		return writeJSONResponse(stdout, clarifyLoopResponse{clarifyLoopSummaryDocument: summary, Next: nextCommandsForRun(context.Paths, runID)})
 	}
 	writeClarifyLoopSummary(stdout, summary)
 	return nil
+}
+
+// clarifyLoopResponse is the loop summary plus the next affordance; the
+// summary artifact on disk stays unchanged.
+type clarifyLoopResponse struct {
+	clarifyLoopSummaryDocument
+	Next []string `json:"next"`
 }
 
 func (a App) resolveClarifyLoopMaxRounds(configPath string, override int) (int, error) {

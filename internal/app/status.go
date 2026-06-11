@@ -26,6 +26,9 @@ type statusResponse struct {
 	Memory      memoryStatus     `json:"memory,omitempty"`
 	Usage       usageStatus      `json:"usage,omitempty"`
 	Message     string           `json:"message,omitempty"`
+	// Next holds the concrete runnable commands for the current run's stage.
+	// Runs.NextCommand predates it and is kept for compatibility.
+	Next []string `json:"next"`
 }
 
 type projectMapStatus struct {
@@ -68,9 +71,11 @@ func writeStatusNotInitialized(stdout io.Writer) error {
 	return writeJSONResponse(stdout, struct {
 		Initialized bool   `json:"initialized"`
 		Message     string `json:"message"`
+		Fix         string `json:"fix"`
 	}{
 		Initialized: false,
 		Message:     "Pactum is not initialized. Run: pactum init",
+		Fix:         "pactum init",
 	})
 }
 
@@ -102,6 +107,7 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 	}
 
 	runs := runsStatus{Active: activeRuns}
+	next := []string{}
 	usageRunID := ""
 	if latestID, hasLatest, err := latestRunID(paths); err != nil {
 		return statusResponse{}, err
@@ -125,10 +131,13 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 		switch {
 		case currentValid:
 			runs.NextCommand = nextCommandForStatus(deriveRunStatus(paths, currentID))
+			next = nextCommandsForRun(paths, currentID)
 		case len(active) == 1:
 			runs.NextCommand = nextCommandForStatus(deriveRunStatus(paths, active[0]))
+			next = nextCommandsForRun(paths, active[0])
 		default:
 			runs.NextCommand = "pactum task use " + latestID
+			next = []string{"pactum task use " + latestID}
 		}
 	}
 	usage, err := runUsageStatus(paths, usageRunID)
@@ -145,6 +154,7 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 		Runs:        runs,
 		Memory:      memoryStatus{Items: memoryItems, Stale: 0},
 		Usage:       usage,
+		Next:        next,
 	}, nil
 }
 

@@ -11,11 +11,14 @@ const notReadySchema = "pactum.not_ready.v1"
 // artifact does not exist yet. It keeps --json output parseable instead of
 // leaking a plain-text notice onto stdout.
 type notReadyResponse struct {
-	Schema           string `json:"schema"`
-	Ready            bool   `json:"ready"`
-	RunID            string `json:"run_id"`
-	Message          string `json:"message"`
+	Schema  string `json:"schema"`
+	Ready   bool   `json:"ready"`
+	RunID   string `json:"run_id"`
+	Message string `json:"message"`
+	// SuggestedCommand predates Fix and is kept for compatibility; both carry
+	// the exact remedial command.
 	SuggestedCommand string `json:"suggested_command,omitempty"`
+	Fix              string `json:"fix,omitempty"`
 }
 
 // writeNotReady emits a not-ready response. With --json it writes a structured
@@ -29,6 +32,7 @@ func writeNotReady(stdout io.Writer, jsonOutput bool, runID, message, suggested 
 			RunID:            runID,
 			Message:          message,
 			SuggestedCommand: suggested,
+			Fix:              suggested,
 		})
 	}
 	fmt.Fprintln(stdout, message)

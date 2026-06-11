@@ -71,6 +71,28 @@ design. Always confirm against the actual files before relying on them.
     the contract (goal/scope/acceptance/validation), the plan command, and
     the recommended next action.
 
+## JSON affordances (`--json`)
+
+Add `--json` to read Pactum's state machine instead of memorizing it:
+
+- Workflow commands that advance a run, plus `pactum status` and
+  `pactum task show`, return a top-level `next` array of complete pactum
+  command strings (run id filled in) — the legal next moves. An empty `next`
+  means there is no safe scriptable move: either the next step needs a human
+  decision or the run is at a terminal state; `pactum execute run` is never
+  suggested.
+- A failed command returns a `pactum.error.v1` envelope:
+  `error.code` is a stable machine-readable reason, `error.message` the human
+  text, and `error.fix` (when present) the single exact command that remedies
+  the failure — never a placeholder. When there is no single fix (for example,
+  open blocking clarifications), the envelope's `next` lists safe inspection
+  commands such as `pactum clarify show <run_id>`.
+- Read-only `show` commands whose artifact does not exist yet return
+  `pactum.not_ready.v1` with exit 0 and the remedial command in `fix`.
+
+The older `suggested_command` / `next_command` fields remain for
+compatibility; prefer `fix` and `next`.
+
 ## Current-run usage
 
 `pactum task new` and `pactum task use` set the current run (recorded in

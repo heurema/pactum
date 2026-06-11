@@ -86,6 +86,7 @@ type reviewProposeFindingsResponse struct {
 	ReviewerAttemptIDs []string               `json:"reviewer_attempt_ids"`
 	Created            []reviewProposalRecord `json:"created"`
 	Warnings           []string               `json:"warnings"`
+	Next               []string               `json:"next"`
 }
 
 type reviewAcceptProposalResponse struct {
@@ -93,12 +94,14 @@ type reviewAcceptProposalResponse struct {
 	Decision reviewProposalDecisionRecord `json:"decision"`
 	Finding  reviewFindingRecord          `json:"finding"`
 	State    reviewStateResponse          `json:"state"`
+	Next     []string                     `json:"next"`
 }
 
 type reviewRejectProposalResponse struct {
 	Proposal reviewProposalView           `json:"proposal"`
 	Decision reviewProposalDecisionRecord `json:"decision"`
 	State    reviewStateResponse          `json:"state"`
+	Next     []string                     `json:"next"`
 }
 
 func (a App) ReviewProposeFindings(stdout io.Writer, runID string, reviewerAttemptID string, jsonOutput bool) error {
@@ -159,6 +162,7 @@ func (a App) ReviewProposeFindings(stdout io.Writer, runID string, reviewerAttem
 		Warnings:           warnings,
 	}
 	if len(created) == 0 {
+		response.Next = nextCommandsForRun(context.Paths, runID)
 		if jsonOutput {
 			return writeJSONResponse(stdout, response)
 		}
@@ -175,6 +179,7 @@ func (a App) ReviewProposeFindings(stdout io.Writer, runID string, reviewerAttem
 		return err
 	}
 
+	response.Next = nextCommandsForRun(context.Paths, runID)
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
@@ -280,7 +285,7 @@ func (a App) acceptReviewProposal(stdout io.Writer, context reviewContext, runID
 
 	state := buildReviewStateWithProposals(review, findings, resolutions, proposals, decisions)
 	view, _ := findReviewProposalView(state.Proposals, proposalID)
-	response := reviewAcceptProposalResponse{Proposal: view, Decision: decision, Finding: finding, State: state}
+	response := reviewAcceptProposalResponse{Proposal: view, Decision: decision, Finding: finding, State: state, Next: nextCommandsForRun(context.Paths, runID)}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
@@ -334,7 +339,7 @@ func (a App) ReviewRejectProposal(stdout io.Writer, runID string, proposalID str
 	}
 	state := buildReviewStateWithProposals(review, findings, resolutions, proposals, decisions)
 	view, _ := findReviewProposalView(state.Proposals, proposalID)
-	response := reviewRejectProposalResponse{Proposal: view, Decision: decision, State: state}
+	response := reviewRejectProposalResponse{Proposal: view, Decision: decision, State: state, Next: nextCommandsForRun(context.Paths, runID)}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}

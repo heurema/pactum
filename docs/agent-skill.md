@@ -47,6 +47,19 @@ The flow (full detail in
 11. report current run, relevant files, contract summary, plan command, next
     action
 
+## Machine affordances
+
+With `--json`, the CLI announces the legal moves so an agent never guesses the
+pipeline state machine: workflow commands (and `pactum status` /
+`pactum task show`) return a top-level `next` array of directly runnable
+pactum commands for the run's stage, and recognizable precondition failures
+return a `pactum.error.v1` envelope with a stable `error.code` and, when a
+single exact remedial command exists, `error.fix`. Read-only not-ready
+responses (`pactum.not_ready.v1`) carry the remedial command in `fix` and keep
+exit code 0. The older `suggested_command` / `next_command` fields remain for
+compatibility; `fix` and `next` are preferred. Commands that would launch a
+real agent (`pactum execute run`) are never emitted as a `fix`.
+
 ## Current-run usage
 
 After `pactum task new` (or `pactum task use`), the run is **current**, so the

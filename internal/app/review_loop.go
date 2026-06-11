@@ -444,10 +444,17 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 	}
 
 	if options.JSONOutput {
-		return writeJSONResponse(stdout, summary)
+		return writeJSONResponse(stdout, reviewLoopResponse{reviewLoopSummaryDocument: summary, Next: nextCommandsForRun(context.Paths, runID)})
 	}
 	writeReviewLoopSummary(stdout, summary)
 	return nil
+}
+
+// reviewLoopResponse is the loop summary plus the next affordance; the
+// summary artifact on disk stays unchanged.
+type reviewLoopResponse struct {
+	reviewLoopSummaryDocument
+	Next []string `json:"next"`
 }
 
 func (a App) resolveReviewLoopSettings(context reviewContext, options reviewLoopOptions) (reviewLoopSettings, error) {

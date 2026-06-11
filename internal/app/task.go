@@ -99,11 +99,21 @@ type taskShowResponse struct {
 	NextCommand string `json:"next_command,omitempty"`
 	CreatedAt   string `json:"created_at,omitempty"`
 	UpdatedAt   string `json:"updated_at,omitempty"`
+	// Next holds the concrete runnable commands for the run's stage.
+	// NextCommand predates it and is kept for compatibility.
+	Next []string `json:"next"`
 }
 
 type taskUseResponse struct {
-	Schema       string `json:"schema"`
-	CurrentRunID string `json:"current_run_id"`
+	Schema       string   `json:"schema"`
+	CurrentRunID string   `json:"current_run_id"`
+	Next         []string `json:"next"`
+}
+
+// taskNewResponse is the created run state plus the next affordance.
+type taskNewResponse struct {
+	contractRunState
+	Next []string `json:"next"`
 }
 
 type taskNewOptions struct {
@@ -118,6 +128,7 @@ type taskNewClarifyResponse struct {
 	Schema      string                     `json:"schema"`
 	Run         contractRunState           `json:"run"`
 	ClarifyLoop clarifyLoopSummaryDocument `json:"clarify_loop"`
+	Next        []string                   `json:"next"`
 }
 
 // TaskNew creates a contract-first run for a task and records it as the current
@@ -144,7 +155,7 @@ func (a App) TaskNew(stdout io.Writer, liveOutput io.Writer, task string, option
 
 	if !options.Clarify {
 		if options.JSONOutput {
-			return writeJSONResponse(stdout, state)
+			return writeJSONResponse(stdout, taskNewResponse{contractRunState: state, Next: nextCommandsForRun(paths, state.RunID)})
 		}
 		writeTaskCreated(stdout, state)
 		return nil
@@ -163,7 +174,7 @@ func (a App) taskNewClarify(stdout io.Writer, liveOutput io.Writer, paths artifa
 	}
 	summary, err := a.runTaskNewClarifyLoop(liveOutput, state.RunID, options)
 	if err != nil {
-		return fmt.Errorf("run %s was created, but its clarify loop failed (re-run it with: pactum clarify run %s): %w", state.RunID, state.RunID, err)
+		return clarifyLoopFailedError(state.RunID, err)
 	}
 	// Re-read the run state: the loop may have moved it (clarifying vs
 	// contract_draft), and both output paths must report the fresh status.
@@ -173,7 +184,12 @@ func (a App) taskNewClarify(stdout io.Writer, liveOutput io.Writer, paths artifa
 		return err
 	}
 	if options.JSONOutput {
-		return writeJSONResponse(stdout, taskNewClarifyResponse{Schema: taskNewClarifySchema, Run: refreshed, ClarifyLoop: summary})
+		return writeJSONResponse(stdout, taskNewClarifyResponse{
+			Schema:      taskNewClarifySchema,
+			Run:         refreshed,
+			ClarifyLoop: summary,
+			Next:        nextCommandsForRun(paths, state.RunID),
+		})
 	}
 	status, err := buildClarificationStatus(runPaths, refreshed)
 	if err != nil {
@@ -267,7 +283,7 @@ func (a App) TaskShow(stdout io.Writer, runID string, jsonOutput bool) error {
 	}
 	_ = root
 	if !runExists(paths, runID) {
-		return fmt.Errorf("run not found: %s", runID)
+		return runNotFoundError(runID)
 	}
 	state, err := readContractRunState(contractRunPaths(runDirFor(paths, runID)).RunJSON)
 	if err != nil {
@@ -284,6 +300,7 @@ func (a App) TaskShow(stdout io.Writer, runID string, jsonOutput bool) error {
 		NextCommand: nextCommandForStatus(status),
 		CreatedAt:   state.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:   state.UpdatedAt.Format(time.RFC3339),
+		Next:        nextCommandsForRun(paths, runID),
 	}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
@@ -303,13 +320,13 @@ func (a App) TaskUse(stdout io.Writer, runID string, jsonOutput bool) error {
 	}
 	paths := artifacts.New(root)
 	if !runExists(paths, runID) {
-		return fmt.Errorf("run not found: %s", runID)
+		return runNotFoundError(runID)
 	}
 	if err := writeCurrentRun(paths, runID); err != nil {
 		return err
 	}
 	if jsonOutput {
-		return writeJSONResponse(stdout, taskUseResponse{Schema: taskUseSchema, CurrentRunID: runID})
+		return writeJSONResponse(stdout, taskUseResponse{Schema: taskUseSchema, CurrentRunID: runID, Next: nextCommandsForRun(paths, runID)})
 	}
 	fmt.Fprintf(stdout, "Current run set to %s\n", runID)
 	return nil

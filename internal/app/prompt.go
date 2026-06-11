@@ -73,6 +73,7 @@ type promptBuildResponse struct {
 	RunID     string         `json:"run_id"`
 	RunStatus string         `json:"run_status"`
 	Manifest  promptManifest `json:"manifest"`
+	Next      []string       `json:"next"`
 }
 
 type promptShowResponse struct {
@@ -83,11 +84,15 @@ type promptShowResponse struct {
 }
 
 type promptShowNotBuiltResponse struct {
-	RunID            string `json:"run_id"`
-	RunStatus        string `json:"run_status"`
-	Ready            bool   `json:"ready"`
-	Message          string `json:"message"`
+	Schema    string `json:"schema"`
+	RunID     string `json:"run_id"`
+	RunStatus string `json:"run_status"`
+	Ready     bool   `json:"ready"`
+	Message   string `json:"message"`
+	// SuggestedCommand predates Fix and is kept for compatibility; both carry
+	// the exact remedial command.
 	SuggestedCommand string `json:"suggested_command"`
+	Fix              string `json:"fix"`
 }
 
 func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error {
@@ -101,7 +106,7 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 		return err
 	}
 	if status.BlockingOpen > 0 {
-		return fmt.Errorf("cannot build executor prompt: blocking clarification questions remain")
+		return blockingClarificationsOpenError("build executor prompt", runID)
 	}
 	hash, err := verifyApprovedContract(context.RunPaths, context.Contract, context.Approval, "build executor prompt")
 	if err != nil {
@@ -119,7 +124,7 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 			fmt.Fprintln(stdout, "Suggested:")
 			fmt.Fprintln(stdout, "  pactum map refresh")
 		}
-		return fmt.Errorf("cannot build executor prompt: project map is stale")
+		return projectMapStaleError("build executor prompt")
 	}
 
 	now := a.nowUTC()
@@ -160,7 +165,7 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 		return err
 	}
 
-	response := promptBuildResponse{RunID: runID, RunStatus: context.State.Status, Manifest: manifest}
+	response := promptBuildResponse{RunID: runID, RunStatus: context.State.Status, Manifest: manifest, Next: nextCommandsForRun(context.Paths, runID)}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
@@ -177,11 +182,13 @@ func (a App) PromptShow(stdout io.Writer, runID string, jsonOutput bool) error {
 		message := "Executor prompt has not been built. Run: pactum prompt build " + runID
 		if jsonOutput {
 			return writeJSONResponse(stdout, promptShowNotBuiltResponse{
+				Schema:           notReadySchema,
 				RunID:            runID,
 				RunStatus:        context.State.Status,
 				Ready:            false,
 				Message:          message,
 				SuggestedCommand: "pactum prompt build " + runID,
+				Fix:              "pactum prompt build " + runID,
 			})
 		}
 		fmt.Fprintf(stdout, "Executor prompt has not been built. Run: pactum prompt build %s\n", runID)

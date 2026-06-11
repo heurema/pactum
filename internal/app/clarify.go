@@ -114,7 +114,8 @@ type clarifyAskResponse struct {
 	// already-approved run back to clarifying (approval reset to pending). It is
 	// omitted (false) when the run was not approved. The reset itself is allowed;
 	// the field only makes the otherwise-silent regression visible.
-	ApprovalReset bool `json:"approval_reset,omitempty"`
+	ApprovalReset bool     `json:"approval_reset,omitempty"`
+	Next          []string `json:"next"`
 }
 
 type clarifyAnswerResponse struct {
@@ -125,7 +126,8 @@ type clarifyAnswerResponse struct {
 	// ApprovalReset reports that recording this answer regressed an
 	// already-approved run back to clarifying (approval reset to pending). It is
 	// omitted (false) when the run was not approved.
-	ApprovalReset bool `json:"approval_reset,omitempty"`
+	ApprovalReset bool     `json:"approval_reset,omitempty"`
+	Next          []string `json:"next"`
 }
 
 func (a App) ClarifyAsk(stdout io.Writer, runID string, question string, blocking bool, jsonOutput bool) error {
@@ -160,7 +162,7 @@ func (a App) ClarifyAsk(stdout io.Writer, runID string, question string, blockin
 		return err
 	}
 
-	response := clarifyAskResponse{RunID: runID, RunStatus: status.RunStatus, Question: record, ApprovalReset: approvalReset}
+	response := clarifyAskResponse{RunID: runID, RunStatus: status.RunStatus, Question: record, ApprovalReset: approvalReset, Next: nextCommandsForRun(context.Paths, runID)}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
@@ -196,7 +198,7 @@ func (a App) ClarifyAnswer(stdout io.Writer, runID string, questionID string, an
 		return err
 	}
 
-	response := clarifyAnswerResponse{RunID: runID, RunStatus: status.RunStatus, Answer: answerRecord, Decision: decisionRecord, ApprovalReset: approvalReset}
+	response := clarifyAnswerResponse{RunID: runID, RunStatus: status.RunStatus, Answer: answerRecord, Decision: decisionRecord, ApprovalReset: approvalReset, Next: nextCommandsForRun(context.Paths, runID)}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}

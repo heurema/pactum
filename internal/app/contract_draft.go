@@ -103,6 +103,7 @@ type contractDraftResponse struct {
 	Result    contractDrafterResultDocument `json:"result"`
 	Proposal  contractDraftProposalDocument `json:"proposal"`
 	Warnings  []string                      `json:"warnings"`
+	Next      []string                      `json:"next"`
 }
 
 type contractShowDraftResponse struct {
@@ -118,6 +119,7 @@ type contractAcceptDraftResponse struct {
 	Approval      approvalState                 `json:"approval"`
 	Proposal      contractDraftProposalDocument `json:"proposal"`
 	Contract      draftContract                 `json:"contract"`
+	Next          []string                      `json:"next"`
 }
 
 func (a App) ContractDraft(stdout io.Writer, liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration, jsonOutput bool) error {
@@ -203,6 +205,8 @@ func (a App) ContractDraft(stdout io.Writer, liveOutput io.Writer, runID string,
 				Result:    result,
 				Proposal:  proposal,
 				Warnings:  warnings,
+				// The recorded proposal awaits acceptance; that is the next move.
+				Next: []string{"pactum contract accept " + runID},
 			}, nil
 		},
 		RenderSuccess: func(stdout io.Writer, response contractDraftResponse, request contractDrafterRequestDocument) {
@@ -289,6 +293,7 @@ func (a App) ContractAcceptDraft(stdout io.Writer, runID string, acceptedBy stri
 		Approval:      reviseResponse.Approval,
 		Proposal:      proposal,
 		Contract:      reviseResponse.Contract,
+		Next:          nextCommandsForRun(context.Paths, runID),
 	}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)

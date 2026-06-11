@@ -38,10 +38,25 @@ func (a App) ExecutePlan(stdout io.Writer, runID string, agentName string, jsonO
 	}
 
 	if jsonOutput {
-		return writeJSONResponse(stdout, plan)
+		// Running the executor is human-approved, so the plan has no safe next.
+		return writeJSONResponse(stdout, executePlanResponse{DryRunPlan: plan, Next: []string{}})
 	}
 	writeExecutePlan(stdout, prep.State, plan, prep.AgentName, prep.ModelSpec)
 	return nil
+}
+
+// executePlanResponse is the dry-run plan plus the next affordance; the plan
+// artifact on disk stays unchanged.
+type executePlanResponse struct {
+	agents.DryRunPlan
+	Next []string `json:"next"`
+}
+
+// executeRunResponse is the attempt result plus the next affordance; the
+// attempt artifacts on disk stay unchanged.
+type executeRunResponse struct {
+	executionResultDocument
+	Next []string `json:"next"`
 }
 
 func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, agentName string, timeout time.Duration, jsonOutput bool) error {
@@ -116,6 +131,13 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 		RenderRunOnly: func(stdout io.Writer, request executionRequestDocument, result executionResultDocument) {
 			writeExecuteRun(stdout, prep.State, request, result, prep.AgentName, prep.ModelSpec)
 		},
+		WrapRunOnly: func(result executionResultDocument) any {
+			next := []string{}
+			if result.ExitCode == 0 && (!result.TimedOut || result.CompletedDespiteTimeout) {
+				next = nextCommandsForRun(prep.Paths, runID)
+			}
+			return executeRunResponse{executionResultDocument: result, Next: next}
+		},
 	})
 }
 
@@ -141,7 +163,7 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 		return executionPreparation{}, err
 	}
 	if !runDirExists {
-		return executionPreparation{}, fmt.Errorf("run not found: %s", runID)
+		return executionPreparation{}, runNotFoundError(runID)
 	}
 
 	runPaths := contractRunPaths(runDir)
@@ -158,7 +180,7 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 		return executionPreparation{}, err
 	}
 	if !isRegularFile(runPaths.PromptManifest) {
-		return executionPreparation{}, fmt.Errorf("cannot prepare execution: executor prompt has not been built")
+		return executionPreparation{}, promptNotBuiltError("prepare execution", runID)
 	}
 
 	manifest, err := readPromptManifest(runPaths.PromptManifest)
@@ -166,7 +188,7 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 		return executionPreparation{}, err
 	}
 	if manifest.Status != "ready" {
-		return executionPreparation{}, fmt.Errorf("cannot prepare execution: executor prompt has not been built")
+		return executionPreparation{}, promptNotBuiltError("prepare execution", runID)
 	}
 	hash, err := verifyApprovedContract(runPaths, contract, approval, "prepare execution")
 	if err != nil {
@@ -181,7 +203,7 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 		return executionPreparation{}, err
 	}
 	if report.ProjectMap.Status != "fresh" {
-		return executionPreparation{}, fmt.Errorf("cannot prepare execution: project map is stale")
+		return executionPreparation{}, projectMapStaleError("prepare execution")
 	}
 	if manifest.MapRunID != report.ProjectMap.RunID {
 		return executionPreparation{}, fmt.Errorf("cannot prepare execution: executor prompt was built for a different project map")

@@ -79,6 +79,13 @@ type reviewFixResultDocument struct {
 	processResult
 }
 
+// reviewFixRunResponse is the fixer attempt result plus the next affordance;
+// the attempt artifacts on disk stay unchanged.
+type reviewFixRunResponse struct {
+	reviewFixResultDocument
+	Next []string `json:"next"`
+}
+
 func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, agentName string, timeout time.Duration, jsonOutput bool) error {
 	context, ok, err := a.loadReviewContext(stdout, runID)
 	if err != nil || !ok {
@@ -145,6 +152,15 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 		},
 		RenderRunOnly: func(stdout io.Writer, request reviewFixRequestDocument, result reviewFixResultDocument) {
 			writeReviewFixRun(stdout, request, result, prep.FixerName, prep.ModelSpec)
+		},
+		WrapRunOnly: func(result reviewFixResultDocument) any {
+			next := []string{}
+			if result.ExitCode == 0 && (!result.TimedOut || result.CompletedDespiteTimeout) {
+				// Recorded fixer output is parsed into resolutions; applying it
+				// is the safe next move.
+				next = []string{"pactum review fix apply " + runID}
+			}
+			return reviewFixRunResponse{reviewFixResultDocument: result, Next: next}
 		},
 	})
 }

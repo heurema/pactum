@@ -34,6 +34,13 @@ type MapRefreshResult struct {
 	SearchIndex  string    `json:"search_index"`
 }
 
+// mapRefreshResponse is the refresh result plus the next affordance; map
+// refresh prints no human Next: hints, so next mirrors that as empty.
+type mapRefreshResponse struct {
+	MapRefreshResult
+	Next []string `json:"next"`
+}
+
 func (a App) RefreshMap(root string) (MapRefreshResult, error) {
 	return a.refreshMap(root, a.nowUTC())
 }

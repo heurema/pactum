@@ -465,7 +465,7 @@ func (c *mapRefreshCmd) Run(r *runner) error {
 		return err
 	}
 	if c.JSONOutput {
-		return writeJSONResponse(r.Stdout, result)
+		return writeJSONResponse(r.Stdout, mapRefreshResponse{MapRefreshResult: result, Next: []string{}})
 	}
 	writeMapRefreshResult(r.Stdout, result)
 	return nil
