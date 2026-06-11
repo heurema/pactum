@@ -517,7 +517,7 @@ func writePromptBuild(stdout io.Writer, response promptBuildResponse) {
 	fmt.Fprintf(stdout, "  prompt manifest: %s\n", runArtifactRepoRel(response.RunID, "contract/prompt-manifest.json"))
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Next:")
-	fmt.Fprintln(stdout, "  pactum execute dry-run --agent codex")
+	fmt.Fprintln(stdout, "  pactum execute plan --agent codex")
 }
 
 func writePromptShow(stdout io.Writer, response promptShowResponse) {

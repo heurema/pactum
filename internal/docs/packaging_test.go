@@ -47,7 +47,7 @@ func TestSmokeScriptExists(t *testing.T) {
 		"pactum init",
 		"pactum status",
 		"pactum task new",
-		"pactum agents doctor",
+		"pactum doctor",
 	} {
 		if !strings.Contains(content, mention) {
 			t.Errorf("scripts/smoke.sh does not reference %q", mention)

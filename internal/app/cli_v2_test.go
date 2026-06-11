@@ -60,7 +60,6 @@ func TestReadOnlyCommandsBeforeInitExitZero(t *testing.T) {
 	for _, args := range [][]string{
 		{"status"},
 		{"task", "list"},
-		{"task", "current"},
 		{"version"},
 	} {
 		var stdout, stderr bytes.Buffer
@@ -161,7 +160,7 @@ func TestTaskNewCreatesRunAndSetsCurrent(t *testing.T) {
 	_ = app
 }
 
-func TestTaskListAndCurrentShowRun(t *testing.T) {
+func TestTaskListShowsCurrentRun(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupContractRun(t, root)
 
@@ -174,14 +173,8 @@ func TestTaskListAndCurrentShowRun(t *testing.T) {
 	if list.CurrentRunID != runID || len(list.Runs) != 1 || list.Runs[0].RunID != runID {
 		t.Fatalf("task list unexpected: %#v", list)
 	}
-
-	stdout.Reset()
-	stderr.Reset()
-	if code := app.Run([]string{"task", "current"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("task current exited %d, stderr: %s", code, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), runID) {
-		t.Fatalf("task current output mismatch:\n%s", stdout.String())
+	if !list.Runs[0].Current {
+		t.Fatalf("task list should mark the current run: %#v", list.Runs[0])
 	}
 }
 
@@ -304,8 +297,8 @@ func TestClarifyAnswerPrefixRouting(t *testing.T) {
 	// Ask two questions.
 	for _, q := range []string{"First?", "Second?"} {
 		var stdout, stderr bytes.Buffer
-		if code := app.Run([]string{"clarify", "ask", q}, &stdout, &stderr); code != 0 {
-			t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+		if code := app.Run([]string{"clarify", "add", q}, &stdout, &stderr); code != 0 {
+			t.Fatalf("clarify add exited %d, stderr: %s", code, stderr.String())
 		}
 	}
 
@@ -346,14 +339,14 @@ func TestReviewResolvePrefixRouting(t *testing.T) {
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := app.Run([]string{"review", "add-finding", runID, "needs work", "--blocking"}, &stdout, &stderr); code != 0 {
+	if code := app.Run([]string{"review", "finding", "add", runID, "needs work", "--blocking"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("review add-finding exited %d, stderr: %s", code, stderr.String())
 	}
 
 	// Resolve with a bare finding id (run resolved from current/sole-active).
 	stdout.Reset()
 	stderr.Reset()
-	if code := app.Run([]string{"review", "resolve", "f_001", "--note", "fixed"}, &stdout, &stderr); code != 0 {
+	if code := app.Run([]string{"review", "finding", "resolve", "f_001", "--note", "fixed"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("review resolve (bare finding id) exited %d, stderr: %s", code, stderr.String())
 	}
 }
@@ -400,7 +393,7 @@ func TestJSONErrorEnvelope(t *testing.T) {
 		wantCode string
 	}{
 		{[]string{"contract", "show", "run_missing", "--json"}, "run_not_found"},
-		{[]string{"execute", "dry-run", "run_missing", "--json"}, "run_not_found"},
+		{[]string{"execute", "plan", "run_missing", "--json"}, "run_not_found"},
 		{[]string{"prompt", "build", "--json"}, "contract_not_approved"}, // current run is a draft
 	}
 	for _, tc := range cases {
@@ -454,7 +447,7 @@ func TestStatusDerivesLifecycleAndNextStep(t *testing.T) {
 	if status.Runs.LatestStatus != "prompt_built" {
 		t.Fatalf("latest status = %q, want prompt_built", status.Runs.LatestStatus)
 	}
-	if status.Runs.NextCommand != "pactum execute dry-run" {
+	if status.Runs.NextCommand != "pactum execute plan" {
 		t.Fatalf("next command = %q", status.Runs.NextCommand)
 	}
 }
@@ -624,10 +617,10 @@ func TestReviewFixWithoutYesFailsNonInteractive(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	app = configureHelperFixers(t, app, paths, "helper")
-	runReviewCommand(t, app, "review", "add-finding", runID, "fixer requires explicit yes")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "fixer requires explicit yes")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "fix", runID, "--agent", "helper"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "helper"}, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("review fix without --yes exited %d, want 1, stderr: %s", code, stderr.String())
 	}
@@ -637,13 +630,13 @@ func TestReviewFixWithoutYesFailsNonInteractive(t *testing.T) {
 	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 }
 
-func TestExecuteDryRunDoesNotNeedYes(t *testing.T) {
+func TestExecutePlanDoesNotNeedYes(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupApprovedAndBuiltPrompt(t, root)
 
 	var stdout, stderr bytes.Buffer
-	if code := app.Run([]string{"execute", "dry-run", runID, "--agent", "codex"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("execute dry-run exited %d, stderr: %s", code, stderr.String())
+	if code := app.Run([]string{"execute", "plan", runID, "--agent", "codex"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("execute plan exited %d, stderr: %s", code, stderr.String())
 	}
 }
 

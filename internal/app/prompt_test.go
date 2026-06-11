@@ -64,9 +64,9 @@ func TestPromptBuildFailsWhenBlockingClarificationOpen(t *testing.T) {
 	app, _, runID := setupContractRun(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "ask", runID, "Need a decision?", "--blocking"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "add", runID, "Need a decision?", "--blocking"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify add exited %d, stderr: %s", code, stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
@@ -135,7 +135,7 @@ func TestPromptBuildSucceedsForApprovedContract(t *testing.T) {
 		".heurema/pactum/runs/" + runID + "/context/executor-context.md",
 		".heurema/pactum/runs/" + runID + "/contract/prompt-manifest.json",
 		"Next:",
-		"pactum execute dry-run --agent codex",
+		"pactum execute plan --agent codex",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("prompt build output missing %q:\n%s", want, got)
@@ -360,9 +360,9 @@ func TestClarifyAfterApprovedPromptBuildRemovesPromptReadiness(t *testing.T) {
 	assertFile(t, runPaths.PromptManifest)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "ask", runID, "Does this reset readiness?", "--blocking"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "add", runID, "Does this reset readiness?", "--blocking"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify add exited %d, stderr: %s", code, stderr.String())
 	}
 	assertNoFile(t, runPaths.PromptManifest)
 	if approval := readApproval(t, runPaths.ApprovalJSON); approval.Status != "pending" || approval.ContractSHA256 != nil {
@@ -461,7 +461,7 @@ func setupApprovedPromptContract(t *testing.T, root string) (App, artifacts.Path
 
 	var stdout, stderr bytes.Buffer
 	commands := [][]string{
-		{"clarify", "ask", runID, "Should prompt build require approval?", "--blocking"},
+		{"clarify", "add", runID, "Should prompt build require approval?", "--blocking"},
 		{"clarify", "answer", runID, "q_001", "Yes. Prompt build must be approved first."},
 		{
 			"contract", "revise", runID,

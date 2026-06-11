@@ -51,10 +51,10 @@ func (c *versionCmd) Run(r *runner) error {
 	return nil
 }
 
-func (c *clarifyAskCmd) Run(r *runner) error {
+func (c *clarifyAddCmd) Run(r *runner) error {
 	explicitRun, rest := splitLeadingRunID(c.Args)
 	if len(rest) != 1 {
-		return errors.New("usage: pactum clarify ask [run_id] <question>")
+		return errors.New("usage: pactum clarify add [run_id] <question>")
 	}
 	runID, err := r.App.resolveRunArgMutating(explicitRun, false)
 	if err != nil {
@@ -87,7 +87,7 @@ func (c *clarifySuggestCmd) Run(r *runner) error {
 	return r.App.ClarifySuggest(r.Stdout, r.Stderr, runID, c.Reviewer, c.Timeout, c.Yes, c.JSONOutput)
 }
 
-func (c *clarifyLoopCmd) Run(r *runner) error {
+func (c *clarifyRunCmd) Run(r *runner) error {
 	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
 	if err != nil {
 		return err
@@ -101,7 +101,7 @@ func (c *clarifyLoopCmd) Run(r *runner) error {
 	})
 }
 
-func (c *clarifyStatusCmd) Run(r *runner) error {
+func (c *clarifyShowCmd) Run(r *runner) error {
 	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
 	if err != nil || !ok {
 		return err
@@ -114,6 +114,9 @@ func (c *contractShowCmd) Run(r *runner) error {
 	if err != nil || !ok {
 		return err
 	}
+	if c.Draft {
+		return r.App.ContractShowDraft(r.Stdout, runID, c.JSONOutput)
+	}
 	return r.App.ContractShow(r.Stdout, runID, c.JSONOutput)
 }
 
@@ -125,15 +128,7 @@ func (c *contractDraftCmd) Run(r *runner) error {
 	return r.App.ContractDraft(r.Stdout, r.Stderr, runID, c.Reviewer, c.Timeout, c.Yes, c.JSONOutput)
 }
 
-func (c *contractShowDraftCmd) Run(r *runner) error {
-	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
-	if err != nil || !ok {
-		return err
-	}
-	return r.App.ContractShowDraft(r.Stdout, runID, c.JSONOutput)
-}
-
-func (c *contractAcceptDraftCmd) Run(r *runner) error {
+func (c *contractAcceptCmd) Run(r *runner) error {
 	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
 	if err != nil {
 		return err
@@ -183,12 +178,12 @@ func (c *promptShowCmd) Run(r *runner) error {
 	return r.App.PromptShow(r.Stdout, runID, c.JSONOutput)
 }
 
-func (c *executeDryRunCmd) Run(r *runner) error {
+func (c *executePlanCmd) Run(r *runner) error {
 	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
 	if err != nil {
 		return err
 	}
-	return r.App.ExecuteDryRun(r.Stdout, runID, c.Agent, c.JSONOutput)
+	return r.App.ExecutePlan(r.Stdout, runID, c.Agent, c.JSONOutput)
 }
 
 func (c *executeRunCmd) Run(r *runner) error {
@@ -197,14 +192,6 @@ func (c *executeRunCmd) Run(r *runner) error {
 		return err
 	}
 	return r.App.ExecuteRun(r.Stdout, r.Stderr, runID, c.Agent, c.Timeout, c.Yes, c.JSONOutput)
-}
-
-func (c *executeStatusCmd) Run(r *runner) error {
-	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
-	if err != nil || !ok {
-		return err
-	}
-	return r.App.ExecuteStatus(r.Stdout, runID, c.JSONOutput)
 }
 
 func (c *executeShowCmd) Run(r *runner) error {
@@ -271,10 +258,10 @@ func (c *reviewShowCmd) Run(r *runner) error {
 	return r.App.ReviewShow(r.Stdout, runID, c.JSONOutput)
 }
 
-func (c *reviewAddFindingCmd) Run(r *runner) error {
+func (c *reviewFindingAddCmd) Run(r *runner) error {
 	explicitRun, rest := splitLeadingRunID(c.Args)
 	if len(rest) != 1 {
-		return errors.New("usage: pactum review add-finding [run_id] <message>")
+		return errors.New("usage: pactum review finding add [run_id] <message>")
 	}
 	runID, err := r.App.resolveRunArgMutating(explicitRun, false)
 	if err != nil {
@@ -291,10 +278,10 @@ func (c *reviewAddFindingCmd) Run(r *runner) error {
 	return r.App.ReviewAddFinding(r.Stdout, runID, finding, c.JSONOutput)
 }
 
-func (c *reviewResolveCmd) Run(r *runner) error {
+func (c *reviewFindingResolveCmd) Run(r *runner) error {
 	explicitRun, rest := splitLeadingRunID(c.Args)
 	if len(rest) != 1 {
-		return errors.New("usage: pactum review resolve [run_id] <finding_id>")
+		return errors.New("usage: pactum review finding resolve [run_id] <finding_id>")
 	}
 	findingID := rest[0]
 	if !strings.HasPrefix(findingID, "f_") {
@@ -315,12 +302,12 @@ func (c *reviewApproveCmd) Run(r *runner) error {
 	return r.App.ReviewApprove(r.Stdout, runID, c.By, c.JSONOutput)
 }
 
-func (c *reviewDryRunCmd) Run(r *runner) error {
+func (c *reviewPlanCmd) Run(r *runner) error {
 	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
 	if err != nil {
 		return err
 	}
-	return r.App.ReviewDryRun(r.Stdout, runID, c.Reviewer, c.JSONOutput)
+	return r.App.ReviewPlan(r.Stdout, runID, c.Reviewer, c.JSONOutput)
 }
 
 func (c *reviewRunCmd) Run(r *runner) error {
@@ -331,7 +318,7 @@ func (c *reviewRunCmd) Run(r *runner) error {
 	return r.App.ReviewRun(r.Stdout, r.Stderr, runID, c.Reviewer, c.Timeout, c.Yes, c.JSONOutput)
 }
 
-func (c *reviewFixCmd) Run(r *runner) error {
+func (c *reviewFixRunCmd) Run(r *runner) error {
 	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
 	if err != nil {
 		return err
@@ -356,10 +343,10 @@ func (c *reviewLoopCmd) Run(r *runner) error {
 	})
 }
 
-func (c *reviewProposeFindingsCmd) Run(r *runner) error {
+func (c *reviewProposalCollectCmd) Run(r *runner) error {
 	explicitRun, rest := splitLeadingRunID(c.Args)
 	if len(rest) > 1 {
-		return errors.New("usage: pactum review propose-findings [run_id] [reviewer_attempt_id]")
+		return errors.New("usage: pactum review proposal collect [run_id] [reviewer_attempt_id]")
 	}
 	attemptID := ""
 	if len(rest) == 1 {
@@ -372,10 +359,10 @@ func (c *reviewProposeFindingsCmd) Run(r *runner) error {
 	return r.App.ReviewProposeFindings(r.Stdout, runID, attemptID, c.JSONOutput)
 }
 
-func (c *reviewApplyFixOutcomesCmd) Run(r *runner) error {
+func (c *reviewFixApplyCmd) Run(r *runner) error {
 	explicitRun, rest := splitLeadingRunID(c.Args)
 	if len(rest) > 1 {
-		return errors.New("usage: pactum review apply-fix-outcomes [run_id] [fixer_attempt_id]")
+		return errors.New("usage: pactum review fix apply [run_id] [fixer_attempt_id]")
 	}
 	attemptID := ""
 	if len(rest) == 1 {
@@ -388,10 +375,10 @@ func (c *reviewApplyFixOutcomesCmd) Run(r *runner) error {
 	return r.App.ReviewApplyFixOutcomes(r.Stdout, runID, attemptID, c.JSONOutput)
 }
 
-func (c *reviewAcceptProposalCmd) Run(r *runner) error {
+func (c *reviewProposalAcceptCmd) Run(r *runner) error {
 	explicitRun, rest := splitLeadingRunID(c.Args)
 	if len(rest) != 1 {
-		return errors.New("usage: pactum review accept-proposal [run_id] <proposal_id>")
+		return errors.New("usage: pactum review proposal accept [run_id] <proposal_id>")
 	}
 	proposalID := rest[0]
 	if !strings.HasPrefix(proposalID, "p_") {
@@ -404,10 +391,10 @@ func (c *reviewAcceptProposalCmd) Run(r *runner) error {
 	return r.App.ReviewAcceptProposal(r.Stdout, runID, proposalID, c.JSONOutput)
 }
 
-func (c *reviewRejectProposalCmd) Run(r *runner) error {
+func (c *reviewProposalRejectCmd) Run(r *runner) error {
 	explicitRun, rest := splitLeadingRunID(c.Args)
 	if len(rest) != 1 {
-		return errors.New("usage: pactum review reject-proposal [run_id] <proposal_id>")
+		return errors.New("usage: pactum review proposal reject [run_id] <proposal_id>")
 	}
 	proposalID := rest[0]
 	if !strings.HasPrefix(proposalID, "p_") {
@@ -420,8 +407,8 @@ func (c *reviewRejectProposalCmd) Run(r *runner) error {
 	return r.App.ReviewRejectProposal(r.Stdout, runID, proposalID, c.Reason, c.JSONOutput)
 }
 
-func (c *agentsDoctorCmd) Run(r *runner) error {
-	return r.App.AgentsDoctor(r.Stdout, c.Agent, c.JSONOutput)
+func (c *doctorCmd) Run(r *runner) error {
+	return r.App.Doctor(r.Stdout, c.Agent, c.JSONOutput)
 }
 
 func (c *memoryProposeCmd) Run(r *runner) error {

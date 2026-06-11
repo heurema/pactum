@@ -1,13 +1,13 @@
 ---
 name: pactum
-description: Use Pactum's contract-first workflow for non-trivial repository code changes. Use when a code task needs project-map context, contract approval, a prompt boundary, a safe dry-run, or the gate/review/memory workflow. Do not use for quick questions, for trivial edits, or when the user asks not to use Pactum.
+description: Use Pactum's contract-first workflow for non-trivial repository code changes. Use when a code task needs project-map context, contract approval, a prompt boundary, a safe plan step, or the gate/review/memory workflow. Do not use for quick questions, for trivial edits, or when the user asks not to use Pactum.
 ---
 
 # Pactum — contract-first agent workflow
 
 Pactum turns a repository code task into an auditable, contract-first run:
 project map → task → clarification → approved contract → prompt boundary →
-safe dry-run. It is a CLI you drive with shell commands.
+execution plan. It is a CLI you drive with shell commands.
 
 This file is the portable skill. The full procedure and rationale live in the
 reference files next to it — **read them with your file tools before acting**:
@@ -16,7 +16,7 @@ reference files next to it — **read them with your file tools before acting**:
   strategy, current-run usage, and reporting format. Read this before starting.
 - `references/install.md` — installing the `pactum` CLI and this skill.
 - `references/safety.md` — the rules for real (unsandboxed) agent execution.
-  Read this before running anything beyond a dry-run.
+  Read this before running anything beyond the plan step.
 
 ## Scope
 
@@ -30,7 +30,7 @@ reference files next to it — **read them with your file tools before acting**:
 - Verify the CLI first: run `which pactum`. If it is not found, stop and follow
   `references/install.md`; do not continue until `which pactum` succeeds.
 - **Do not run `pactum execute run` by default.** The default stop point is
-  `pactum execute dry-run`.
+  `pactum execute plan`.
 - **Do not run `pactum review run` by default.**
 - Do not pass `--yes` unless the user has explicitly approved unsandboxed,
   direct agent execution. Pactum runs agents as real subprocesses; this is not
@@ -52,14 +52,14 @@ Read `references/workflow.md` for the detailed version. The safe default flow:
 5. Targeted `pactum search "<term>"` (identifiers, paths, domain terms; with
    `--kind wiki`, `--kind code_item`, `--kind import`) and read the relevant
    `map/wiki/` pages and source files.
-6. `pactum clarify ask "..." --blocking` / `pactum clarify answer q_001 "..."`
+6. `pactum clarify add "..." --blocking` / `pactum clarify answer q_001 "..."`
    if anything is ambiguous.
 7. `pactum contract revise` with goal, in-scope, out-of-scope, acceptance
    criteria, and validation commands.
 8. `pactum contract approve --by manual` — only after the scope is clear.
 9. `pactum prompt build` then `pactum prompt show`.
-10. `pactum execute dry-run --agent codex` — the safe stop point.
-11. Report: current run id, relevant files, contract summary, the dry-run
+10. `pactum execute plan --agent codex` — the safe stop point.
+11. Report: current run id, relevant files, contract summary, the plan
     command, and the recommended next action.
 
 Stop at step 10 and report. Only proceed to real execution after the user

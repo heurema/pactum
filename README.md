@@ -62,7 +62,7 @@ those registry names. The generated default registers a single unpinned
 
 Both built-ins read their prompt from a prompt file that Pactum prepares. Check
 that the agent CLIs are installed and visible on your `PATH` with
-`pactum agents doctor`.
+`pactum doctor`.
 
 Pactum runs these agents as **direct subprocesses in your repository**. There is
 no Pactum-managed isolation, container, or virtual machine around them.
@@ -132,12 +132,11 @@ pactum status
 # 2. Create a contract-first run for a task (this becomes the current run).
 pactum task new "add feature X"
 
-# Inspect runs at any time:
+# Inspect runs at any time (the current run is marked with *):
 pactum task list
-pactum task current
 
 # 3. Clarify open questions before approving the contract.
-pactum clarify ask "Question?" --blocking
+pactum clarify add "Question?" --blocking
 pactum clarify answer q_001 "Answer"
 
 # 4. Shape and approve the contract.
@@ -155,7 +154,7 @@ pactum prompt build
 #    agent directly in your repository; it asks for confirmation on a terminal,
 #    or pass --yes for non-interactive use. An omitted --agent runs the first
 #    entry of the config agents registry; --agent <name> picks another entry.
-pactum execute dry-run
+pactum execute plan
 pactum execute run --yes
 
 # 7. Gate the result. Validation commands run only with --allow-commands.
@@ -163,8 +162,8 @@ pactum gate run --allow-commands
 
 # 8. Review the run manually.
 pactum review prepare
-pactum review add-finding "..." --blocking --severity medium --category quality
-pactum review resolve f_001 --note "Fixed"
+pactum review finding add "..." --blocking --severity medium --category quality
+pactum review finding resolve f_001 --note "Fixed"
 pactum review approve
 
 # 9. Capture reusable project memory from the reviewed run.
@@ -180,8 +179,8 @@ pactum version
 
 > Every staged command still accepts an explicit run id (for example
 > `pactum contract approve run_20260603_120000`) and the secondary-id commands
-> accept either form, e.g. `pactum review resolve f_001` or
-> `pactum review resolve <run_id> f_001`.
+> accept either form, e.g. `pactum review finding resolve f_001` or
+> `pactum review finding resolve <run_id> f_001`.
 
 ## Documentation
 
@@ -191,8 +190,8 @@ pactum version
   each stage produces and whether it mutates state.
 - [docs/workspace.md](docs/workspace.md) — the `.heurema/pactum/` layout, which
   parts are generated vs durable, and what to commit.
-- [docs/agents.md](docs/agents.md) — the built-in agents, `pactum agents doctor`,
-  dry-run vs run, and the direct-subprocess execution model.
+- [docs/agents.md](docs/agents.md) — the built-in agents, `pactum doctor`,
+  plan vs run, and the direct-subprocess execution model.
 - [docs/memory.md](docs/memory.md) — deterministic project memory: propose,
   accept, search, refresh/stale, and the prompt boundary.
 - [docs/agent-skill.md](docs/agent-skill.md) — the repo-local, cross-agent

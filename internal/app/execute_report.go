@@ -69,36 +69,30 @@ type logExcerpt struct {
 	Truncated bool
 }
 
-func (a App) ExecuteStatus(stdout io.Writer, runID string, jsonOutput bool) error {
-	context, ok, err := a.loadExecuteReportContext(stdout, runID)
-	if err != nil || !ok {
-		return err
-	}
-
-	response, err := buildExecuteStatusResponse(context)
-	if err != nil {
-		return err
-	}
-	if jsonOutput {
-		return writeJSONResponse(stdout, response)
-	}
-	writeExecuteStatus(stdout, response)
-	return nil
-}
-
+// ExecuteShow reports execution state. Without an attempt id it prints the
+// run-level execution summary (prompt readiness, plan artifact, attempts, last
+// result); with one it prints that attempt's captured artifacts.
 func (a App) ExecuteShow(stdout io.Writer, runID string, attemptID string, logs bool, jsonOutput bool) error {
 	context, ok, err := a.loadExecuteReportContext(stdout, runID)
 	if err != nil || !ok {
 		return err
 	}
 
-	attempt, found, err := loadExecutionAttempt(context, attemptID)
+	if strings.TrimSpace(attemptID) == "" {
+		response, err := buildExecuteStatusResponse(context)
+		if err != nil {
+			return err
+		}
+		if jsonOutput {
+			return writeJSONResponse(stdout, response)
+		}
+		writeExecuteStatus(stdout, response)
+		return nil
+	}
+
+	attempt, err := loadExecutionAttempt(context, attemptID)
 	if err != nil {
 		return err
-	}
-	if !found {
-		fmt.Fprintf(stdout, "No execution attempts found. Run: pactum execute run %s\n", runID)
-		return nil
 	}
 
 	if jsonOutput {
@@ -227,47 +221,48 @@ func listExecutionAttemptIDs(attemptsDir string) ([]string, error) {
 	return ids, nil
 }
 
-func loadExecutionAttempt(context executeReportContext, attemptID string) (executionAttemptSummary, bool, error) {
-	attemptID = strings.TrimSpace(attemptID)
-	var result executionResultDocument
-	resultLoaded := false
-	if attemptID == "" {
-		if isRegularFile(context.RunPaths.LastResultJSON) {
-			if err := readJSON(context.RunPaths.LastResultJSON, &result); err != nil {
-				return executionAttemptSummary{}, false, err
-			}
-			resultLoaded = true
-			if result.AttemptID != "" {
-				attemptID = result.AttemptID
-			}
+// loadLatestExecutionAttempt resolves the run's most recent execution attempt:
+// the one recorded in last-result.json, falling back to the highest-numbered
+// attempt directory. ok is false when the run has no attempts.
+func loadLatestExecutionAttempt(context executeReportContext) (executionAttemptSummary, bool, error) {
+	attemptID := ""
+	if isRegularFile(context.RunPaths.LastResultJSON) {
+		var result executionResultDocument
+		if err := readJSON(context.RunPaths.LastResultJSON, &result); err != nil {
+			return executionAttemptSummary{}, false, err
 		}
-		if attemptID == "" {
-			attempts, err := listExecutionAttemptIDs(context.RunPaths.AttemptsDir)
-			if err != nil {
-				return executionAttemptSummary{}, false, err
-			}
-			if len(attempts) == 0 {
-				return executionAttemptSummary{}, false, nil
-			}
-			attemptID = attempts[len(attempts)-1]
-		}
+		attemptID = result.AttemptID
 	}
-
-	attemptPaths := executionAttemptPaths(context.RunPaths, attemptID)
-	dirExists, err := storeDirExists(attemptPaths.Dir)
+	if attemptID == "" {
+		attempts, err := listExecutionAttemptIDs(context.RunPaths.AttemptsDir)
+		if err != nil {
+			return executionAttemptSummary{}, false, err
+		}
+		if len(attempts) == 0 {
+			return executionAttemptSummary{}, false, nil
+		}
+		attemptID = attempts[len(attempts)-1]
+	}
+	attempt, err := loadExecutionAttempt(context, attemptID)
 	if err != nil {
 		return executionAttemptSummary{}, false, err
 	}
-	if !dirExists {
-		return executionAttemptSummary{}, false, fmt.Errorf("execution attempt not found: %s", attemptID)
+	return attempt, true, nil
+}
+
+func loadExecutionAttempt(context executeReportContext, attemptID string) (executionAttemptSummary, error) {
+	attemptID = strings.TrimSpace(attemptID)
+	attemptPaths := executionAttemptPaths(context.RunPaths, attemptID)
+	dirExists, err := storeDirExists(attemptPaths.Dir)
+	if err != nil {
+		return executionAttemptSummary{}, err
 	}
-	if !isRegularFile(attemptPaths.ResultJSON) {
-		return executionAttemptSummary{}, false, fmt.Errorf("execution attempt not found: %s", attemptID)
+	if !dirExists || !isRegularFile(attemptPaths.ResultJSON) {
+		return executionAttemptSummary{}, fmt.Errorf("execution attempt not found: %s", attemptID)
 	}
-	if !resultLoaded {
-		if err := readJSON(attemptPaths.ResultJSON, &result); err != nil {
-			return executionAttemptSummary{}, false, err
-		}
+	var result executionResultDocument
+	if err := readJSON(attemptPaths.ResultJSON, &result); err != nil {
+		return executionAttemptSummary{}, err
 	}
 	if result.AttemptID == "" {
 		result.AttemptID = attemptID
@@ -276,7 +271,7 @@ func loadExecutionAttempt(context executeReportContext, attemptID string) (execu
 		ID:     attemptID,
 		Paths:  attemptPaths,
 		Result: result,
-	}, true, nil
+	}, nil
 }
 
 func buildExecuteShowResponse(attempt executionAttemptSummary, logs bool) (executeShowResponse, error) {
@@ -362,7 +357,7 @@ func writeExecuteStatus(stdout io.Writer, response executeStatusResponse) {
 	fmt.Fprintln(stdout, "Prompt:")
 	fmt.Fprintf(stdout, "  ready: %s\n", yesNo(response.PromptReady))
 	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Dry-run:")
+	fmt.Fprintln(stdout, "Plan:")
 	fmt.Fprintf(stdout, "  exists: %s\n", yesNo(response.DryRun.Exists))
 	fmt.Fprintf(stdout, "  path: %s\n", runArtifactRepoRel(response.RunID, response.DryRun.Path))
 	fmt.Fprintln(stdout)

@@ -258,6 +258,40 @@ reviews across M8–M10. Rough priority in parentheses.
     consume, with no auto-stop / convergence-driven control flow built this slice.
     This completes the "grill the requester" clarification arc (slices 1-5).
 
+## Agent-first CLI polish arc
+
+The CLI's primary consumer is an orchestrating AI agent driving pactum through
+a skill, not a human typing commands. That flips the design goal from
+memorability to **derivability**: the best agent CLI is the one whose complete
+description fits in a few sentences, with everything else inferable from a
+regular grammar. Every irregularity costs skill-doc tokens and invites
+hallucinated commands. Principles: a uniform verb set per stage (`run`,
+`show`, plus `approve/accept/reject` for decisions and `add/resolve/answer`
+for collections); one name per action (no aliases or duplicates); zero
+interactivity (confirmation happens upstream, in the human's conversation
+with their agent); the CLI announces legal moves instead of making the agent
+guess (structured `next` affordances and error envelopes carrying a `reason`
+code plus the remedial `fix` command); stdout is the agent's context, so
+human output stays terse and artifacts travel by path. Decision commands
+carry an optional `--by <principal>` (default `manual`) recording whose
+decision the agent relayed — attribution without ceremony.
+
+- **Slice 1 — grammar normalization** (in flight, M23.0): renames, nested
+  subcommands instead of hyphenated ones, duplicate/alias removal.
+- **Slice 2 — confirmation model** (med): remove interactive confirms,
+  `--yes`, and `gate run --allow-commands`; extend the optional
+  `--by`-with-default to the remaining decision verbs (`contract accept`,
+  `clarify answer`, `review proposal accept|reject`).
+- **Slice 3 — affordances** (med): structured error envelopes
+  (`reason` + `fix`), a `next` array in every mutating command's `--json`
+  output and in `pactum status`, so the skill never encodes the stage state
+  machine.
+- **Slice 4 — pipeline smoothing + skill rewrite** (med): `review run`
+  absorbs prepare (and possibly the loop as the canonical entry),
+  `prompt build` self-heals a stale map, fold `clarify suggest` semantics
+  into `clarify run --rounds`, then rewrite `agent-skill.md` against the
+  final grammar.
+
 ## Hardening / cleanup
 
 - **Lens fan-out test flakiness under full-suite race load** (small). Three

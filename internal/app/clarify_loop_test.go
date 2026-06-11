@@ -24,11 +24,11 @@ func TestClarifyLoopRequiresYes(t *testing.T) {
 	app = configureHelperClarifiers(t, app, paths, "helper")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "loop", runID, "--reviewer", "helper"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "run", runID, "--reviewer", "helper"}, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("clarify loop without --yes exited %d, want 1, stderr: %s", code, stderr.String())
 	}
-	if got := stderr.String(); !strings.Contains(got, "clarify loop requires --yes") {
+	if got := stderr.String(); !strings.Contains(got, "clarify run requires --yes") {
 		t.Fatalf("clarify loop confirmation stderr mismatch:\n%s", got)
 	}
 	assertNoFile(t, runPaths.ClarifyLoopSummaryJSON)
@@ -50,7 +50,7 @@ func TestClarifyLoopConvergesOnHighConfidenceAnswers(t *testing.T) {
 	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "loop", runID, "--reviewer", "helper", "--yes", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "run", runID, "--reviewer", "helper", "--yes", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("clarify loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
@@ -147,7 +147,7 @@ func TestClarifyLoopStopsNeedsHuman(t *testing.T) {
 	setClarifyLoopHelperEnv(t, filepath.Join(stateDir, "sequence"), "medium_then_empty")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "loop", runID, "--reviewer", clarifyLoopClarifierName, "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "run", runID, "--reviewer", clarifyLoopClarifierName, "--yes"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("clarify loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
@@ -191,7 +191,7 @@ func TestClarifyLoopStopsAtMaxRounds(t *testing.T) {
 	setClarifyLoopHelperEnv(t, filepath.Join(stateDir, "sequence"), "always_medium")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "loop", runID, "--reviewer", clarifyLoopClarifierName, "--max-rounds", "2", "--yes", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "run", runID, "--reviewer", clarifyLoopClarifierName, "--max-rounds", "2", "--yes", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("clarify loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
@@ -224,7 +224,7 @@ func TestClarifyLoopUsesConfigMaxRounds(t *testing.T) {
 	setClarifyLoopHelperEnv(t, filepath.Join(stateDir, "sequence"), "always_medium")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "loop", runID, "--reviewer", clarifyLoopClarifierName, "--yes", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "run", runID, "--reviewer", clarifyLoopClarifierName, "--yes", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("clarify loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
@@ -241,7 +241,7 @@ func TestClarifyLoopRejectsNegativeMaxRounds(t *testing.T) {
 	app = configureHelperClarifiers(t, app, paths, "helper")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "loop", runID, "--reviewer", "helper", "--max-rounds=-1", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "run", runID, "--reviewer", "helper", "--max-rounds=-1", "--yes"}, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("clarify loop with negative max rounds exited %d, want 1", code)
 	}
@@ -261,7 +261,7 @@ func TestClarifyLoopSurfacesApprovalResetOnApprovedRun(t *testing.T) {
 	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "loop", runID, "--reviewer", "helper", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "run", runID, "--reviewer", "helper", "--yes"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("clarify loop exited %d, stderr: %s", code, stderr.String())
 	}

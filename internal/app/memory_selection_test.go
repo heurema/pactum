@@ -218,7 +218,7 @@ func TestReviewerContextReferencesMemoryContext(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 
-	runReviewCommand(t, app, "review", "dry-run", runID)
+	runReviewCommand(t, app, "review", "plan", runID)
 	context := mustReadFile(t, runPaths.ReviewContextMD)
 	if !strings.Contains(context, "Memory context: context/memory-context.md") {
 		t.Fatalf("reviewer context missing memory pointer:\n%s", context)

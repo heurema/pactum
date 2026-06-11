@@ -3,9 +3,9 @@ package app
 import "time"
 
 type cli struct {
-	Agents   agentsCmd   `cmd:"" help:"Diagnose built-in agents."`
 	Clarify  clarifyCmd  `cmd:"" help:"Manage manual clarification artifacts."`
 	Contract contractCmd `cmd:"" help:"Inspect, revise, and approve run contracts."`
+	Doctor   doctorCmd   `cmd:"" help:"Diagnose built-in agents without launching them."`
 	Execute  executeCmd  `cmd:"" help:"Prepare deterministic execution artifacts."`
 	Export   exportCmd   `cmd:"" help:"Export a run's full record as a single archive."`
 	Gate     gateCmd     `cmd:"" help:"Run deterministic validation and scope gates."`
@@ -30,14 +30,14 @@ type mapCmd struct {
 }
 
 type clarifyCmd struct {
-	Ask     clarifyAskCmd     `cmd:"" help:"Add a manual clarification question."`
+	Add     clarifyAddCmd     `cmd:"" help:"Add a manual clarification question."`
 	Answer  clarifyAnswerCmd  `cmd:"" help:"Record a manual clarification answer."`
 	Suggest clarifySuggestCmd `cmd:"" help:"Run a read-only clarifier agent and record proposed questions."`
-	Loop    clarifyLoopCmd    `cmd:"" help:"Run clarifier rounds that auto-resolve high-confidence recommendations until convergence."`
-	Status  clarifyStatusCmd  `cmd:"" aliases:"list" help:"Print clarification status for a run (alias: list)."`
+	Run     clarifyRunCmd     `cmd:"" help:"Run clarifier rounds that auto-resolve high-confidence recommendations until convergence."`
+	Show    clarifyShowCmd    `cmd:"" help:"Print clarification status for a run."`
 }
 
-type clarifyAskCmd struct {
+type clarifyAddCmd struct {
 	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <question>"`
 	Blocking   bool     `name:"blocking" help:"Mark the question as blocking contract progress."`
 	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
@@ -56,7 +56,7 @@ type clarifySuggestCmd struct {
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
-type clarifyLoopCmd struct {
+type clarifyRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to clarify."`
 	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the clarifier. Defaults to cross-model selection against the run executor."`
 	MaxRounds  int           `name:"max-rounds" help:"Maximum clarifier rounds. Defaults to clarify.max_rounds."`
@@ -65,18 +65,17 @@ type clarifyLoopCmd struct {
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
-type clarifyStatusCmd struct {
+type clarifyShowCmd struct {
 	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type contractCmd struct {
-	Show        contractShowCmd        `cmd:"" help:"Show a run contract."`
-	Draft       contractDraftCmd       `cmd:"" help:"Run a read-only agent to propose contract fields."`
-	ShowDraft   contractShowDraftCmd   `cmd:"show-draft" help:"Show the latest contract draft proposal."`
-	AcceptDraft contractAcceptDraftCmd `cmd:"accept-draft" help:"Accept the latest contract draft proposal."`
-	Revise      contractReviseCmd      `cmd:"" help:"Revise deterministic contract fields."`
-	Approve     contractApproveCmd     `cmd:"" help:"Approve a run contract."`
+	Show    contractShowCmd    `cmd:"" help:"Show a run contract."`
+	Draft   contractDraftCmd   `cmd:"" help:"Run a read-only agent to propose contract fields."`
+	Accept  contractAcceptCmd  `cmd:"" help:"Accept the latest contract draft proposal."`
+	Revise  contractReviseCmd  `cmd:"" help:"Revise deterministic contract fields."`
+	Approve contractApproveCmd `cmd:"" help:"Approve a run contract."`
 }
 
 type promptCmd struct {
@@ -85,10 +84,9 @@ type promptCmd struct {
 }
 
 type executeCmd struct {
-	DryRun executeDryRunCmd `cmd:"dry-run" help:"Prepare execution artifacts without running an agent."`
-	Run    executeRunCmd    `cmd:"run" help:"Run the selected built-in agent directly in the repository."`
-	Show   executeShowCmd   `cmd:"show" help:"Show captured execution attempt artifacts."`
-	Status executeStatusCmd `cmd:"status" help:"Summarize captured execution artifacts."`
+	Plan executePlanCmd `cmd:"plan" help:"Prepare execution artifacts without running an agent."`
+	Run  executeRunCmd  `cmd:"run" help:"Run the selected built-in agent directly in the repository."`
+	Show executeShowCmd `cmd:"show" help:"Summarize execution, or show a captured attempt's artifacts."`
 }
 
 type gateCmd struct {
@@ -97,24 +95,32 @@ type gateCmd struct {
 }
 
 type reviewCmd struct {
-	Prepare          reviewPrepareCmd          `cmd:"" help:"Prepare manual review artifacts."`
-	Status           reviewStatusCmd           `cmd:"" help:"Show manual review status."`
-	Show             reviewShowCmd             `cmd:"" help:"Show manual review findings."`
-	AddFinding       reviewAddFindingCmd       `cmd:"add-finding" help:"Append a manual review finding."`
-	Resolve          reviewResolveCmd          `cmd:"" help:"Resolve a manual review finding."`
-	Approve          reviewApproveCmd          `cmd:"" help:"Approve a manual review."`
-	DryRun           reviewDryRunCmd           `cmd:"dry-run" help:"Prepare reviewer artifacts without running a reviewer."`
-	Run              reviewRunCmd              `cmd:"run" help:"Run a built-in reviewer and capture attempt artifacts."`
-	Fix              reviewFixCmd              `cmd:"fix" help:"Run a write-enabled fixer against current review findings."`
-	Loop             reviewLoopCmd             `cmd:"loop" help:"Run reviewer/fixer rounds until a clean review round or max rounds."`
-	ProposeFindings  reviewProposeFindingsCmd  `cmd:"propose-findings" help:"Parse reviewer output into pending finding proposals."`
-	ApplyFixOutcomes reviewApplyFixOutcomesCmd `cmd:"apply-fix-outcomes" help:"Parse fixer output into review resolutions."`
-	AcceptProposal   reviewAcceptProposalCmd   `cmd:"accept-proposal" help:"Accept a pending review finding proposal."`
-	RejectProposal   reviewRejectProposalCmd   `cmd:"reject-proposal" help:"Reject a pending review finding proposal."`
+	Prepare  reviewPrepareCmd  `cmd:"" help:"Prepare manual review artifacts."`
+	Status   reviewStatusCmd   `cmd:"" help:"Show manual review status."`
+	Show     reviewShowCmd     `cmd:"" help:"Show manual review findings."`
+	Finding  reviewFindingCmd  `cmd:"" help:"Manage manual review findings."`
+	Approve  reviewApproveCmd  `cmd:"" help:"Approve a manual review."`
+	Plan     reviewPlanCmd     `cmd:"plan" help:"Prepare reviewer artifacts without running a reviewer."`
+	Run      reviewRunCmd      `cmd:"run" help:"Run a built-in reviewer and capture attempt artifacts."`
+	Fix      reviewFixCmd      `cmd:"fix" help:"Run a write-enabled fixer and apply its outcomes."`
+	Loop     reviewLoopCmd     `cmd:"loop" help:"Run reviewer/fixer rounds until a clean review round or max rounds."`
+	Proposal reviewProposalCmd `cmd:"" help:"Manage pending review finding proposals."`
 }
 
-type agentsCmd struct {
-	Doctor agentsDoctorCmd `cmd:"" help:"Diagnose built-in agents without launching them."`
+type reviewFindingCmd struct {
+	Add     reviewFindingAddCmd     `cmd:"" help:"Append a manual review finding."`
+	Resolve reviewFindingResolveCmd `cmd:"" help:"Resolve a manual review finding."`
+}
+
+type reviewFixCmd struct {
+	Run   reviewFixRunCmd   `cmd:"run" help:"Run a write-enabled fixer against current review findings."`
+	Apply reviewFixApplyCmd `cmd:"apply" help:"Parse fixer output into review resolutions."`
+}
+
+type reviewProposalCmd struct {
+	Collect reviewProposalCollectCmd `cmd:"" help:"Parse reviewer output into pending finding proposals."`
+	Accept  reviewProposalAcceptCmd  `cmd:"" help:"Accept a pending review finding proposal."`
+	Reject  reviewProposalRejectCmd  `cmd:"" help:"Reject a pending review finding proposal."`
 }
 
 type memoryCmd struct {
@@ -128,6 +134,7 @@ type memoryCmd struct {
 
 type contractShowCmd struct {
 	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
+	Draft      bool   `name:"draft" help:"Show the latest contract draft proposal instead of the contract."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -139,12 +146,7 @@ type contractDraftCmd struct {
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
-type contractShowDraftCmd struct {
-	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
-	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
-}
-
-type contractAcceptDraftCmd struct {
+type contractAcceptCmd struct {
 	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id whose latest draft proposal should be accepted."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
@@ -178,7 +180,7 @@ type promptShowCmd struct {
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
-type executeDryRunCmd struct {
+type executePlanCmd struct {
 	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to prepare for execution."`
 	Agent      string `name:"agent" help:"Registry name (config agents) of the executor. Defaults to the first registry entry."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
@@ -190,11 +192,6 @@ type executeRunCmd struct {
 	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without agent output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
 	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
-}
-
-type executeStatusCmd struct {
-	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
-	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type executeShowCmd struct {
@@ -235,7 +232,7 @@ type reviewShowCmd struct {
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
-type reviewAddFindingCmd struct {
+type reviewFindingAddCmd struct {
 	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <message>"`
 	Severity   string   `name:"severity" default:"medium" enum:"low,medium,high,critical" help:"Finding severity."`
 	Category   string   `name:"category" default:"other" enum:"correctness,scope,quality,validation,process,other" help:"Finding category."`
@@ -245,7 +242,7 @@ type reviewAddFindingCmd struct {
 	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
-type reviewResolveCmd struct {
+type reviewFindingResolveCmd struct {
 	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <finding_id>"`
 	Note       string   `name:"note" help:"Resolution note."`
 	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
@@ -257,7 +254,7 @@ type reviewApproveCmd struct {
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
-type reviewDryRunCmd struct {
+type reviewPlanCmd struct {
 	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to prepare reviewer artifacts for."`
 	Reviewer   string `name:"reviewer" help:"Registry name (config agents) of the reviewer. Defaults to cross-model selection against the run executor."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
@@ -271,7 +268,7 @@ type reviewRunCmd struct {
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
-type reviewFixCmd struct {
+type reviewFixRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id whose review findings should be fixed."`
 	Agent      string        `name:"agent" help:"Registry name (config agents) of the fixer. Defaults to the first registry entry."`
 	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without fixer output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
@@ -291,28 +288,28 @@ type reviewLoopCmd struct {
 	JSONOutput  bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
-type reviewProposeFindingsCmd struct {
+type reviewProposalCollectCmd struct {
 	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] [reviewer_attempt_id]"`
 	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
-type reviewApplyFixOutcomesCmd struct {
+type reviewFixApplyCmd struct {
 	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] [fixer_attempt_id]"`
 	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
-type reviewAcceptProposalCmd struct {
+type reviewProposalAcceptCmd struct {
 	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <proposal_id>"`
 	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
-type reviewRejectProposalCmd struct {
+type reviewProposalRejectCmd struct {
 	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <proposal_id>"`
 	Reason     string   `name:"reason" help:"Reason for rejecting the proposal."`
 	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
-type agentsDoctorCmd struct {
+type doctorCmd struct {
 	Agent      string `name:"agent" help:"Built-in agent name to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }

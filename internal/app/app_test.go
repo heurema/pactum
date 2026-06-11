@@ -1529,9 +1529,9 @@ func TestContractApproveBlockedByOpenBlockingClarification(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "ask", runID, "Should approval wait?", "--blocking"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "add", runID, "Should approval wait?", "--blocking"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify add exited %d, stderr: %s", code, stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
@@ -1559,9 +1559,9 @@ func TestContractApproveAllowsNonBlockingOpenClarification(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "ask", runID, "Optional context?"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "add", runID, "Optional context?"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify add exited %d, stderr: %s", code, stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
@@ -1625,9 +1625,9 @@ func TestClarifyAfterApprovedContractResetsApproval(t *testing.T) {
 	}
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"clarify", "ask", runID, "Need approval reset?", "--blocking"}, &stdout, &stderr)
+	code = app.Run([]string{"clarify", "add", runID, "Need approval reset?", "--blocking"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify add exited %d, stderr: %s", code, stderr.String())
 	}
 	if state := readRunState(t, runPaths.RunJSON); state.Status != "clarifying" {
 		t.Fatalf("run status = %q, want clarifying", state.Status)
@@ -1709,7 +1709,7 @@ func TestClarifyBeforeInitPrintsGuidance(t *testing.T) {
 	root := t.TempDir()
 
 	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"clarify", "status", "run_x"}, &stdout, &stderr)
+	code := testApp(root).Run([]string{"clarify", "show", "run_x"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("clarify before init exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1724,9 +1724,9 @@ func TestClarifyBeforeInitJSONOutput(t *testing.T) {
 	// Read-only --json before init: exit 0 with the structured not-initialized
 	// status document (no plain text).
 	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"clarify", "status", "run_x", "--json"}, &stdout, &stderr)
+	code := testApp(root).Run([]string{"clarify", "show", "run_x", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify status --json before init exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify show --json before init exited %d, stderr: %s", code, stderr.String())
 	}
 	var response struct {
 		Initialized bool   `json:"initialized"`
@@ -1740,7 +1740,7 @@ func TestClarifyBeforeInitJSONOutput(t *testing.T) {
 	// Mutating --json before init: exit 1 with a JSON error envelope on stdout
 	// (stderr empty), never plain text.
 	for _, args := range [][]string{
-		{"clarify", "ask", "run_x", "Question?", "--json"},
+		{"clarify", "add", "run_x", "Question?", "--json"},
 		{"clarify", "answer", "run_x", "q_001", "Answer.", "--json"},
 	} {
 		var stdout, stderr bytes.Buffer
@@ -1764,9 +1764,9 @@ func TestClarifyAskBlockingQuestionUpdatesArtifacts(t *testing.T) {
 	app, paths, runID := setupContractRun(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "ask", runID, "Should this feature update existing contract artifacts?", "--blocking"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "add", runID, "Should this feature update existing contract artifacts?", "--blocking"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify add exited %d, stderr: %s", code, stderr.String())
 	}
 	got := stdout.String()
 	for _, want := range []string{
@@ -1777,7 +1777,7 @@ func TestClarifyAskBlockingQuestionUpdatesArtifacts(t *testing.T) {
 		"status: open",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("clarify ask output missing %q:\n%s", want, got)
+			t.Fatalf("clarify add output missing %q:\n%s", want, got)
 		}
 	}
 
@@ -1826,9 +1826,9 @@ func TestClarifyAnswerQuestionUpdatesArtifacts(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "ask", runID, "Should this write to contract.md?", "--blocking"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "add", runID, "Should this write to contract.md?", "--blocking"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify add exited %d, stderr: %s", code, stderr.String())
 	}
 
 	stdout.Reset()
@@ -1890,8 +1890,8 @@ func TestClarifyMultipleQuestionsStatusCounts(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	for _, args := range [][]string{
-		{"clarify", "ask", runID, "First blocking question?", "--blocking"},
-		{"clarify", "ask", runID, "Second blocking question?", "--blocking"},
+		{"clarify", "add", runID, "First blocking question?", "--blocking"},
+		{"clarify", "add", runID, "Second blocking question?", "--blocking"},
 		{"clarify", "answer", runID, "q_001", "First answer."},
 	} {
 		stdout.Reset()
@@ -1915,14 +1915,14 @@ func TestClarifyMultipleQuestionsStatusCounts(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code := app.Run([]string{"clarify", "status", runID}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "show", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify status exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify show exited %d, stderr: %s", code, stderr.String())
 	}
 	got := stdout.String()
 	for _, want := range []string{"total: 2", "answered: 1", "open: 1", "blocking open: 1", "q_002 [blocking] Second blocking question?"} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("clarify status missing %q:\n%s", want, got)
+			t.Fatalf("clarify show missing %q:\n%s", want, got)
 		}
 	}
 }
@@ -1932,9 +1932,9 @@ func TestClarifyNonBlockingQuestionKeepsContractDraft(t *testing.T) {
 	app, paths, runID := setupContractRun(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "ask", runID, "Optional context?"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "add", runID, "Optional context?"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify add exited %d, stderr: %s", code, stderr.String())
 	}
 	var state contractRunState
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, filepath.Join(paths.RunsDir, runID, "run.json"))), &state))
@@ -1948,20 +1948,20 @@ func TestClarifyStatusJSONOutput(t *testing.T) {
 	app, _, runID := setupContractRun(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "ask", runID, "Blocking question?", "--blocking"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "add", runID, "Blocking question?", "--blocking"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify add exited %d, stderr: %s", code, stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"clarify", "status", runID, "--json"}, &stdout, &stderr)
+	code = app.Run([]string{"clarify", "show", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify status --json exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify show --json exited %d, stderr: %s", code, stderr.String())
 	}
 	var status clarifyStatusResponse
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &status))
 	if status.RunID != runID || status.RunStatus != "clarifying" || status.Total != 1 || status.Open != 1 || status.BlockingOpen != 1 || len(status.Questions) != 1 {
-		t.Fatalf("unexpected clarify status json: %#v", status)
+		t.Fatalf("unexpected clarify show json: %#v", status)
 	}
 }
 
@@ -1977,12 +1977,12 @@ func TestClarifyStatusReportsApprovedRun(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"clarify", "status", runID}, &stdout, &stderr)
+	code = app.Run([]string{"clarify", "show", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify status exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify show exited %d, stderr: %s", code, stderr.String())
 	}
 	if got := stdout.String(); !strings.Contains(got, "status: contract_approved") {
-		t.Fatalf("clarify status should preserve approved status:\n%s", got)
+		t.Fatalf("clarify show should preserve approved status:\n%s", got)
 	}
 }
 
@@ -1998,14 +1998,14 @@ func TestClarifyStatusJSONReportsApprovedRun(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"clarify", "status", runID, "--json"}, &stdout, &stderr)
+	code = app.Run([]string{"clarify", "show", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify status --json exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify show --json exited %d, stderr: %s", code, stderr.String())
 	}
 	var status clarifyStatusResponse
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &status))
 	if status.RunID != runID || status.RunStatus != "contract_approved" || status.BlockingOpen != 0 {
-		t.Fatalf("unexpected approved clarify status json: %#v", status)
+		t.Fatalf("unexpected approved clarify show json: %#v", status)
 	}
 }
 
@@ -2016,7 +2016,7 @@ func TestClarifyLatestAnswerWinsForDisplay(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	for _, args := range [][]string{
-		{"clarify", "ask", runID, "Which answer wins?", "--blocking"},
+		{"clarify", "add", runID, "Which answer wins?", "--blocking"},
 		{"clarify", "answer", runID, "q_001", "First answer."},
 		{"clarify", "answer", runID, "q_001", "Second answer."},
 	} {
@@ -2033,9 +2033,9 @@ func TestClarifyLatestAnswerWinsForDisplay(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code := app.Run([]string{"clarify", "status", runID, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "show", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify status --json exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify show --json exited %d, stderr: %s", code, stderr.String())
 	}
 	var status clarifyStatusResponse
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &status))
@@ -2064,9 +2064,9 @@ func TestClarifyRunNotFoundReturnsError(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = testApp(root).Run([]string{"clarify", "status", "run_missing"}, &stdout, &stderr)
+	code = testApp(root).Run([]string{"clarify", "show", "run_missing"}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("clarify status missing run should fail")
+		t.Fatalf("clarify show missing run should fail")
 	}
 	if got := stderr.String(); !strings.Contains(got, "run not found: run_missing") {
 		t.Fatalf("missing run stderr mismatch:\n%s", got)
@@ -2094,7 +2094,7 @@ func TestClarifyArtifactsUseRepoRelativePaths(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	for _, args := range [][]string{
-		{"clarify", "ask", runID, "Should paths stay portable?", "--blocking"},
+		{"clarify", "add", runID, "Should paths stay portable?", "--blocking"},
 		{"clarify", "answer", runID, "q_001", "Yes, keep them repo-relative."},
 	} {
 		stdout.Reset()

@@ -12,27 +12,27 @@ import (
 	"github.com/heurema/pactum/internal/artifacts"
 )
 
-func TestExecuteStatusBeforeInitPrintsGuidance(t *testing.T) {
+func TestExecuteShowBeforeInitPrintsGuidance(t *testing.T) {
 	root := t.TempDir()
 
 	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"execute", "status", "run_x"}, &stdout, &stderr)
+	code := testApp(root).Run([]string{"execute", "show", "run_x"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute status before init exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute show before init exited %d, stderr: %s", code, stderr.String())
 	}
 	if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
-		t.Fatalf("execute status before init output mismatch:\n%s", got)
+		t.Fatalf("execute show before init output mismatch:\n%s", got)
 	}
 }
 
-func TestExecuteStatusWithNoAttempts(t *testing.T) {
+func TestExecuteShowSummaryWithNoAttempts(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupApprovedAndBuiltPrompt(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "status", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "show", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute status exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute show exited %d, stderr: %s", code, stderr.String())
 	}
 	got := stdout.String()
 	for _, want := range []string{
@@ -43,19 +43,19 @@ func TestExecuteStatusWithNoAttempts(t *testing.T) {
 		".heurema/pactum/runs/" + runID + "/execute/last-result.json",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("execute status output missing %q:\n%s", want, got)
+			t.Fatalf("execute show output missing %q:\n%s", want, got)
 		}
 	}
 }
 
-func TestExecuteStatusAfterHelperRunAndJSON(t *testing.T) {
+func TestExecuteShowSummaryAfterHelperRunAndJSON(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := runSuccessfulHelperAttempt(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "status", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "show", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute status exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute show exited %d, stderr: %s", code, stderr.String())
 	}
 	got := stdout.String()
 	for _, want := range []string{
@@ -65,15 +65,15 @@ func TestExecuteStatusAfterHelperRunAndJSON(t *testing.T) {
 		"last timed out: false",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("execute status output missing %q:\n%s", want, got)
+			t.Fatalf("execute show output missing %q:\n%s", want, got)
 		}
 	}
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"execute", "status", runID, "--json"}, &stdout, &stderr)
+	code = app.Run([]string{"execute", "show", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute status --json exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute show --json exited %d, stderr: %s", code, stderr.String())
 	}
 	var response executeStatusResponse
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
@@ -86,19 +86,19 @@ func TestExecuteStatusAfterHelperRunAndJSON(t *testing.T) {
 	if !response.LastResult.Exists || response.LastResult.ExitCode != 0 || response.LastResult.TimedOut {
 		t.Fatalf("unexpected last result json: %#v", response.LastResult)
 	}
-	assertDoesNotContainRoot(t, "execute status json", stdout.String(), root)
+	assertDoesNotContainRoot(t, "execute show json", stdout.String(), root)
 }
 
-func TestExecuteStatusDoesNotPairPreviousResultWithNewerIncompleteAttempt(t *testing.T) {
+func TestExecuteShowSummaryDoesNotPairPreviousResultWithNewerIncompleteAttempt(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := runSuccessfulHelperAttempt(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	assertNoError(t, os.MkdirAll(filepath.Join(runPaths.AttemptsDir, "attempt_002"), 0o755))
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "status", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "show", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute status exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute show exited %d, stderr: %s", code, stderr.String())
 	}
 	got := stdout.String()
 	for _, want := range []string{
@@ -108,7 +108,7 @@ func TestExecuteStatusDoesNotPairPreviousResultWithNewerIncompleteAttempt(t *tes
 		"last completed exit code: 0",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("execute status output missing %q:\n%s", want, got)
+			t.Fatalf("execute show output missing %q:\n%s", want, got)
 		}
 	}
 	for _, forbidden := range []string{
@@ -116,15 +116,15 @@ func TestExecuteStatusDoesNotPairPreviousResultWithNewerIncompleteAttempt(t *tes
 		"last timed out: false",
 	} {
 		if strings.Contains(got, forbidden) {
-			t.Fatalf("execute status output should not pair previous result with attempt_002 via %q:\n%s", forbidden, got)
+			t.Fatalf("execute show output should not pair previous result with attempt_002 via %q:\n%s", forbidden, got)
 		}
 	}
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"execute", "status", runID, "--json"}, &stdout, &stderr)
+	code = app.Run([]string{"execute", "show", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute status --json exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute show --json exited %d, stderr: %s", code, stderr.String())
 	}
 	var response executeStatusResponse
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
@@ -136,17 +136,17 @@ func TestExecuteStatusDoesNotPairPreviousResultWithNewerIncompleteAttempt(t *tes
 	}
 }
 
-func TestExecuteShowWithNoAttempts(t *testing.T) {
+func TestExecuteShowExplicitAttemptFailsWhenNoAttempts(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupApprovedAndBuiltPrompt(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "show", runID}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("execute show exited %d, stderr: %s", code, stderr.String())
+	code := app.Run([]string{"execute", "show", runID, "attempt_001"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("execute show attempt_001 should fail when no attempts exist")
 	}
-	if got := stdout.String(); !strings.Contains(got, "No execution attempts found. Run: pactum execute run "+runID) {
-		t.Fatalf("execute show no-attempt output mismatch:\n%s", got)
+	if got := stderr.String(); !strings.Contains(got, "execution attempt not found: attempt_001") {
+		t.Fatalf("execute show no-attempt stderr mismatch:\n%s", got)
 	}
 }
 
@@ -155,7 +155,7 @@ func TestExecuteShowAfterHelperRun(t *testing.T) {
 	app, _, runID := runSuccessfulHelperAttempt(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "show", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "show", runID, "attempt_001"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute show exited %d, stderr: %s", code, stderr.String())
 	}
@@ -233,7 +233,7 @@ func TestExecuteShowJSONIncludesLogsOnlyWhenRequested(t *testing.T) {
 	app, _, runID := runSuccessfulHelperAttempt(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "show", runID, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "show", runID, "attempt_001", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute show --json exited %d, stderr: %s", code, stderr.String())
 	}
@@ -248,7 +248,7 @@ func TestExecuteShowJSONIncludesLogsOnlyWhenRequested(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"execute", "show", runID, "--json", "--logs"}, &stdout, &stderr)
+	code = app.Run([]string{"execute", "show", runID, "attempt_001", "--json", "--logs"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute show --json --logs exited %d, stderr: %s", code, stderr.String())
 	}
@@ -263,7 +263,7 @@ func TestExecuteShowJSONIncludesLogsOnlyWhenRequested(t *testing.T) {
 	assertDoesNotContainRoot(t, "execute show json", stdout.String(), root)
 }
 
-func TestExecuteStatusShowReadOnlyRunState(t *testing.T) {
+func TestExecuteShowReadOnlyRunState(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := runSuccessfulHelperAttempt(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
@@ -271,10 +271,10 @@ func TestExecuteStatusShowReadOnlyRunState(t *testing.T) {
 	eventsBefore := mustReadFile(t, paths.EventsJSONL)
 
 	for _, args := range [][]string{
-		{"execute", "status", runID},
-		{"execute", "status", runID, "--json"},
 		{"execute", "show", runID},
-		{"execute", "show", runID, "--json", "--logs"},
+		{"execute", "show", runID, "--json"},
+		{"execute", "show", runID, "attempt_001"},
+		{"execute", "show", runID, "attempt_001", "--json", "--logs"},
 	} {
 		var stdout, stderr bytes.Buffer
 		code := app.Run(args, &stdout, &stderr)
@@ -311,4 +311,25 @@ func numberedLines(prefix string, count int) string {
 		fmt.Fprintf(&builder, "%s-%03d\n", prefix, i)
 	}
 	return builder.String()
+}
+
+func TestExecuteShowSummaryIgnoresLogsFlag(t *testing.T) {
+	// --logs affects only attempt-detail output: the summary (no attempt id)
+	// must render identically with and without it, even when logs exist.
+	root := t.TempDir()
+	app, _, runID := runSuccessfulHelperAttempt(t, root)
+
+	var plain, withLogs, stderr bytes.Buffer
+	if code := app.Run([]string{"execute", "show", runID}, &plain, &stderr); code != 0 {
+		t.Fatalf("execute show exited %d, stderr: %s", code, stderr.String())
+	}
+	if code := app.Run([]string{"execute", "show", runID, "--logs"}, &withLogs, &stderr); code != 0 {
+		t.Fatalf("execute show --logs exited %d, stderr: %s", code, stderr.String())
+	}
+	if plain.String() != withLogs.String() {
+		t.Fatalf("--logs must not change the summary output:\n--- without:\n%s\n--- with:\n%s", plain.String(), withLogs.String())
+	}
+	if strings.Contains(withLogs.String(), "Logs:") {
+		t.Fatalf("summary output must not include a Logs section:\n%s", withLogs.String())
+	}
 }

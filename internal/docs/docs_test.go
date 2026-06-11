@@ -35,16 +35,36 @@ var forbiddenDocPhrases = []string{
 	// M5.3 replaced the top-level `run` command with `task new`.
 	"--contract-only",
 	`pactum run "`,
+	// M23.0 normalized the command grammar; the old spellings are hard-removed.
+	// Artifact paths like execute/dry-run.json are still valid and do not match
+	// these command phrases.
+	"pactum agents doctor",
+	"pactum clarify ask",
+	"pactum clarify loop",
+	"pactum clarify status",
+	"pactum clarify list",
+	"contract show-draft",
+	"contract accept-draft",
+	"pactum execute dry-run",
+	"pactum execute status",
+	"pactum review dry-run",
+	"review add-finding",
+	"pactum review resolve",
+	"review propose-findings",
+	"review accept-proposal",
+	"review reject-proposal",
+	"review apply-fix-outcomes",
+	"pactum task current",
 }
 
 // requiredDocMentions are current commands the user-facing docs must describe.
 var requiredDocMentions = []string{
-	"pactum execute dry-run",
+	"pactum execute plan",
 	"pactum execute run",
 	"pactum gate run",
-	"pactum review propose-findings",
+	"pactum review proposal collect",
 	"pactum memory refresh",
-	"pactum agents doctor",
+	"pactum doctor",
 	// Packaging / install surface (M5.2).
 	"make build",
 	"go install ./cmd/pactum",

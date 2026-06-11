@@ -7,7 +7,7 @@ import (
 	"github.com/heurema/pactum/internal/agents"
 )
 
-func (a App) AgentsDoctor(stdout io.Writer, agentName string, jsonOutput bool) error {
+func (a App) Doctor(stdout io.Writer, agentName string, jsonOutput bool) error {
 	_, _, ok, err := a.requireWorkspace(stdout, false)
 	if err != nil || !ok {
 		return err
@@ -20,11 +20,11 @@ func (a App) AgentsDoctor(stdout io.Writer, agentName string, jsonOutput bool) e
 	if jsonOutput {
 		return writeJSONResponse(stdout, report)
 	}
-	writeAgentsDoctor(stdout, report)
+	writeDoctor(stdout, report)
 	return nil
 }
 
-func writeAgentsDoctor(stdout io.Writer, report agents.DoctorReport) {
+func writeDoctor(stdout io.Writer, report agents.DoctorReport) {
 	fmt.Fprintln(stdout, "Built-in agents")
 	fmt.Fprintln(stdout)
 	fmt.Fprintf(stdout, "Default executor: %s\n", report.DefaultExecutor)

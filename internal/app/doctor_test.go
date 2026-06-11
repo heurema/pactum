@@ -15,7 +15,7 @@ func TestAgentsDoctorBeforeInitPrintsGuidance(t *testing.T) {
 	root := t.TempDir()
 
 	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"agents", "doctor"}, &stdout, &stderr)
+	code := testApp(root).Run([]string{"doctor"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("agents doctor before init exited %d, stderr: %s", code, stderr.String())
 	}
@@ -29,7 +29,7 @@ func TestAgentsDoctorDefaultConfig(t *testing.T) {
 	_, _ = setupInitializedWorkspace(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"agents", "doctor"}, &stdout, &stderr)
+	code := testApp(root).Run([]string{"doctor"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("agents doctor exited %d, stderr: %s", code, stderr.String())
 	}
@@ -53,7 +53,7 @@ func TestAgentsDoctorJSON(t *testing.T) {
 	_, _ = setupInitializedWorkspace(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"agents", "doctor", "--json"}, &stdout, &stderr)
+	code := testApp(root).Run([]string{"doctor", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("agents doctor --json exited %d, stderr: %s", code, stderr.String())
 	}
@@ -72,7 +72,7 @@ func TestAgentsDoctorSelectedBuiltIn(t *testing.T) {
 	_, _ = setupInitializedWorkspace(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"agents", "doctor", "--agent", "codex"}, &stdout, &stderr)
+	code := testApp(root).Run([]string{"doctor", "--agent", "codex"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("agents doctor codex exited %d, stderr: %s", code, stderr.String())
 	}
@@ -97,7 +97,7 @@ func TestAgentsDoctorMissingAgentFails(t *testing.T) {
 	_, _ = setupInitializedWorkspace(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"agents", "doctor", "--agent", "missing"}, &stdout, &stderr)
+	code := testApp(root).Run([]string{"doctor", "--agent", "missing"}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("agents doctor missing adapter should fail")
 	}
@@ -112,8 +112,8 @@ func TestAgentsDoctorReadOnlyLedger(t *testing.T) {
 	before := mustReadFile(t, paths.EventsJSONL)
 
 	for _, args := range [][]string{
-		{"agents", "doctor"},
-		{"agents", "doctor", "--json"},
+		{"doctor"},
+		{"doctor", "--json"},
 	} {
 		var stdout, stderr bytes.Buffer
 		code := app.Run(args, &stdout, &stderr)

@@ -258,7 +258,7 @@ unenforced. Wiring them is the implementation — not new config surface.
 
 | Config (today) | Used by |
 |----------------|---------|
-| `clarify.max_rounds` (removed as dead in M16.0; live again since M17.0) | Phase 1 round cap — enforced by `pactum clarify loop` |
+| `clarify.max_rounds` (removed as dead in M16.0; live again since M17.0) | Phase 1 round cap — enforced by `pactum clarify run` |
 | `review.max_rounds` | Phase 3 round cap |
 | `review.budget.mode`, `review.budget.max_tokens` | Phase 3 budget stop |
 | `clarify --blocking`, review `blocking` findings | severity gate (critical ⇄ blocking) |
@@ -283,8 +283,9 @@ unenforced. Wiring them is the implementation — not new config surface.
 **Already matches the target:**
 
 - Execute is one-shot (one subprocess per invocation).
-- Review has a real reviewer agent: `review run` → `propose-findings`, plus
-  `resolve` / `approve` and a `blocking` attribute on findings.
+- Review has a real reviewer agent: `review run` → `review proposal collect`,
+  plus `review finding resolve` / `review approve` and a `blocking` attribute
+  on findings.
 - Config caps and the `budget` block are declared.
 - The contract has an `Assumptions` section.
 - Two agent stages exist (execute, review), each a fresh subprocess.

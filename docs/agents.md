@@ -78,7 +78,7 @@ separate panel members.
 ## Name resolution
 
 Pick the executor with `--agent <name>` on the execute commands (the fixer in
-`review fix` and `review loop` resolves the same way) and the
+`review fix run` and `review loop` resolves the same way) and the
 reviewer/clarifier/drafter with `--reviewer <name>` on the clarify, contract
 draft, and review commands. Both flags accept registry names only.
 
@@ -90,13 +90,13 @@ registry entry when every entry runs on the executor's engine. Before any
 execution attempt exists (`clarify suggest`, `contract draft`), the would-be
 executor is the first registry entry, so the same rule applies against it. An
 explicit `--reviewer` always wins. Check the selected entry in the `Resolved`
-block for `clarify suggest`, `contract draft`, `review dry-run`, and
+block for `clarify suggest`, `contract draft`, `review plan`, and
 `review run`.
 
 `review.panel` is the review-loop roster: a list of registry names. When
 `pactum review loop` runs without `--reviewer`, each review round runs all
 panel members concurrently — every member expanding into the five built-in
-lens attempts described under [Review: dry-run vs run](#review-dry-run-vs-run),
+lens attempts described under [Review: plan vs run](#review-plan-vs-run),
 so a round spawns members × lenses attempts — then parses their finding
 proposals in the configured order; each member runs with its own
 entry's `model`/`effort`, and two names backed by the same engine run as
@@ -113,8 +113,8 @@ usage ledger records both the registry name (`agent_name`) and the inferred
 engine (`agent`); execution and attempt artifacts keep recording the engine,
 so cross-model comparison semantics are unchanged.
 
-The human output for `clarify suggest`, `contract draft`, `execute dry-run`,
-`execute run`, `review dry-run`, and `review run` includes a `Resolved` block
+The human output for `clarify suggest`, `contract draft`, `execute plan`,
+`execute run`, `review plan`, and `review run` includes a `Resolved` block
 once per command. It shows the selected registry name plus the model and
 effort values Pactum applied from its entry: pinned values are shown directly,
 and an empty effort is shown as `inherit` because Pactum does not read the
@@ -125,12 +125,12 @@ required). The engine appears in the Agent/Attempt sections below it.
 Pactum does **not** install, bundle, configure, or authenticate these CLIs. You
 must install and configure each agent CLI separately and make its command
 available on your `PATH` before Pactum can run it — Pactum only invokes the
-command it expects (`codex` or `claude`). Use `pactum agents doctor` to confirm
+command it expects (`codex` or `claude`). Use `pactum doctor` to confirm
 the CLI is present.
 
-## `pactum agents doctor`
+## `pactum doctor`
 
-`pactum agents doctor` diagnoses the built-in agent CLIs **without launching
+`pactum doctor` diagnoses the built-in agent CLIs **without launching
 them**: for each built-in it reports the command, input mode, resolved path on
 your `PATH`, and a status of `on_path` or `missing_command` (with the issue
 listed when the command is not found). Pass `--agent <name>` to inspect a
@@ -143,8 +143,8 @@ follow-up.
 Run it before executing to confirm the agent CLIs are installed and visible:
 
 ```sh
-pactum agents doctor
-pactum agents doctor --agent claude
+pactum doctor
+pactum doctor --agent claude
 ```
 
 ## Execution model: direct subprocess, no isolation
@@ -198,7 +198,7 @@ fires only when the protocol goes truly quiet. The attempt log is unaffected:
 only the agent's streamed message text is written to `stdout.log`, the
 liveness ticks carry no content. A prompt response recorded before the kill
 counts as the agent's completion signal for the completion-aware finalize
-described under [Execute: dry-run vs run](#execute-dry-run-vs-run).
+described under [Execute: plan vs run](#execute-plan-vs-run).
 
 Message chunks land in `stdout.log` as streamed. Chunks stamped with a
 `messageId` share one id per message, so an id change marks a message
@@ -250,14 +250,14 @@ performs writes:
   `-c sandbox_mode="read-only"`, pinning the same sandbox the CLI reviewer uses
   (`codex --sandbox read-only`) regardless of the operator's codex config.
 
-Write stages (`execute run`, `review fix`) keep auto-approval and the
+Write stages (`execute run`, `review fix run`) keep auto-approval and the
 scope-guarded writes described below.
 
 #### Real-time write scope guard (ACP only)
 
 Because the ACP transport services the agent's file writes itself, it can enforce
 the contract path-scope *in real time*, at the file-write boundary. On the write
-stages (`execute run` and `review fix`), each `WriteTextFile` is checked against
+stages (`execute run` and `review fix run`), each `WriteTextFile` is checked against
 the approved contract's `paths_in_scope` / `paths_out_of_scope`: a write whose
 repo-relative path is out of scope (or escapes the repo) is denied — the agent
 receives a write failure and nothing touches disk. This is the architectural
@@ -279,7 +279,7 @@ The guard has two deliberate limits:
 ## Live output
 
 `clarify suggest`, `contract draft`, `execute run`, `review run`, and
-`review fix` (and each per-round reviewer/fixer sub-run inside `review loop`)
+`review fix run` (and each per-round reviewer/fixer sub-run inside `review loop`)
 stream the agent's stdout and stderr live to **your terminal's stderr** as the
 process runs, so a
 multi-minute run is not a silent black box. This is in addition to — not instead
@@ -303,9 +303,9 @@ report), not about constraining what the agent process can do.
 
 There is also **no Docker support yet**.
 
-## Execute: dry-run vs run
+## Execute: plan vs run
 
-- `pactum execute dry-run <run_id> --agent codex` prepares and records the exact
+- `pactum execute plan <run_id> --agent codex` prepares and records the exact
   command Pactum would launch (`execute/dry-run.json`, including the resolved
   command and arguments) but does **not** start any process. Use it to confirm
   the boundaries pass and to see what would run.
@@ -323,7 +323,7 @@ There is also **no Docker support yet**.
   section; set `timeouts.idle` only to deviate from the built-in. Because execution is **unsandboxed**, `execute
   run` asks for confirmation on an interactive terminal and **requires `--yes`**
   when stdin is not a terminal (CI/automation), so it never launches an agent
-  unattended by accident. `execute dry-run` never needs `--yes`.
+  unattended by accident. `execute plan` never needs `--yes`.
 
 The idle timeout is **completion-aware**: when the watchdog fires but the
 captured output already carries the agent's successful terminal marker —
@@ -343,13 +343,13 @@ The two built-in executors use different output channels: codex streams its
 reasoning/progress to **stderr** (with the final result on stdout), while claude
 writes to **stdout** (stderr is often empty). Both streams are captured under
 `execute/attempts/attempt_NNN/{stdout,stderr}.log` and surfaced by
-`pactum execute show --logs`, so the meaningful trace may live in either file
-depending on the agent.
+`pactum execute show <attempt_id> --logs`, so the meaningful trace may live in
+either file depending on the agent.
 
 Both first re-verify the prompt boundary: the contract is still approved and its
 hash matches, the project map is fresh and matches the prompt manifest, and the
 accepted-memory boundary recorded at prompt build is unchanged. If any check
-fails, neither dry-run nor run proceeds.
+fails, neither plan nor run proceeds.
 
 Both write-stage prompts — the built executor prompt and the review-fix fixer
 prompt — carry a shared **house style** section: match the surrounding idiom,
@@ -396,9 +396,9 @@ the agent never answers questions, revises the contract, or edits code. Like oth
 agent-running commands, it asks for confirmation on an interactive terminal and
 **requires `--yes`** for non-interactive/automated use.
 
-## Clarify loop
+## Clarify run
 
-`pactum clarify loop <run_id> --yes` composes `clarify suggest` and the
+`pactum clarify run <run_id> --yes` composes `clarify suggest` and the
 per-question recommendation into autonomous clarification rounds. Each round:
 
 1. **Suggest** — runs the clarifier exactly as `clarify suggest` does (same
@@ -422,7 +422,7 @@ round that errors finalizes the summary with the defensive `error` terminal
 instead):
 
 - `converged` — no open blocking questions remain (the same condition as the
-  `clarify status` converged flag).
+  `clarify show` converged flag).
 - `needs_human` — a round created no new questions and auto-resolved nothing:
   automation is out of moves, and the open blocking questions await the human.
 - `max_rounds` — the round cap was reached. `--max-rounds` overrides the
@@ -446,7 +446,7 @@ command renders the created run, the loop summary, and the open blocking
 questions with their kind, confidence, and recommended answer (the human's
 working set); `--json` embeds the loop summary document alongside the task
 response (`pactum.task_new_clarify.v1`). A loop failure leaves the created run
-intact and current — re-run `pactum clarify loop` on it.
+intact and current — re-run `pactum clarify run` on it.
 
 **The safety story is the downstream gate:** the loop lets the clarifier's own
 high-confidence recommendations answer its questions, which is acceptable only
@@ -467,8 +467,8 @@ The drafter must emit a fenced JSON block with
 `schema: "pactum.contract_draft_proposal.v1"` and the proposal fields
 `in_scope`, `out_of_scope`, `acceptance`, `validation`, and `assumptions`.
 Pactum does **not** apply this output automatically: `pactum contract
-show-draft <run_id>` shows the pending proposal, and a human must run `pactum
-contract accept-draft <run_id>` to append the proposed fields through the normal
+show <run_id> --draft` shows the pending proposal, and a human must run `pactum
+contract accept <run_id>` to append the proposed fields through the normal
 contract revision path. Accepting the draft resets contract approval like any
 other revision; the human still approves separately with `pactum contract
 approve`.
@@ -478,7 +478,7 @@ edits code. Like other agent-running commands, `contract draft` streams live
 agent output to stderr, honors `--timeout` as an idle no-output timeout, supports
 `--json`, and **requires `--yes`** for non-interactive/automated use.
 
-## Review: dry-run vs run
+## Review: plan vs run
 
 Reviewer agents are optional, and Pactum never trusts their output
 automatically.
@@ -498,7 +498,7 @@ a deliberate default in exchange for focused, higher-recall reviews.
 Cross-lens duplicate findings collapse through the normal finding fingerprint
 dedup, keeping the maximum severity.
 
-- `pactum review dry-run <run_id> --reviewer codex` prepares the reviewer
+- `pactum review plan <run_id> --reviewer codex` prepares the reviewer
   context and the five per-lens prompts (`review/reviewer-context.md`,
   `review/reviewer-prompt-<name>-<lens>.md`, `review/reviewer-dry-run.json`)
   without launching a reviewer; its output lists the five lens attempts that
@@ -510,7 +510,7 @@ dedup, keeping the maximum severity.
   request and result. Like `execute run`, it is
   unsandboxed agent execution, so it asks for confirmation on an interactive
   terminal and **requires `--yes`** for non-interactive/automated use; `review
-  dry-run` never needs `--yes`. All lens attempts run to completion, but if any
+  plan` never needs `--yes`. All lens attempts run to completion, but if any
   attempt fails the command (and a review-loop round) fails as a whole — the
   completed lenses' output stays on disk in their attempt artifacts.
 
@@ -524,18 +524,18 @@ design sources are condensed in
 [`review-prompt-design.md`](review-prompt-design.md).
 
 A reviewer can emit optional structured finding proposals as a fenced JSON block.
-`pactum review propose-findings <run_id>` parses the captured reviewer stdout of
+`pactum review proposal collect <run_id>` parses the captured reviewer stdout of
 **every completed reviewer attempt** (all lenses) into **pending proposals** — it
 does not create findings; pass `--attempt <id>` to parse a single attempt, and
 with several attempts each warning is prefixed with its attempt id. In the manual flow, a
-human then decides each one with `pactum review accept-proposal <run_id> p_001`
-(which creates a real review finding) or `pactum review reject-proposal <run_id>
+human then decides each one with `pactum review proposal accept <run_id> p_001`
+(which creates a real review finding) or `pactum review proposal reject <run_id>
 p_001 --reason "..."`. Outside the explicit `review loop` command, proposals
 are inert until a person accepts them.
 
 ## Review fix
 
-`pactum review fix <run_id> --agent codex --yes` launches a fresh
+`pactum review fix run <run_id> --agent codex --yes` launches a fresh
 executor-role fixer against the run's current `review/findings.jsonl`. The
 fixer prompt includes the approved contract goal/scope/acceptance criteria and
 the current review findings, and instructs the agent to trace each finding to
@@ -551,7 +551,7 @@ as execution, captures request/result/stdout/stderr artifacts under
 `review/fix/fixer-context.md`, `review/fix/fixer-dry-run.json`, and
 `review/fix/last-result.json`.
 
-Like `execute run` and `review run`, `review fix` is unsandboxed and requires
+Like `execute run` and `review run`, `review fix run` is unsandboxed and requires
 `--yes` for non-interactive/automated use. It does not approve reviews, resolve
 findings, or re-run the gate.
 

@@ -12,7 +12,7 @@ import (
 	"github.com/heurema/pactum/internal/ledger"
 )
 
-func (a App) ExecuteDryRun(stdout io.Writer, runID string, agentName string, jsonOutput bool) error {
+func (a App) ExecutePlan(stdout io.Writer, runID string, agentName string, jsonOutput bool) error {
 	root, _, ok, err := a.requireWorkspace(stdout, false)
 	if err != nil || !ok {
 		return err
@@ -40,7 +40,7 @@ func (a App) ExecuteDryRun(stdout io.Writer, runID string, agentName string, jso
 	if jsonOutput {
 		return writeJSONResponse(stdout, plan)
 	}
-	writeExecuteDryRun(stdout, prep.State, plan, prep.AgentName, prep.ModelSpec)
+	writeExecutePlan(stdout, prep.State, plan, prep.AgentName, prep.ModelSpec)
 	return nil
 }
 
@@ -256,8 +256,8 @@ func verifyExecutionMemoryBoundary(paths artifacts.Paths, runPaths contractRunPa
 	return nil
 }
 
-func writeExecuteDryRun(stdout io.Writer, state contractRunState, plan agents.DryRunPlan, agentName string, modelSpec agents.ModelSpec) {
-	fmt.Fprintln(stdout, "Execution dry-run prepared")
+func writeExecutePlan(stdout io.Writer, state contractRunState, plan agents.DryRunPlan, agentName string, modelSpec agents.ModelSpec) {
+	fmt.Fprintln(stdout, "Execution plan prepared")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", plan.RunID)
@@ -278,7 +278,7 @@ func writeExecuteDryRun(stdout io.Writer, state contractRunState, plan agents.Dr
 	fmt.Fprintf(stdout, "  %s\n", formatAgentCommand(plan.WouldRun))
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Artifacts:")
-	fmt.Fprintf(stdout, "  dry run: %s\n", runArtifactRepoRel(plan.RunID, agents.DryRunArtifactDryRun))
+	fmt.Fprintf(stdout, "  plan: %s\n", runArtifactRepoRel(plan.RunID, agents.DryRunArtifactDryRun))
 	fmt.Fprintf(stdout, "  prompt: %s\n", runArtifactRepoRel(plan.RunID, plan.Artifacts.Prompt))
 	fmt.Fprintf(stdout, "  executor context: %s\n", runArtifactRepoRel(plan.RunID, plan.Artifacts.ExecutorContext))
 }
