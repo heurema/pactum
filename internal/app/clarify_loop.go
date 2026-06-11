@@ -70,7 +70,7 @@ type clarifyLoopRoundSummary struct {
 // only the question-and-answer churn; contract approval stays manual.
 func (a App) ClarifyLoop(stdout io.Writer, liveOutput io.Writer, runID string, options clarifyLoopOptions) error {
 	if !options.Yes {
-		return fmt.Errorf("clarify loop requires --yes because it runs clarifier agents directly")
+		return fmt.Errorf("clarify run requires --yes because it runs clarifier agents directly")
 	}
 
 	context, ok, err := a.loadClarifyContext(io.Discard, runID, options.JSONOutput)

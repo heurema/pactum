@@ -179,7 +179,7 @@ func TestTaskNewClarifyLoopFailureLeavesRunCreated(t *testing.T) {
 	}
 	for _, want := range []string{
 		"run " + taskNewSecondRunID + " was created, but its clarify loop failed",
-		"pactum clarify loop " + taskNewSecondRunID + " --yes",
+		"pactum clarify run " + taskNewSecondRunID + " --yes",
 	} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("loop failure stderr missing %q:\n%s", want, stderr.String())

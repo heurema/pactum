@@ -1,6 +1,6 @@
 # Execution safety
 
-Read this before running anything beyond `pactum execute dry-run`.
+Read this before running anything beyond `pactum execute plan`.
 
 ## Real agent execution is not sandboxed
 
@@ -11,7 +11,7 @@ about this; the skill must be too.
 
 ## Rules
 
-- The default stop point is `pactum execute dry-run --agent <name>`. Stop there
+- The default stop point is `pactum execute plan --agent <name>`. Stop there
   and report.
 - Run `pactum execute run` **only after** the user has explicitly approved
   unsandboxed, direct agent execution for this task. The same applies to
@@ -26,9 +26,9 @@ about this; the skill must be too.
 - Do not claim code changed unless it actually changed. Source files remain the
   source of truth; verify before reporting.
 
-## Why dry-run first
+## Why plan first
 
-`pactum execute dry-run` validates the approved contract hash, the project
+`pactum execute plan` validates the approved contract hash, the project
 map's freshness, and the prompt manifest, and prints the exact command that
 *would* run — giving you and the user a reviewable plan before any real,
 unsandboxed execution.

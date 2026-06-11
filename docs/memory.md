@@ -81,7 +81,7 @@ stale items against current source before relying on them.
 To keep this boundary honest, `prompt build` records hashes in
 `contract/prompt-manifest.json` for both the run-local memory artifacts and the
 global accepted-memory source files (`memory/items.jsonl` and
-`memory/refreshes.jsonl`). Before `pactum execute dry-run` or `pactum execute
+`memory/refreshes.jsonl`). Before `pactum execute plan` or `pactum execute
 run` proceeds, it re-verifies those hashes: if the run's memory context changed,
 or if accepted memory changed after the prompt was built, execution refuses until
 you rebuild the prompt. Memory that is merely **stale** (but unchanged since

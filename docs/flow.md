@@ -13,20 +13,20 @@ report, the review, and the accepted memory are all files you can read.
 | --- | --- | --- | --- |
 | Init / map | `pactum init`, `pactum map refresh` | `manifest.json`, `config.yaml`, `map/` (`wiki/` pages, `repo-map.md`, `llms.txt`, `files.jsonl`, `code-items.jsonl`, `hashes.jsonl`, `search.sqlite`) | Yes |
 | Status / search | `pactum status`, `pactum search "<query>"` | — (reads map + workspace) | No |
-| Task | `pactum task new "<task>"`, `pactum task list`, `pactum task show`, `pactum task use`, `pactum task current` | `runs/<id>/run.json`, `task.md`, `context/repo-context.md`, `context/search-results.json`, `context/memory-context.md`, `contract/contract.json`, `contract/contract.md`, `contract/approval.json`, `cache/current-run` | `new`/`use`: Yes; `list`/`show`/`current`: No |
-| Clarify | `pactum clarify ask`, `pactum clarify answer`, `pactum clarify status` | `clarify/questions.jsonl`, `clarify/answers.jsonl`, `clarify/decisions.jsonl` | `ask`/`answer`: Yes; `status`: No |
+| Task | `pactum task new "<task>"`, `pactum task list`, `pactum task show`, `pactum task use` | `runs/<id>/run.json`, `task.md`, `context/repo-context.md`, `context/search-results.json`, `context/memory-context.md`, `contract/contract.json`, `contract/contract.md`, `contract/approval.json`, `cache/current-run` | `new`/`use`: Yes; `list`/`show`: No |
+| Clarify | `pactum clarify add`, `pactum clarify answer`, `pactum clarify show` | `clarify/questions.jsonl`, `clarify/answers.jsonl`, `clarify/decisions.jsonl` | `add`/`answer`: Yes; `show`: No |
 | Contract | `pactum contract revise`, `pactum contract approve`, `pactum contract show` | `contract/contract.json`, `contract/contract.md`, `contract/approval.json` | `revise`/`approve`: Yes; `show`: No |
 | Prompt | `pactum prompt build`, `pactum prompt show` | `contract/prompt.md`, `contract/prompt-manifest.json`, `context/executor-context.md`, `context/memory-context.md`, `context/memory-selection.json` | `build`: Yes; `show`: No |
-| Execute | `pactum execute dry-run`, `pactum execute run`, `pactum execute show/status` | `execute/dry-run.json`, `execute/attempts/attempt_NNN/{request,result,stdout,stderr}`, `execute/last-result.json` | `dry-run`/`run`: Yes; `show`/`status`: No |
+| Execute | `pactum execute plan`, `pactum execute run`, `pactum execute show` | `execute/dry-run.json`, `execute/attempts/attempt_NNN/{request,result,stdout,stderr}`, `execute/last-result.json` | `plan`/`run`: Yes; `show`: No |
 | Gate | `pactum gate run`, `pactum gate show` | `gate/gate-report.json`, `gate/validation/command_NNN/{stdout,stderr,result}` | `run`: Yes; `show`: No |
-| Review | `pactum review prepare`, `pactum review add-finding`, `pactum review resolve`, `pactum review approve`, `pactum review status/show` | `review/review.json`, `review/findings.jsonl`, `review/resolutions.jsonl` | mutating subcommands: Yes; `status`/`show`: No |
-| Reviewer proposals | `pactum review dry-run`, `pactum review run`, `pactum review propose-findings`, `pactum review accept-proposal`, `pactum review reject-proposal` | `review/reviewer-context.md`, `review/reviewer-prompt-<name>-<lens>.md`, `review/reviewer-dry-run.json`, `review/reviewer-attempts/...`, `review/proposals.jsonl`, `review/proposal-decisions.jsonl` | Yes |
+| Review | `pactum review prepare`, `pactum review finding add`, `pactum review finding resolve`, `pactum review approve`, `pactum review status/show` | `review/review.json`, `review/findings.jsonl`, `review/resolutions.jsonl` | mutating subcommands: Yes; `status`/`show`: No |
+| Reviewer proposals | `pactum review plan`, `pactum review run`, `pactum review proposal collect`, `pactum review proposal accept`, `pactum review proposal reject` | `review/reviewer-context.md`, `review/reviewer-prompt-<name>-<lens>.md`, `review/reviewer-dry-run.json`, `review/reviewer-attempts/...`, `review/proposals.jsonl`, `review/proposal-decisions.jsonl` | Yes |
 | Memory | `pactum memory propose`, `pactum memory show`, `pactum memory accept`, `pactum memory search`, `pactum memory refresh`, `pactum memory stale` | `runs/<id>/memory/{memory-candidate.json,memory-candidate.md,memory-acceptance.json}`, `memory/items.jsonl`, `memory/project-memory.md`, `memory/refreshes.jsonl` | `propose`/`accept`/`refresh`: Yes; `show`/`search`/`stale`: No |
 | Export | `pactum export [run_id] --output <path>` | the ZIP archive at `--output` (outside the exported run directory) | No |
 
 "Mutates state?" means the command writes durable artifacts and/or appends to
 the workspace ledger (`ledger/events.jsonl`). Read-only commands (`status`,
-`search`, every `show`, `clarify status`, `review status`, `memory search`,
+`search`, every `show`, `clarify show`, `review status`, `memory search`,
 `memory stale`) never append ledger events.
 
 ## Stage details
@@ -79,9 +79,9 @@ lexical search results for the task, and the accepted memory selected for the
 task. The new run is recorded as the **current run** (a local-only pointer at
 `cache/current-run`), so the staged commands below can omit the run id.
 
-`pactum task new "<task>" --clarify --yes` additionally runs the autonomous
-clarify loop (see [agents.md](agents.md)) against the new run as soon as it is
-created: suggest → auto-resolve high-confidence recommendations → re-suggest,
+`pactum task new "<task>" --clarify --yes` additionally runs autonomous
+clarifier rounds (see [agents.md](agents.md)) against the new run as soon as it
+is created: suggest → auto-resolve high-confidence recommendations → re-suggest,
 until converged, `needs_human`, or the round cap. The command then prints the
 created run, the loop summary, and a "questions awaiting you" section with the
 open blocking questions automation could not resolve — each with its kind,
@@ -89,21 +89,22 @@ confidence, and recommended answer — so you answer only those and proceed to
 `pactum contract approve`. `--reviewer`, `--max-rounds`, and the idle
 `--timeout` pass through to the loop, and `--yes` is required because the loop
 runs clarifier agents directly. A loop failure never rolls back the run: it
-stays created (and current), and you can re-run `pactum clarify loop` on it.
+stays created (and current), and you can re-run `pactum clarify run` on it.
 Without `--clarify`, `task new` only creates the run and the draft contract as
 described above.
 
 `pactum task list` lists every run with its derived lifecycle status, `pactum
-task show [run_id|--latest]` shows one run and its next step, `pactum task use
-<run_id>` changes the current run, and `pactum task current` prints it. When a
+task show [run_id|--latest]` shows one run and its next step, and `pactum task
+use <run_id>` changes the current run. `pactum status` reports the current run,
+and `pactum task list` marks it with `*`. When a
 staged command's run id is omitted, Pactum resolves it to the current run, or to
 the sole active run if no current run is set; otherwise it asks you to pick one.
 
 ### Clarify
 
-`pactum clarify ask <run_id> "Question?"` appends a question; add `--blocking` to
+`pactum clarify add <run_id> "Question?"` appends a question; add `--blocking` to
 mark it as blocking contract approval. `pactum clarify answer <run_id> q_001
-"Answer"` records the answer and decision. `pactum clarify status <run_id>`
+"Answer"` records the answer and decision. `pactum clarify show <run_id>`
 summarizes open and answered questions. Open **blocking** questions prevent
 contract approval and prompt build.
 
@@ -129,19 +130,21 @@ prints the built prompt.
 
 ### Execute
 
-Always inspect `pactum execute dry-run` before `pactum execute run`. `dry-run`
+Always inspect `pactum execute plan` before `pactum execute run`. `plan`
 writes the exact command Pactum would run (`execute/dry-run.json`) without
 launching anything. `pactum execute run` runs the agent as a subprocess and
 captures the attempt (request, result, stdout, stderr) under
 `execute/attempts/`. An omitted `--agent` runs the first entry of the config
 agents registry; `--agent <name>` picks another registered entry. Because direct execution is
 unsandboxed, `execute run` asks for confirmation on an interactive terminal and
-**requires `--yes`** for non-interactive/automated use; `dry-run` never needs
+**requires `--yes`** for non-interactive/automated use; `plan` never needs
 `--yes`. Both first re-verify the boundaries recorded at prompt build: the
 contract hash still matches the approval, the project map is still fresh and
 matches the prompt manifest, and the accepted-memory boundary is unchanged.
-`pactum execute status/show` inspect captured attempts. See
-[agents.md](agents.md) for the execution model.
+`pactum execute show` inspects captured attempts: with no attempt id it shows
+the run-level execution summary, and `pactum execute show [run_id]
+<attempt_id>` shows one attempt in detail. See [agents.md](agents.md) for the
+execution model.
 
 ### Gate
 
@@ -167,9 +170,9 @@ effect on the gate. The gate status is `passed`, `needs_review`, or `failed`.
 ### Review
 
 `pactum review prepare <run_id>` creates the manual review (requires a gate
-report). `pactum review add-finding` appends a finding with a severity and
-category; `--blocking` blocks approval until resolved. `pactum review resolve
-<run_id> f_001` records a resolution. `pactum review approve <run_id> --by
+report). `pactum review finding add` appends a finding with a severity and
+category; `--blocking` blocks approval until resolved. `pactum review finding
+resolve <run_id> f_001` records a resolution. `pactum review approve <run_id> --by
 manual` approves the review, which requires that the gate did not fail and that
 no blocking findings remain. Adding a finding to an approved review resets the
 approval.
@@ -177,17 +180,17 @@ approval.
 ### Reviewer proposals
 
 Reviewer agents are optional and never trusted automatically. `pactum review
-dry-run` prepares the reviewer prompt/context without launching. `pactum review
+plan` prepares the reviewer prompt/context without launching. `pactum review
 run` runs a reviewer subprocess and captures its output. `pactum review
-propose-findings <run_id>` parses optional fenced-JSON finding blocks from the
+proposal collect <run_id>` parses optional fenced-JSON finding blocks from the
 captured stdout of every completed reviewer attempt (all lenses; `--attempt`
 narrows to one) into **pending proposals**. A human then runs
-`pactum review accept-proposal <run_id> p_001` (which creates a real finding) or
-`pactum review reject-proposal <run_id> p_001 --reason "..."`. Pending proposals
+`pactum review proposal accept <run_id> p_001` (which creates a real finding) or
+`pactum review proposal reject <run_id> p_001 --reason "..."`. Pending proposals
 must be decided before memory can be proposed.
 
-The fixer reports a structured outcome per finding: `pactum review
-apply-fix-outcomes <run_id>` parses a `pactum.review_fix_outcomes.v1` fenced-JSON
+The fixer reports a structured outcome per finding: `pactum review fix apply
+<run_id>` parses a `pactum.review_fix_outcomes.v1` fenced-JSON
 block from the fixer's captured stdout (best-effort — a missing or malformed
 block warns, never errors) and **resolves** findings accordingly: `fixed` and
 `rebutted` findings become resolved, `blocked` findings stay open. In the

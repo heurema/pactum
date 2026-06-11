@@ -201,28 +201,28 @@ func TestExecutorContextIncludesMemoryCounts(t *testing.T) {
 	}
 }
 
-func TestExecuteDryRunSucceedsWhenMemoryBoundaryMatches(t *testing.T) {
+func TestExecutePlanSucceedsWhenMemoryBoundaryMatches(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPromptWithMemoryItems(t, root, freshBoundaryMemoryItem())
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan exited %d, stderr: %s", code, stderr.String())
 	}
 	assertFile(t, runPaths.DryRunJSON)
 }
 
-func TestExecuteDryRunFailsWhenMemoryContextChanges(t *testing.T) {
+func TestExecutePlanFailsWhenMemoryContextChanges(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPromptWithMemoryItems(t, root, freshBoundaryMemoryItem())
 
 	mustWriteFile(t, runPaths.MemoryContextMD, mustReadFile(t, runPaths.MemoryContextMD)+"\ntampered\n")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("execute dry-run should fail when memory context changed")
+		t.Fatalf("execute plan should fail when memory context changed")
 	}
 	if got := stderr.String(); !strings.Contains(got, "cannot prepare execution: memory context changed after prompt build") {
 		t.Fatalf("memory context change stderr mismatch:\n%s", got)
@@ -230,23 +230,23 @@ func TestExecuteDryRunFailsWhenMemoryContextChanges(t *testing.T) {
 	assertNoFile(t, runPaths.DryRunJSON)
 }
 
-func TestExecuteDryRunFailsWhenMemorySelectionChanges(t *testing.T) {
+func TestExecutePlanFailsWhenMemorySelectionChanges(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPromptWithMemoryItems(t, root, freshBoundaryMemoryItem())
 
 	mustWriteFile(t, runPaths.MemorySelectionJSON, mustReadFile(t, runPaths.MemorySelectionJSON)+"\n")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("execute dry-run should fail when memory selection changed")
+		t.Fatalf("execute plan should fail when memory selection changed")
 	}
 	if got := stderr.String(); !strings.Contains(got, "cannot prepare execution: memory context changed after prompt build") {
 		t.Fatalf("memory selection change stderr mismatch:\n%s", got)
 	}
 }
 
-func TestExecuteDryRunFailsWhenMemoryItemsChange(t *testing.T) {
+func TestExecutePlanFailsWhenMemoryItemsChange(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPromptWithMemoryItems(t, root, freshBoundaryMemoryItem())
 
@@ -258,9 +258,9 @@ func TestExecuteDryRunFailsWhenMemoryItemsChange(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("execute dry-run should fail when accepted memory items changed")
+		t.Fatalf("execute plan should fail when accepted memory items changed")
 	}
 	if got := stderr.String(); !strings.Contains(got, "cannot prepare execution: accepted memory changed after prompt build") {
 		t.Fatalf("memory items change stderr mismatch:\n%s", got)
@@ -268,23 +268,23 @@ func TestExecuteDryRunFailsWhenMemoryItemsChange(t *testing.T) {
 	assertNoFile(t, runPaths.DryRunJSON)
 }
 
-func TestExecuteDryRunFailsWhenMemoryRefreshesChange(t *testing.T) {
+func TestExecutePlanFailsWhenMemoryRefreshesChange(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, _ := setupApprovedPromptWithMemoryItems(t, root, freshBoundaryMemoryItem())
 
 	runMemorySelectionCommand(t, app, "memory", "refresh")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("execute dry-run should fail when memory refreshes changed")
+		t.Fatalf("execute plan should fail when memory refreshes changed")
 	}
 	if got := stderr.String(); !strings.Contains(got, "cannot prepare execution: accepted memory changed after prompt build") {
 		t.Fatalf("memory refreshes change stderr mismatch:\n%s", got)
 	}
 }
 
-func TestExecuteDryRunAllowsStaleSelectedMemory(t *testing.T) {
+func TestExecutePlanAllowsStaleSelectedMemory(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPromptWithMemoryItems(t, root, staleBoundaryMemoryItem())
 
@@ -294,9 +294,9 @@ func TestExecuteDryRunAllowsStaleSelectedMemory(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run should succeed with stale-but-unchanged memory, stderr: %s", stderr.String())
+		t.Fatalf("execute plan should succeed with stale-but-unchanged memory, stderr: %s", stderr.String())
 	}
 	assertFile(t, runPaths.DryRunJSON)
 
@@ -340,7 +340,7 @@ func TestReviewerContextIncludesMemorySummaryWhenPromptBuilt(t *testing.T) {
 
 	writeReviewGateReportForTest(t, runPaths, runID, "passed")
 	runReviewCommand(t, app, "review", "prepare", runID)
-	runReviewCommand(t, app, "review", "dry-run", runID)
+	runReviewCommand(t, app, "review", "plan", runID)
 
 	context := mustReadFile(t, runPaths.ReviewContextMD)
 	for _, want := range []string{
@@ -376,7 +376,7 @@ func TestMemoryBoundaryArtifactsArePortable(t *testing.T) {
 	runMemorySelectionCommand(t, app, "prompt", "build", runID)
 	writeReviewGateReportForTest(t, runPaths, runID, "passed")
 	runReviewCommand(t, app, "review", "prepare", runID)
-	runReviewCommand(t, app, "review", "dry-run", runID)
+	runReviewCommand(t, app, "review", "plan", runID)
 
 	for name, content := range map[string]string{
 		"contract/prompt-manifest.json": mustReadFile(t, runPaths.PromptManifest),
@@ -388,7 +388,7 @@ func TestMemoryBoundaryArtifactsArePortable(t *testing.T) {
 	}
 }
 
-func TestExecuteDryRunFailsWhenMemoryMetadataMissing(t *testing.T) {
+func TestExecutePlanFailsWhenMemoryMetadataMissing(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPromptWithMemoryItems(t, root, freshBoundaryMemoryItem())
 
@@ -400,9 +400,9 @@ func TestExecuteDryRunFailsWhenMemoryMetadataMissing(t *testing.T) {
 	mustWriteFile(t, runPaths.PromptManifest, string(data)+"\n")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("execute dry-run should fail when memory metadata is missing")
+		t.Fatalf("execute plan should fail when memory metadata is missing")
 	}
 	if got := stderr.String(); !strings.Contains(got, "cannot prepare execution: executor prompt memory metadata is missing") {
 		t.Fatalf("missing memory metadata stderr mismatch:\n%s", got)

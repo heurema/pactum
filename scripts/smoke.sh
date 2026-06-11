@@ -9,7 +9,7 @@
 #   pactum init
 #   pactum status
 #   pactum task new "<task>"
-#   pactum agents doctor
+#   pactum doctor
 #
 # It never launches a real agent and never calls Codex or Claude. The temp
 # repository is removed on exit. Portable to Linux and macOS; bash required.
@@ -82,7 +82,7 @@ step "pactum status"
 step "pactum task new (contract-only, no execution)"
 "${PACTUM_BIN}" task new "smoke test Pactum install"
 
-step "pactum agents doctor (PATH check only)"
-"${PACTUM_BIN}" agents doctor
+step "pactum doctor (PATH check only)"
+"${PACTUM_BIN}" doctor
 
 printf '\nSMOKE OK: pactum built, initialized, and exercised the safe command surface.\n'

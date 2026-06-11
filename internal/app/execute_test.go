@@ -15,20 +15,20 @@ import (
 	"github.com/heurema/pactum/internal/artifacts"
 )
 
-func TestExecuteDryRunBeforeInitPrintsGuidance(t *testing.T) {
+func TestExecutePlanBeforeInitPrintsGuidance(t *testing.T) {
 	root := t.TempDir()
 
 	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"execute", "dry-run", "run_x"}, &stdout, &stderr)
+	code := testApp(root).Run([]string{"execute", "plan", "run_x"}, &stdout, &stderr)
 	if code != 1 {
-		t.Fatalf("execute dry-run before init exited %d, want 1, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan before init exited %d, want 1, stderr: %s", code, stderr.String())
 	}
 	if got := stderr.String(); !strings.Contains(got, "not initialized") {
-		t.Fatalf("execute dry-run before init stderr mismatch:\n%s", got)
+		t.Fatalf("execute plan before init stderr mismatch:\n%s", got)
 	}
 }
 
-func TestExecuteDryRunMissingRunReturnsError(t *testing.T) {
+func TestExecutePlanMissingRunReturnsError(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
 
@@ -41,50 +41,50 @@ func TestExecuteDryRunMissingRunReturnsError(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"execute", "dry-run", "run_missing"}, &stdout, &stderr)
+	code = app.Run([]string{"execute", "plan", "run_missing"}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("execute dry-run missing run should fail")
+		t.Fatalf("execute plan missing run should fail")
 	}
 	if got := stderr.String(); !strings.Contains(got, "run not found: run_missing") {
 		t.Fatalf("missing run stderr mismatch:\n%s", got)
 	}
 }
 
-func TestExecuteDryRunMissingPromptManifestFails(t *testing.T) {
+func TestExecutePlanMissingPromptManifestFails(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupApprovedPromptContract(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("execute dry-run should fail without built prompt")
+		t.Fatalf("execute plan should fail without built prompt")
 	}
 	if got := stderr.String(); !strings.Contains(got, "cannot prepare execution: executor prompt has not been built") {
 		t.Fatalf("missing prompt manifest stderr mismatch:\n%s", got)
 	}
 }
 
-func TestExecuteDryRunSucceedsAfterPromptBuild(t *testing.T) {
+func TestExecutePlanSucceedsAfterPromptBuild(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan exited %d, stderr: %s", code, stderr.String())
 	}
 	assertFile(t, runPaths.DryRunJSON)
 	got := stdout.String()
 	for _, want := range []string{
-		"Execution dry-run prepared",
+		"Execution plan prepared",
 		"Resolved:",
 		"Would run:",
 		"codex exec --json --dangerously-bypass-approvals-and-sandbox -c model=\"gpt-5\" < .heurema/pactum/runs/" + runID + "/contract/prompt.md",
 		".heurema/pactum/runs/" + runID + "/execute/dry-run.json",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("execute dry-run output missing %q:\n%s", want, got)
+			t.Fatalf("execute plan output missing %q:\n%s", want, got)
 		}
 	}
 	assertResolvedBlock(t, got, "codex", "gpt-5", "inherit", "partial")
@@ -100,14 +100,14 @@ func TestExecuteDryRunSucceedsAfterPromptBuild(t *testing.T) {
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", wantPrompt)
 }
 
-func TestExecuteDryRunJSONOutput(t *testing.T) {
+func TestExecutePlanJSONOutput(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupApprovedAndBuiltPrompt(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run --json exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan --json exited %d, stderr: %s", code, stderr.String())
 	}
 	var plan agents.DryRunPlan
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &plan))
@@ -117,7 +117,7 @@ func TestExecuteDryRunJSONOutput(t *testing.T) {
 	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != `exec --json --dangerously-bypass-approvals-and-sandbox -c model="gpt-5"` || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
 		t.Fatalf("missing would_run json: %#v", plan.WouldRun)
 	}
-	if strings.Contains(stdout.String(), "Execution dry-run prepared") {
+	if strings.Contains(stdout.String(), "Execution plan prepared") {
 		t.Fatalf("json output should not include human output:\n%s", stdout.String())
 	}
 	if strings.Contains(stdout.String(), "Resolved:") {
@@ -125,29 +125,29 @@ func TestExecuteDryRunJSONOutput(t *testing.T) {
 	}
 }
 
-func TestExecuteDryRunUnsupportedAgentFails(t *testing.T) {
+func TestExecutePlanUnsupportedAgentFails(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupApprovedAndBuiltPrompt(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "missing"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID, "--agent", "missing"}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("execute dry-run should fail for missing agent")
+		t.Fatalf("execute plan should fail for missing agent")
 	}
 	if got := stderr.String(); !strings.Contains(got, `unknown agent "missing": not registered in config agents`) {
 		t.Fatalf("missing agent stderr mismatch:\n%s", got)
 	}
 }
 
-func TestExecuteDryRunUsesDefaultExecutor(t *testing.T) {
+func TestExecutePlanUsesDefaultExecutor(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan exited %d, stderr: %s", code, stderr.String())
 	}
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
 	if plan.Agent.Name != "codex" || plan.Agent.Command != "codex" {
@@ -155,14 +155,14 @@ func TestExecuteDryRunUsesDefaultExecutor(t *testing.T) {
 	}
 }
 
-func TestExecuteDryRunExplicitCodex(t *testing.T) {
+func TestExecutePlanExplicitCodex(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "codex"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID, "--agent", "codex"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run codex exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan codex exited %d, stderr: %s", code, stderr.String())
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
@@ -175,14 +175,14 @@ func TestExecuteDryRunExplicitCodex(t *testing.T) {
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", executionPromptRepoPath(runID))
 }
 
-func TestExecuteDryRunExplicitClaude(t *testing.T) {
+func TestExecutePlanExplicitClaude(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "claude"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID, "--agent", "claude"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run claude exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan claude exited %d, stderr: %s", code, stderr.String())
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
@@ -195,14 +195,14 @@ func TestExecuteDryRunExplicitClaude(t *testing.T) {
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", executionPromptRepoPath(runID))
 }
 
-func TestExecuteDryRunAppliesExecutorModelConfigToCodex(t *testing.T) {
+func TestExecutePlanAppliesExecutorModelConfigToCodex(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "codex", Model: "gpt-5", Effort: "high"})
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "codex"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID, "--agent", "codex"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run codex exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan codex exited %d, stderr: %s", code, stderr.String())
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
@@ -213,14 +213,14 @@ func TestExecuteDryRunAppliesExecutorModelConfigToCodex(t *testing.T) {
 	assertResolvedBlock(t, stdout.String(), "codex", "gpt-5", "high", "pinned")
 }
 
-func TestExecuteDryRunAppliesExecutorModelConfigToClaude(t *testing.T) {
+func TestExecutePlanAppliesExecutorModelConfigToClaude(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"}, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "claude"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID, "--agent", "claude"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run claude exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan claude exited %d, stderr: %s", code, stderr.String())
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
@@ -231,29 +231,29 @@ func TestExecuteDryRunAppliesExecutorModelConfigToClaude(t *testing.T) {
 	assertResolvedBlock(t, stdout.String(), "claude", "claude-sonnet-4", "high", "pinned")
 }
 
-func TestExecuteDryRunResolvedPartialPin(t *testing.T) {
+func TestExecutePlanResolvedPartialPin(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "codex"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID, "--agent", "codex"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run codex exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan codex exited %d, stderr: %s", code, stderr.String())
 	}
 	// Model-only pin: the effort still inherits, so pinning is "partial", not "pinned".
 	assertResolvedBlock(t, stdout.String(), "codex", "gpt-5", "inherit", "partial")
 }
 
-func TestExecuteDryRunPinAppliesOnlyToMatchingAgent(t *testing.T) {
+func TestExecutePlanPinAppliesOnlyToMatchingAgent(t *testing.T) {
 	root := t.TempDir()
 	// Each entry carries only its own pins: invoking codex must not pick up
 	// claude's effort pin.
 	app, paths, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"}, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "codex"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID, "--agent", "codex"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run codex exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan codex exited %d, stderr: %s", code, stderr.String())
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
@@ -264,7 +264,7 @@ func TestExecuteDryRunPinAppliesOnlyToMatchingAgent(t *testing.T) {
 	assertResolvedBlock(t, stdout.String(), "codex", "gpt-5", "inherit", "partial")
 }
 
-func TestExecuteDryRunDefaultsToFirstRegistryEntry(t *testing.T) {
+func TestExecutePlanDefaultsToFirstRegistryEntry(t *testing.T) {
 	root := t.TempDir()
 	// claude first: an omitted --agent must pick the first registry entry, not
 	// a hardcoded built-in default.
@@ -274,9 +274,9 @@ func TestExecuteDryRunDefaultsToFirstRegistryEntry(t *testing.T) {
 	)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan exited %d, stderr: %s", code, stderr.String())
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
@@ -286,7 +286,7 @@ func TestExecuteDryRunDefaultsToFirstRegistryEntry(t *testing.T) {
 	assertResolvedBlock(t, stdout.String(), "claude", "claude-opus-4-8", "inherit", "partial")
 }
 
-func TestExecuteDryRunTwoEntriesOnSameBuiltInCarryDistinctPins(t *testing.T) {
+func TestExecutePlanTwoEntriesOnSameBuiltInCarryDistinctPins(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root,
 		agentRegistryEntry{Name: "fable", Model: "claude-fable-5"},
@@ -295,9 +295,9 @@ func TestExecuteDryRunTwoEntriesOnSameBuiltInCarryDistinctPins(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "fable"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID, "--agent", "fable"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run fable exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan fable exited %d, stderr: %s", code, stderr.String())
 	}
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
 	if plan.Agent.Name != "claude" || strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json --dangerously-skip-permissions --model claude-fable-5" {
@@ -307,9 +307,9 @@ func TestExecuteDryRunTwoEntriesOnSameBuiltInCarryDistinctPins(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"execute", "dry-run", runID, "--agent", "opus"}, &stdout, &stderr)
+	code = app.Run([]string{"execute", "plan", runID, "--agent", "opus"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run opus exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan opus exited %d, stderr: %s", code, stderr.String())
 	}
 	plan = readDryRunPlan(t, runPaths.DryRunJSON)
 	if plan.Agent.Name != "claude" || strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json --dangerously-skip-permissions --model claude-opus-4-8" {
@@ -318,7 +318,7 @@ func TestExecuteDryRunTwoEntriesOnSameBuiltInCarryDistinctPins(t *testing.T) {
 	assertResolvedBlock(t, stdout.String(), "opus", "claude-opus-4-8", "inherit", "partial")
 }
 
-func TestExecuteDryRunHashMismatchFails(t *testing.T) {
+func TestExecutePlanHashMismatchFails(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
@@ -326,31 +326,31 @@ func TestExecuteDryRunHashMismatchFails(t *testing.T) {
 	mustWriteFile(t, runPaths.ContractJSON, contractJSON)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("execute dry-run should fail with hash mismatch")
+		t.Fatalf("execute plan should fail with hash mismatch")
 	}
 	if got := stderr.String(); !strings.Contains(got, "cannot prepare execution: approved contract hash does not match current contract") {
 		t.Fatalf("hash mismatch stderr mismatch:\n%s", got)
 	}
 }
 
-func TestExecuteDryRunStaleMapFails(t *testing.T) {
+func TestExecutePlanStaleMapFails(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupApprovedAndBuiltPrompt(t, root)
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("execute dry-run should fail with stale map")
+		t.Fatalf("execute plan should fail with stale map")
 	}
 	if got := stderr.String(); !strings.Contains(got, "cannot prepare execution: project map is stale") {
 		t.Fatalf("stale map stderr mismatch:\n%s", got)
 	}
 }
 
-func TestExecuteDryRunFailsWhenPromptManifestMapRunIsStale(t *testing.T) {
+func TestExecutePlanFailsWhenPromptManifestMapRunIsStale(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
@@ -371,9 +371,9 @@ func TestExecuteDryRunFailsWhenPromptManifestMapRunIsStale(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code = app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("execute dry-run should fail when prompt manifest map run is stale")
+		t.Fatalf("execute plan should fail when prompt manifest map run is stale")
 	}
 	if got := stderr.String(); !strings.Contains(got, "cannot prepare execution: executor prompt was built for a different project map") {
 		t.Fatalf("stale prompt map stderr mismatch:\n%s", got)
@@ -381,7 +381,7 @@ func TestExecuteDryRunFailsWhenPromptManifestMapRunIsStale(t *testing.T) {
 	assertNoFile(t, runPaths.DryRunJSON)
 }
 
-func TestExecuteDryRunSucceedsAfterPromptBuildOnLatestMap(t *testing.T) {
+func TestExecutePlanSucceedsAfterPromptBuildOnLatestMap(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedPromptContract(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
@@ -408,34 +408,34 @@ func TestExecuteDryRunSucceedsAfterPromptBuildOnLatestMap(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code = app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan exited %d, stderr: %s", code, stderr.String())
 	}
 	assertFile(t, runPaths.DryRunJSON)
 }
 
-func TestExecuteDryRunPathPortability(t *testing.T) {
+func TestExecutePlanPathPortability(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan exited %d, stderr: %s", code, stderr.String())
 	}
 	assertDoesNotContainRoot(t, "execute/dry-run.json", mustReadFile(t, runPaths.DryRunJSON), root)
 }
 
-func TestExecuteDryRunWritesLedgerEvent(t *testing.T) {
+func TestExecutePlanWritesLedgerEvent(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan exited %d, stderr: %s", code, stderr.String())
 	}
 	events := strings.Join(readLines(t, paths.EventsJSONL), "\n")
 	if !strings.Contains(events, "execution_dry_run_prepared") || !strings.Contains(events, runID) {
@@ -443,7 +443,7 @@ func TestExecuteDryRunWritesLedgerEvent(t *testing.T) {
 	}
 }
 
-func TestExecuteDryRunUnsupportedInputModeFails(t *testing.T) {
+func TestExecutePlanUnsupportedInputModeFails(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedPromptContract(t, root)
 	registerTestAgents(t, paths, "bad-input")
@@ -459,9 +459,9 @@ func TestExecuteDryRunUnsupportedInputModeFails(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	stdout.Reset()
 	stderr.Reset()
-	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "bad-input"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID, "--agent", "bad-input"}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("execute dry-run should fail for unsupported input mode")
+		t.Fatalf("execute plan should fail for unsupported input mode")
 	}
 	if got := stderr.String(); !strings.Contains(got, "unsupported agent input mode: stdin") {
 		t.Fatalf("unsupported input stderr mismatch:\n%s", got)
@@ -496,9 +496,9 @@ func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
 	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "dry-run", runID, "--agent", "helper"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID, "--agent", "helper"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("execute dry-run helper exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("execute plan helper exited %d, stderr: %s", code, stderr.String())
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	dryRunPlan := readDryRunPlan(t, runPaths.DryRunJSON)

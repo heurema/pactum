@@ -87,12 +87,12 @@ func TestReviewFixPassesModelSpecAndStaysWriteStage(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
 	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "codex", Model: "gpt-5", Effort: "high"})
-	runReviewCommand(t, app, "review", "add-finding", runID, "transport request fields")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "transport request fields")
 	transport := &recordingAgentTransport{}
 	app.AgentTransport = transport
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "fix", runID, "--agent", "codex", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "codex", "--yes"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review fix exited %d, stderr: %s", code, stderr.String())
 	}

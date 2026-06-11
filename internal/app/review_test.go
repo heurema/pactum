@@ -122,7 +122,7 @@ func TestReviewAddFindingUpdatesSummaryAndLedger(t *testing.T) {
 	app, paths, runID, runPaths := setupPreparedReview(t, root, "passed")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "add-finding", runID, "Review command should not mutate gate report", "--blocking", "--severity", "medium", "--category", "process"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "finding", "add", runID, "Review command should not mutate gate report", "--blocking", "--severity", "medium", "--category", "process"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review add-finding exited %d, stderr: %s", code, stderr.String())
 	}
@@ -146,7 +146,7 @@ func TestReviewAddFindingRefreshesCurrentGateStatus(t *testing.T) {
 	writeReviewGateReportForTest(t, runPaths, runID, "failed")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "add-finding", runID, "gate changed after prepare"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "finding", "add", runID, "gate changed after prepare"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review add-finding exited %d, stderr: %s", code, stderr.String())
 	}
@@ -161,7 +161,7 @@ func TestReviewAddFindingRejectsAbsoluteFilePath(t *testing.T) {
 	app, _, runID, _ := setupPreparedReview(t, root, "passed")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "add-finding", runID, "absolute path", "--file", filepath.Join(root, "main.go")}, &stdout, &stderr)
+	code := app.Run([]string{"review", "finding", "add", runID, "absolute path", "--file", filepath.Join(root, "main.go")}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("review add-finding with absolute file should fail")
 	}
@@ -173,10 +173,10 @@ func TestReviewAddFindingRejectsAbsoluteFilePath(t *testing.T) {
 func TestReviewResolveFindingUpdatesStatusAndLedger(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupPreparedReview(t, root, "passed")
-	runReviewCommand(t, app, "review", "add-finding", runID, "blocking process issue", "--blocking", "--severity", "high", "--category", "process")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "blocking process issue", "--blocking", "--severity", "high", "--category", "process")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "resolve", runID, "f_001", "--note", "Verified review commands are read/write only in review artifacts."}, &stdout, &stderr)
+	code := app.Run([]string{"review", "finding", "resolve", runID, "f_001", "--note", "Verified review commands are read/write only in review artifacts."}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review resolve exited %d, stderr: %s", code, stderr.String())
 	}
@@ -206,11 +206,11 @@ func TestReviewResolveFindingUpdatesStatusAndLedger(t *testing.T) {
 func TestReviewResolveRefreshesCurrentGateStatus(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
-	runReviewCommand(t, app, "review", "add-finding", runID, "blocking process issue", "--blocking")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "blocking process issue", "--blocking")
 	writeReviewGateReportForTest(t, runPaths, runID, "failed")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "resolve", runID, "f_001", "--note", "gate changed after prepare"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "finding", "resolve", runID, "f_001", "--note", "gate changed after prepare"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review resolve exited %d, stderr: %s", code, stderr.String())
 	}
@@ -223,9 +223,9 @@ func TestReviewResolveRefreshesCurrentGateStatus(t *testing.T) {
 func TestReviewResolveLatestResolutionWins(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
-	runReviewCommand(t, app, "review", "add-finding", runID, "quality issue")
-	runReviewCommand(t, app, "review", "resolve", runID, "f_001", "--note", "first note")
-	runReviewCommand(t, app, "review", "resolve", runID, "f_001", "--note", "second note")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "quality issue")
+	runReviewCommand(t, app, "review", "finding", "resolve", runID, "f_001", "--note", "first note")
+	runReviewCommand(t, app, "review", "finding", "resolve", runID, "f_001", "--note", "second note")
 
 	resolutions := readReviewResolutions(t, runPaths.ReviewResolutionsJSONL)
 	if len(resolutions) != 2 || resolutions[0].ID != "r_001" || resolutions[1].ID != "r_002" {
@@ -245,7 +245,7 @@ func TestReviewResolveLatestResolutionWins(t *testing.T) {
 func TestReviewApproveBlocksWithOpenBlockingFinding(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
-	runReviewCommand(t, app, "review", "add-finding", runID, "blocking process issue", "--blocking")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "blocking process issue", "--blocking")
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"review", "approve", runID}, &stdout, &stderr)
@@ -304,7 +304,7 @@ func TestReviewAddFindingAfterApprovedResetsApproval(t *testing.T) {
 	app, paths, runID, runPaths := setupPreparedReview(t, root, "passed")
 	runReviewCommand(t, app, "review", "approve", runID, "--by", "manual")
 
-	runReviewCommand(t, app, "review", "add-finding", runID, "new blocking issue", "--blocking")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "new blocking issue", "--blocking")
 	review := readReviewDoc(t, runPaths.ReviewJSON)
 	if review.Status != "changes_requested" || review.Approval.ApprovedAt != nil || review.Approval.ApprovedBy != nil {
 		t.Fatalf("approval should reset after new finding: %#v", review)
@@ -318,7 +318,7 @@ func TestReviewAddFindingAfterApprovedResetsApproval(t *testing.T) {
 func TestReviewStatusJSONIncludesSummary(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, _ := setupPreparedReview(t, root, "passed")
-	runReviewCommand(t, app, "review", "add-finding", runID, "process issue", "--category", "process")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "process issue", "--category", "process")
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"review", "status", runID, "--json"}, &stdout, &stderr)
@@ -335,7 +335,7 @@ func TestReviewStatusJSONIncludesSummary(t *testing.T) {
 func TestReviewShowJSONIncludesFindings(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, _ := setupPreparedReview(t, root, "passed")
-	runReviewCommand(t, app, "review", "add-finding", runID, "quality issue", "--category", "quality")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "quality issue", "--category", "quality")
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"review", "show", runID, "--json"}, &stdout, &stderr)
@@ -352,7 +352,7 @@ func TestReviewShowJSONIncludesFindings(t *testing.T) {
 func TestReviewStatusAndShowAreReadOnly(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupPreparedReview(t, root, "passed")
-	runReviewCommand(t, app, "review", "add-finding", runID, "process issue")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "process issue")
 
 	beforeReview := mustReadFile(t, runPaths.ReviewJSON)
 	beforeLedger := mustReadFile(t, paths.EventsJSONL)
@@ -369,8 +369,8 @@ func TestReviewStatusAndShowAreReadOnly(t *testing.T) {
 func TestReviewArtifactsArePortable(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
-	runReviewCommand(t, app, "review", "add-finding", runID, "portable path issue", "--file", "internal/app/review.go", "--line", "123")
-	runReviewCommand(t, app, "review", "resolve", runID, "f_001", "--note", "relative artifacts only")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "portable path issue", "--file", "internal/app/review.go", "--line", "123")
+	runReviewCommand(t, app, "review", "finding", "resolve", runID, "f_001", "--note", "relative artifacts only")
 
 	for name, content := range map[string]string{
 		"review/review.json":       mustReadFile(t, runPaths.ReviewJSON),
@@ -381,20 +381,20 @@ func TestReviewArtifactsArePortable(t *testing.T) {
 	}
 }
 
-func TestReviewDryRunBeforeInitPrintsGuidance(t *testing.T) {
+func TestReviewPlanBeforeInitPrintsGuidance(t *testing.T) {
 	root := t.TempDir()
 
 	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"review", "dry-run", "run_x"}, &stdout, &stderr)
+	code := testApp(root).Run([]string{"review", "plan", "run_x"}, &stdout, &stderr)
 	if code != 1 {
-		t.Fatalf("review dry-run before init exited %d, want 1, stderr: %s", code, stderr.String())
+		t.Fatalf("review plan before init exited %d, want 1, stderr: %s", code, stderr.String())
 	}
 	if got := stderr.String(); !strings.Contains(got, "not initialized") {
-		t.Fatalf("review dry-run before init stderr mismatch:\n%s", got)
+		t.Fatalf("review plan before init stderr mismatch:\n%s", got)
 	}
 }
 
-func TestReviewDryRunMissingRunReturnsError(t *testing.T) {
+func TestReviewPlanMissingRunReturnsError(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
 
@@ -407,67 +407,67 @@ func TestReviewDryRunMissingRunReturnsError(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"review", "dry-run", "run_missing"}, &stdout, &stderr)
+	code = app.Run([]string{"review", "plan", "run_missing"}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("review dry-run missing run should fail")
+		t.Fatalf("review plan missing run should fail")
 	}
 	if got := stderr.String(); !strings.Contains(got, "run not found: run_missing") {
 		t.Fatalf("missing run stderr mismatch:\n%s", got)
 	}
 }
 
-func TestReviewDryRunBeforeReviewPreparedFails(t *testing.T) {
+func TestReviewPlanBeforeReviewPreparedFails(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, _ := setupRunWithGateReport(t, root, "passed")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"review", "plan", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("review dry-run should fail before review prepare")
+		t.Fatalf("review plan should fail before review prepare")
 	}
 	if got := stderr.String(); !strings.Contains(got, "review has not been prepared: "+runID) {
 		t.Fatalf("review not prepared stderr mismatch:\n%s", got)
 	}
 }
 
-func TestReviewDryRunMissingGateReportFails(t *testing.T) {
+func TestReviewPlanMissingGateReportFails(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedReviewWithoutGateReport(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"review", "plan", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("review dry-run should fail without gate report")
+		t.Fatalf("review plan should fail without gate report")
 	}
-	if got := stderr.String(); !strings.Contains(got, "cannot prepare reviewer dry-run: gate report not found") {
+	if got := stderr.String(); !strings.Contains(got, "cannot prepare reviewer plan: gate report not found") {
 		t.Fatalf("missing gate stderr mismatch:\n%s", got)
 	}
 	assertNoFile(t, runPaths.ReviewDryRunJSON)
 }
 
-func TestReviewDryRunContractNotApprovedFails(t *testing.T) {
+func TestReviewPlanContractNotApprovedFails(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"review", "plan", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("review dry-run should fail without approved contract")
+		t.Fatalf("review plan should fail without approved contract")
 	}
-	if got := stderr.String(); !strings.Contains(got, "cannot prepare reviewer dry-run: contract is not approved") {
+	if got := stderr.String(); !strings.Contains(got, "cannot prepare reviewer plan: contract is not approved") {
 		t.Fatalf("unapproved contract stderr mismatch:\n%s", got)
 	}
 	assertNoFile(t, runPaths.ReviewDryRunJSON)
 }
 
-func TestReviewDryRunSucceeds(t *testing.T) {
+func TestReviewPlanSucceeds(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "dry-run", runID}, &stdout, &stderr)
+	code := app.Run([]string{"review", "plan", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review dry-run exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("review plan exited %d, stderr: %s", code, stderr.String())
 	}
 	assertFile(t, runPaths.ReviewContextMD)
 	for _, lens := range reviewLenses {
@@ -478,7 +478,7 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 	// No execution attempt exists, so cross-model selection treats the first
 	// registry entry (codex) as the would-be executor and picks claude.
 	for _, want := range []string{
-		"Reviewer dry-run prepared",
+		"Reviewer plan prepared",
 		"Resolved:",
 		"Would run (one attempt per lens):",
 		"claude -p --output-format json --model claude-opus-4-8 < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt-claude-correctness.md",
@@ -486,7 +486,7 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 		".heurema/pactum/runs/" + runID + "/review/reviewer-context.md",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("review dry-run output missing %q:\n%s", want, got)
+			t.Fatalf("review plan output missing %q:\n%s", want, got)
 		}
 	}
 	assertResolvedBlock(t, got, "claude", "claude-opus-4-8", "inherit", "partial")
@@ -522,14 +522,14 @@ func TestReviewDryRunSucceeds(t *testing.T) {
 	}
 }
 
-func TestReviewDryRunJSONOutput(t *testing.T) {
+func TestReviewPlanJSONOutput(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "dry-run", runID, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "plan", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review dry-run --json exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("review plan --json exited %d, stderr: %s", code, stderr.String())
 	}
 	var plan reviewerDryRunDocument
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &plan))
@@ -548,7 +548,7 @@ func TestReviewDryRunJSONOutput(t *testing.T) {
 		first.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerLensPromptArtifact("claude", reviewLenses[0])) {
 		t.Fatalf("reviewer dry-run json missing artifacts/would_run: %#v", first)
 	}
-	if strings.Contains(stdout.String(), "Reviewer dry-run prepared") {
+	if strings.Contains(stdout.String(), "Reviewer plan prepared") {
 		t.Fatalf("json output should not include human output:\n%s", stdout.String())
 	}
 	if strings.Contains(stdout.String(), "Resolved:") {
@@ -556,14 +556,14 @@ func TestReviewDryRunJSONOutput(t *testing.T) {
 	}
 }
 
-func TestReviewDryRunUsesDefaultReviewer(t *testing.T) {
+func TestReviewPlanUsesDefaultReviewer(t *testing.T) {
 	// With no execution attempt the would-be executor is the first registry
 	// entry (codex), so the default reviewer is the first entry on a different
 	// built-in (claude).
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 
-	runReviewCommand(t, app, "review", "dry-run", runID)
+	runReviewCommand(t, app, "review", "plan", runID)
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	if plan.Reviewer.Name != "claude" || plan.Reviewer.Command != "claude" {
 		t.Fatalf("default reviewer mismatch: %#v", plan.Reviewer)
@@ -574,7 +574,7 @@ func TestReviewDryRunUsesDefaultReviewer(t *testing.T) {
 	}
 }
 
-func TestReviewDryRunCrossModelReviewSelectsOppositeBuiltIn(t *testing.T) {
+func TestReviewPlanCrossModelReviewSelectsOppositeBuiltIn(t *testing.T) {
 	for _, tc := range []struct {
 		executor  string
 		want      string
@@ -589,9 +589,9 @@ func TestReviewDryRunCrossModelReviewSelectsOppositeBuiltIn(t *testing.T) {
 			writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", mustResolveExecutorForTest(t, tc.executor))
 
 			var stdout, stderr bytes.Buffer
-			code := app.Run([]string{"review", "dry-run", runID}, &stdout, &stderr)
+			code := app.Run([]string{"review", "plan", runID}, &stdout, &stderr)
 			if code != 0 {
-				t.Fatalf("review dry-run exited %d, stderr: %s", code, stderr.String())
+				t.Fatalf("review plan exited %d, stderr: %s", code, stderr.String())
 			}
 			plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 			if plan.Reviewer.Name != tc.want {
@@ -602,15 +602,15 @@ func TestReviewDryRunCrossModelReviewSelectsOppositeBuiltIn(t *testing.T) {
 	}
 }
 
-func TestReviewDryRunCrossModelReviewExplicitReviewerWins(t *testing.T) {
+func TestReviewPlanCrossModelReviewExplicitReviewerWins(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", mustResolveExecutorForTest(t, agents.BuiltinCodex))
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "dry-run", runID, "--reviewer", agents.BuiltinCodex}, &stdout, &stderr)
+	code := app.Run([]string{"review", "plan", runID, "--reviewer", agents.BuiltinCodex}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review dry-run exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("review plan exited %d, stderr: %s", code, stderr.String())
 	}
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	if plan.Reviewer.Name != agents.BuiltinCodex {
@@ -619,7 +619,7 @@ func TestReviewDryRunCrossModelReviewExplicitReviewerWins(t *testing.T) {
 	assertResolvedBlock(t, stdout.String(), agents.BuiltinCodex, "gpt-5", "inherit", "partial")
 }
 
-func TestReviewDryRunCrossModelSkipsSameUnderlyingEntries(t *testing.T) {
+func TestReviewPlanCrossModelSkipsSameUnderlyingEntries(t *testing.T) {
 	// The first entry differing by UNDERLYING agent wins: fable runs on claude
 	// like the executor, so codex is selected even though fable comes first.
 	root := t.TempDir()
@@ -631,14 +631,14 @@ func TestReviewDryRunCrossModelSkipsSameUnderlyingEntries(t *testing.T) {
 	)
 	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", mustResolveExecutorForTest(t, agents.BuiltinClaude))
 
-	runReviewCommand(t, app, "review", "dry-run", runID)
+	runReviewCommand(t, app, "review", "plan", runID)
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	if plan.Reviewer.Name != agents.BuiltinCodex {
 		t.Fatalf("cross-model should skip same-underlying entries, got: %#v", plan.Reviewer)
 	}
 }
 
-func TestReviewDryRunCrossModelFallsBackToFirstEntryWhenNoOtherBuiltIn(t *testing.T) {
+func TestReviewPlanCrossModelFallsBackToFirstEntryWhenNoOtherBuiltIn(t *testing.T) {
 	// Every registry entry runs on the executor's built-in, so cross-model
 	// selection falls back to the first registry entry.
 	root := t.TempDir()
@@ -646,32 +646,32 @@ func TestReviewDryRunCrossModelFallsBackToFirstEntryWhenNoOtherBuiltIn(t *testin
 	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
 	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", mustResolveExecutorForTest(t, agents.BuiltinCodex))
 
-	runReviewCommand(t, app, "review", "dry-run", runID)
+	runReviewCommand(t, app, "review", "plan", runID)
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	if plan.Reviewer.Name != agents.BuiltinCodex {
 		t.Fatalf("same-built-in registry should fall back to the first entry, got: %#v", plan.Reviewer)
 	}
 }
 
-func TestReviewDryRunCrossModelReviewForNonBuiltInExecutor(t *testing.T) {
+func TestReviewPlanCrossModelReviewForNonBuiltInExecutor(t *testing.T) {
 	// The recorded executor is not a built-in, so every registry entry's
 	// underlying agent differs and the first entry (codex) is selected.
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	writeExecutionAttemptForTest(t, runPaths, runID, "attempt_001", helperAgentDescriptor("helper"))
 
-	runReviewCommand(t, app, "review", "dry-run", runID)
+	runReviewCommand(t, app, "review", "plan", runID)
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	if plan.Reviewer.Name != agents.BuiltinCodex {
 		t.Fatalf("non-built-in executor should select the first registry entry, got: %#v", plan.Reviewer)
 	}
 }
 
-func TestReviewDryRunExplicitReviewers(t *testing.T) {
+func TestReviewPlanExplicitReviewers(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 
-	runReviewCommand(t, app, "review", "dry-run", runID, "--reviewer", "codex")
+	runReviewCommand(t, app, "review", "plan", runID, "--reviewer", "codex")
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	if plan.Reviewer.Name != "codex" || plan.Reviewer.Command != "codex" {
 		t.Fatalf("codex reviewer mismatch: %#v", plan.Reviewer)
@@ -683,7 +683,7 @@ func TestReviewDryRunExplicitReviewers(t *testing.T) {
 	}
 	assertCommandArgsDoNotContain(t, wouldRun.Args, codexPromptArtifact, runArtifactRepoRel(runID, codexPromptArtifact))
 
-	runReviewCommand(t, app, "review", "dry-run", runID, "--reviewer", "claude")
+	runReviewCommand(t, app, "review", "plan", runID, "--reviewer", "claude")
 	plan = readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	if plan.Reviewer.Name != "claude" || plan.Reviewer.Command != "claude" {
 		t.Fatalf("claude reviewer mismatch: %#v", plan.Reviewer)
@@ -696,7 +696,7 @@ func TestReviewDryRunExplicitReviewers(t *testing.T) {
 	assertCommandArgsDoNotContain(t, wouldRun.Args, claudePromptArtifact, runArtifactRepoRel(runID, claudePromptArtifact))
 }
 
-func TestReviewDryRunAppliesPanelEntryPinToCodex(t *testing.T) {
+func TestReviewPlanAppliesPanelEntryPinToCodex(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	setAgentRegistryConfig(t, paths,
@@ -705,9 +705,9 @@ func TestReviewDryRunAppliesPanelEntryPinToCodex(t *testing.T) {
 	)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "dry-run", runID, "--reviewer", "codex"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "plan", runID, "--reviewer", "codex"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review dry-run codex exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("review plan codex exited %d, stderr: %s", code, stderr.String())
 	}
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	wantArgs := []string{"exec", "--json", "--sandbox", "read-only", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"}
@@ -723,9 +723,9 @@ func TestReviewDryRunAppliesPanelEntryPinToCodex(t *testing.T) {
 	// pin, not the codex entry's effort.
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"review", "dry-run", runID, "--reviewer", "claude"}, &stdout, &stderr)
+	code = app.Run([]string{"review", "plan", runID, "--reviewer", "claude"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review dry-run claude exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("review plan claude exited %d, stderr: %s", code, stderr.String())
 	}
 	plan = readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	wantArgs = []string{"-p", "--output-format", "json", "--model", "claude-opus-4-8"}
@@ -735,15 +735,15 @@ func TestReviewDryRunAppliesPanelEntryPinToCodex(t *testing.T) {
 	assertResolvedBlock(t, stdout.String(), "claude", "claude-opus-4-8", "inherit", "partial")
 }
 
-func TestReviewDryRunAppliesPanelEntryPinToClaude(t *testing.T) {
+func TestReviewPlanAppliesPanelEntryPinToClaude(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"})
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "dry-run", runID, "--reviewer", "claude"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "plan", runID, "--reviewer", "claude"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review dry-run claude exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("review plan claude exited %d, stderr: %s", code, stderr.String())
 	}
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 	wantArgs := []string{"-p", "--output-format", "json", "--model", "claude-sonnet-4", "--effort", "high"}
@@ -754,21 +754,21 @@ func TestReviewDryRunAppliesPanelEntryPinToClaude(t *testing.T) {
 	assertResolvedBlock(t, stdout.String(), "claude", "claude-sonnet-4", "high", "pinned")
 }
 
-func TestReviewDryRunUnsupportedReviewerFails(t *testing.T) {
+func TestReviewPlanUnsupportedReviewerFails(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "dry-run", runID, "--reviewer", "missing"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "plan", runID, "--reviewer", "missing"}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("review dry-run should fail for missing reviewer")
+		t.Fatalf("review plan should fail for missing reviewer")
 	}
 	if got := stderr.String(); !strings.Contains(got, `unknown agent "missing": not registered in config agents`) {
 		t.Fatalf("missing reviewer stderr mismatch:\n%s", got)
 	}
 }
 
-func TestReviewDryRunUnsupportedInputModeFails(t *testing.T) {
+func TestReviewPlanUnsupportedInputModeFails(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
 	registerTestAgents(t, paths, "bad-input")
@@ -780,22 +780,22 @@ func TestReviewDryRunUnsupportedInputModeFails(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "dry-run", runID, "--reviewer", "bad-input"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "plan", runID, "--reviewer", "bad-input"}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("review dry-run should fail for unsupported input mode")
+		t.Fatalf("review plan should fail for unsupported input mode")
 	}
 	if got := stderr.String(); !strings.Contains(got, "unsupported agent input mode: stdin") {
 		t.Fatalf("unsupported input stderr mismatch:\n%s", got)
 	}
 }
 
-func TestReviewDryRunContextIncludesManualFindings(t *testing.T) {
+func TestReviewPlanContextIncludesManualFindings(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	runReviewCommand(t, app, "review", "add-finding", runID, "Manual review artifacts should stay append-only", "--category", "process", "--severity", "medium")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "Manual review artifacts should stay append-only", "--category", "process", "--severity", "medium")
 	appendReviewProposalForTest(t, runPaths, runID, "p_001", "Pending proposal should be visible to reviewer", true)
 
-	runReviewCommand(t, app, "review", "dry-run", runID)
+	runReviewCommand(t, app, "review", "plan", runID)
 	context := mustReadFile(t, runPaths.ReviewContextMD)
 	for _, want := range []string{
 		"f_001",
@@ -811,12 +811,12 @@ func TestReviewDryRunContextIncludesManualFindings(t *testing.T) {
 	}
 }
 
-func TestReviewDryRunArtifactsArePortable(t *testing.T) {
+func TestReviewPlanArtifactsArePortable(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	runReviewCommand(t, app, "review", "add-finding", runID, "portable reviewer context", "--file", "internal/app/review.go")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "portable reviewer context", "--file", "internal/app/review.go")
 
-	runReviewCommand(t, app, "review", "dry-run", runID)
+	runReviewCommand(t, app, "review", "plan", runID)
 	contents := map[string]string{
 		"review/reviewer-context.md":   mustReadFile(t, runPaths.ReviewContextMD),
 		"review/reviewer-dry-run.json": mustReadFile(t, runPaths.ReviewDryRunJSON),
@@ -829,41 +829,41 @@ func TestReviewDryRunArtifactsArePortable(t *testing.T) {
 	}
 }
 
-func TestReviewDryRunWritesLedgerEvent(t *testing.T) {
+func TestReviewPlanWritesLedgerEvent(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
 
-	runReviewCommand(t, app, "review", "dry-run", runID)
+	runReviewCommand(t, app, "review", "plan", runID)
 	events := strings.Join(readLines(t, paths.EventsJSONL), "\n")
 	if !strings.Contains(events, "review_dry_run_prepared") || !strings.Contains(events, runID) {
 		t.Fatalf("events missing review_dry_run_prepared:\n%s", events)
 	}
 }
 
-func TestReviewDryRunDoesNotMutateManualReviewArtifacts(t *testing.T) {
+func TestReviewPlanDoesNotMutateManualReviewArtifacts(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	runReviewCommand(t, app, "review", "add-finding", runID, "manual artifact should not change")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "manual artifact should not change")
 
 	beforeReview := mustReadFile(t, runPaths.ReviewJSON)
 	beforeFindings := mustReadFile(t, runPaths.ReviewFindingsJSONL)
 	beforeResolutions := mustReadFile(t, runPaths.ReviewResolutionsJSONL)
 	beforeEvents := readLines(t, paths.EventsJSONL)
 
-	runReviewCommand(t, app, "review", "dry-run", runID)
+	runReviewCommand(t, app, "review", "plan", runID)
 
 	if got := mustReadFile(t, runPaths.ReviewJSON); got != beforeReview {
-		t.Fatalf("review dry-run mutated review.json")
+		t.Fatalf("review plan mutated review.json")
 	}
 	if got := mustReadFile(t, runPaths.ReviewFindingsJSONL); got != beforeFindings {
-		t.Fatalf("review dry-run mutated findings.jsonl")
+		t.Fatalf("review plan mutated findings.jsonl")
 	}
 	if got := mustReadFile(t, runPaths.ReviewResolutionsJSONL); got != beforeResolutions {
-		t.Fatalf("review dry-run mutated resolutions.jsonl")
+		t.Fatalf("review plan mutated resolutions.jsonl")
 	}
 	afterEvents := readLines(t, paths.EventsJSONL)
 	if len(afterEvents) != len(beforeEvents)+1 || !strings.Contains(afterEvents[len(afterEvents)-1], "review_dry_run_prepared") {
-		t.Fatalf("review dry-run should only append its ledger event:\nbefore=%v\nafter=%v", beforeEvents, afterEvents)
+		t.Fatalf("review plan should only append its ledger event:\nbefore=%v\nafter=%v", beforeEvents, afterEvents)
 	}
 }
 
@@ -1211,7 +1211,7 @@ func TestReviewRunRequestWouldRunMatchesDryRun(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	app = configureHelperReviewers(t, app, paths, "helper")
-	runReviewCommand(t, app, "review", "dry-run", runID, "--reviewer", "helper")
+	runReviewCommand(t, app, "review", "plan", runID, "--reviewer", "helper")
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
 
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
@@ -1354,7 +1354,7 @@ func TestReviewFixDryRunArtifactsUseWriteEnabledExecutorAndPrompt(t *testing.T) 
 				model = "claude-sonnet-4"
 			}
 			setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: tc.agent, Model: model, Effort: "high"})
-			runReviewCommand(t, app, "review", "add-finding", runID, "Fix prompt should include accepted review finding", "--file", "internal/app/review.go", "--line", "42", "--blocking", "--category", "correctness")
+			runReviewCommand(t, app, "review", "finding", "add", runID, "Fix prompt should include accepted review finding", "--file", "internal/app/review.go", "--line", "42", "--blocking", "--category", "correctness")
 
 			var stdout bytes.Buffer
 			context, ok, err := app.loadReviewContext(&stdout, runID)
@@ -1409,7 +1409,7 @@ func TestReviewFixDryRunArtifactsUseWriteEnabledExecutorAndPrompt(t *testing.T) 
 func TestReviewFixRegeneratesPromptWhenFindingsChange(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	runReviewCommand(t, app, "review", "add-finding", runID, "first finding", "--category", "quality")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "first finding", "--category", "quality")
 
 	var buf bytes.Buffer
 	ctx, ok, err := app.loadReviewContext(&buf, runID)
@@ -1425,7 +1425,7 @@ func TestReviewFixRegeneratesPromptWhenFindingsChange(t *testing.T) {
 
 	// Add a second finding and re-prepare. The fixer prompt inlines the findings,
 	// so it must be regenerated rather than reusing the first attempt's stale prompt.
-	runReviewCommand(t, app, "review", "add-finding", runID, "second finding added later", "--category", "quality")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "second finding added later", "--category", "quality")
 	ctx2, ok, err := app.loadReviewContext(&buf, runID)
 	assertNoError(t, err)
 	if !ok {
@@ -1447,7 +1447,7 @@ func TestReviewFixRunWritesAttemptArtifacts(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	app = configureHelperFixers(t, app, paths, "helper")
-	runReviewCommand(t, app, "review", "add-finding", runID, "valid fixer finding", "--blocking", "--category", "quality")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "valid fixer finding", "--blocking", "--category", "quality")
 	t.Setenv("PACTUM_FIXER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_FIXER_EXPECTED_CWD", root)
 
@@ -1456,7 +1456,7 @@ func TestReviewFixRunWritesAttemptArtifacts(t *testing.T) {
 	beforeResolutions := mustReadFile(t, runPaths.ReviewResolutionsJSONL)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "fix", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review fix exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1532,12 +1532,12 @@ func TestReviewFixStreamsLiveOutputToStderr(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
 	app = configureHelperFixers(t, app, paths, "helper")
-	runReviewCommand(t, app, "review", "add-finding", runID, "valid fixer finding", "--blocking", "--category", "quality")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "valid fixer finding", "--blocking", "--category", "quality")
 	t.Setenv("PACTUM_FIXER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_FIXER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "fix", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review fix exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1560,7 +1560,7 @@ func TestReviewFixResolvedBlockShowsExecutorModel(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "codex", Model: "gpt-5", Effort: "high"})
-	runReviewCommand(t, app, "review", "add-finding", runID, "model pinning should be visible")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "model pinning should be visible")
 	t.Setenv("PACTUM_FIXER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_FIXER_EXPECTED_CWD", root)
 	app.AgentRegistry = testAgentRegistry(agents.AgentDescriptor{
@@ -1571,7 +1571,7 @@ func TestReviewFixResolvedBlockShowsExecutorModel(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "fix", runID, "--agent", "codex", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "codex", "--yes"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review fix exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1594,12 +1594,12 @@ func TestReviewFixJSONOutput(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
 	app = configureHelperFixers(t, app, paths, "helper")
-	runReviewCommand(t, app, "review", "add-finding", runID, "json output finding")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "json output finding")
 	t.Setenv("PACTUM_FIXER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_FIXER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "fix", runID, "--agent", "helper", "--yes", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "helper", "--yes", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review fix --json exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1617,9 +1617,9 @@ func TestReviewFixJSONOutput(t *testing.T) {
 func TestReviewApplyFixOutcomesResolvesFixedAndRebuttedOnly(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupPreparedReview(t, root, "passed")
-	runReviewCommand(t, app, "review", "add-finding", runID, "fixed finding", "--blocking", "--category", "quality")
-	runReviewCommand(t, app, "review", "add-finding", runID, "rebutted finding", "--blocking", "--category", "quality")
-	runReviewCommand(t, app, "review", "add-finding", runID, "blocked finding", "--blocking", "--category", "quality")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "fixed finding", "--blocking", "--category", "quality")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "rebutted finding", "--blocking", "--category", "quality")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "blocked finding", "--blocking", "--category", "quality")
 	writeReviewFixAttemptForTest(t, runPaths, runID, "attempt_001", reviewFixStructuredOutput([]map[string]any{
 		{"finding_id": "f_001", "outcome": "fixed", "note": "changed internal/app/review.go"},
 		{"finding_id": "f_002", "outcome": "rebutted", "note": "not applicable in " + root},
@@ -1627,7 +1627,7 @@ func TestReviewApplyFixOutcomesResolvesFixedAndRebuttedOnly(t *testing.T) {
 	}), true)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "apply-fix-outcomes", runID, "attempt_001", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "fix", "apply", runID, "attempt_001", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review apply-fix-outcomes exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1655,13 +1655,13 @@ func TestReviewApplyFixOutcomesResolvesFixedAndRebuttedOnly(t *testing.T) {
 func TestReviewApplyFixOutcomesMissingOrMalformedBlockWarnsWithoutWriting(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
-	runReviewCommand(t, app, "review", "add-finding", runID, "open finding", "--blocking", "--category", "quality")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "open finding", "--blocking", "--category", "quality")
 	writeReviewFixAttemptForTest(t, runPaths, runID, "attempt_001", "plain prose only\n", true)
 	writeReviewFixAttemptForTest(t, runPaths, runID, "attempt_002", "```json\n{malformed\n```\n", true)
 
 	for _, attemptID := range []string{"attempt_001", "attempt_002"} {
 		var stdout, stderr bytes.Buffer
-		code := app.Run([]string{"review", "apply-fix-outcomes", runID, attemptID, "--json"}, &stdout, &stderr)
+		code := app.Run([]string{"review", "fix", "apply", runID, attemptID, "--json"}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("review apply-fix-outcomes %s exited %d, stderr: %s", attemptID, code, stderr.String())
 		}
@@ -1683,15 +1683,15 @@ func TestReviewApplyFixOutcomesMissingOrMalformedBlockWarnsWithoutWriting(t *tes
 func TestReviewApplyFixOutcomesSkipsUnknownAndAlreadyResolvedFindings(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
-	runReviewCommand(t, app, "review", "add-finding", runID, "already fixed", "--blocking", "--category", "quality")
-	runReviewCommand(t, app, "review", "resolve", runID, "f_001", "--note", "manual")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "already fixed", "--blocking", "--category", "quality")
+	runReviewCommand(t, app, "review", "finding", "resolve", runID, "f_001", "--note", "manual")
 	writeReviewFixAttemptForTest(t, runPaths, runID, "attempt_001", reviewFixStructuredOutput([]map[string]any{
 		{"finding_id": "f_001", "outcome": "fixed", "note": "duplicate"},
 		{"finding_id": "f_404", "outcome": "fixed", "note": "unknown"},
 	}), true)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "apply-fix-outcomes", runID, "attempt_001", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "fix", "apply", runID, "attempt_001", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review apply-fix-outcomes exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1713,7 +1713,7 @@ func TestReviewProposeFindingsBeforeInitPrintsGuidance(t *testing.T) {
 	root := t.TempDir()
 
 	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"review", "propose-findings", "run_x"}, &stdout, &stderr)
+	code := testApp(root).Run([]string{"review", "proposal", "collect", "run_x"}, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("review propose-findings before init exited %d, want 1, stderr: %s", code, stderr.String())
 	}
@@ -1735,7 +1735,7 @@ func TestReviewProposeFindingsMissingRunReturnsError(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"review", "propose-findings", "run_missing"}, &stdout, &stderr)
+	code = app.Run([]string{"review", "proposal", "collect", "run_missing"}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("review propose-findings missing run should fail")
 	}
@@ -1749,7 +1749,7 @@ func TestReviewProposeFindingsBeforeReviewPreparedFails(t *testing.T) {
 	app, _, runID, _ := setupRunWithGateReport(t, root, "passed")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "propose-findings", runID}, &stdout, &stderr)
+	code := app.Run([]string{"review", "proposal", "collect", runID}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("review propose-findings should fail before review prepare")
 	}
@@ -1763,7 +1763,7 @@ func TestReviewProposeFindingsWithNoReviewerAttemptsFails(t *testing.T) {
 	app, _, runID, _ := setupPreparedReview(t, root, "passed")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "propose-findings", runID}, &stdout, &stderr)
+	code := app.Run([]string{"review", "proposal", "collect", runID}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("review propose-findings should fail without attempts")
 	}
@@ -1779,7 +1779,7 @@ func TestReviewProposeFindingsWithNoStructuredBlockDoesNotWrite(t *testing.T) {
 	beforeEvents := readLines(t, paths.EventsJSONL)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "propose-findings", runID}, &stdout, &stderr)
+	code := app.Run([]string{"review", "proposal", "collect", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review propose-findings exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1814,7 +1814,7 @@ func TestReviewProposeFindingsParsesValidStructuredBlock(t *testing.T) {
 	}), true)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "propose-findings", runID}, &stdout, &stderr)
+	code := app.Run([]string{"review", "proposal", "collect", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review propose-findings exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1855,7 +1855,7 @@ func TestReviewProposeFindingsSkipsInvalidProposals(t *testing.T) {
 	}), true)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "propose-findings", runID, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "proposal", "collect", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review propose-findings --json exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1882,7 +1882,7 @@ func TestReviewProposeFindingsUsesExplicitAttemptID(t *testing.T) {
 		{"message": "second attempt", "severity": "medium", "category": "quality"},
 	}), true)
 
-	runReviewCommand(t, app, "review", "propose-findings", runID, "reviewer_attempt_001")
+	runReviewCommand(t, app, "review", "proposal", "collect", runID, "reviewer_attempt_001")
 	proposals := readReviewProposals(t, runPaths.ReviewProposalsJSONL)
 	if len(proposals) != 1 || proposals[0].ReviewerAttemptID != "reviewer_attempt_001" || proposals[0].Message != "first attempt" {
 		t.Fatalf("explicit attempt not used: %#v", proposals)
@@ -1899,7 +1899,7 @@ func TestReviewProposeFindingsUsesLatestCompletedAttempt(t *testing.T) {
 		{"message": "incomplete attempt", "severity": "medium", "category": "quality"},
 	}), false)
 
-	runReviewCommand(t, app, "review", "propose-findings", runID)
+	runReviewCommand(t, app, "review", "proposal", "collect", runID)
 	proposals := readReviewProposals(t, runPaths.ReviewProposalsJSONL)
 	if len(proposals) != 1 || proposals[0].ReviewerAttemptID != "reviewer_attempt_001" || proposals[0].Message != "completed attempt" {
 		t.Fatalf("latest completed attempt not used: %#v", proposals)
@@ -1912,7 +1912,7 @@ func TestReviewAcceptProposalCreatesFinding(t *testing.T) {
 	appendReviewProposalForTest(t, runPaths, runID, "p_001", "accepted proposal", true)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "accept-proposal", runID, "p_001"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "proposal", "accept", runID, "p_001"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review accept-proposal exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1948,7 +1948,7 @@ func TestReviewAcceptProposalDoesNotCopyEvidenceToFinding(t *testing.T) {
 	appendReviewProposalForTest(t, runPaths, runID, "p_001", "blocking issue", true)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "accept-proposal", runID, "p_001", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "proposal", "accept", runID, "p_001", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review accept-proposal exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1984,7 +1984,7 @@ func TestReviewRejectProposalRecordsDecisionOnly(t *testing.T) {
 	beforeReview := mustReadFile(t, runPaths.ReviewJSON)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "reject-proposal", runID, "p_001", "--reason", "not relevant"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "proposal", "reject", runID, "p_001", "--reason", "not relevant"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review reject-proposal exited %d, stderr: %s", code, stderr.String())
 	}
@@ -2011,11 +2011,11 @@ func TestReviewProposalCannotBeDecidedTwice(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
 	appendReviewProposalForTest(t, runPaths, runID, "p_001", "decide once", false)
-	runReviewCommand(t, app, "review", "accept-proposal", runID, "p_001")
+	runReviewCommand(t, app, "review", "proposal", "accept", runID, "p_001")
 
 	for _, args := range [][]string{
-		{"review", "accept-proposal", runID, "p_001"},
-		{"review", "reject-proposal", runID, "p_001"},
+		{"review", "proposal", "accept", runID, "p_001"},
+		{"review", "proposal", "reject", runID, "p_001"},
 	} {
 		var stdout, stderr bytes.Buffer
 		code := app.Run(args, &stdout, &stderr)
@@ -2053,7 +2053,7 @@ func TestReviewAcceptProposalAfterApprovedReviewResetsApproval(t *testing.T) {
 	runReviewCommand(t, app, "review", "approve", runID, "--by", "manual")
 	appendReviewProposalForTest(t, runPaths, runID, "p_001", "new blocking proposal", true)
 
-	runReviewCommand(t, app, "review", "accept-proposal", runID, "p_001")
+	runReviewCommand(t, app, "review", "proposal", "accept", runID, "p_001")
 	review := readReviewDoc(t, runPaths.ReviewJSON)
 	if review.Status != "changes_requested" || review.Approval.ApprovedAt != nil || review.Approval.ApprovedBy != nil {
 		t.Fatalf("approval should reset after accepted proposal: %#v", review)
@@ -2138,8 +2138,8 @@ func TestReviewProposalArtifactsArePortable(t *testing.T) {
 		},
 	}), true)
 
-	runReviewCommand(t, app, "review", "propose-findings", runID)
-	runReviewCommand(t, app, "review", "accept-proposal", runID, "p_001")
+	runReviewCommand(t, app, "review", "proposal", "collect", runID)
+	runReviewCommand(t, app, "review", "proposal", "accept", runID, "p_001")
 	for name, content := range map[string]string{
 		"review/proposals.jsonl":          mustReadFile(t, runPaths.ReviewProposalsJSONL),
 		"review/proposal-decisions.jsonl": mustReadFile(t, runPaths.ReviewProposalDecisionsJSONL),
@@ -2153,7 +2153,7 @@ func TestReviewPromptIncludesStructuredProposalContract(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 
-	runReviewCommand(t, app, "review", "dry-run", runID)
+	runReviewCommand(t, app, "review", "plan", runID)
 	prompt := mustReadFile(t, reviewerLensPromptPath(runPaths, "claude", reviewLenses[0]))
 	for _, want := range []string{
 		"## Optional structured finding proposals",
@@ -2290,7 +2290,7 @@ func TestReviewProposeFindingsConfidenceDefaultsAndValidation(t *testing.T) {
 	}), true)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "propose-findings", runID, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "proposal", "collect", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review propose-findings --json exited %d, stderr: %s", code, stderr.String())
 	}
@@ -2323,8 +2323,8 @@ func TestReviewShowDisplaysFindingConfidence(t *testing.T) {
 			"confidence": "high",
 		},
 	}), true)
-	runReviewCommand(t, app, "review", "propose-findings", runID)
-	runReviewCommand(t, app, "review", "accept-proposal", runID, "p_001")
+	runReviewCommand(t, app, "review", "proposal", "collect", runID)
+	runReviewCommand(t, app, "review", "proposal", "accept", runID, "p_001")
 
 	findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL)
 	if len(findings) != 1 || findings[0].Confidence != "high" {

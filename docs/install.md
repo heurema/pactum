@@ -87,7 +87,7 @@ pactum version          # also: pactum version --json
 ```
 
 You should also see the top-level command groups (`init`, `status`, `task`,
-`contract`, `execute`, `gate`, `review`, `memory`, `agents`, `version`, ...).
+`contract`, `execute`, `gate`, `review`, `memory`, `doctor`, `version`, ...).
 
 ## First-repo smoke check
 
@@ -97,7 +97,7 @@ Inside any Git repository you want Pactum to manage:
 pactum init             # create .heurema/pactum/ and build the project map
 pactum status           # show workspace + project map status
 pactum task new "demo"  # create a contract-first run (becomes the current run)
-pactum agents doctor    # check whether codex/claude are on PATH
+pactum doctor           # check whether codex/claude are on PATH
 ```
 
 Notes:
@@ -106,7 +106,7 @@ Notes:
   deterministic project map and search index. It does not run any agent.
 - `pactum task new` creates a run and records it as the current run, so the
   staged commands (`contract approve`, `prompt build`, ...) can omit the run id.
-- `pactum agents doctor` only checks your `PATH` for the agent commands. It
+- `pactum doctor` only checks your `PATH` for the agent commands. It
   does **not** launch the agents and does **not** authenticate them; a
   `missing_command` status simply means the CLI isn't installed yet.
 
@@ -118,7 +118,7 @@ scripts/smoke.sh
 ```
 
 It builds `bin/pactum`, creates a temporary Git repo, and runs `version`,
-`init`, `status`, `task new`, and `agents doctor` — never a real agent — then
+`init`, `status`, `task new`, and `doctor` — never a real agent — then
 cleans up.
 
 ## Continuous integration

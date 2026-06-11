@@ -67,7 +67,7 @@ func TestSkillInlinesSafetyAndStop(t *testing.T) {
 	for _, want := range []string{
 		"which pactum",
 		"pactum task new",
-		"pactum execute dry-run",
+		"pactum execute plan",
 		"pactum execute run",     // mentioned as the thing NOT to run by default
 		"references/workflow.md", // explicitly tells the agent to read references
 		".heurema",
@@ -93,7 +93,7 @@ func TestSkillWorkflowReference(t *testing.T) {
 		"pactum contract revise",
 		"pactum contract approve --by manual",
 		"pactum prompt build",
-		"pactum execute dry-run",
+		"pactum execute plan",
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Fatalf("workflow.md missing %q", want)
@@ -189,6 +189,24 @@ func TestSkillDocsAvoidStaleAndPrematureClaims(t *testing.T) {
 		"/plugin install pactum@pactum",
 		"pactum install",
 		"pactum skill install",
+		// M23.0 removed these command spellings.
+		"pactum agents doctor",
+		"pactum clarify ask",
+		"pactum clarify loop",
+		"pactum clarify status",
+		"pactum clarify list",
+		"pactum execute dry-run",
+		"pactum execute status",
+		"pactum review dry-run",
+		"review add-finding",
+		"pactum review resolve",
+		"review propose-findings",
+		"review accept-proposal",
+		"review reject-proposal",
+		"review apply-fix-outcomes",
+		"contract show-draft",
+		"contract accept-draft",
+		"pactum task current",
 	}
 	for _, rel := range files {
 		content := readRepoFile(t, rel)

@@ -573,12 +573,12 @@ func (a App) ReviewApprove(stdout io.Writer, runID string, approvedBy string, js
 	return nil
 }
 
-func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, jsonOutput bool) error {
+func (a App) ReviewPlan(stdout io.Writer, runID string, reviewerName string, jsonOutput bool) error {
 	context, ok, err := a.loadReviewContext(stdout, runID)
 	if err != nil || !ok {
 		return err
 	}
-	prep, err := a.prepareReviewer(context, reviewerName, "prepare reviewer dry-run")
+	prep, err := a.prepareReviewer(context, reviewerName, "prepare reviewer plan")
 	if err != nil {
 		return err
 	}
@@ -599,7 +599,7 @@ func (a App) ReviewDryRun(stdout io.Writer, runID string, reviewerName string, j
 	if jsonOutput {
 		return writeJSONResponse(stdout, plan)
 	}
-	writeReviewDryRun(stdout, plan, prep.ReviewerName, prep.ModelSpec)
+	writeReviewPlan(stdout, plan, prep.ReviewerName, prep.ModelSpec)
 	return nil
 }
 
@@ -808,10 +808,10 @@ func (a App) prepareReviewerForAgent(context reviewContext, reviewer agents.Agen
 // execution attempt. Cross-model reviewer selection compares the registry
 // entries' inferred engines against it.
 func latestExecutionExecutorName(context reviewContext) (string, bool) {
-	attempt, ok, err := loadExecutionAttempt(executeReportContext{
+	attempt, ok, err := loadLatestExecutionAttempt(executeReportContext{
 		RunPaths: context.RunPaths,
 		State:    context.State,
-	}, "")
+	})
 	if err != nil || !ok {
 		return "", false
 	}
@@ -1463,8 +1463,8 @@ func writeReviewApproved(stdout io.Writer, state reviewStateResponse) {
 	}
 }
 
-func writeReviewDryRun(stdout io.Writer, plan reviewerDryRunDocument, reviewerName string, modelSpec agents.ModelSpec) {
-	fmt.Fprintln(stdout, "Reviewer dry-run prepared")
+func writeReviewPlan(stdout io.Writer, plan reviewerDryRunDocument, reviewerName string, modelSpec agents.ModelSpec) {
+	fmt.Fprintln(stdout, "Reviewer plan prepared")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", plan.RunID)
@@ -1490,7 +1490,7 @@ func writeReviewDryRun(stdout io.Writer, plan reviewerDryRunDocument, reviewerNa
 		fmt.Fprintf(stdout, "  reviewer prompt (%s): %s\n", attempt.Lens, runArtifactRepoRel(plan.RunID, attempt.Artifacts.ReviewerPrompt))
 	}
 	fmt.Fprintf(stdout, "  reviewer context: %s\n", runArtifactRepoRel(plan.RunID, reviewerContextArtifact))
-	fmt.Fprintf(stdout, "  dry run: %s\n", runArtifactRepoRel(plan.RunID, reviewerDryRunArtifact))
+	fmt.Fprintf(stdout, "  plan: %s\n", runArtifactRepoRel(plan.RunID, reviewerDryRunArtifact))
 }
 
 func writeReviewRun(stdout io.Writer, response reviewerRunResponse, reviewer agents.AgentDescriptor, reviewerName string, modelSpec agents.ModelSpec) {

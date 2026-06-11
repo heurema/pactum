@@ -12,7 +12,7 @@ Instructions for coding agents working in this repository.
 
 - Do not run real agents (`pactum execute run`, `pactum review run`) without
   explicit approval — agent execution is unsandboxed.
-- The default stop point for the Pactum workflow is `pactum execute dry-run`.
+- The default stop point for the Pactum workflow is `pactum execute plan`.
 - The durable `.heurema/pactum/` run record (config, ledger, contracts,
   decisions, gate verdicts, review findings, memory) is version-controlled; the
   selective `.heurema/pactum/.gitignore` keeps the regenerable/machine-specific

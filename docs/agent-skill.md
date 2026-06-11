@@ -28,7 +28,7 @@ skill today.
 ## Safe default flow
 
 The skill is procedural and conservative. Its default stop point is
-`pactum execute dry-run` — it never runs a real, unsandboxed agent on its own.
+`pactum execute plan` — it never runs a real, unsandboxed agent on its own.
 The flow (full detail in
 [`assets/agent-skills/pactum/references/workflow.md`](../assets/agent-skills/pactum/references/workflow.md)):
 
@@ -43,8 +43,8 @@ The flow (full detail in
 7. `pactum contract revise` (goal, in/out of scope, acceptance, validation)
 8. `pactum contract approve --by manual`
 9. `pactum prompt build` / `pactum prompt show`
-10. `pactum execute dry-run --agent codex`
-11. report current run, relevant files, contract summary, dry-run command, next
+10. `pactum execute plan --agent codex`
+11. report current run, relevant files, contract summary, plan command, next
     action
 
 ## Current-run usage

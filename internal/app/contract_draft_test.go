@@ -40,9 +40,9 @@ func TestContractDraftRecordsProposalWithoutApplying(t *testing.T) {
 	readmeBefore := mustReadFile(t, filepath.Join(root, "README.md"))
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "ask", runID, "Should acceptance stay human-gated?", "--blocking"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "add", runID, "Should acceptance stay human-gated?", "--blocking"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify ask exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify add exited %d, stderr: %s", code, stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
@@ -183,7 +183,7 @@ func TestContractShowDraftAndAcceptAppliesProposalThroughRevision(t *testing.T) 
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"contract", "show-draft", runID}, &stdout, &stderr)
+	code = app.Run([]string{"contract", "show", "--draft", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract show-draft exited %d, stderr: %s", code, stderr.String())
 	}
@@ -199,7 +199,7 @@ func TestContractShowDraftAndAcceptAppliesProposalThroughRevision(t *testing.T) 
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"contract", "accept-draft", runID}, &stdout, &stderr)
+	code = app.Run([]string{"contract", "accept", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract accept-draft exited %d, stderr: %s", code, stderr.String())
 	}

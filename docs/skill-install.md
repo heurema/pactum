@@ -48,5 +48,5 @@ pactum version
 - The skill is **repo-local** for now; marketplace / plugin packaging is
   deferred to a later milestone.
 - Real agent execution remains opt-in: the skill stops at
-  `pactum execute dry-run` unless you explicitly approve direct, unsandboxed
+  `pactum execute plan` unless you explicitly approve direct, unsandboxed
   execution.

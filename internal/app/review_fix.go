@@ -335,7 +335,7 @@ func renderReviewFixPrompt(prep reviewFixPreparation) string {
 	fmt.Fprintln(&b, "- For false positives, explain a concrete rebuttal instead of changing code.")
 	fmt.Fprintln(&b, "- Keep changes inside the approved contract and review-finding scope.")
 	fmt.Fprintln(&b, "- Do not edit `.heurema` artifacts.")
-	fmt.Fprintln(&b, "- Do not run `pactum review approve`, `pactum review resolve`, or any review loop command.")
+	fmt.Fprintln(&b, "- Do not run `pactum review approve`, `pactum review finding resolve`, or any review loop command.")
 	fmt.Fprintln(&b)
 	writeHouseStyleSection(&b)
 	fmt.Fprintln(&b)

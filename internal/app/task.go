@@ -17,21 +17,19 @@ const (
 	taskListSchema       = "pactum.task_list.v1"
 	taskShowSchema       = "pactum.task.v1"
 	taskUseSchema        = "pactum.task_use.v1"
-	taskCurrentSchema    = "pactum.task_current.v1"
 	taskNewClarifySchema = "pactum.task_new_clarify.v1"
 )
 
 type taskCmd struct {
-	New     taskNewCmd     `cmd:"" help:"Create a contract-first run for a task."`
-	List    taskListCmd    `cmd:"" help:"List runs and their lifecycle status."`
-	Show    taskShowCmd    `cmd:"" help:"Show a run's status and next step."`
-	Use     taskUseCmd     `cmd:"" help:"Set the current run."`
-	Current taskCurrentCmd `cmd:"" help:"Show the current run."`
+	New  taskNewCmd  `cmd:"" help:"Create a contract-first run for a task."`
+	List taskListCmd `cmd:"" help:"List runs and their lifecycle status."`
+	Show taskShowCmd `cmd:"" help:"Show a run's status and next step."`
+	Use  taskUseCmd  `cmd:"" help:"Set the current run."`
 }
 
 type taskNewCmd struct {
 	Task       string        `arg:"" name:"task" help:"Task to prepare a contract for."`
-	Clarify    bool          `name:"clarify" help:"Run the autonomous clarify loop on the new run (requires --yes)."`
+	Clarify    bool          `name:"clarify" help:"Run autonomous clarifier rounds on the new run (requires --yes)."`
 	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the clarifier. Defaults to cross-model selection against the run executor."`
 	MaxRounds  int           `name:"max-rounds" help:"Maximum clarifier rounds. Defaults to clarify.max_rounds."`
 	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without clarifier output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
@@ -52,10 +50,6 @@ type taskShowCmd struct {
 type taskUseCmd struct {
 	RunID      string `arg:"" name:"run_id" help:"Run id to make current."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
-}
-
-type taskCurrentCmd struct {
-	JSONOutput bool `name:"json" help:"Print machine-readable JSON output."`
 }
 
 func (c *taskNewCmd) Run(r *runner) error {
@@ -83,10 +77,6 @@ func (c *taskShowCmd) Run(r *runner) error {
 
 func (c *taskUseCmd) Run(r *runner) error {
 	return r.App.TaskUse(r.Stdout, c.RunID, c.JSONOutput)
-}
-
-func (c *taskCurrentCmd) Run(r *runner) error {
-	return r.App.TaskCurrent(r.Stdout, c.JSONOutput)
 }
 
 type taskListItem struct {
@@ -117,12 +107,6 @@ type taskShowResponse struct {
 type taskUseResponse struct {
 	Schema       string `json:"schema"`
 	CurrentRunID string `json:"current_run_id"`
-}
-
-type taskCurrentResponse struct {
-	Schema       string `json:"schema"`
-	CurrentRunID string `json:"current_run_id,omitempty"`
-	Exists       bool   `json:"exists"`
 }
 
 type taskNewOptions struct {
@@ -186,7 +170,7 @@ func (a App) taskNewClarify(stdout io.Writer, liveOutput io.Writer, paths artifa
 	}
 	summary, err := a.runTaskNewClarifyLoop(liveOutput, state.RunID, options)
 	if err != nil {
-		return fmt.Errorf("run %s was created, but its clarify loop failed (re-run it with: pactum clarify loop %s --yes): %w", state.RunID, state.RunID, err)
+		return fmt.Errorf("run %s was created, but its clarify loop failed (re-run it with: pactum clarify run %s --yes): %w", state.RunID, state.RunID, err)
 	}
 	// Re-read the run state: the loop may have moved it (clarifying vs
 	// contract_draft), and both output paths must report the fresh status.
@@ -220,7 +204,7 @@ func (a App) taskNewClarify(stdout io.Writer, liveOutput io.Writer, paths artifa
 
 // runTaskNewClarifyLoop reuses the clarify loop wholesale through its own
 // command path (same rounds, terminals, artifacts, and ledger events as
-// `pactum clarify loop`) and parses its JSON summary so TaskNew can embed it.
+// `pactum clarify run`) and parses its JSON summary so TaskNew can embed it.
 func (a App) runTaskNewClarifyLoop(liveOutput io.Writer, runID string, options taskNewOptions) (clarifyLoopSummaryDocument, error) {
 	var stdout bytes.Buffer
 	if err := a.ClarifyLoop(&stdout, liveOutput, runID, clarifyLoopOptions{
@@ -336,28 +320,6 @@ func (a App) TaskUse(stdout io.Writer, runID string, jsonOutput bool) error {
 		return writeJSONResponse(stdout, taskUseResponse{Schema: taskUseSchema, CurrentRunID: runID})
 	}
 	fmt.Fprintf(stdout, "Current run set to %s\n", runID)
-	return nil
-}
-
-// TaskCurrent prints the current run pointer, if any.
-func (a App) TaskCurrent(stdout io.Writer, jsonOutput bool) error {
-	_, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
-	if err != nil || !ok {
-		return err
-	}
-	current, exists := readCurrentRun(paths)
-	if exists && !runExists(paths, current) {
-		// Stale pointer (run removed): report as no current run.
-		current, exists = "", false
-	}
-	if jsonOutput {
-		return writeJSONResponse(stdout, taskCurrentResponse{Schema: taskCurrentSchema, CurrentRunID: current, Exists: exists})
-	}
-	if !exists {
-		fmt.Fprintln(stdout, "No current run. Set one with: pactum task use <run_id>")
-		return nil
-	}
-	fmt.Fprintln(stdout, current)
 	return nil
 }
 

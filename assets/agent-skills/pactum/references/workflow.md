@@ -42,7 +42,7 @@ design. Always confirm against the actual files before relying on them.
    `--kind code_item` excludes imports; `--kind import` returns them.
 
 6. **Clarify if needed.** For anything ambiguous:
-   `pactum clarify ask "..." --blocking` then
+   `pactum clarify add "..." --blocking` then
    `pactum clarify answer q_001 "..."`. Blocking questions must be answered
    before the prompt can be built.
 
@@ -62,13 +62,13 @@ design. Always confirm against the actual files before relying on them.
    `pactum prompt show`. `prompt build` re-derives the run's search context from
    the approved contract, so the executor context reflects the final scope.
 
-10. **Safe dry-run.** `pactum execute dry-run --agent codex`. This validates the
+10. **Safe plan step.** `pactum execute plan --agent codex`. This validates the
     contract hash, map freshness, and prompt manifest, and prints the command
     that *would* run — without running a real agent. This is the default stop
     point.
 
 11. **Report.** Summarize: current run id, the relevant files you found,
-    the contract (goal/scope/acceptance/validation), the dry-run command, and
+    the contract (goal/scope/acceptance/validation), the plan command, and
     the recommended next action.
 
 ## Current-run usage
@@ -76,11 +76,12 @@ design. Always confirm against the actual files before relying on them.
 `pactum task new` and `pactum task use` set the current run (recorded in
 `.heurema/pactum/cache/current-run`). Staged commands (`clarify`, `contract`,
 `prompt`, `execute`) then operate on it without a run id. Use
-`pactum task list` / `pactum task current` to inspect.
+`pactum status` (reports the current run) or `pactum task list` (the current
+run is marked with `*`) to inspect.
 
 ## Stop conditions
 
-- Stop at the dry-run and report. Do not run real execution unless the user
+- Stop at the plan step and report. Do not run real execution unless the user
   explicitly approves it (see `references/safety.md`).
 - If the contract is ambiguous, stop and ask rather than guessing scope.
 - If validation would change files or run untrusted commands, confirm first.
@@ -91,5 +92,5 @@ Report back with:
 - Run: `<run id>` and status.
 - Relevant files: the paths you inspected or will change.
 - Contract: goal, in/out of scope, acceptance, validation.
-- Dry-run: the exact command Pactum would run.
+- Plan: the exact command Pactum would run.
 - Next action: what you recommend, and whether it needs the user's approval.

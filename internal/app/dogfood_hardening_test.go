@@ -37,8 +37,8 @@ func TestGeneratedPromptArtifactsHaveNoStaleMilestoneWording(t *testing.T) {
 	reviewRoot := t.TempDir()
 	reviewApp, _, reviewRunID, reviewRunPaths := setupApprovedPreparedReview(t, reviewRoot, "passed")
 	var reviewOut, reviewErr bytes.Buffer
-	if code := reviewApp.Run([]string{"review", "dry-run", reviewRunID}, &reviewOut, &reviewErr); code != 0 {
-		t.Fatalf("review dry-run exited %d, stderr: %s", code, reviewErr.String())
+	if code := reviewApp.Run([]string{"review", "plan", reviewRunID}, &reviewOut, &reviewErr); code != 0 {
+		t.Fatalf("review plan exited %d, stderr: %s", code, reviewErr.String())
 	}
 
 	artifactsToCheck := map[string]string{
@@ -118,13 +118,12 @@ func TestReadOnlyCommandsDoNotAppendLedgerEvents(t *testing.T) {
 		{"memory", "stale"},
 		{"memory", "show", runID},
 		{"prompt", "show", runID},
-		{"execute", "status", runID},
 		{"execute", "show", runID},
 		{"gate", "show", runID},
 		{"review", "status", runID},
 		{"review", "show", runID},
 		{"contract", "show", runID},
-		{"clarify", "status", runID},
+		{"clarify", "show", runID},
 	}
 	for _, args := range readOnlyCommands {
 		var stdout, stderr bytes.Buffer
@@ -152,9 +151,9 @@ func TestDogfoodCommandHelpHasNoStaleConcepts(t *testing.T) {
 
 	commands := [][]string{
 		{"execute", "run"},
-		{"execute", "dry-run"},
+		{"execute", "plan"},
 		{"review", "run"},
-		{"review", "dry-run"},
+		{"review", "plan"},
 		{"memory", "refresh"},
 		{"memory", "stale"},
 		{"memory", "search"},
