@@ -61,12 +61,14 @@ type contractReviseResponse struct {
 	ApprovalReset bool          `json:"approval_reset"`
 	Approval      approvalState `json:"approval"`
 	Contract      draftContract `json:"contract"`
+	Next          []string      `json:"next"`
 }
 
 type contractApproveResponse struct {
 	RunID     string        `json:"run_id"`
 	RunStatus string        `json:"run_status"`
 	Approval  approvalState `json:"approval"`
+	Next      []string      `json:"next"`
 }
 
 func (a App) ContractShow(stdout io.Writer, runID string, jsonOutput bool) error {
@@ -136,6 +138,7 @@ func (a App) ContractRevise(stdout io.Writer, runID string, revision contractRev
 		ApprovalReset: approvalReset,
 		Approval:      approval,
 		Contract:      contract,
+		Next:          nextCommandsForRun(context.Paths, runID),
 	}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
@@ -157,7 +160,7 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 		if !jsonOutput {
 			writeBlockingApprovalQuestions(stdout, status)
 		}
-		return fmt.Errorf("cannot approve contract: blocking clarification questions remain")
+		return blockingClarificationsOpenError("approve contract", runID)
 	}
 
 	now := a.nowUTC()
@@ -189,7 +192,7 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 		return err
 	}
 
-	response := contractApproveResponse{RunID: runID, RunStatus: state.Status, Approval: approval}
+	response := contractApproveResponse{RunID: runID, RunStatus: state.Status, Approval: approval, Next: nextCommandsForRun(context.Paths, runID)}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
@@ -214,7 +217,7 @@ func (a App) loadRunStateContext(stdout io.Writer, runID string, jsonOutput bool
 		return runStateBase{}, false, err
 	}
 	if !runDirExists {
-		return runStateBase{}, false, fmt.Errorf("run not found: %s", runID)
+		return runStateBase{}, false, runNotFoundError(runID)
 	}
 
 	runPaths := contractRunPaths(runDir)
@@ -312,7 +315,7 @@ func readApprovalState(path string) (approvalState, error) {
 // action names the operation for error messages, e.g. "run gate".
 func verifyApprovedContract(runPaths contractRunPathSet, contract draftContract, approval approvalState, action string) (string, error) {
 	if contract.Status != "approved" || approval.Status != "approved" || approval.ContractSHA256 == nil {
-		return "", fmt.Errorf("cannot %s: contract is not approved", action)
+		return "", contractNotApprovedError(action, contract.RunID)
 	}
 	hash, err := storeFileSHA256(runPaths.ContractJSON)
 	if err != nil {

@@ -41,6 +41,23 @@ reference files next to it — **read them with your file tools before acting**:
   the actual files before relying on them.
 - Never hide a non-zero command exit; report failures with their output.
 
+## Machine affordances (read `next` and `fix`, don't memorize stage order)
+
+With `--json`, Pactum announces the legal moves:
+
+- Successful workflow commands (and `pactum status` / `pactum task show`)
+  carry a top-level `next` array of complete, directly runnable pactum
+  commands for the run's current stage. `next: []` means the next move needs
+  a human (for example, real execution approval).
+- Failures emit a `pactum.error.v1` envelope: `error.code` is a stable reason
+  (`contract_not_approved`, `prompt_not_built`, ...), and `error.fix`, when
+  present, is the exact remedial command to run. Some envelopes also carry
+  `next` with safe inspection commands.
+- Exit-0 "not ready" responses (`pactum.not_ready.v1`) carry the remedial
+  command in `fix` (and the older `suggested_command`).
+
+Prefer `fix`/`next` over the older `suggested_command`/`next_command` fields.
+
 ## Safe workflow (skeleton)
 
 Read `references/workflow.md` for the detailed version. The safe default flow:

@@ -37,6 +37,7 @@ type reviewApplyFixOutcomesResponse struct {
 	Blocked        int                      `json:"blocked"`
 	Resolutions    []reviewResolutionRecord `json:"resolutions"`
 	Warnings       []string                 `json:"warnings"`
+	Next           []string                 `json:"next"`
 }
 
 func (a App) ReviewApplyFixOutcomes(stdout io.Writer, runID string, fixerAttemptID string, jsonOutput bool) error {
@@ -138,6 +139,7 @@ func (a App) ReviewApplyFixOutcomes(stdout io.Writer, runID string, fixerAttempt
 		}
 	}
 
+	response.Next = nextCommandsForRun(context.Paths, runID)
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}

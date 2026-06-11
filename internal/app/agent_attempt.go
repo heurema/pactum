@@ -63,6 +63,10 @@ type agentAttemptLifecycle[Prepared any, Request any, Result any, Response any] 
 	BuildResult   func(agentAttemptContext[Prepared], agents.RunResult) Result
 	ProcessResult func(Result) processResult
 	RenderRunOnly func(io.Writer, Request, Result)
+	// WrapRunOnly wraps the result document for the run-only --json response so
+	// a stage can attach CLI-only affordances (next) without writing them into
+	// attempt artifacts. Nil leaves the result document as the response.
+	WrapRunOnly   func(Result) any
 	AfterSuccess  func(agentAttemptContext[Prepared], Request, Result, time.Time) (Response, error)
 	RenderSuccess func(io.Writer, Response, Request)
 }
@@ -155,11 +159,14 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 		if err := writeAgentAttemptRunOnly(cfg, request, result); err != nil {
 			return err
 		}
+		// The run-only document above is the payload (like a gate failure's
+		// report): the typed error tells the --json path not to append a
+		// second JSON document (the error envelope) to the same stdout.
 		process := cfg.ProcessResult(result)
 		if process.TimedOut {
-			return fmt.Errorf("%s", cfg.TimeoutMessage(cfg.Timeout))
+			return agentAttemptFailedError{msg: cfg.TimeoutMessage(cfg.Timeout)}
 		}
-		return processExitError{Kind: cfg.ExitKind, ExitCode: process.ExitCode}
+		return agentAttemptFailedError{msg: processExitError{Kind: cfg.ExitKind, ExitCode: process.ExitCode}.Error()}
 	}
 
 	if cfg.AfterSuccess == nil {
@@ -176,8 +183,20 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 	return nil
 }
 
+// agentAttemptFailedError marks a failed agent attempt whose run-only result
+// document was already written to stdout — the --json path must not append an
+// error envelope after it (mirrors gateProcessError for gate failures).
+type agentAttemptFailedError struct {
+	msg string
+}
+
+func (e agentAttemptFailedError) Error() string { return e.msg }
+
 func writeAgentAttemptRunOnly[Prepared any, Request any, Result any, Response any](cfg agentAttemptLifecycle[Prepared, Request, Result, Response], request Request, result Result) error {
 	if cfg.JSONOutput {
+		if cfg.WrapRunOnly != nil {
+			return writeJSONResponse(cfg.Stdout, cfg.WrapRunOnly(result))
+		}
 		return writeJSONResponse(cfg.Stdout, result)
 	}
 	cfg.RenderRunOnly(cfg.Stdout, request, result)

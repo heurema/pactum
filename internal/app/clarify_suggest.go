@@ -97,7 +97,8 @@ type clarifySuggestResponse struct {
 	// ApprovalReset reports that recording these suggestions regressed an
 	// already-approved run back to clarifying (approval reset to pending). It is
 	// omitted (false) when the run was not approved or no questions were recorded.
-	ApprovalReset bool `json:"approval_reset,omitempty"`
+	ApprovalReset bool     `json:"approval_reset,omitempty"`
+	Next          []string `json:"next"`
 }
 
 func (a App) ClarifySuggest(stdout io.Writer, liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration, jsonOutput bool) error {
@@ -184,6 +185,7 @@ func (a App) ClarifySuggest(stdout io.Writer, liveOutput io.Writer, runID string
 				Created:       created,
 				Warnings:      warnings,
 				ApprovalReset: approvalReset,
+				Next:          nextCommandsForRun(context.Paths, runID),
 			}, nil
 		},
 		RenderSuccess: func(stdout io.Writer, response clarifySuggestResponse, request clarifierRequestDocument) {

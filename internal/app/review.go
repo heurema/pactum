@@ -229,11 +229,20 @@ type reviewStateResponse struct {
 type reviewAddFindingResponse struct {
 	Finding reviewFindingRecord `json:"finding"`
 	State   reviewStateResponse `json:"state"`
+	Next    []string            `json:"next"`
 }
 
 type reviewResolveResponse struct {
 	Resolution reviewResolutionRecord `json:"resolution"`
 	State      reviewStateResponse    `json:"state"`
+	Next       []string               `json:"next"`
+}
+
+// reviewStateMutationResponse is the review state plus the next affordance,
+// the --json response of the mutating review commands (prepare, approve).
+type reviewStateMutationResponse struct {
+	reviewStateResponse
+	Next []string `json:"next"`
 }
 
 type reviewerDryRunPreparation struct {
@@ -314,6 +323,15 @@ type reviewerRunResponse struct {
 	RunID    string                   `json:"run_id"`
 	Reviewer string                   `json:"reviewer"`
 	Attempts []reviewerResultDocument `json:"attempts"`
+	Next     []string                 `json:"next"`
+}
+
+// reviewPlanResponse is the reviewer dry-run plan plus the next affordance;
+// the plan artifact on disk stays unchanged. Running the reviewer is
+// human-approved, so the plan has no safe next.
+type reviewPlanResponse struct {
+	reviewerDryRunDocument
+	Next []string `json:"next"`
 }
 
 func (a App) ReviewPrepare(stdout io.Writer, runID string, jsonOutput bool) error {
@@ -322,7 +340,7 @@ func (a App) ReviewPrepare(stdout io.Writer, runID string, jsonOutput bool) erro
 		return err
 	}
 	if !isRegularFile(context.RunPaths.GateReportJSON) {
-		return fmt.Errorf("cannot prepare review: gate report not found")
+		return gateReportMissingError("prepare review", runID)
 	}
 
 	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
@@ -366,7 +384,7 @@ func (a App) ReviewPrepare(stdout io.Writer, runID string, jsonOutput bool) erro
 
 	state := buildReviewStateWithProposals(review, findings, resolutions, proposals, proposalDecisions)
 	if jsonOutput {
-		return writeJSONResponse(stdout, state)
+		return writeJSONResponse(stdout, reviewStateMutationResponse{reviewStateResponse: state, Next: nextCommandsForRun(context.Paths, runID)})
 	}
 	writeReviewPrepared(stdout, state)
 	return nil
@@ -459,7 +477,7 @@ func (a App) ReviewAddFinding(stdout io.Writer, runID string, input reviewFindin
 		return err
 	}
 
-	response := reviewAddFindingResponse{Finding: finding, State: buildReviewState(review, findings, resolutions)}
+	response := reviewAddFindingResponse{Finding: finding, State: buildReviewState(review, findings, resolutions), Next: nextCommandsForRun(context.Paths, runID)}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
@@ -511,7 +529,7 @@ func (a App) ReviewResolve(stdout io.Writer, runID string, findingID string, not
 		return err
 	}
 
-	response := reviewResolveResponse{Resolution: resolution, State: buildReviewState(review, findings, resolutions)}
+	response := reviewResolveResponse{Resolution: resolution, State: buildReviewState(review, findings, resolutions), Next: nextCommandsForRun(context.Paths, runID)}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
@@ -529,7 +547,7 @@ func (a App) ReviewApprove(stdout io.Writer, runID string, approvedBy string, js
 		return err
 	}
 	if !isRegularFile(context.RunPaths.GateReportJSON) {
-		return fmt.Errorf("cannot approve review: gate report not found")
+		return gateReportMissingError("approve review", runID)
 	}
 	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
 	if err != nil {
@@ -565,7 +583,7 @@ func (a App) ReviewApprove(stdout io.Writer, runID string, approvedBy string, js
 
 	state := buildReviewState(review, findings, resolutions)
 	if jsonOutput {
-		return writeJSONResponse(stdout, state)
+		return writeJSONResponse(stdout, reviewStateMutationResponse{reviewStateResponse: state, Next: nextCommandsForRun(context.Paths, runID)})
 	}
 	writeReviewApproved(stdout, state)
 	return nil
@@ -595,7 +613,7 @@ func (a App) ReviewPlan(stdout io.Writer, runID string, reviewerName string, jso
 	}
 
 	if jsonOutput {
-		return writeJSONResponse(stdout, plan)
+		return writeJSONResponse(stdout, reviewPlanResponse{reviewerDryRunDocument: plan, Next: []string{}})
 	}
 	writeReviewPlan(stdout, plan, prep.ReviewerName, prep.ModelSpec)
 	return nil
@@ -623,11 +641,18 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, rev
 	}
 	reviewer := reviewLoopReviewer{Name: prep.ReviewerName, Agent: prep.Reviewer, ModelSpec: prep.ModelSpec}
 	results, runErr := a.runReviewerLensAttempts(liveOutput, runID, prep, reviewer, timeout)
+	next := []string{}
+	if runErr == nil {
+		// Recorded reviewer output is parsed into proposals; collecting them is
+		// the safe next move.
+		next = []string{"pactum review proposal collect " + runID}
+	}
 	response := reviewerRunResponse{
 		Schema:   reviewerRunSchema,
 		RunID:    runID,
 		Reviewer: prep.ReviewerName,
 		Attempts: results,
+		Next:     next,
 	}
 	if jsonOutput {
 		if err := writeJSONResponse(stdout, response); err != nil {
@@ -689,7 +714,7 @@ func (a App) prepareReviewer(context reviewContext, reviewerName string, action 
 		return reviewerDryRunPreparation{}, err
 	}
 	if !isRegularFile(context.RunPaths.GateReportJSON) {
-		return reviewerDryRunPreparation{}, fmt.Errorf("cannot %s: gate report not found", action)
+		return reviewerDryRunPreparation{}, gateReportMissingError(action, context.State.RunID)
 	}
 	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
 	if err != nil {
@@ -751,7 +776,7 @@ func (a App) prepareReviewerForAgent(context reviewContext, reviewer agents.Agen
 		return reviewerDryRunPreparation{}, err
 	}
 	if !isRegularFile(context.RunPaths.GateReportJSON) {
-		return reviewerDryRunPreparation{}, fmt.Errorf("cannot %s: gate report not found", action)
+		return reviewerDryRunPreparation{}, gateReportMissingError(action, context.State.RunID)
 	}
 	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
 	if err != nil {
@@ -856,7 +881,7 @@ func readReviewDocument(path string) (reviewDocument, error) {
 
 func requireReviewPrepared(runPaths contractRunPathSet, runID string) (reviewDocument, error) {
 	if !isRegularFile(runPaths.ReviewJSON) {
-		return reviewDocument{}, fmt.Errorf("review has not been prepared: %s", runID)
+		return reviewDocument{}, reviewNotPreparedError(fmt.Sprintf("review has not been prepared: %s", runID), runID)
 	}
 	return readReviewDocument(runPaths.ReviewJSON)
 }

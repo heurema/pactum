@@ -122,9 +122,9 @@ func (a App) GateRun(stdout io.Writer, runID string, jsonOutput bool) error {
 			return err
 		}
 		if !hasCompleted {
-			return fmt.Errorf("cannot run gate: no completed execution attempts found")
+			return noExecutionAttemptError("cannot run gate: no completed execution attempts found", runID)
 		}
-		return fmt.Errorf("cannot run gate: no completed execution attempts found for current approved contract")
+		return noExecutionAttemptError("cannot run gate: no completed execution attempts found for current approved contract", runID)
 	}
 
 	commands := nonEmptyValidationCommands(context.Contract.Validation.Commands)
@@ -195,7 +195,13 @@ func (a App) GateRun(stdout io.Writer, runID string, jsonOutput bool) error {
 	}
 
 	if jsonOutput {
-		if err := writeJSONResponse(stdout, report); err != nil {
+		// A failed gate has no safe next move — fixing and re-executing is a
+		// human decision.
+		next := []string{}
+		if report.Status != "failed" {
+			next = nextCommandsForRun(context.Paths, runID)
+		}
+		if err := writeJSONResponse(stdout, gateRunResponse{gateReportDocument: report, Next: next}); err != nil {
 			return err
 		}
 	} else {
@@ -205,6 +211,13 @@ func (a App) GateRun(stdout io.Writer, runID string, jsonOutput bool) error {
 		return gateProcessError{Status: report.Status}
 	}
 	return nil
+}
+
+// gateRunResponse is the gate report plus the next affordance; the report
+// artifact on disk stays unchanged.
+type gateRunResponse struct {
+	gateReportDocument
+	Next []string `json:"next"`
 }
 
 func (a App) GateShow(stdout io.Writer, runID string, jsonOutput bool) error {
@@ -239,14 +252,14 @@ func ensureGateContractApproved(context runContext) error {
 
 func ensureGatePromptReady(context runContext) (promptManifest, error) {
 	if !isRegularFile(context.RunPaths.PromptManifest) {
-		return promptManifest{}, fmt.Errorf("cannot run gate: executor prompt has not been built")
+		return promptManifest{}, promptNotBuiltError("run gate", context.State.RunID)
 	}
 	manifest, err := readPromptManifest(context.RunPaths.PromptManifest)
 	if err != nil {
 		return promptManifest{}, err
 	}
 	if manifest.Status != "ready" {
-		return promptManifest{}, fmt.Errorf("cannot run gate: executor prompt has not been built")
+		return promptManifest{}, promptNotBuiltError("run gate", context.State.RunID)
 	}
 	if context.Approval.ContractSHA256 == nil || manifest.ContractSHA256 != *context.Approval.ContractSHA256 {
 		return promptManifest{}, fmt.Errorf("cannot run gate: executor prompt does not match current approved contract")

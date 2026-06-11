@@ -128,9 +128,17 @@ type memoryShowResponse struct {
 	Acceptance memoryAcceptanceDocument `json:"acceptance"`
 }
 
+// memoryProposeResponse is the proposed candidate plus the next affordance,
+// mirroring the human Next: block.
+type memoryProposeResponse struct {
+	memoryShowResponse
+	Next []string `json:"next"`
+}
+
 type memoryAcceptResponse struct {
 	Item       memoryItemRecord         `json:"item"`
 	Acceptance memoryAcceptanceDocument `json:"acceptance"`
+	Next       []string                 `json:"next"`
 }
 
 type preparedMemoryCandidate struct {
@@ -176,7 +184,10 @@ func (a App) MemoryPropose(stdout io.Writer, runID string, jsonOutput bool) erro
 
 	response := memoryShowResponse{Candidate: prepared.Candidate, Acceptance: acceptance}
 	if jsonOutput {
-		return writeJSONResponse(stdout, response)
+		return writeJSONResponse(stdout, memoryProposeResponse{
+			memoryShowResponse: response,
+			Next:               []string{"pactum memory show " + runID, "pactum memory accept " + runID},
+		})
 	}
 	writeMemoryCandidateProposed(stdout, response)
 	return nil
@@ -270,7 +281,7 @@ func (a App) MemoryAccept(stdout io.Writer, runID string, acceptedBy string, jso
 		return err
 	}
 
-	response := memoryAcceptResponse{Item: item, Acceptance: acceptance}
+	response := memoryAcceptResponse{Item: item, Acceptance: acceptance, Next: nextCommandsForRun(context.Paths, runID)}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
@@ -287,14 +298,14 @@ func (a App) prepareMemoryCandidate(context runContext) (preparedMemoryCandidate
 		return preparedMemoryCandidate{}, err
 	}
 	if !isRegularFile(context.RunPaths.GateReportJSON) {
-		return preparedMemoryCandidate{}, fmt.Errorf("cannot propose memory: gate report not found")
+		return preparedMemoryCandidate{}, gateReportMissingError("propose memory", context.State.RunID)
 	}
 	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
 	if err != nil {
 		return preparedMemoryCandidate{}, err
 	}
 	if !isRegularFile(context.RunPaths.ReviewJSON) {
-		return preparedMemoryCandidate{}, fmt.Errorf("cannot propose memory: review is not prepared")
+		return preparedMemoryCandidate{}, reviewNotPreparedError("cannot propose memory: review is not prepared", context.State.RunID)
 	}
 	review, err := readReviewDocument(context.RunPaths.ReviewJSON)
 	if err != nil {
@@ -313,7 +324,7 @@ func (a App) prepareMemoryCandidate(context runContext) (preparedMemoryCandidate
 	}
 	reviewState := buildReviewStateWithProposals(review, findings, resolutions, proposals, proposalDecisions)
 	if reviewState.ProposalSummary.Pending > 0 {
-		return preparedMemoryCandidate{}, fmt.Errorf("cannot propose memory: pending review proposals remain")
+		return preparedMemoryCandidate{}, pendingReviewProposalsError(context.State.RunID)
 	}
 
 	createdAt := a.nowUTC().Format(time.RFC3339)

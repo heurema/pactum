@@ -246,6 +246,100 @@ func memoryAccepted(path string) bool {
 	return err == nil && exists && acceptance.Status == "accepted"
 }
 
+// nextCommandsForRun maps a run's derived lifecycle stage to the concrete
+// runnable command(s) an agent would run next — the JSON `next` affordance.
+// Stages whose real next step needs a human (answering clarifications,
+// running the executor, deciding proposals) point at safe inspection or
+// preparation commands instead; a finished run has no next move.
+func nextCommandsForRun(paths artifacts.Paths, runID string) []string {
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	switch deriveRunStatus(paths, runID) {
+	case "contract_draft":
+		// Unreadable clarification records cannot prove approval is legal, so
+		// they point at inspection just like open blocking questions.
+		if open, err := openBlockingQuestionCount(runPaths); err != nil || open > 0 {
+			return []string{"pactum clarify show " + runID}
+		}
+		return []string{"pactum contract approve " + runID}
+	case "contract_approved":
+		return []string{"pactum prompt build " + runID}
+	case "prompt_built":
+		return []string{"pactum execute plan " + runID + " --agent codex"}
+	case "executed":
+		return []string{"pactum gate run " + runID}
+	case "gated":
+		return []string{"pactum review prepare " + runID}
+	case "review_prepared":
+		return nextReviewCommands(runPaths, runID)
+	case "review_approved":
+		// Proposals collected after approval re-block memory propose, so the
+		// affordance is only legal once every proposal is decided.
+		if pending, err := pendingReviewProposalCount(runPaths); err != nil || pending > 0 {
+			return []string{"pactum review show " + runID}
+		}
+		return []string{"pactum memory propose " + runID}
+	case "memory_proposed":
+		return []string{"pactum memory accept " + runID}
+	default:
+		return []string{}
+	}
+}
+
+// openBlockingQuestionCount counts open blocking clarification questions. An
+// error means the records are unreadable, so the caller cannot prove the
+// count is zero.
+func openBlockingQuestionCount(runPaths contractRunPathSet) (int, error) {
+	questions, err := readClarificationQuestions(runPaths.QuestionsJSONL)
+	if err != nil {
+		return 0, err
+	}
+	answers, err := readClarificationAnswers(runPaths.AnswersJSONL)
+	if err != nil {
+		return 0, err
+	}
+	answered := latestAnswersByQuestion(answers)
+	open := 0
+	for _, question := range questions {
+		if _, ok := answered[question.ID]; !ok && question.Blocking {
+			open++
+		}
+	}
+	return open, nil
+}
+
+// pendingReviewProposalCount counts undecided review proposals.
+func pendingReviewProposalCount(runPaths contractRunPathSet) (int, error) {
+	proposals, decisions, err := readReviewProposalRecords(runPaths)
+	if err != nil {
+		return 0, err
+	}
+	return summarizeReviewProposals(buildReviewProposalViews(proposals, decisions)).Pending, nil
+}
+
+// nextReviewCommands picks the affordance for a prepared review: approval is
+// only legal when the gate did not fail, every proposal is decided, and no
+// blocking finding is open, so until then the safe move is inspecting the
+// review.
+func nextReviewCommands(runPaths contractRunPathSet, runID string) []string {
+	inspect := []string{"pactum review show " + runID}
+	gateReport, err := readReviewGateReport(runPaths.GateReportJSON)
+	if err != nil || gateReport.Status == "failed" {
+		return inspect
+	}
+	findings, resolutions, err := readReviewRecords(runPaths)
+	if err != nil {
+		return inspect
+	}
+	pending, err := pendingReviewProposalCount(runPaths)
+	if err != nil {
+		return inspect
+	}
+	if pending > 0 || summarizeReview(findings, resolutions).BlockingOpen > 0 {
+		return inspect
+	}
+	return []string{"pactum review approve " + runID}
+}
+
 // nextCommandForStatus maps a derived lifecycle status to the command a user
 // would typically run next.
 func nextCommandForStatus(status string) string {

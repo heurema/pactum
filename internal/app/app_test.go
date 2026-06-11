@@ -2135,10 +2135,13 @@ func TestMapRefreshJSONOutput(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("map refresh --json exited %d, stderr: %s", code, stderr.String())
 	}
-	var result MapRefreshResult
+	var result mapRefreshResponse
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &result))
 	if result.RunID == "" || result.RepoRoot != "." || result.SearchIndex != "ready" || result.FilesIndexed == 0 {
 		t.Fatalf("unexpected map refresh --json result: %#v", result)
+	}
+	if result.Next == nil || len(result.Next) != 0 {
+		t.Fatalf("map refresh next = %v, want the explicit empty array", result.Next)
 	}
 }
 

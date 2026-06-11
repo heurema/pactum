@@ -47,6 +47,14 @@ type memoryRefreshRecord struct {
 	Items     []memoryRefreshItem `json:"items"`
 }
 
+// memoryRefreshResponse is the refresh record plus the next affordance; the
+// record appended to the refreshes artifact stays unchanged, and memory
+// refresh prints no human Next: hints, so next mirrors that as empty.
+type memoryRefreshResponse struct {
+	memoryRefreshRecord
+	Next []string `json:"next"`
+}
+
 type memoryRefreshItem struct {
 	MemoryItemID string                `json:"memory_item_id"`
 	Status       string                `json:"status"`
@@ -118,7 +126,7 @@ func (a App) MemoryRefresh(stdout io.Writer, jsonOutput bool) error {
 		return err
 	}
 	if jsonOutput {
-		return writeJSONResponse(stdout, refresh)
+		return writeJSONResponse(stdout, memoryRefreshResponse{memoryRefreshRecord: refresh, Next: []string{}})
 	}
 	writeMemoryRefresh(stdout, paths, refresh)
 	return nil
