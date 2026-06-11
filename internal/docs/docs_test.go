@@ -13,6 +13,7 @@ import (
 // failure rather than a silently smaller set.
 var requiredDocFiles = []string{
 	"README.md",
+	"SECURITY.md",
 	"docs/install.md",
 	"docs/flow.md",
 	"docs/workspace.md",
@@ -122,6 +123,80 @@ func TestDocsMentionCurrentCommands(t *testing.T) {
 	for _, mention := range requiredDocMentions {
 		if !strings.Contains(all, mention) {
 			t.Errorf("user-facing docs do not mention %q", mention)
+		}
+	}
+}
+
+// requiredSecurityPolicyMentions pin the security-policy concepts SECURITY.md
+// must keep stating: the threat model, every agent-launching command, the
+// safe-usage guidance, the private reporting channel, and the version policy.
+// Existence and stale-phrase checks alone would not catch their deletion.
+var requiredSecurityPolicyMentions = []string{
+	// Threat model.
+	"not a sandbox",
+	"security boundary",
+	// Every agent-launching command.
+	"pactum clarify suggest",
+	"pactum clarify run",
+	"pactum contract draft",
+	"pactum execute run",
+	"pactum review run",
+	"pactum review fix run",
+	"pactum review loop",
+	// Safe usage.
+	"Trusted repositories only",
+	"pactum execute plan",
+	"path scope",
+	"long-lived credentials",
+	"inherited environment",
+	"Control the external tooling",
+	"review, pin, or otherwise control",
+	"restricted or high-sensitivity",
+	// Private reporting and supported versions.
+	"https://github.com/heurema/pactum/security/advisories/new",
+	"Only `main` is supported",
+}
+
+// TestSecurityPolicyMentionsRequiredConcepts ensures SECURITY.md keeps
+// describing the threat model, the agent-launching commands, the safe-usage
+// guidance, the private reporting channel, and the supported-version policy.
+func TestSecurityPolicyMentionsRequiredConcepts(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "SECURITY.md"))
+	if err != nil {
+		t.Fatalf("read SECURITY.md: %v", err)
+	}
+	content := string(data)
+	for _, mention := range requiredSecurityPolicyMentions {
+		if !strings.Contains(content, mention) {
+			t.Errorf("SECURITY.md does not mention %q", mention)
+		}
+	}
+}
+
+// requiredReadmeSecurityMentions pin the README security truth: the exact
+// commands real execution runs, the unsandboxed warning, and the pointer to
+// the security policy. The README is where a user first learns how agents
+// run, so these claims must not silently soften or drift from the code.
+var requiredReadmeSecurityMentions = []string{
+	"codex exec --json --dangerously-bypass-approvals-and-sandbox",
+	"claude -p --output-format json --dangerously-skip-permissions",
+	"@zed-industries/codex-acp",
+	"@agentclientprotocol/claude-agent-acp",
+	"unsandboxed",
+	"SECURITY.md",
+}
+
+// TestReadmeStatesSecurityTruth ensures the README keeps naming the exact
+// executor commands and the unsandboxed warning.
+func TestReadmeStatesSecurityTruth(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	content := string(data)
+	for _, mention := range requiredReadmeSecurityMentions {
+		if !strings.Contains(content, mention) {
+			t.Errorf("README.md does not state %q", mention)
 		}
 	}
 }

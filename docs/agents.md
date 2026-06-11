@@ -8,10 +8,14 @@ it does not wrap the agent in any isolation.
 
 Two agents are built in. There are **no custom agents in the MVP**.
 
-| Name | Command run | Role |
+| Name | Executor command (CLI transport) | Role |
 | --- | --- | --- |
-| `codex` | `codex exec --dangerously-bypass-approvals-and-sandbox` | executor / reviewer |
-| `claude` | `claude -p` | executor / reviewer |
+| `codex` | `codex exec --json --dangerously-bypass-approvals-and-sandbox` | executor / reviewer |
+| `claude` | `claude -p --output-format json --dangerously-skip-permissions` | executor / reviewer |
+
+In the reviewer role the write bypass is dropped: `codex` runs
+`codex exec --json --sandbox read-only` and `claude` runs
+`claude -p --output-format json`.
 
 Both agents receive their prompt from a prompt file that Pactum prepares (the
 built executor prompt for execution, the clarifier prompt for `clarify suggest`,
@@ -305,10 +309,12 @@ There is also **no Docker support yet**.
 
 ## Execute: plan vs run
 
-- `pactum execute plan <run_id> --agent codex` prepares and records the exact
-  command Pactum would launch (`execute/dry-run.json`, including the resolved
-  command and arguments) but does **not** start any process. Use it to confirm
-  the boundaries pass and to see what would run.
+- `pactum execute plan <run_id> --agent codex` prepares and records the
+  execution plan (`execute/dry-run.json`, including the resolved CLI command
+  and arguments) but does **not** start any process. Use it to confirm the
+  boundaries pass. The recorded command is the CLI-transport invocation; under
+  the default ACP transport, `execute run` launches the agent's `npx` ACP
+  adapter instead (see the transport section above).
 - `pactum execute run <run_id> --agent codex` launches the agent subprocess and
   captures the attempt — request, result (exit code, timing, timeout flag), and
   stdout/stderr logs — under `execute/attempts/`. This is real agent execution
@@ -537,10 +543,10 @@ the current review findings, and instructs the agent to trace each finding to
 code, fix valid findings in place, and explain a rebuttal for false positives.
 
 This is write-enabled agent execution, not reviewer execution: `codex` uses
-`codex exec --dangerously-bypass-approvals-and-sandbox`, and `claude` uses the
-executor command with `--dangerously-skip-permissions`. The command honors the
-fixer's registry-entry pins (an omitted `--agent` defaults to the first
-registry entry), prints the same `Resolved` block
+`codex exec --json --dangerously-bypass-approvals-and-sandbox`, and `claude`
+uses the executor command with `--dangerously-skip-permissions`. The command
+honors the fixer's registry-entry pins (an omitted `--agent` defaults to the
+first registry entry), prints the same `Resolved` block
 as execution, captures request/result/stdout/stderr artifacts under
 `review/fix/attempts/`, and writes `review/fix/fixer-prompt.md`,
 `review/fix/fixer-context.md`, `review/fix/fixer-dry-run.json`, and
