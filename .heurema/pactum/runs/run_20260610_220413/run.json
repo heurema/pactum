@@ -1,10 +1,10 @@
 {
   "schema": "pactum.run.v1",
   "run_id": "run_20260610_220413",
-  "status": "clarifying",
+  "status": "contract_approved",
   "task": "Add an export command that dumps a run's full record as a single archive",
   "created_at": "2026-06-10T22:04:13.878812Z",
-  "updated_at": "2026-06-10T22:10:19.577778Z",
+  "updated_at": "2026-06-11T06:29:52.001048Z",
   "repo_root": ".",
   "workspace": ".heurema/pactum",
   "map_run_id": "map_20260610_211052",

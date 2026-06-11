@@ -1,0 +1,6 @@
+{"schema":"pactum.review_resolution.v1","id":"r_001","run_id":"run_20260611_080712","finding_id":"f_006","outcome":"fixed","note":"Added the bare {\"review\", \"fix\"} invocation to the negative parser table in TestRemovedCommandSpellingsAreRejected (internal/app/cli_grammar_test.go:74). The removed single-verb spelling is now pinned as a parser error (exit 2, non-empty stderr) since review fix is a group requiring run/apply. Verified with the targeted test and full make check.","created_at":"2026-06-11T08:52:43Z","source":"review_fix"}
+{"schema":"pactum.review_resolution.v1","id":"r_002","run_id":"run_20260611_080712","finding_id":"f_001","created_at":"2026-06-11T08:57:14Z","source":"manual"}
+{"schema":"pactum.review_resolution.v1","id":"r_003","run_id":"run_20260611_080712","finding_id":"f_002","created_at":"2026-06-11T08:57:14Z","source":"manual"}
+{"schema":"pactum.review_resolution.v1","id":"r_004","run_id":"run_20260611_080712","finding_id":"f_003","created_at":"2026-06-11T08:57:14Z","source":"manual"}
+{"schema":"pactum.review_resolution.v1","id":"r_005","run_id":"run_20260611_080712","finding_id":"f_004","created_at":"2026-06-11T08:57:14Z","source":"manual"}
+{"schema":"pactum.review_resolution.v1","id":"r_006","run_id":"run_20260611_080712","finding_id":"f_005","created_at":"2026-06-11T08:57:14Z","source":"manual"}
