@@ -96,14 +96,6 @@ func gateReportMissingError(action string, runID string) error {
 	}
 }
 
-func reviewNotPreparedError(msg string, runID string) error {
-	return &preconditionError{
-		msg:  msg,
-		code: "review_not_prepared",
-		fix:  "pactum review prepare " + runID,
-	}
-}
-
 // pendingReviewProposalsError has no fix: accepting or rejecting proposals is
 // a per-proposal human decision, so next points at safe inspection.
 func pendingReviewProposalsError(runID string) error {

@@ -356,6 +356,179 @@ func TestClarifyAnswerRecordsExplicitBy(t *testing.T) {
 	assertDoesNotContainRoot(t, "clarifications/decisions.jsonl", mustReadFile(t, runPaths.DecisionsJSONL), root)
 }
 
+// appendRecommendedQuestionForTest appends an open question carrying a stored
+// recommended answer (empty recommendation = none) and optional dependencies.
+func appendRecommendedQuestionForTest(t *testing.T, runPaths contractRunPathSet, runID string, id string, recommended string, dependsOn ...string) {
+	t.Helper()
+	assertNoError(t, appendJSONLine(runPaths.QuestionsJSONL, clarificationQuestionRecord{
+		Schema:            clarificationQuestionSchema,
+		ID:                id,
+		RunID:             runID,
+		Question:          "Question " + id,
+		Blocking:          true,
+		RecommendedAnswer: recommended,
+		Confidence:        "medium",
+		DependsOn:         dependsOn,
+		Status:            "open",
+		Source:            "clarifier_attempt",
+	}))
+}
+
+func TestClarifyAnswerRecommendedRecordsStoredRecommendation(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	appendRecommendedQuestionForTest(t, runPaths, runID, "q_001", "Use SQLite.")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"clarify", "answer", runID, "q_001", "--recommended", "--by", "  alice  ", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify answer --recommended exited %d, stderr: %s", code, stderr.String())
+	}
+	var response clarifyAnswerResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.Answer.Answer != "Use SQLite." || response.Answer.Source != "manual_recommended" {
+		t.Fatalf("recommended answer record mismatch: %#v", response.Answer)
+	}
+	if response.Decision.Source != "manual_recommended_answer" || response.Decision.DecidedBy != "alice" {
+		t.Fatalf("recommended decision record mismatch: %#v", response.Decision)
+	}
+	answers, err := readClarificationAnswers(runPaths.AnswersJSONL)
+	assertNoError(t, err)
+	if len(answers) != 1 || answers[0].Source != "manual_recommended" {
+		t.Fatalf("persisted answer provenance mismatch: %#v", answers)
+	}
+	decisions, err := readClarificationDecisions(runPaths.DecisionsJSONL)
+	assertNoError(t, err)
+	if len(decisions) != 1 || decisions[0].Source != "manual_recommended_answer" || decisions[0].DecidedBy != "alice" {
+		t.Fatalf("persisted decision provenance mismatch: %#v", decisions)
+	}
+}
+
+func TestClarifyAnswerRecommendedErrors(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	appendRecommendedQuestionForTest(t, runPaths, runID, "q_001", "Use SQLite.")
+	appendRecommendedQuestionForTest(t, runPaths, runID, "q_002", "")
+	appendRecommendedQuestionForTest(t, runPaths, runID, "q_003", "A key/value table.", "q_001")
+
+	cases := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{"no recommendation", []string{"clarify", "answer", runID, "q_002", "--recommended"}, "question has no recommended answer: q_002"},
+		{"dependency blocked", []string{"clarify", "answer", runID, "q_003", "--recommended"}, "depends on unanswered questions (inspect with: pactum clarify show " + runID + ")"},
+		{"unknown question", []string{"clarify", "answer", runID, "q_099", "--recommended"}, "question not found: q_099"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := app.Run(tc.args, &stdout, &stderr); code == 0 {
+				t.Fatalf("%v should fail", tc.args)
+			}
+			if !strings.Contains(stderr.String(), tc.wantErr) {
+				t.Fatalf("%v stderr = %q, want %q", tc.args, stderr.String(), tc.wantErr)
+			}
+		})
+	}
+
+	// Answering the question makes a second --recommended a revision attempt,
+	// which is an error; the typed answer remains the escape hatch.
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"clarify", "answer", runID, "q_001", "--recommended"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("first --recommended exited %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"clarify", "answer", runID, "q_001", "--recommended"}, &stdout, &stderr); code == 0 {
+		t.Fatalf("--recommended on an answered question should fail")
+	}
+	if !strings.Contains(stderr.String(), "question is already answered: q_001") {
+		t.Fatalf("already-answered stderr mismatch:\n%s", stderr.String())
+	}
+}
+
+func TestClarifyAnswerAllRecommendedAnswersInDependencyOrderAndReportsSkips(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	appendRecommendedQuestionForTest(t, runPaths, runID, "q_001", "Use SQLite.")
+	appendRecommendedQuestionForTest(t, runPaths, runID, "q_002", "A key/value table.", "q_001")
+	appendRecommendedQuestionForTest(t, runPaths, runID, "q_003", "")
+	appendRecommendedQuestionForTest(t, runPaths, runID, "q_004", "LRU.", "q_003")
+	appendRecommendedQuestionForTest(t, runPaths, runID, "q_005", "Already settled.")
+	appendClarificationAnswerForTest(t, runPaths.AnswersJSONL, "a_001", "q_005")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"clarify", "answer", runID, "--all-recommended", "--by", "bob", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify answer --all-recommended exited %d, stderr: %s", code, stderr.String())
+	}
+	var response clarifyAnswerAllRecommendedResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	// q_001 answers first and unblocks q_002 in the same pass; q_003 has no
+	// recommendation and q_004 stays blocked behind it; answered q_005 is
+	// untouched.
+	if len(response.Answered) != 2 || response.Answered[0].Answer.QuestionID != "q_001" || response.Answered[1].Answer.QuestionID != "q_002" {
+		t.Fatalf("answered set mismatch: %#v", response.Answered)
+	}
+	for _, entry := range response.Answered {
+		if entry.Answer.Source != "manual_all_recommended" || entry.Decision.Source != "manual_all_recommended_answer" || entry.Decision.DecidedBy != "bob" {
+			t.Fatalf("bulk provenance mismatch: %#v", entry)
+		}
+	}
+	wantSkips := []clarifyRecommendedSkip{
+		{QuestionID: "q_003", Reason: "no_recommendation"},
+		{QuestionID: "q_004", Reason: "dependencies_unanswered"},
+	}
+	if len(response.Skipped) != len(wantSkips) || response.Skipped[0] != wantSkips[0] || response.Skipped[1] != wantSkips[1] {
+		t.Fatalf("skipped set mismatch: %#v", response.Skipped)
+	}
+
+	// Human output reports the skipped IDs too.
+	var human, humanErr bytes.Buffer
+	appendRecommendedQuestionForTest(t, runPaths, runID, "q_006", "Batch of 100.")
+	if code := app.Run([]string{"clarify", "answer", runID, "--all-recommended"}, &human, &humanErr); code != 0 {
+		t.Fatalf("clarify answer --all-recommended (human) exited %d, stderr: %s", code, humanErr.String())
+	}
+	for _, want := range []string{"Recommended answers recorded", "q_006: Batch of 100.", "q_003: no_recommendation", "q_004: dependencies_unanswered"} {
+		if !strings.Contains(human.String(), want) {
+			t.Fatalf("human output missing %q:\n%s", want, human.String())
+		}
+	}
+}
+
+func TestClarifyAnswerAllRecommendedErrorsWhenNothingRecordable(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	appendRecommendedQuestionForTest(t, runPaths, runID, "q_001", "")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"clarify", "answer", runID, "--all-recommended"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("--all-recommended with only unrecordable questions should fail")
+	}
+	if !strings.Contains(stderr.String(), "no recommended answers recorded: q_001 (no_recommendation)") {
+		t.Fatalf("nothing-recordable stderr mismatch:\n%s", stderr.String())
+	}
+
+	// No open questions at all is not an error: there is nothing to skip either.
+	appendClarificationAnswerForTest(t, runPaths.AnswersJSONL, "a_001", "q_001")
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"clarify", "answer", runID, "--all-recommended", "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("--all-recommended with nothing open exited %d, stderr: %s", code, stderr.String())
+	}
+	var response clarifyAnswerAllRecommendedResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if len(response.Answered) != 0 || len(response.Skipped) != 0 {
+		t.Fatalf("nothing-open response should be empty: %#v", response)
+	}
+}
+
 func approveRunForTest(t *testing.T, app App, runID string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer

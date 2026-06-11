@@ -170,8 +170,9 @@ pactum execute run
 # 7. Gate the result: it runs the contract's validation commands.
 pactum gate run
 
-# 8. Review the run manually.
-pactum review prepare
+# 8. Review the run. `review run`, `review finding add`, and `review approve`
+#    self-scaffold the review record once the gate report exists;
+#    `pactum review run` would instead drive autonomous reviewer/fixer rounds.
 pactum review finding add "..." --blocking --severity medium --category quality
 pactum review finding resolve f_001 --note "Fixed"
 pactum review approve

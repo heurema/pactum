@@ -18,7 +18,8 @@ In the reviewer role the write bypass is dropped: `codex` runs
 `claude -p --output-format json`.
 
 Both agents receive their prompt from a prompt file that Pactum prepares (the
-built executor prompt for execution, the clarifier prompt for `clarify suggest`,
+built executor prompt for execution, the clarifier prompt for clarifier
+rounds (`clarify run`),
 the contract drafter prompt for `contract draft`, or the reviewer prompt for
 review); Pactum feeds that file to the agent process on standard input.
 
@@ -82,7 +83,7 @@ separate panel members.
 ## Name resolution
 
 Pick the executor with `--agent <name>` on the execute commands (the fixer in
-`review fix run` and `review loop` resolves the same way) and the
+`review fix run` and `review run` resolves the same way) and the
 reviewer/clarifier/drafter with `--reviewer <name>` on the clarify, contract
 draft, and review commands. Both flags accept registry names only.
 
@@ -91,14 +92,13 @@ When `--agent` is omitted, the **first registry entry** is the executor. When
 engines**: Pactum reads the latest execution attempt's engine and picks the
 first registry entry whose inferred engine differs, falling back to the first
 registry entry when every entry runs on the executor's engine. Before any
-execution attempt exists (`clarify suggest`, `contract draft`), the would-be
+execution attempt exists (`clarify run`, `contract draft`), the would-be
 executor is the first registry entry, so the same rule applies against it. An
 explicit `--reviewer` always wins. Check the selected entry in the `Resolved`
-block for `clarify suggest`, `contract draft`, `review plan`, and
-`review run`.
+block for `contract draft`, `review plan`, and `review fix run`.
 
-`review.panel` is the review-loop roster: a list of registry names. When
-`pactum review loop` runs without `--reviewer`, each review round runs all
+`review.panel` is the reviewer-round roster: a list of registry names. When
+`pactum review run` runs without `--reviewer`, each review round runs all
 panel members concurrently — every member expanding into the five built-in
 lens attempts described under [Review: plan vs run](#review-plan-vs-run),
 so a round spawns members × lenses attempts — then parses their finding
@@ -117,8 +117,8 @@ usage ledger records both the registry name (`agent_name`) and the inferred
 engine (`agent`); execution and attempt artifacts keep recording the engine,
 so cross-model comparison semantics are unchanged.
 
-The human output for `clarify suggest`, `contract draft`, `execute plan`,
-`execute run`, `review plan`, and `review run` includes a `Resolved` block
+The human output for `contract draft`, `execute plan`, `execute run`,
+`review plan`, and `review fix run` includes a `Resolved` block
 once per command. It shows the selected registry name plus the model and
 effort values Pactum applied from its entry: pinned values are shown directly,
 and an empty effort is shown as `inherit` because Pactum does not read the
@@ -236,7 +236,7 @@ instead).
 
 #### Read-only stages over ACP
 
-The read-only stages (`review`, `clarify suggest`, `contract draft`) are marked
+The read-only stages (`review`, clarifier rounds, `contract draft`) are marked
 read-only on the run request, and enforcement follows how each agent actually
 performs writes:
 
@@ -282,8 +282,8 @@ The guard has two deliberate limits:
 
 ## Live output
 
-`clarify suggest`, `contract draft`, `execute run`, `review run`, and
-`review fix run` (and each per-round reviewer/fixer sub-run inside `review loop`)
+`clarify run`, `contract draft`, `execute run`, `review run`, and
+`review fix run` (including each per-round reviewer/fixer sub-run)
 stream the agent's stdout and stderr live to **your terminal's stderr** as the
 process runs, so a
 multi-minute run is not a silent black box. This is in addition to — not instead
@@ -293,7 +293,7 @@ attempt directory.
 The live stream goes to stderr on purpose: stdout stays the clean result channel
 in every mode. The human summary (or, with `--json`, the machine-readable result
 document) remains the only thing on stdout, so `--json` output stays parseable
-and `review loop` can still parse its sub-command JSON. Redirect stderr (for
+and the autonomous rounds can still parse their sub-command JSON. Redirect stderr (for
 example `2>/dev/null`) to silence the live trace without affecting the result on
 stdout.
 
@@ -369,12 +369,12 @@ the rules it will be reviewed against.
 After execution, gate the result with `pactum gate run <run_id>`, which runs
 the contract's validation commands.
 
-## Clarify suggest
+## The clarifier round
 
-`pactum clarify suggest <run_id> --reviewer codex` launches a read-only
-reviewer-role agent to propose clarification questions from the contract goal,
-repository context, first-pass search results, and existing clarifications. It
-writes `clarify/clarifier-prompt.md`, `clarify/clarifier-context.md`, captures
+Each round of `pactum clarify run` launches a read-only reviewer-role agent to
+propose clarification questions from the contract goal, repository context,
+first-pass search results, and existing clarifications. It writes
+`clarify/clarifier-prompt.md`, `clarify/clarifier-context.md`, captures
 the attempt under `clarify/clarifier-attempts/`, and stores the latest result at
 `clarify/clarifier-last-result.json`.
 
@@ -402,12 +402,12 @@ the agent never answers questions, revises the contract, or edits code.
 
 ## Clarify run
 
-`pactum clarify run <run_id>` composes `clarify suggest` and the
+`pactum clarify run <run_id>` composes the clarifier round and the
 per-question recommendation into autonomous clarification rounds. Each round:
 
-1. **Suggest** — runs the clarifier exactly as `clarify suggest` does (same
-   prompt, same artifacts under `clarify/clarifier-attempts/`, same prompt-level
-   dedupe via the existing-questions context).
+1. **Propose** — runs the clarifier round described above (prompt, artifacts
+   under `clarify/clarifier-attempts/`, and prompt-level dedupe via the
+   existing-questions context).
 2. **Auto-resolve** — every open question whose `confidence` is `high`, whose
    `recommended_answer` is non-empty, and whose `depends_on` prerequisites are
    all answered gets that recommendation recorded as its answer (answer source
@@ -416,10 +416,13 @@ per-question recommendation into autonomous clarification rounds. Each round:
    stay open — a recommendation formed without the answer its `depends_on`
    declares it needs is not committed by automation. Questions resolve
    foundational-first, so a prerequisite auto-resolved earlier in the same
-   round unblocks its dependents.
+   round unblocks its dependents. `--no-auto` skips this step entirely:
+   created questions stay open for the human, so
+   `pactum clarify run --no-auto --max-rounds 1` is the single manual
+   clarifier pass.
 3. **Refresh** — after a round that auto-resolved something the clarification
    artifacts are refreshed once; a resolve-less round only recomputes the
-   status (suggest already refreshed when it recorded questions).
+   status (the proposal step already refreshed when it recorded questions).
 
 The loop stops at the first of three terminals, checked after each round (a
 round that errors finalizes the summary with the defensive `error` terminal
@@ -429,6 +432,8 @@ instead):
   `clarify show` converged flag).
 - `needs_human` — a round created no new questions and auto-resolved nothing:
   automation is out of moves, and the open blocking questions await the human.
+  With `--no-auto`, any open blocking question after a round ends the loop
+  here — auto-resolution is off, so only the human can make progress.
 - `max_rounds` — the round cap was reached. `--max-rounds` overrides the
   `clarify.max_rounds` workspace config key (default 3).
 
@@ -436,10 +441,14 @@ The loop writes `clarify/loop-summary.json`
 (`pactum.clarify_loop_summary.v1`) with per-round counts (questions created,
 auto-resolved, open blocking after), the terminal reason, the converged flag,
 and the final per-dimension coverage; `--json` prints the same document.
-`--reviewer` selects the clarifier explicitly (same resolution as `clarify
-suggest`), and the idle `--timeout` applies to each clarifier attempt. Running
-the loop on an approved run surfaces the same approval-reset warning as
-`clarify suggest`.
+`--reviewer` selects the clarifier explicitly (the cross-model reviewer
+resolution above), and the idle `--timeout` applies to each clarifier attempt.
+Running the loop on an approved run surfaces an approval-reset warning.
+
+The questions awaiting the human carry the clarifier's stored recommendation:
+relay it with `pactum clarify answer <q_id> --recommended` (or every open
+recommended question at once with `pactum clarify answer --all-recommended`),
+or type an explicit answer with `pactum clarify answer <q_id> "..."`.
 
 `pactum task new "<task>" --clarify` runs this same loop immediately
 after creating the run — one command from task to a pre-interrogated contract.
@@ -506,14 +515,14 @@ dedup, keeping the maximum severity.
   `review/reviewer-prompt-<name>-<lens>.md`, `review/reviewer-dry-run.json`)
   without launching a reviewer; its output lists the five lens attempts that
   would run.
-- `pactum review run <run_id> --reviewer codex` launches the five lens
-  attempts concurrently (same direct-subprocess model as execution, with the
-  idle `--timeout` per attempt) and captures each attempt under
-  `review/reviewer-attempts/`, with the lens recorded in the attempt's
-  request and result. Like `execute run`, it is unsandboxed agent execution.
-  All lens attempts run to completion, but if any
-  attempt fails the command (and a review-loop round) fails as a whole — the
-  completed lenses' output stays on disk in their attempt artifacts.
+- `pactum review run <run_id>` drives autonomous reviewer/fixer rounds (the
+  next section). Each round launches the lens attempts concurrently (same
+  direct-subprocess model as execution, with the idle `--timeout` per attempt)
+  and captures each attempt under `review/reviewer-attempts/`, with the lens
+  recorded in the attempt's request and result. Like `execute run`, it is
+  unsandboxed agent execution. All lens attempts run to completion, but if any
+  attempt fails the round fails as a whole — the completed lenses' output
+  stays on disk in their attempt artifacts.
 
 Beyond the lens checklist, every lens prompt shares the same hardened review
 methodology: findings must be certain-or-silent (with an explicit NOT-to-flag
@@ -525,14 +534,16 @@ design sources are condensed in
 [`review-prompt-design.md`](review-prompt-design.md).
 
 A reviewer can emit optional structured finding proposals as a fenced JSON block.
-`pactum review proposal collect <run_id>` parses the captured reviewer stdout of
-**every completed reviewer attempt** (all lenses) into **pending proposals** — it
-does not create findings; pass `--attempt <id>` to parse a single attempt, and
-with several attempts each warning is prefixed with its attempt id. In the manual flow, a
+`pactum review run` parses and accepts valid proposals automatically as part of
+its rounds. The surgical alternative is `pactum review proposal collect
+<run_id>`, which parses the captured reviewer stdout of **every completed
+reviewer attempt** (all lenses) into **pending proposals** — it does not create
+findings; pass `--attempt <id>` to parse a single attempt, and with several
+attempts each warning is prefixed with its attempt id. In that manual flow, a
 human then decides each one with `pactum review proposal accept <run_id> p_001`
 (which creates a real review finding) or `pactum review proposal reject <run_id>
-p_001 --reason "..."`. Outside the explicit `review loop` command, proposals
-are inert until a person accepts them.
+p_001 --reason "..."` — proposals collected manually are inert until a person
+accepts them.
 
 ## Review fix
 
@@ -555,28 +566,33 @@ as execution, captures request/result/stdout/stderr artifacts under
 Like `execute run` and `review run`, `review fix run` is unsandboxed. It does
 not approve reviews, resolve findings, or re-run the gate.
 
-## Review loop
+## Review run rounds
 
-`pactum review loop <run_id> --reviewer codex --agent codex` runs the
+`pactum review run <run_id> --reviewer codex --agent codex` runs the
 reviewer round — five concurrent lens attempts per resolved reviewer, with each
 member's per-lens prompts written before the round launches and the lens
 surfaced per attempt in the round summary — parses structured finding
 proposals, accepts the proposals into review
-findings, and runs the fixer when the current round creates open findings. After
-each fixer attempt, Pactum re-runs the gate with the approved validation
-commands, then starts another reviewer round.
+findings, and runs the fixer when the current round creates open blocking
+findings. After each fixer attempt, Pactum re-runs the gate with the approved
+validation commands, then starts another reviewer round. The review record
+itself is scaffolded implicitly when the gate report exists — there is no
+separate preparation step.
 
-The loop stops after the configured number of consecutive clean reviewer rounds,
-after repeated no-change fixer rounds, or when `--max-rounds` is reached. If
-the flags are omitted, Pactum reads `review.max_rounds`,
+The rounds stop after the configured number of consecutive clean reviewer
+rounds, after repeated no-change fixer rounds, or when `--max-rounds` is
+reached. If the flags are omitted, Pactum reads `review.max_rounds`,
 `review.clean_rounds`, and `review.patience` from the workspace
 config. The default clean-round requirement is 1, preserving the original "first
 clean round converges" behavior. The default no-change patience is 2: when a
 fixer runs but the source fingerprint is unchanged for two consecutive fixer
-rounds, the loop terminates as `stalemate`. The idle `--timeout` applies to each
-reviewer or fixer subprocess, and `--json` prints the loop summary as JSON.
+rounds, the run terminates as `stalemate`. `--no-fix` never invokes the fixer:
+the first round that leaves open blocking findings ends the run as
+`findings_open`, with the findings awaiting the human in `pactum review show`.
+The idle `--timeout` applies to each reviewer or fixer subprocess, and `--json`
+prints the summary as JSON.
 
-The loop writes `review/loop-summary.json` with the terminal reason and
+Every run writes `review/loop-summary.json` with the terminal reason and
 per-round open-finding counts, clean streak, and unchanged-fingerprint streak.
 It does not run `pactum review approve`; the human approval gate remains
 explicit.

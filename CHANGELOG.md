@@ -67,6 +67,17 @@ yet — everything lives under **Unreleased**.
   and `gate run --allow-commands` are gone, and every decision verb carries an
   optional `--by <principal>` (default `manual`) recorded in the decision
   artifact.
+- Smoothed the pipeline (hard removals, no aliases): `pactum review run` now
+  drives the reviewer/fixer rounds (the separate loop spelling is gone, and
+  `--no-fix` keeps it a reviewer-only pass that stops on open blocking
+  findings as `findings_open`); the review record self-scaffolds once a gate
+  report exists (the preparation spelling and the `review_not_prepared` error
+  are gone, and `review status`/`show` derive the empty pending state);
+  `prompt build` self-heals a stale project map and records the refresh as an
+  additive `map_refresh` object; the standalone clarifier-suggestion spelling
+  folded into `pactum clarify run --no-auto --max-rounds 1`; and
+  `pactum clarify answer` gained the recommended-answer decision verbs
+  (`--recommended`, `--all-recommended`) with their own recorded provenance.
 - Made the project map wiki-first in place: `repo-map.md` and `llms.txt` now
   route to the wiki before the code surface, and code items are framed as
   best-effort symbol hints (incomplete by design) rather than semantic truth.

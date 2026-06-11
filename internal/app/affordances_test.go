@@ -59,12 +59,12 @@ func TestJSONErrorEnvelopePinnedPreconditions(t *testing.T) {
 			name: "project_map_stale",
 			setup: func(t *testing.T) (App, []string, string) {
 				root := t.TempDir()
-				app, _, runID := setupApprovedPromptContract(t, root)
+				app, _, runID := setupApprovedAndBuiltPrompt(t, root)
 				mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
-				return app, []string{"prompt", "build", runID, "--json"}, runID
+				return app, []string{"execute", "plan", runID, "--json"}, runID
 			},
 			wantCode:    "project_map_stale",
-			wantMessage: func(string) string { return "cannot build executor prompt: project map is stale" },
+			wantMessage: func(string) string { return "cannot prepare execution: project map is stale" },
 			wantFix:     func(string) string { return "pactum map refresh" },
 		},
 		{
@@ -115,21 +115,11 @@ func TestJSONErrorEnvelopePinnedPreconditions(t *testing.T) {
 			name: "gate_report_missing",
 			setup: func(t *testing.T) (App, []string, string) {
 				app, _, runID := setupApprovedAndBuiltPrompt(t, t.TempDir())
-				return app, []string{"review", "prepare", runID, "--json"}, runID
-			},
-			wantCode:    "gate_report_missing",
-			wantMessage: func(string) string { return "cannot prepare review: gate report not found" },
-			wantFix:     func(runID string) string { return "pactum gate run " + runID },
-		},
-		{
-			name: "review_not_prepared",
-			setup: func(t *testing.T) (App, []string, string) {
-				app, _, runID, _ := setupRunWithGateReport(t, t.TempDir(), "passed")
 				return app, []string{"review", "approve", runID, "--json"}, runID
 			},
-			wantCode:    "review_not_prepared",
-			wantMessage: func(runID string) string { return "review has not been prepared: " + runID },
-			wantFix:     func(runID string) string { return "pactum review prepare " + runID },
+			wantCode:    "gate_report_missing",
+			wantMessage: func(string) string { return "cannot approve review: gate report not found" },
+			wantFix:     func(runID string) string { return "pactum gate run " + runID },
 		},
 		{
 			name: "pending_review_proposals",
@@ -244,7 +234,7 @@ func TestNextArraysMirrorStageAffordances(t *testing.T) {
 	if code := app.Run([]string{"prompt", "build", runID}, &human, &stderr); code != 0 {
 		t.Fatalf("prompt build exited %d, stderr: %s", code, stderr.String())
 	}
-	if !strings.Contains(human.String(), "Next:\n  pactum execute plan --agent codex\n") {
+	if !strings.Contains(human.String(), "Next:\n  pactum execute plan "+runID+" --agent codex\n") {
 		t.Fatalf("human prompt build Next: hint changed:\n%s", human.String())
 	}
 
@@ -370,18 +360,18 @@ func TestNextAffordancesAcrossLifecycleStages(t *testing.T) {
 	next = decodeNext(t, app, "execute", "run", runID, "--agent", "helper", "--json")
 	assertNext(t, next, "pactum gate run "+runID)
 
+	// A gated run with nothing open already affords approval: the review
+	// scaffold is implicit, so no preparation step sits in between.
 	next = decodeNext(t, app, "gate", "run", runID, "--json")
-	assertNext(t, next, "pactum review prepare "+runID)
-
-	next = decodeNext(t, app, "review", "prepare", runID, "--json")
 	assertNext(t, next, "pactum review approve "+runID)
 
-	// Recorded reviewer output is collected into proposals before approval.
+	// review run scaffolds the review, runs the panel, and reports the loop
+	// summary; with a clean helper the review stays approvable.
 	app = configureHelperReviewers(t, app, paths, "helper")
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
-	next = decodeNext(t, app, "review", "run", runID, "--reviewer", "helper", "--json")
-	assertNext(t, next, "pactum review proposal collect "+runID)
+	next = decodeNext(t, app, "review", "run", runID, "--reviewer", "helper", "--no-fix", "--max-rounds", "1", "--json")
+	assertNext(t, next, "pactum review approve "+runID)
 
 	// An open blocking finding makes approval illegal, so next points at
 	// inspection until it is resolved.
@@ -415,8 +405,8 @@ func TestNextAffordancesAcrossLifecycleStages(t *testing.T) {
 }
 
 // TestNextDoesNotAdvertiseApproveForFailedGate pins the failed-gate legality
-// gate: review approve rejects a failed gate, so a review prepared from one
-// keeps pointing at inspection even with nothing open.
+// gate: review approve rejects a failed gate, so a gated run with one keeps
+// pointing at inspection even with nothing open.
 func TestNextDoesNotAdvertiseApproveForFailedGate(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupGatePreparedRun(t, root, []string{"false"}, true)
@@ -424,9 +414,7 @@ func TestNextDoesNotAdvertiseApproveForFailedGate(t *testing.T) {
 	if code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr); code == 0 {
 		t.Fatalf("gate run with a failing validation command exited 0:\n%s", stdout.String())
 	}
-	next := decodeNext(t, app, "review", "prepare", runID, "--json")
-	assertNext(t, next, "pactum review show "+runID)
-	next = decodeNext(t, app, "task", "show", runID, "--json")
+	next := decodeNext(t, app, "task", "show", runID, "--json")
 	assertNext(t, next, "pactum review show "+runID)
 }
 
@@ -481,8 +469,7 @@ func TestEmittedAffordancesUseCurrentGrammar(t *testing.T) {
 	collectErr(blockingClarificationsOpenError("approve contract", runID))
 	collectErr(promptNotBuiltError("prepare execution", runID))
 	collectErr(noExecutionAttemptError("cannot run gate: no completed execution attempts found", runID))
-	collectErr(gateReportMissingError("prepare review", runID))
-	collectErr(reviewNotPreparedError("review has not been prepared: "+runID, runID))
+	collectErr(gateReportMissingError("approve review", runID))
 	collectErr(pendingReviewProposalsError(runID))
 	collectErr(clarifyLoopFailedError(runID, errors.New("boom")))
 

@@ -166,7 +166,14 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 }
 
 func (a App) prepareReviewFixer(context reviewContext, agentName string) (reviewFixPreparation, error) {
-	review, err := requireReviewPrepared(context.RunPaths, context.State.RunID)
+	if !isRegularFile(context.RunPaths.GateReportJSON) {
+		return reviewFixPreparation{}, gateReportMissingError("run review fix", context.State.RunID)
+	}
+	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
+	if err != nil {
+		return reviewFixPreparation{}, err
+	}
+	review, err := loadOrDeriveReviewDocument(context.RunPaths, context.State.RunID, gateReport.Status)
 	if err != nil {
 		return reviewFixPreparation{}, err
 	}
@@ -349,7 +356,7 @@ func renderReviewFixPrompt(prep reviewFixPreparation) string {
 	fmt.Fprintln(&b, "- For false positives, explain a concrete rebuttal instead of changing code.")
 	fmt.Fprintln(&b, "- Keep changes inside the approved contract and review-finding scope.")
 	fmt.Fprintln(&b, "- Do not edit `.heurema` artifacts.")
-	fmt.Fprintln(&b, "- Do not run `pactum review approve`, `pactum review finding resolve`, or any review loop command.")
+	fmt.Fprintln(&b, "- Do not run `pactum review approve`, `pactum review finding resolve`, or `pactum review run`.")
 	fmt.Fprintln(&b)
 	writeHouseStyleSection(&b)
 	fmt.Fprintln(&b)

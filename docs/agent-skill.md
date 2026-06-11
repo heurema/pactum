@@ -39,37 +39,44 @@ The flow (full detail in
 5. targeted `pactum search` (identifiers, paths, domain terms; `--kind wiki`,
    `--kind code_item`, `--kind import`) and read the relevant `map/wiki/` pages
    and source files
-6. clarify if needed
+6. clarify if needed (`clarify add`, then a typed `clarify answer` or the
+   recommended-answer decision verbs `--recommended` / `--all-recommended`)
 7. `pactum contract revise` (goal, in/out of scope, acceptance, validation)
 8. `pactum contract approve --by manual`
-9. `pactum prompt build` / `pactum prompt show`
+9. `pactum prompt build` / `pactum prompt show` (a stale map is self-healed and
+   the refresh recorded)
 10. `pactum execute plan --agent codex`
 11. report current run, relevant files, contract summary, plan command, next
     action
 
 ## Machine affordances
 
-With `--json`, the CLI announces the legal moves so an agent never guesses the
-pipeline state machine: workflow commands (and `pactum status` /
-`pactum task show`) return a top-level `next` array of directly runnable
-pactum commands for the run's stage, and recognizable precondition failures
-return a `pactum.error.v1` envelope with a stable `error.code` and, when a
-single exact remedial command exists, `error.fix`. Read-only not-ready
-responses (`pactum.not_ready.v1`) carry the remedial command in `fix` and keep
-exit code 0. The older `suggested_command` / `next_command` fields remain for
-compatibility; `fix` and `next` are preferred. Commands that would launch a
-real agent (`pactum execute run`) are never emitted as a `fix`.
+With `--json`, the CLI announces the legal moves so an agent reads `next` and
+`error.fix` instead of memorizing the pipeline state machine: workflow commands
+(and `pactum status` / `pactum task show`) return a top-level `next` array of
+directly runnable pactum commands for the run's stage, and recognizable
+precondition failures return a `pactum.error.v1` envelope with a stable
+`error.code` and, when a single exact remedial command exists, `error.fix`.
+Read-only not-ready responses (`pactum.not_ready.v1`) carry the remedial
+command in `fix` and keep exit code 0. Commands that would launch a real agent
+(`pactum execute run`) are never emitted as a `fix`. Decision verbs
+(`clarify answer`, `contract accept`/`approve`, `review proposal
+accept`/`reject`, `review approve`, `memory accept`) relay explicit human
+decisions and record the principal from `--by`.
 
 ## Current-run usage
 
 After `pactum task new` (or `pactum task use`), the run is **current**, so the
-staged commands (`clarify`, `contract`, `prompt`, `execute`) need no run id.
+staged commands (`clarify`, `contract`, `prompt`, `execute`, `gate`, `review`,
+`memory`) need no run id.
 
 ## When real execution is allowed
 
-`pactum execute run` and `pactum review run` launch a real agent as a direct,
-**unsandboxed** subprocess. The skill does not run them by default: it runs
-them only after the user explicitly approves direct agent execution. See
+`pactum execute run` and `pactum review run` launch real agents as direct,
+**unsandboxed** subprocesses — and `review run` includes a write-enabled fixer
+unless `--no-fix` is set. The skill does not run them by default: it runs
+them only after the user explicitly approves direct agent execution, matching
+the threat model in [SECURITY.md](../SECURITY.md). See
 [`assets/agent-skills/pactum/references/safety.md`](../assets/agent-skills/pactum/references/safety.md).
 
 ## Source of truth

@@ -15,20 +15,20 @@ import (
 	"github.com/heurema/pactum/internal/artifacts"
 )
 
-func TestReviewPrepareBeforeInitPrintsGuidance(t *testing.T) {
+func TestReviewFindingAddBeforeInitPrintsGuidance(t *testing.T) {
 	root := t.TempDir()
 
 	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"review", "prepare", "run_x"}, &stdout, &stderr)
+	code := testApp(root).Run([]string{"review", "finding", "add", "run_x", "note"}, &stdout, &stderr)
 	if code != 1 {
-		t.Fatalf("review prepare before init exited %d, want 1, stderr: %s", code, stderr.String())
+		t.Fatalf("review finding add before init exited %d, want 1, stderr: %s", code, stderr.String())
 	}
 	if got := stderr.String(); !strings.Contains(got, "not initialized") {
-		t.Fatalf("review prepare before init stderr mismatch:\n%s", got)
+		t.Fatalf("review finding add before init stderr mismatch:\n%s", got)
 	}
 }
 
-func TestReviewPrepareMissingRunReturnsError(t *testing.T) {
+func TestReviewFindingAddMissingRunReturnsError(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
 
@@ -41,80 +41,117 @@ func TestReviewPrepareMissingRunReturnsError(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"review", "prepare", "run_missing"}, &stdout, &stderr)
+	code = app.Run([]string{"review", "finding", "add", "run_missing", "note"}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("review prepare missing run should fail")
+		t.Fatalf("review finding add for a missing run should fail")
 	}
 	if got := stderr.String(); !strings.Contains(got, "run not found: run_missing") {
 		t.Fatalf("missing run stderr mismatch:\n%s", got)
 	}
 }
 
-func TestReviewPrepareWithoutGateReportFails(t *testing.T) {
+func TestReviewFindingAddWithoutGateReportFails(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupContractRun(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "prepare", runID}, &stdout, &stderr)
+	code := app.Run([]string{"review", "finding", "add", runID, "note"}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("review prepare without gate report should fail")
+		t.Fatalf("review finding add without gate report should fail")
 	}
-	if got := stderr.String(); !strings.Contains(got, "cannot prepare review: gate report not found") {
+	if got := stderr.String(); !strings.Contains(got, "cannot add review finding: gate report not found") {
 		t.Fatalf("missing gate stderr mismatch:\n%s", got)
 	}
 }
 
-func TestReviewPrepareCreatesArtifacts(t *testing.T) {
+func TestReviewFindingAddScaffoldsReviewArtifacts(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupRunWithGateReport(t, root, "needs_review")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "prepare", runID}, &stdout, &stderr)
+	code := app.Run([]string{"review", "finding", "add", runID, "needs a closer look"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review prepare exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("review finding add exited %d, stderr: %s", code, stderr.String())
 	}
 	assertFile(t, runPaths.ReviewJSON)
 	assertFile(t, runPaths.ReviewFindingsJSONL)
 	assertFile(t, runPaths.ReviewResolutionsJSONL)
 	review := readReviewDoc(t, runPaths.ReviewJSON)
-	if review.Status != "pending" || review.Gate.Status != "needs_review" || review.Summary.Findings != 0 {
+	if review.Gate.Status != "needs_review" || review.Summary.Findings != 1 {
 		t.Fatalf("unexpected review document: %#v", review)
 	}
-	if got := stdout.String(); !strings.Contains(got, "Review prepared") || !strings.Contains(got, "status: needs_review") {
-		t.Fatalf("prepare output mismatch:\n%s", got)
-	}
 	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
-	if indexOfEvent(eventTypes, "review_prepared") == -1 {
-		t.Fatalf("events missing review_prepared:\n%v", eventTypes)
+	if indexOfEvent(eventTypes, "review_scaffolded") == -1 {
+		t.Fatalf("events missing review_scaffolded:\n%v", eventTypes)
 	}
 }
 
-func TestReviewStatusBeforePreparePrintsGuidance(t *testing.T) {
+func TestReviewApproveScaffoldsReviewOnGatedRun(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID, _ := setupRunWithGateReport(t, root, "passed")
+	app, _, runID, runPaths := setupRunWithGateReport(t, root, "passed")
+	assertNoFile(t, runPaths.ReviewJSON)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "approve", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review approve on a gated run exited %d, stderr: %s", code, stderr.String())
+	}
+	review := readReviewDoc(t, runPaths.ReviewJSON)
+	if review.Status != "approved" || review.Gate.Status != "passed" {
+		t.Fatalf("approve should scaffold and approve the review: %#v", review)
+	}
+	assertFile(t, runPaths.ReviewFindingsJSONL)
+	assertFile(t, runPaths.ReviewResolutionsJSONL)
+}
+
+func TestReviewStatusNotGatedPrintsGuidance(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"review", "status", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review status before prepare exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("review status before gate exited %d, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Review has not been prepared. Run: pactum review prepare "+runID) {
+	if got := stdout.String(); !strings.Contains(got, "Run has not been gated. Run: pactum gate run "+runID) {
 		t.Fatalf("status guidance mismatch:\n%s", got)
 	}
 }
 
-func TestReviewShowBeforePreparePrintsGuidance(t *testing.T) {
+func TestReviewStatusOnGatedRunShowsDerivedPendingState(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID, _ := setupRunWithGateReport(t, root, "passed")
+	app, _, runID, runPaths := setupRunWithGateReport(t, root, "passed")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "show", runID}, &stdout, &stderr)
+	code := app.Run([]string{"review", "status", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review show before prepare exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("review status on gated run exited %d, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Review has not been prepared. Run: pactum review prepare "+runID) {
-		t.Fatalf("show guidance mismatch:\n%s", got)
+	got := stdout.String()
+	for _, want := range []string{"Review status", "status: pending", "findings: 0"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("derived status output missing %q:\n%s", want, got)
+		}
 	}
+	assertNoFile(t, runPaths.ReviewJSON)
+	assertNoFile(t, runPaths.ReviewFindingsJSONL)
+}
+
+func TestReviewShowOnGatedRunShowsDerivedPendingState(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupRunWithGateReport(t, root, "passed")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "show", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review show on gated run exited %d, stderr: %s", code, stderr.String())
+	}
+	var state reviewStateResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &state))
+	if state.Review.Status != "pending" || state.Review.RunID != runID || len(state.Findings) != 0 {
+		t.Fatalf("derived review state mismatch: %#v", state.Review)
+	}
+	assertNoFile(t, runPaths.ReviewJSON)
 }
 
 func TestReviewAddFindingUpdatesSummaryAndLedger(t *testing.T) {
@@ -416,18 +453,19 @@ func TestReviewPlanMissingRunReturnsError(t *testing.T) {
 	}
 }
 
-func TestReviewPlanBeforeReviewPreparedFails(t *testing.T) {
+func TestReviewPlanOnGatedRunDerivesReviewState(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID, _ := setupRunWithGateReport(t, root, "passed")
+	app, paths, runID := setupApprovedPromptContract(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	writeReviewGateReportForTest(t, runPaths, runID, "passed")
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"review", "plan", runID}, &stdout, &stderr)
-	if code == 0 {
-		t.Fatalf("review plan should fail before review prepare")
+	if code != 0 {
+		t.Fatalf("review plan on a gated run exited %d, stderr: %s", code, stderr.String())
 	}
-	if got := stderr.String(); !strings.Contains(got, "review has not been prepared: "+runID) {
-		t.Fatalf("review not prepared stderr mismatch:\n%s", got)
-	}
+	assertFile(t, runPaths.ReviewDryRunJSON)
+	assertNoFile(t, runPaths.ReviewJSON)
 }
 
 func TestReviewPlanMissingGateReportFails(t *testing.T) {
@@ -902,18 +940,22 @@ func TestReviewRunMissingRunReturnsError(t *testing.T) {
 	}
 }
 
-func TestReviewRunBeforeReviewPreparedFails(t *testing.T) {
+func TestReviewRunScaffoldsReviewOnGatedRun(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID, _ := setupRunWithGateReport(t, root, "passed")
+	app, _, runID, runPaths := setupRunWithGateReport(t, root, "passed")
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"review", "run", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("review run should fail before review prepare")
+		t.Fatalf("review run should still fail on the unapproved contract")
 	}
-	if got := stderr.String(); !strings.Contains(got, "review has not been prepared: "+runID) {
-		t.Fatalf("review not prepared stderr mismatch:\n%s", got)
+	if got := stderr.String(); !strings.Contains(got, "cannot run reviewer: contract is not approved") {
+		t.Fatalf("unapproved contract stderr mismatch:\n%s", got)
 	}
+	// The review scaffold is created implicitly before the round runs.
+	assertFile(t, runPaths.ReviewJSON)
+	assertFile(t, runPaths.ReviewFindingsJSONL)
+	assertFile(t, runPaths.ReviewResolutionsJSONL)
 }
 
 func TestReviewRunMissingGateReportFails(t *testing.T) {
@@ -925,7 +967,7 @@ func TestReviewRunMissingGateReportFails(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("review run should fail without gate report")
 	}
-	if got := stderr.String(); !strings.Contains(got, "cannot run reviewer: gate report not found") {
+	if got := stderr.String(); !strings.Contains(got, "cannot run review: gate report not found") {
 		t.Fatalf("missing gate stderr mismatch:\n%s", got)
 	}
 	if _, err := os.Stat(runPaths.ReviewAttemptsDir); err == nil {
@@ -1004,7 +1046,7 @@ func TestReviewRunStreamsLiveOutputToStderr(t *testing.T) {
 	}
 	// Stdout stays the clean human summary; agent output never leaks there.
 	out := stdout.String()
-	if !strings.Contains(out, "Reviewer attempts finished") {
+	if !strings.Contains(out, "Review run finished") {
 		t.Fatalf("stdout missing human summary:\n%s", out)
 	}
 	if strings.Contains(out, "cwd_is_repo=") || strings.Contains(out, "reviewer-stderr-line") {
@@ -1028,10 +1070,8 @@ func TestReviewRunWritesAttemptArtifacts(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Reviewer attempts finished") || !strings.Contains(got, "reviewer_attempt_001") {
+	if got := stdout.String(); !strings.Contains(got, "Review run finished") || !strings.Contains(got, "terminal reason: clean_round") {
 		t.Fatalf("review run output mismatch:\n%s", got)
-	} else {
-		assertResolvedBlock(t, got, "helper", "claude-opus-4-8", "inherit", "partial")
 	}
 
 	// Five concurrent lens attempts: the lens-to-attempt-ID mapping depends on
@@ -1190,17 +1230,15 @@ func TestReviewRunStoresCrossReviewerAttempts(t *testing.T) {
 	}
 }
 
-func TestReviewRunAutoBuildsDryRunArtifacts(t *testing.T) {
+func TestReviewRunAutoBuildsReviewerPrompts(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	app = configureHelperReviewers(t, app, paths, "helper")
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
-	_ = os.Remove(runPaths.ReviewDryRunJSON)
 	_ = os.Remove(runPaths.ReviewContextMD)
 
 	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper")
-	assertFile(t, runPaths.ReviewDryRunJSON)
 	assertFile(t, runPaths.ReviewContextMD)
 	for _, lens := range reviewLenses {
 		assertFile(t, reviewerLensPromptPath(runPaths, "helper", lens))
@@ -1283,43 +1321,40 @@ func TestReviewRunJSONOutput(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("review run --json exited %d, stderr: %s", code, stderr.String())
 	}
-	var response reviewerRunResponse
+	var response struct {
+		reviewLoopSummaryDocument
+		Next []string `json:"next"`
+	}
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
-	if response.Schema != reviewerRunSchema || response.RunID != runID || response.Reviewer != "helper" {
+	if response.Schema != reviewLoopSummarySchema || response.RunID != runID || response.Reviewer != "helper" {
 		t.Fatalf("unexpected review run json: %#v", response)
 	}
-	if len(response.Attempts) != len(reviewLenses) {
-		t.Fatalf("review run json should list one attempt per lens: %#v", response.Attempts)
+	if response.TerminalReason != "clean_round" || len(response.Rounds) != 1 {
+		t.Fatalf("review run with a clean helper should converge in one round: %#v", response)
 	}
-	for index, lens := range reviewLenses {
-		result := response.Attempts[index]
-		// Attempt documents record the engine inferred from the entry's model.
-		if result.Lens != lens.Key || result.AttemptID == "" || result.Reviewer != "claude" || result.ExitCode != 0 {
-			t.Fatalf("unexpected review run attempt json: %#v", result)
-		}
+	if len(response.Rounds[0].ReviewerAttempts) != len(reviewLenses) {
+		t.Fatalf("round should record one attempt per lens: %#v", response.Rounds[0])
 	}
-	if strings.Contains(stdout.String(), "Reviewer attempts finished") {
+	// The stage-derived next affordance is present; the full-pipeline value is
+	// pinned by the lifecycle affordance tests.
+	if response.Next == nil {
+		t.Fatalf("review run json missing next affordance:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "Review run finished") {
 		t.Fatalf("json output should not include human output:\n%s", stdout.String())
-	}
-	if strings.Contains(stdout.String(), "Resolved:") {
-		t.Fatalf("json output should not include resolved human output:\n%s", stdout.String())
 	}
 }
 
 func TestReviewRunPreconditionFailuresDoNotWriteAttemptEvents(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, _ := setupRunWithGateReport(t, root, "passed")
-	beforeEvents := readLines(t, paths.EventsJSONL)
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"review", "run", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("review run should fail before review prepare")
+		t.Fatalf("review run should fail on the unapproved contract")
 	}
 	afterEvents := readLines(t, paths.EventsJSONL)
-	if len(afterEvents) != len(beforeEvents) {
-		t.Fatalf("precondition failure should not append ledger events:\nbefore=%v\nafter=%v", beforeEvents, afterEvents)
-	}
 	for _, forbidden := range []string{"reviewer_attempt_started", "reviewer_attempt_finished"} {
 		if strings.Contains(strings.Join(afterEvents, "\n"), forbidden) {
 			t.Fatalf("precondition failure should not write %s:\n%v", forbidden, afterEvents)
@@ -1741,20 +1776,6 @@ func TestReviewProposeFindingsMissingRunReturnsError(t *testing.T) {
 	}
 	if got := stderr.String(); !strings.Contains(got, "run not found: run_missing") {
 		t.Fatalf("missing run stderr mismatch:\n%s", got)
-	}
-}
-
-func TestReviewProposeFindingsBeforeReviewPreparedFails(t *testing.T) {
-	root := t.TempDir()
-	app, _, runID, _ := setupRunWithGateReport(t, root, "passed")
-
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "proposal", "collect", runID}, &stdout, &stderr)
-	if code == 0 {
-		t.Fatalf("review propose-findings should fail before review prepare")
-	}
-	if got := stderr.String(); !strings.Contains(got, "review has not been prepared: "+runID) {
-		t.Fatalf("review not prepared stderr mismatch:\n%s", got)
 	}
 }
 
@@ -2391,10 +2412,20 @@ func writeReviewGateReportForTest(t *testing.T, runPaths contractRunPathSet, run
 	assertNoError(t, writeJSON(runPaths.GateReportJSON, report))
 }
 
+// scaffoldReviewForTest writes the review record the mutating review commands
+// would self-scaffold, for tests that start from an existing review.
+func scaffoldReviewForTest(t *testing.T, runPaths contractRunPathSet, runID string, gateStatus string) {
+	t.Helper()
+	assertNoError(t, os.MkdirAll(runPaths.ReviewDir, 0o755))
+	assertNoError(t, writeJSON(runPaths.ReviewJSON, newReviewDocument(runID, gateStatus, "2026-05-31T18:40:12Z")))
+	assertNoError(t, ensureAppendOnlyFile(runPaths.ReviewFindingsJSONL))
+	assertNoError(t, ensureAppendOnlyFile(runPaths.ReviewResolutionsJSONL))
+}
+
 func setupPreparedReview(t *testing.T, root string, gateStatus string) (App, artifacts.Paths, string, contractRunPathSet) {
 	t.Helper()
 	app, paths, runID, runPaths := setupRunWithGateReport(t, root, gateStatus)
-	runReviewCommand(t, app, "review", "prepare", runID)
+	scaffoldReviewForTest(t, runPaths, runID, gateStatus)
 	return app, paths, runID, runPaths
 }
 
@@ -2403,7 +2434,7 @@ func setupApprovedPreparedReview(t *testing.T, root string, gateStatus string) (
 	app, paths, runID := setupApprovedPromptContract(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	writeReviewGateReportForTest(t, runPaths, runID, gateStatus)
-	runReviewCommand(t, app, "review", "prepare", runID)
+	scaffoldReviewForTest(t, runPaths, runID, gateStatus)
 	return app, paths, runID, runPaths
 }
 

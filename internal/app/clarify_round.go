@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,7 +17,6 @@ const (
 	clarifierContextArtifact    = "clarify/clarifier-context.md"
 	clarifierPromptArtifact     = "clarify/clarifier-prompt.md"
 	clarifierAttemptsArtifact   = "clarify/clarifier-attempts"
-	clarifierLastResultArtifact = "clarify/clarifier-last-result.json"
 	clarifierRequestSchema      = "pactum.clarifier_request.v1"
 	clarifierResultSchema       = "pactum.clarifier_result.v1"
 )
@@ -86,7 +84,9 @@ type clarifierSuggestionInput struct {
 	DependsOn []int `json:"depends_on"`
 }
 
-type clarifySuggestResponse struct {
+// clarifierRoundResponse is the JSON document one clarifier round writes; the
+// clarify loop parses it to drive its round summaries.
+type clarifierRoundResponse struct {
 	RunID     string                        `json:"run_id"`
 	RunStatus string                        `json:"run_status"`
 	AttemptID string                        `json:"attempt_id"`
@@ -94,15 +94,18 @@ type clarifySuggestResponse struct {
 	Result    clarifierResultDocument       `json:"result"`
 	Created   []clarificationQuestionRecord `json:"created"`
 	Warnings  []string                      `json:"warnings"`
-	// ApprovalReset reports that recording these suggestions regressed an
+	// ApprovalReset reports that recording these questions regressed an
 	// already-approved run back to clarifying (approval reset to pending). It is
 	// omitted (false) when the run was not approved or no questions were recorded.
 	ApprovalReset bool     `json:"approval_reset,omitempty"`
 	Next          []string `json:"next"`
 }
 
-func (a App) ClarifySuggest(stdout io.Writer, liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration, jsonOutput bool) error {
-	context, ok, err := a.loadClarifyContext(stdout, runID, jsonOutput)
+// runClarifierRound launches one read-only clarifier attempt and records its
+// proposed questions. It is the clarify loop's round primitive and always
+// writes the round response as JSON to stdout.
+func (a App) runClarifierRound(stdout io.Writer, liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration) error {
+	context, ok, err := a.loadClarifyContext(stdout, runID, true)
 	if err != nil || !ok {
 		return err
 	}
@@ -115,10 +118,10 @@ func (a App) ClarifySuggest(stdout io.Writer, liveOutput io.Writer, runID string
 		return err
 	}
 
-	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[agents.DryRunCommand, clarifierRequestDocument, clarifierResultDocument, clarifySuggestResponse]{
+	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[agents.DryRunCommand, clarifierRequestDocument, clarifierResultDocument, clarifierRoundResponse]{
 		Stdout:          stdout,
 		LiveOutput:      liveOutput,
-		JSONOutput:      jsonOutput,
+		JSONOutput:      true,
 		Root:            context.Root,
 		EventsJSONL:     context.Paths.EventsJSONL,
 		RunID:           runID,
@@ -168,15 +171,19 @@ func (a App) ClarifySuggest(stdout io.Writer, liveOutput io.Writer, runID string
 		ProcessResult: func(result clarifierResultDocument) processResult {
 			return result.processResult
 		},
+		// Unreachable in practice: JSONOutput is hardcoded true above, and the
+		// lifecycle renders run-only/success output only when JSONOutput is
+		// false. Kept because the lifecycle fields are required; do not add
+		// logic here.
 		RenderRunOnly: func(stdout io.Writer, request clarifierRequestDocument, result clarifierResultDocument) {
-			writeClarifySuggestRunOnly(stdout, request, result, prep.ClarifierName, prep.ModelSpec)
+			fmt.Fprintf(stdout, "clarifier attempt %s exit code %d\n", result.AttemptID, result.ExitCode)
 		},
-		AfterSuccess: func(attempt agentAttemptContext[agents.DryRunCommand], request clarifierRequestDocument, result clarifierResultDocument, now time.Time) (clarifySuggestResponse, error) {
+		AfterSuccess: func(attempt agentAttemptContext[agents.DryRunCommand], request clarifierRequestDocument, result clarifierResultDocument, now time.Time) (clarifierRoundResponse, error) {
 			created, warnings, status, approvalReset, err := a.recordClarifierSuggestions(context, attempt.AttemptID, attempt.AttemptPaths.StdoutLog, now)
 			if err != nil {
-				return clarifySuggestResponse{}, err
+				return clarifierRoundResponse{}, err
 			}
-			return clarifySuggestResponse{
+			return clarifierRoundResponse{
 				RunID:         runID,
 				RunStatus:     status.RunStatus,
 				AttemptID:     attempt.AttemptID,
@@ -188,8 +195,8 @@ func (a App) ClarifySuggest(stdout io.Writer, liveOutput io.Writer, runID string
 				Next:          nextCommandsForRun(context.Paths, runID),
 			}, nil
 		},
-		RenderSuccess: func(stdout io.Writer, response clarifySuggestResponse, request clarifierRequestDocument) {
-			writeClarifySuggest(stdout, response, request, prep.ClarifierName, prep.ModelSpec)
+		RenderSuccess: func(stdout io.Writer, response clarifierRoundResponse, request clarifierRequestDocument) {
+			fmt.Fprintf(stdout, "clarifier attempt %s recorded %d questions\n", response.AttemptID, len(response.Created))
 		},
 	})
 }
@@ -248,9 +255,9 @@ func writeClarifierPromptArtifacts(prep clarifierPreparation) error {
 
 // recordClarifierSuggestions parses the clarifier output into open questions and,
 // when any are recorded, refreshes the clarification artifacts. The returned bool
-// is the approvalReset flag from refreshClarificationArtifacts so ClarifySuggest
-// can surface an approved -> clarifying regression; it is false when zero
-// questions are recorded (the early-return path never refreshes artifacts).
+// is the approvalReset flag from refreshClarificationArtifacts so the round
+// response can surface an approved -> clarifying regression; it is false when
+// zero questions are recorded (the early-return path never refreshes artifacts).
 func (a App) recordClarifierSuggestions(context clarifyContext, attemptID string, stdoutPath string, now time.Time) ([]clarificationQuestionRecord, []string, clarifyStatusResponse, bool, error) {
 	stdoutBytes, err := activeStore.ReadBytes(stdoutPath)
 	if err != nil {
@@ -639,65 +646,4 @@ func renderClarifierPrompt(runID string) string {
 	fmt.Fprintln(&b, "depends_on (optional) lists the 1-based positions of earlier questions in this same block that must be answered first; omit or leave it empty for a foundational question.")
 	fmt.Fprintln(&b, "If no clarification is needed, return the same schema with an empty questions array.")
 	return b.String()
-}
-
-func writeClarifySuggest(stdout io.Writer, response clarifySuggestResponse, request clarifierRequestDocument, clarifierName string, modelSpec agents.ModelSpec) {
-	fmt.Fprintln(stdout, "Clarification suggestions recorded")
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Run:")
-	fmt.Fprintf(stdout, "  id: %s\n", response.RunID)
-	fmt.Fprintf(stdout, "  status: %s\n", response.RunStatus)
-	if response.ApprovalReset {
-		writeApprovalResetWarning(stdout, response.RunID, response.RunStatus)
-	}
-	fmt.Fprintln(stdout)
-	writeResolved(stdout, clarifierName, modelSpec)
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Attempt:")
-	fmt.Fprintf(stdout, "  id: %s\n", response.AttemptID)
-	fmt.Fprintf(stdout, "  clarifier: %s\n", response.Clarifier)
-	fmt.Fprintf(stdout, "  command: %s\n", formatAgentCommand(request.WouldRun))
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Questions:")
-	fmt.Fprintf(stdout, "  created: %d\n", len(response.Created))
-	for _, question := range response.Created {
-		blocking := ""
-		if question.Blocking {
-			blocking = " [blocking]"
-		}
-		fmt.Fprintf(stdout, "  - %s%s %s\n", question.ID, blocking, question.Question)
-	}
-	if len(response.Warnings) > 0 {
-		fmt.Fprintln(stdout)
-		fmt.Fprintln(stdout, "Warnings:")
-		for _, warning := range response.Warnings {
-			fmt.Fprintf(stdout, "  - %s\n", warning)
-		}
-	}
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Artifacts:")
-	fmt.Fprintf(stdout, "  request: %s\n", runArtifactRepoRel(response.RunID, filepath.ToSlash(filepath.Join(clarifierAttemptsArtifact, response.AttemptID, "request.json"))))
-	fmt.Fprintf(stdout, "  result: %s\n", runArtifactRepoRel(response.RunID, filepath.ToSlash(filepath.Join(clarifierAttemptsArtifact, response.AttemptID, "result.json"))))
-	fmt.Fprintf(stdout, "  stdout: %s\n", runArtifactRepoRel(response.RunID, response.Result.Stdout))
-	fmt.Fprintf(stdout, "  stderr: %s\n", runArtifactRepoRel(response.RunID, response.Result.Stderr))
-	fmt.Fprintf(stdout, "  last result: %s\n", runArtifactRepoRel(response.RunID, clarifierLastResultArtifact))
-}
-
-func writeClarifySuggestRunOnly(stdout io.Writer, request clarifierRequestDocument, result clarifierResultDocument, clarifierName string, modelSpec agents.ModelSpec) {
-	fmt.Fprintln(stdout, "Clarifier attempt finished")
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Run:")
-	fmt.Fprintf(stdout, "  id: %s\n", result.RunID)
-	fmt.Fprintln(stdout)
-	writeResolved(stdout, clarifierName, modelSpec)
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Attempt:")
-	fmt.Fprintf(stdout, "  id: %s\n", result.AttemptID)
-	fmt.Fprintf(stdout, "  clarifier: %s\n", result.Clarifier)
-	fmt.Fprintf(stdout, "  command: %s\n", formatAgentCommand(request.WouldRun))
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Result:")
-	fmt.Fprintf(stdout, "  exit code: %d\n", result.ExitCode)
-	fmt.Fprintf(stdout, "  timed out: %t\n", result.TimedOut)
-	writeCompletedDespiteTimeoutWarning(stdout, result.processResult)
 }

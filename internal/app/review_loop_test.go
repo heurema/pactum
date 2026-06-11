@@ -33,15 +33,14 @@ func TestReviewLoopFindingsThenCleanUsesConfigMaxRounds(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	setReviewLoopMaxRoundsConfig(t, paths, 2)
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "findings_then_clean")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -86,7 +85,7 @@ func TestReviewLoopFindingsThenCleanUsesConfigMaxRounds(t *testing.T) {
 	}
 	review := readReviewDoc(t, runPaths.ReviewJSON)
 	if review.Status == "approved" || review.Approval.ApprovedAt != nil || review.Approval.ApprovedBy != nil {
-		t.Fatalf("review loop must not auto-approve review: %#v", review)
+		t.Fatalf("review run must not auto-approve review: %#v", review)
 	}
 	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
 	for _, want := range []string{"review_loop_started", "reviewer_attempt_started", "review_fix_attempt_started", "gate_run_started", "review_loop_finished"} {
@@ -102,15 +101,14 @@ func TestReviewLoopAppliesFixOutcomesAndShrinksOpenFindings(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "findings_then_clean")
 	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_MODE", "fix_f001")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "2", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "2", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -137,15 +135,14 @@ func TestReviewLoopResolvesWhenBlockingFindingRebutted(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_MODE", "rebut_f001")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "5", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "5", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -173,14 +170,13 @@ func TestReviewLoopResolvesNonBlockingFindingsWithoutFixer(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "non_blocking_finding")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -201,20 +197,82 @@ func TestReviewLoopResolvesNonBlockingFindingsWithoutFixer(t *testing.T) {
 	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 }
 
+func TestReviewRunNoFixSinglePanelPassAcceptsFindingsAndStops(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	app = configureReviewLoopHelpers(t, app, paths)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+	assertNoFile(t, runPaths.ReviewJSON)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--no-fix", "--max-rounds", "1", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review run --no-fix exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+	var response struct {
+		reviewLoopSummaryDocument
+		Next []string `json:"next"`
+	}
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.TerminalReason != "findings_open" || len(response.Rounds) != 1 {
+		t.Fatalf("no-fix run should stop as findings_open after one round: %#v", response.reviewLoopSummaryDocument)
+	}
+	if got := response.Rounds[0]; got.ProposalsAccepted != 1 || got.OpenBlockingFindings != 1 || got.FixerAttemptID != "" {
+		t.Fatalf("no-fix round summary mismatch: %#v", got)
+	}
+	// The blocking findings await the human in review show.
+	if !equalStrings(response.Next, []string{"pactum review show " + runID}) {
+		t.Fatalf("no-fix next = %v, want review show", response.Next)
+	}
+	// The review was scaffolded implicitly, the proposal accepted, and no fixer ran.
+	assertFile(t, runPaths.ReviewJSON)
+	findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL)
+	if len(findings) != 1 || !findings[0].Blocking || findings[0].Source != "reviewer_proposal" {
+		t.Fatalf("no-fix run should accept the proposal into findings: %#v", findings)
+	}
+	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
+}
+
+func TestReviewRunNoFixStopsAfterFirstRoundWithOpenBlockingFindings(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	app = configureReviewLoopHelpers(t, app, paths)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--no-fix", "--max-rounds", "2", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review run --no-fix exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+	// Nothing can change the tree without the fixer, so reviewer-only rounds
+	// must not churn to the round cap: the run stops after round 1.
+	summary := readReviewLoopSummary(t, runPaths.ReviewLoopSummaryJSON)
+	if summary.TerminalReason != "findings_open" || len(summary.Rounds) != 1 {
+		t.Fatalf("no-fix run should stop after the first blocking round: %#v", summary)
+	}
+	assertNoFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(2)).ResultJSON)
+	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
+}
+
 func TestReviewLoopStopsAtMaxRounds(t *testing.T) {
 	root := t.TempDir()
 	stateDir := t.TempDir()
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "1"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "1"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 	if got := stdout.String(); !strings.Contains(got, "terminal reason: max_rounds") || !strings.Contains(got, "rounds: 1/1") {
 		t.Fatalf("human loop output mismatch:\n%s", got)
@@ -233,7 +291,6 @@ func TestReviewLoopStopsWhenCapturedTokenBudgetExceeded(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	setReviewLoopBudgetConfig(t, paths, budgetModeBlock, reviewLoopInt64Ptr(100))
 	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
 		SchemaVersion: usageRecordSchemaVersion,
@@ -251,9 +308,9 @@ func TestReviewLoopStopsWhenCapturedTokenBudgetExceeded(t *testing.T) {
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 	if got := stdout.String(); !strings.Contains(got, "terminal reason: budget_exceeded") || !strings.Contains(got, "budget max tokens: 100") || !strings.Contains(got, "budget captured tokens: 150") {
 		t.Fatalf("human budget stop output mismatch:\n%s", got)
@@ -278,7 +335,6 @@ func TestReviewLoopBudgetWarnContinuesToOtherTerminal(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	setReviewLoopBudgetConfig(t, paths, budgetModeWarn, reviewLoopInt64Ptr(100))
 	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
 		SchemaVersion: usageRecordSchemaVersion,
@@ -296,9 +352,9 @@ func TestReviewLoopBudgetWarnContinuesToOtherTerminal(t *testing.T) {
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -320,7 +376,6 @@ func TestReviewLoopNoMaxTokensIgnoresExistingUsage(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
 		SchemaVersion: usageRecordSchemaVersion,
 		RecordID:      "usage_budget_001",
@@ -337,9 +392,9 @@ func TestReviewLoopNoMaxTokensIgnoresExistingUsage(t *testing.T) {
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "findings_then_clean")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "2", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "2", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -373,7 +428,6 @@ func TestReviewLoopBudgetCountsOnlyCapturedUsage(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	setReviewLoopBudgetConfig(t, paths, budgetModeBlock, reviewLoopInt64Ptr(100))
 	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
 		SchemaVersion: usageRecordSchemaVersion,
@@ -403,9 +457,9 @@ func TestReviewLoopBudgetCountsOnlyCapturedUsage(t *testing.T) {
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -424,14 +478,13 @@ func TestReviewLoopDedupsReproposedOpenFindingAcrossRounds(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "4", "--patience", "2", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "4", "--patience", "2", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -472,14 +525,13 @@ func TestReviewLoopAcceptsNewFindingInLaterRound(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_new_findings")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "2", "--patience", "3", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "2", "--patience", "3", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -522,14 +574,13 @@ func TestReviewLoopDedupsIdenticalProposalsWithinRound(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "same_round_duplicates")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -560,15 +611,14 @@ func TestReviewLoopPanelRunsReviewersAndUpgradesDuplicateSeverity(t *testing.T) 
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	setReviewPanelConfig(t, paths, reviewLoopPanelLowName, reviewLoopPanelHighName)
 	app = configureReviewLoopPanelHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "panel_duplicate")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -641,7 +691,6 @@ func TestReviewLoopExplicitReviewerDisablesConfiguredPanel(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	// The loop helpers (not the panel helpers) back this registry: the panel is
 	// configured but must not run, and the explicit reviewer resolves the
 	// loop-reviewer helper on its inferred engine.
@@ -650,9 +699,9 @@ func TestReviewLoopExplicitReviewerDisablesConfiguredPanel(t *testing.T) {
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -675,15 +724,14 @@ func TestReviewLoopCleanPanelRoundTerminates(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	setReviewPanelConfig(t, paths, reviewLoopPanelLowName, reviewLoopPanelHighName)
 	app = configureReviewLoopPanelHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "panel_clean")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--agent", reviewLoopFixerName, "--max-rounds", "4", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--agent", reviewLoopFixerName, "--max-rounds", "4", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -732,12 +780,11 @@ func TestReviewLoopUnknownPanelReviewerFailsClearly(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	setReviewPanelConfig(t, paths, "missing-reviewer", reviewLoopPanelHighName)
 	app = configureReviewLoopPanelHelpers(t, app, paths)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--agent", reviewLoopFixerName, "--max-rounds", "1"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--agent", reviewLoopFixerName, "--max-rounds", "1"}, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("unknown panel reviewer exited %d, want 1", code)
 	}
@@ -752,16 +799,15 @@ func TestReviewLoopReacceptsResolvedFindingWhenReproposed(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	appendReviewLoopFindingForTest(t, runPaths, runID, "f_001", reviewLoopFixtureFindingCore("loop reviewer found a fixable issue", 42))
 	appendReviewLoopResolutionForTest(t, runPaths, runID, "r_001", "f_001")
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -789,16 +835,15 @@ func TestReviewLoopSuppressesRebuttedResolvedFindingWhenReproposed(t *testing.T)
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	appendReviewLoopFindingForTest(t, runPaths, runID, "f_001", reviewLoopFixtureFindingCore("loop reviewer found a fixable issue", 42))
 	appendReviewLoopResolutionWithOutcomeForTest(t, runPaths, runID, "r_001", "f_001", "rebutted")
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -826,16 +871,15 @@ func TestReviewLoopResetsStalemateStreakWhenFixerChangesWorkingTree(t *testing.T
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_new_findings")
 	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_SEQUENCE_FILE", filepath.Join(stateDir, "fixer-sequence"))
 	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_MODE", "append_readme")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3", "--patience", "2", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3", "--patience", "2", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -871,14 +915,13 @@ func TestReviewLoopRequiresConsecutiveCleanRounds(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "clean_findings_clean_clean")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "4", "--clean-rounds", "2", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "4", "--clean-rounds", "2", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -916,14 +959,13 @@ func TestReviewLoopUnparsedFindingsIsNotCleanRound(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "malformed")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "2", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "2", "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
 	}
 	var summary reviewLoopSummaryDocument
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
@@ -944,20 +986,19 @@ func TestReviewLoopStopsWithGateFailedWhenFixerBreaksValidation(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, []string{gateValidationCommandForTest()}, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 	t.Setenv("PACTUM_GATE_HELPER_EXIT", "7")
 
 	var stdout, stderr bytes.Buffer
-	err := app.ReviewLoop(&stdout, &stderr, runID, reviewLoopOptions{
+	err := app.ReviewRun(&stdout, &stderr, runID, reviewRunOptions{
 		Reviewer:   reviewLoopReviewerName,
 		Agent:      reviewLoopFixerName,
 		MaxRounds:  3,
 		JSONOutput: true,
 	})
 	if err != nil {
-		t.Fatalf("review loop should stop cleanly on failed gate, got error: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+		t.Fatalf("review run should stop cleanly on failed gate, got error: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -987,20 +1028,19 @@ func TestReviewLoopStopsWithGateFailedWhenFixerViolatesPathScope(t *testing.T) {
 	app, paths, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-in-scope", "internal/app/**"}, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_MODE", "append_readme")
 
 	var stdout, stderr bytes.Buffer
-	err := app.ReviewLoop(&stdout, &stderr, runID, reviewLoopOptions{
+	err := app.ReviewRun(&stdout, &stderr, runID, reviewRunOptions{
 		Reviewer:   reviewLoopReviewerName,
 		Agent:      reviewLoopFixerName,
 		MaxRounds:  3,
 		JSONOutput: true,
 	})
 	if err != nil {
-		t.Fatalf("review loop should stop cleanly on blocked scope gate, got error: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+		t.Fatalf("review run should stop cleanly on blocked scope gate, got error: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
 	}
 
 	var summary reviewLoopSummaryDocument
@@ -1029,20 +1069,19 @@ func TestReviewLoopGateInfrastructureErrorStillReturnsError(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	mustWriteFile(t, executionAttemptPaths(runPaths, "attempt_001").ResultJSON, "{")
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 	var stdout, stderr bytes.Buffer
-	err := app.ReviewLoop(&stdout, &stderr, runID, reviewLoopOptions{
+	err := app.ReviewRun(&stdout, &stderr, runID, reviewRunOptions{
 		Reviewer:   reviewLoopReviewerName,
 		Agent:      reviewLoopFixerName,
 		MaxRounds:  1,
 		JSONOutput: true,
 	})
 	if err == nil {
-		t.Fatalf("review loop should return gate infrastructure error")
+		t.Fatalf("review run should return gate infrastructure error")
 	}
 	var gateErr gateProcessError
 	if errors.As(err, &gateErr) {
@@ -1056,7 +1095,7 @@ func TestReviewLoopGateInfrastructureErrorStillReturnsError(t *testing.T) {
 		t.Fatalf("infrastructure error should not record a gate report for the round: %#v", got)
 	}
 	if stdout.Len() != 0 {
-		t.Fatalf("errored review loop should not emit summary JSON stdout:\n%s", stdout.String())
+		t.Fatalf("errored review run should not emit summary JSON stdout:\n%s", stdout.String())
 	}
 }
 
@@ -1065,15 +1104,14 @@ func TestReviewLoopStreamsSubRunOutputToStderrWithCleanStdout(t *testing.T) {
 	stateDir := t.TempDir()
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runReviewCommand(t, app, "gate", "run", runID)
-	runReviewCommand(t, app, "review", "prepare", runID)
 	setReviewLoopMaxRoundsConfig(t, paths, 2)
 	app = configureReviewLoopHelpers(t, app, paths)
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "findings_then_clean")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "loop", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--json"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("review loop exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 
 	// The loop's own stdout stays a clean, parseable summary. The sub-command

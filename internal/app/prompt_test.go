@@ -79,21 +79,82 @@ func TestPromptBuildFailsWhenBlockingClarificationOpen(t *testing.T) {
 	}
 }
 
-func TestPromptBuildFailsWhenProjectMapStale(t *testing.T) {
+func readWorkspaceMapRunID(t *testing.T, manifestPath string) string {
+	t.Helper()
+	manifest, err := readWorkspaceManifest(manifestPath)
+	assertNoError(t, err)
+	return manifest.Map.CurrentRunID
+}
+
+func TestPromptBuildSelfHealsStaleProjectMap(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID := setupApprovedPromptContract(t, root)
+	app, paths, runID := setupApprovedPromptContract(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	previousMapRunID := readWorkspaceMapRunID(t, paths.Manifest)
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
-	if code == 0 {
-		t.Fatalf("prompt build should fail with stale project map")
+	if code != 0 {
+		t.Fatalf("prompt build with a stale map should refresh and succeed, exited %d, stderr: %s", code, stderr.String())
 	}
-	if got := stderr.String(); !strings.Contains(got, "cannot build executor prompt: project map is stale") {
-		t.Fatalf("stale map stderr mismatch:\n%s", got)
+	newMapRunID := readWorkspaceMapRunID(t, paths.Manifest)
+	if newMapRunID == previousMapRunID {
+		t.Fatalf("prompt build should have refreshed the stale map: %q", newMapRunID)
 	}
-	if got := stdout.String(); !strings.Contains(got, "pactum map refresh") {
-		t.Fatalf("stale map output should suggest refresh:\n%s", got)
+	got := stdout.String()
+	for _, want := range []string{
+		"Executor prompt built",
+		"stale map refreshed: " + newMapRunID,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("self-heal output missing %q:\n%s", want, got)
+		}
+	}
+	manifest, err := readPromptManifest(runPaths.PromptManifest)
+	assertNoError(t, err)
+	want := promptMapRefresh{Triggered: true, Reason: "project_map_stale", PreviousMapRunID: previousMapRunID, RunID: newMapRunID}
+	if manifest.MapRefresh != want {
+		t.Fatalf("manifest map_refresh = %#v, want %#v", manifest.MapRefresh, want)
+	}
+	if manifest.MapRunID != newMapRunID || !manifest.Checks.ProjectMapFresh {
+		t.Fatalf("manifest should record the refreshed map: %#v", manifest)
+	}
+}
+
+func TestPromptBuildJSONReportsMapRefresh(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedPromptContract(t, root)
+	previousMapRunID := readWorkspaceMapRunID(t, paths.Manifest)
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"prompt", "build", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("prompt build --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var response promptBuildResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if !response.MapRefresh.Triggered || response.MapRefresh.Reason != "project_map_stale" {
+		t.Fatalf("response map_refresh = %#v, want a triggered refresh", response.MapRefresh)
+	}
+	if response.MapRefresh.PreviousMapRunID != previousMapRunID || response.MapRefresh.RunID == previousMapRunID || response.MapRefresh.RunID == "" {
+		t.Fatalf("response map_refresh run ids mismatch: %#v (previous %q)", response.MapRefresh, previousMapRunID)
+	}
+	if response.Manifest.MapRefresh != response.MapRefresh {
+		t.Fatalf("manifest and response map_refresh diverge: %#v vs %#v", response.Manifest.MapRefresh, response.MapRefresh)
+	}
+
+	// A fresh map reports an untriggered refresh.
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"prompt", "build", runID, "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("prompt build --json (fresh map) exited %d, stderr: %s", code, stderr.String())
+	}
+	var fresh promptBuildResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &fresh))
+	if fresh.MapRefresh != (promptMapRefresh{Triggered: false}) {
+		t.Fatalf("fresh map should report map_refresh{triggered:false}: %#v", fresh.MapRefresh)
 	}
 }
 
@@ -135,7 +196,7 @@ func TestPromptBuildSucceedsForApprovedContract(t *testing.T) {
 		".heurema/pactum/runs/" + runID + "/context/executor-context.md",
 		".heurema/pactum/runs/" + runID + "/contract/prompt-manifest.json",
 		"Next:",
-		"pactum execute plan --agent codex",
+		"pactum execute plan " + runID + " --agent codex",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("prompt build output missing %q:\n%s", want, got)

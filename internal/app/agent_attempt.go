@@ -47,7 +47,7 @@ type agentAttemptLifecycle[Prepared any, Request any, Result any, Response any] 
 	// boundary. Write stages (execute, review fix) populate it; read-only stages
 	// leave it nil. The CLI transport ignores it.
 	WritePathAllowed func(repoRelPath string) bool
-	// ReadOnly marks read-only stages (review, clarify suggest, contract draft):
+	// ReadOnly marks read-only stages (review, clarifier round, contract draft):
 	// the ACP transport denies the agent's writes and permission requests. Write
 	// stages (execute, review fix) leave it false. The CLI transport ignores it.
 	ReadOnly bool

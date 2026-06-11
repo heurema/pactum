@@ -28,7 +28,7 @@ This document defines where those loops should live.
 Corollary — the human / machine split:
 
 > The **human defines WHAT** (intent, captured in the contract). The **machine does
-> HOW** (execute) and **self-corrects** (review loop). Human involvement front-loads
+> HOW** (execute) and **self-corrects** (review rounds). Human involvement front-loads
 > into the contract phase and bookends at approval gates.
 
 ## Autonomy boundaries
@@ -36,7 +36,7 @@ Corollary — the human / machine split:
 | Phase | Iteration | Who answers / decides | Human gate |
 |-------|-----------|-----------------------|------------|
 | Contract + clarification | **Loop** (human-in-the-loop) | Human answers; agent generates questions + drafts contract | `contract approve --by manual` |
-| Execute | **One-shot** | Agent (autonomous) | — (covered by the review loop + final review approve) |
+| Execute | **One-shot** | Agent (autonomous) | — (covered by the review rounds + final review approve) |
 | Review | **Loop** (autonomous) | Agent finds, agent fixes | `review approve --by manual` |
 
 ---
@@ -89,7 +89,7 @@ on trivia the agent has honestly flagged.
 
 One agent attempt per run. If execute produced a wrong result, the remedy is **new
 information** (review findings), not re-running the same prompt. Iteration is
-therefore pushed to the review loop, where each round carries new information.
+therefore pushed to the review rounds, where each round carries new information.
 
 **Constraint — no task decomposition.** One contract = one bounded change = one
 execute. This keeps Pactum focused on *bounded changes*; large features must be
@@ -98,7 +98,7 @@ stage) is explicitly **out of scope** for this design and may be revisited later
 
 **Allowed exception.** A single retry is acceptable only for an *infrastructure*
 failure — the agent crashed or produced no diff at all — which is distinct from
-"produced a result that needs improvement" (that goes to the review loop).
+"produced a result that needs improvement" (that goes to the review rounds).
 
 ---
 

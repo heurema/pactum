@@ -24,9 +24,20 @@ type promptManifest struct {
 	ApprovedBy     string                  `json:"approved_by"`
 	ApprovedAt     string                  `json:"approved_at"`
 	MapRunID       string                  `json:"map_run_id"`
+	MapRefresh     promptMapRefresh        `json:"map_refresh"`
 	Artifacts      promptManifestArtifacts `json:"artifacts"`
 	Memory         *promptManifestMemory   `json:"memory"`
 	Checks         promptManifestChecks    `json:"checks"`
+}
+
+// promptMapRefresh records whether prompt build self-healed a stale project
+// map before building. The same additive object appears in the prompt
+// manifest and the prompt build --json response.
+type promptMapRefresh struct {
+	Triggered        bool   `json:"triggered"`
+	Reason           string `json:"reason,omitempty"`
+	PreviousMapRunID string `json:"previous_map_run_id,omitempty"`
+	RunID            string `json:"run_id,omitempty"`
 }
 
 type promptManifestArtifacts struct {
@@ -70,10 +81,11 @@ type promptManifestChecks struct {
 }
 
 type promptBuildResponse struct {
-	RunID     string         `json:"run_id"`
-	RunStatus string         `json:"run_status"`
-	Manifest  promptManifest `json:"manifest"`
-	Next      []string       `json:"next"`
+	RunID      string           `json:"run_id"`
+	RunStatus  string           `json:"run_status"`
+	MapRefresh promptMapRefresh `json:"map_refresh"`
+	Manifest   promptManifest   `json:"manifest"`
+	Next       []string         `json:"next"`
 }
 
 type promptShowResponse struct {
@@ -117,14 +129,25 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 	if err != nil {
 		return err
 	}
+	// A stale project map is self-healed, not a failure: prompt build runs the
+	// refresh itself and records it in the manifest and response.
+	mapRefresh := promptMapRefresh{Triggered: false}
 	if report.ProjectMap.Status != "fresh" {
-		if !jsonOutput {
-			fmt.Fprintln(stdout, "Project map is stale")
-			fmt.Fprintln(stdout)
-			fmt.Fprintln(stdout, "Suggested:")
-			fmt.Fprintln(stdout, "  pactum map refresh")
+		previousMapRunID := report.ProjectMap.RunID
+		refreshed, err := a.RefreshMap(context.Root)
+		if err != nil {
+			return err
 		}
-		return projectMapStaleError("build executor prompt")
+		mapRefresh = promptMapRefresh{
+			Triggered:        true,
+			Reason:           "project_map_stale",
+			PreviousMapRunID: previousMapRunID,
+			RunID:            refreshed.RunID,
+		}
+		report, err = a.workspaceStatus(context.Root)
+		if err != nil {
+			return err
+		}
 	}
 
 	now := a.nowUTC()
@@ -136,7 +159,7 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 	if err != nil {
 		return err
 	}
-	manifest := buildPromptManifest(context, hash, report.ProjectMap.RunID, now, memory)
+	manifest := buildPromptManifest(context, hash, report.ProjectMap.RunID, mapRefresh, now, memory)
 	// Refresh the run's search context from the approved contract: clarification
 	// and revision usually make the work more precise than the initial task
 	// sentence, so re-derive targeted queries from goal/scope/acceptance/validation.
@@ -165,7 +188,7 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 		return err
 	}
 
-	response := promptBuildResponse{RunID: runID, RunStatus: context.State.Status, Manifest: manifest, Next: nextCommandsForRun(context.Paths, runID)}
+	response := promptBuildResponse{RunID: runID, RunStatus: context.State.Status, MapRefresh: mapRefresh, Manifest: manifest, Next: nextCommandsForRun(context.Paths, runID)}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
@@ -216,7 +239,7 @@ func (a App) PromptShow(stdout io.Writer, runID string, jsonOutput bool) error {
 	return nil
 }
 
-func buildPromptManifest(context runContext, contractSHA256 string, mapRunID string, builtAt time.Time, memory promptManifestMemory) promptManifest {
+func buildPromptManifest(context runContext, contractSHA256 string, mapRunID string, mapRefresh promptMapRefresh, builtAt time.Time, memory promptManifestMemory) promptManifest {
 	approvedBy := ""
 	if context.Approval.ApprovedBy != nil {
 		approvedBy = *context.Approval.ApprovedBy
@@ -236,6 +259,7 @@ func buildPromptManifest(context runContext, contractSHA256 string, mapRunID str
 		ApprovedBy:     approvedBy,
 		ApprovedAt:     approvedAt,
 		MapRunID:       mapRunID,
+		MapRefresh:     mapRefresh,
 		Artifacts: promptManifestArtifacts{
 			Prompt:          "contract/prompt.md",
 			ExecutorContext: "context/executor-context.md",
@@ -513,6 +537,11 @@ func writePromptBuild(stdout io.Writer, response promptBuildResponse) {
 	fmt.Fprintf(stdout, "  id: %s\n", response.RunID)
 	fmt.Fprintf(stdout, "  status: %s\n", response.RunStatus)
 	fmt.Fprintln(stdout)
+	if response.MapRefresh.Triggered {
+		fmt.Fprintln(stdout, "Project map:")
+		fmt.Fprintf(stdout, "  stale map refreshed: %s\n", response.MapRefresh.RunID)
+		fmt.Fprintln(stdout)
+	}
 	fmt.Fprintln(stdout, "Checks:")
 	fmt.Fprintln(stdout, "  contract approved: yes")
 	fmt.Fprintln(stdout, "  contract hash: ok")
@@ -524,7 +553,7 @@ func writePromptBuild(stdout io.Writer, response promptBuildResponse) {
 	fmt.Fprintf(stdout, "  prompt manifest: %s\n", runArtifactRepoRel(response.RunID, "contract/prompt-manifest.json"))
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Next:")
-	fmt.Fprintln(stdout, "  pactum execute plan --agent codex")
+	fmt.Fprintf(stdout, "  pactum execute plan %s --agent codex\n", response.RunID)
 }
 
 func writePromptShow(stdout io.Writer, response promptShowResponse) {

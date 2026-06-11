@@ -30,11 +30,10 @@ type mapCmd struct {
 }
 
 type clarifyCmd struct {
-	Add     clarifyAddCmd     `cmd:"" help:"Add a manual clarification question."`
-	Answer  clarifyAnswerCmd  `cmd:"" help:"Record a manual clarification answer."`
-	Suggest clarifySuggestCmd `cmd:"" help:"Run a read-only clarifier agent and record proposed questions."`
-	Run     clarifyRunCmd     `cmd:"" help:"Run clarifier rounds that auto-resolve high-confidence recommendations until convergence."`
-	Show    clarifyShowCmd    `cmd:"" help:"Print clarification status for a run."`
+	Add    clarifyAddCmd    `cmd:"" help:"Add a manual clarification question."`
+	Answer clarifyAnswerCmd `cmd:"" help:"Record a manual clarification answer."`
+	Run    clarifyRunCmd    `cmd:"" help:"Run clarifier rounds that auto-resolve high-confidence recommendations until convergence."`
+	Show   clarifyShowCmd   `cmd:"" help:"Print clarification status for a run."`
 }
 
 type clarifyAddCmd struct {
@@ -44,22 +43,18 @@ type clarifyAddCmd struct {
 }
 
 type clarifyAnswerCmd struct {
-	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <question_id> <answer>"`
-	By         string   `name:"by" default:"manual" help:"Decider name to record."`
-	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
-}
-
-type clarifySuggestCmd struct {
-	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to suggest clarifications for."`
-	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the clarifier. Defaults to cross-model selection against the run executor."`
-	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without clarifier output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
-	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
+	Args           []string `arg:"" optional:"" name:"args" help:"[run_id] <question_id> <answer>"`
+	By             string   `name:"by" default:"manual" help:"Decider name to record."`
+	Recommended    bool     `name:"recommended" help:"Record the question's stored recommended answer as the answer."`
+	AllRecommended bool     `name:"all-recommended" help:"Record the stored recommended answer for every open question that has one."`
+	JSONOutput     bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type clarifyRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to clarify."`
 	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the clarifier. Defaults to cross-model selection against the run executor."`
 	MaxRounds  int           `name:"max-rounds" help:"Maximum clarifier rounds. Defaults to clarify.max_rounds."`
+	NoAuto     bool          `name:"no-auto" help:"Skip auto-resolution of high-confidence recommendations; created questions stay open for the human."`
 	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without clarifier output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
@@ -94,15 +89,13 @@ type gateCmd struct {
 }
 
 type reviewCmd struct {
-	Prepare  reviewPrepareCmd  `cmd:"" help:"Prepare manual review artifacts."`
 	Status   reviewStatusCmd   `cmd:"" help:"Show manual review status."`
 	Show     reviewShowCmd     `cmd:"" help:"Show manual review findings."`
 	Finding  reviewFindingCmd  `cmd:"" help:"Manage manual review findings."`
 	Approve  reviewApproveCmd  `cmd:"" help:"Approve a manual review."`
 	Plan     reviewPlanCmd     `cmd:"plan" help:"Prepare reviewer artifacts without running a reviewer."`
-	Run      reviewRunCmd      `cmd:"run" help:"Run a built-in reviewer and capture attempt artifacts."`
+	Run      reviewRunCmd      `cmd:"run" help:"Run reviewer/fixer rounds until a clean review round or max rounds."`
 	Fix      reviewFixCmd      `cmd:"fix" help:"Run a write-enabled fixer and apply its outcomes."`
-	Loop     reviewLoopCmd     `cmd:"loop" help:"Run reviewer/fixer rounds until a clean review round or max rounds."`
 	Proposal reviewProposalCmd `cmd:"" help:"Manage pending review finding proposals."`
 }
 
@@ -214,11 +207,6 @@ type gateShowCmd struct {
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
-type reviewPrepareCmd struct {
-	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to review."`
-	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
-}
-
 type reviewStatusCmd struct {
 	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
@@ -258,10 +246,15 @@ type reviewPlanCmd struct {
 }
 
 type reviewRunCmd struct {
-	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to review."`
-	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the reviewer. Defaults to cross-model selection against the run executor."`
-	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without reviewer output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
-	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
+	RunID       string        `arg:"" optional:"" name:"run_id" help:"Run id to review."`
+	Reviewer    string        `name:"reviewer" help:"Registry name (config agents) of the reviewer. Defaults to the review panel, falling back to cross-model selection."`
+	Agent       string        `name:"agent" help:"Registry name (config agents) of the fixer. Defaults to the first registry entry."`
+	MaxRounds   int           `name:"max-rounds" help:"Maximum review rounds. Defaults to review.max_rounds."`
+	Patience    int           `name:"patience" help:"Consecutive no-change fixer rounds before stopping as stalemate. Defaults to review.patience."`
+	CleanRounds int           `name:"clean-rounds" help:"Consecutive clean review rounds required before convergence. Defaults to review.clean_rounds."`
+	NoFix       bool          `name:"no-fix" help:"Never invoke the fixer; stop after the first round that leaves open blocking findings."`
+	Timeout     time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without reviewer or fixer output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
+	JSONOutput  bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewFixRunCmd struct {
@@ -269,17 +262,6 @@ type reviewFixRunCmd struct {
 	Agent      string        `name:"agent" help:"Registry name (config agents) of the fixer. Defaults to the first registry entry."`
 	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without fixer output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
-}
-
-type reviewLoopCmd struct {
-	RunID       string        `arg:"" optional:"" name:"run_id" help:"Run id to review."`
-	Reviewer    string        `name:"reviewer" help:"Registry name (config agents) of the reviewer. Defaults to the review panel, falling back to cross-model selection."`
-	Agent       string        `name:"agent" help:"Registry name (config agents) of the fixer. Defaults to the first registry entry."`
-	MaxRounds   int           `name:"max-rounds" help:"Maximum review rounds. Defaults to review.max_rounds."`
-	Patience    int           `name:"patience" help:"Consecutive no-change fixer rounds before stopping as stalemate. Defaults to review.patience."`
-	CleanRounds int           `name:"clean-rounds" help:"Consecutive clean review rounds required before convergence. Defaults to review.clean_rounds."`
-	Timeout     time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without reviewer or fixer output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
-	JSONOutput  bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewProposalCollectCmd struct {

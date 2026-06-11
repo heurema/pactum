@@ -14,13 +14,13 @@ report, the review, and the accepted memory are all files you can read.
 | Init / map | `pactum init`, `pactum map refresh` | `manifest.json`, `config.yaml`, `map/` (`wiki/` pages, `repo-map.md`, `llms.txt`, `files.jsonl`, `code-items.jsonl`, `hashes.jsonl`, `search.sqlite`) | Yes |
 | Status / search | `pactum status`, `pactum search "<query>"` | — (reads map + workspace) | No |
 | Task | `pactum task new "<task>"`, `pactum task list`, `pactum task show`, `pactum task use` | `runs/<id>/run.json`, `task.md`, `context/repo-context.md`, `context/search-results.json`, `context/memory-context.md`, `contract/contract.json`, `contract/contract.md`, `contract/approval.json`, `cache/current-run` | `new`/`use`: Yes; `list`/`show`: No |
-| Clarify | `pactum clarify add`, `pactum clarify answer`, `pactum clarify show` | `clarify/questions.jsonl`, `clarify/answers.jsonl`, `clarify/decisions.jsonl` | `add`/`answer`: Yes; `show`: No |
+| Clarify | `pactum clarify add`, `pactum clarify answer`, `pactum clarify run`, `pactum clarify show` | `clarify/questions.jsonl`, `clarify/answers.jsonl`, `clarify/decisions.jsonl`, `clarify/loop-summary.json` | `add`/`answer`/`run`: Yes; `show`: No |
 | Contract | `pactum contract revise`, `pactum contract approve`, `pactum contract show` | `contract/contract.json`, `contract/contract.md`, `contract/approval.json` | `revise`/`approve`: Yes; `show`: No |
 | Prompt | `pactum prompt build`, `pactum prompt show` | `contract/prompt.md`, `contract/prompt-manifest.json`, `context/executor-context.md`, `context/memory-context.md`, `context/memory-selection.json` | `build`: Yes; `show`: No |
 | Execute | `pactum execute plan`, `pactum execute run`, `pactum execute show` | `execute/dry-run.json`, `execute/attempts/attempt_NNN/{request,result,stdout,stderr}`, `execute/last-result.json` | `plan`/`run`: Yes; `show`: No |
 | Gate | `pactum gate run`, `pactum gate show` | `gate/gate-report.json`, `gate/validation/command_NNN/{stdout,stderr,result}` | `run`: Yes; `show`: No |
-| Review | `pactum review prepare`, `pactum review finding add`, `pactum review finding resolve`, `pactum review approve`, `pactum review status/show` | `review/review.json`, `review/findings.jsonl`, `review/resolutions.jsonl` | mutating subcommands: Yes; `status`/`show`: No |
-| Reviewer proposals | `pactum review plan`, `pactum review run`, `pactum review proposal collect`, `pactum review proposal accept`, `pactum review proposal reject` | `review/reviewer-context.md`, `review/reviewer-prompt-<name>-<lens>.md`, `review/reviewer-dry-run.json`, `review/reviewer-attempts/...`, `review/proposals.jsonl`, `review/proposal-decisions.jsonl` | Yes |
+| Review | `pactum review finding add`, `pactum review finding resolve`, `pactum review approve`, `pactum review status/show` | `review/review.json`, `review/findings.jsonl`, `review/resolutions.jsonl` | mutating subcommands: Yes; `status`/`show`: No |
+| Reviewer rounds | `pactum review plan`, `pactum review run`, `pactum review proposal collect`, `pactum review proposal accept`, `pactum review proposal reject` | `review/reviewer-context.md`, `review/reviewer-prompt-<name>-<lens>.md`, `review/reviewer-dry-run.json`, `review/reviewer-attempts/...`, `review/proposals.jsonl`, `review/proposal-decisions.jsonl`, `review/loop-summary.json` | Yes |
 | Memory | `pactum memory propose`, `pactum memory show`, `pactum memory accept`, `pactum memory search`, `pactum memory refresh`, `pactum memory stale` | `runs/<id>/memory/{memory-candidate.json,memory-candidate.md,memory-acceptance.json}`, `memory/items.jsonl`, `memory/project-memory.md`, `memory/refreshes.jsonl` | `propose`/`accept`/`refresh`: Yes; `show`/`search`/`stale`: No |
 | Export | `pactum export [run_id] --output <path>` | the ZIP archive at `--output` (outside the exported run directory) | No |
 
@@ -107,6 +107,23 @@ mark it as blocking contract approval. `pactum clarify answer <run_id> q_001
 summarizes open and answered questions. Open **blocking** questions prevent
 contract approval and prompt build.
 
+`pactum clarify run <run_id>` runs autonomous clarifier rounds: a read-only
+clarifier proposes questions, high-confidence recommendations are auto-resolved,
+and the loop repeats until converged, `needs_human`, or the round cap
+(`--max-rounds`). `--no-auto` disables auto-resolution entirely — created
+questions stay open for the human, so a single manual clarifier pass is
+`pactum clarify run --no-auto --max-rounds 1`. Every run writes
+`clarify/loop-summary.json`.
+
+A clarifier question stores a recommended answer. `pactum clarify answer
+<run_id> q_001 --recommended` records that stored recommendation as the answer —
+it errors when the question is already answered, has no recommendation, or
+depends on unanswered questions. `pactum clarify answer <run_id>
+--all-recommended` answers every open question that carries a recommendation in
+dependency order and reports the skipped ones (no recommendation, or
+dependencies unanswered). Both record provenance distinguishable from a typed
+answer (`manual_recommended` / `manual_all_recommended`).
+
 Every decision verb — `clarify answer`, `contract accept`, `contract approve`,
 `review proposal accept`/`reject`, `review approve`, `memory accept` — takes an
 optional `--by <principal>` (default `manual`) naming whose decision is being
@@ -130,9 +147,12 @@ resets the approval, because the recorded hash no longer matches.
 `pactum prompt build <run_id>` builds the executor **prompt boundary**: a
 deterministic `prompt.md` plus a `prompt-manifest.json` that records the
 approved contract hash, the project map run, and the accepted-memory boundary
-(content and source hashes). Build requires the contract to be approved, the
-project map fresh, and no open blocking clarifications. `pactum prompt show`
-prints the built prompt.
+(content and source hashes). Build requires the contract to be approved and no
+open blocking clarifications. A stale project map is not a failure: `prompt
+build` refreshes it itself, names the new map run id in its output, and records
+the self-heal as a `map_refresh` object (`{"triggered": false}` when no refresh
+was needed) in both the `--json` response and the prompt manifest. `pactum
+prompt show` prints the built prompt.
 
 ### Execute
 
@@ -174,19 +194,32 @@ effect on the gate. The gate status is `passed`, `needs_review`, or `failed`.
 
 ### Review
 
-`pactum review prepare <run_id>` creates the manual review (requires a gate
-report). `pactum review finding add` appends a finding with a severity and
-category; `--blocking` blocks approval until resolved. `pactum review finding
-resolve <run_id> f_001` records a resolution. `pactum review approve <run_id> --by
-manual` approves the review, which requires that the gate did not fail and that
-no blocking findings remain. Adding a finding to an approved review resets the
-approval.
+There is no separate preparation step: once a gate report exists, the mutating
+review commands (`review run`, `review finding add`, `review approve`)
+self-scaffold `review/review.json` and the findings/resolutions records, and
+`review status`/`review show` derive the empty pending state read-only. `pactum
+review finding add` appends a finding with a severity and category; `--blocking`
+blocks approval until resolved. `pactum review finding resolve <run_id> f_001`
+records a resolution. `pactum review approve <run_id> --by manual` approves the
+review, which requires that the gate did not fail and that no blocking findings
+remain. Adding a finding to an approved review resets the approval.
 
-### Reviewer proposals
+### Reviewer rounds
 
-Reviewer agents are optional and never trusted automatically. `pactum review
-plan` prepares the reviewer prompt/context without launching. `pactum review
-run` runs a reviewer subprocess and captures its output. `pactum review
+Reviewer agents are optional and never trusted to approve anything. `pactum
+review plan` prepares the reviewer prompt/context without launching. `pactum
+review run <run_id>` runs autonomous reviewer/fixer rounds: each round fans the
+reviewer panel out across the fixed lenses, parses structured finding proposals
+from the captured output, accepts valid ones into review findings, and — while
+open **blocking** findings remain — runs the write-enabled fixer, applies its
+outcomes, and re-runs the gate. `--reviewer` overrides the panel, `--agent`
+picks the fixer, and `--max-rounds`, `--patience`, and `--clean-rounds` bound
+the loop. `--no-fix` never invokes the fixer and stops after the first round
+that leaves open blocking findings (`findings_open`), so a single manual panel
+pass is `pactum review run --no-fix --max-rounds 1`. Every run writes
+`review/loop-summary.json`.
+
+The surgical commands remain for working outside the rounds: `pactum review
 proposal collect <run_id>` parses optional fenced-JSON finding blocks from the
 captured stdout of every completed reviewer attempt (all lenses; `--attempt`
 narrows to one) into **pending proposals**. A human then runs
@@ -204,10 +237,10 @@ shrinks as work completes; a finding the fixer resolved as `rebutted` (a false
 positive) is suppressed if a later round re-proposes the same `(file, line,
 message)`.
 
-### Review loop terminal reasons
+### Review run terminal reasons
 
-`pactum review loop` writes `review/loop-summary.json` with a
-`terminal_reason` so operators can tell why the autonomous reviewer/fixer loop
+`pactum review run` writes `review/loop-summary.json` with a
+`terminal_reason` so operators can tell why the autonomous reviewer/fixer rounds
 stopped.
 
 Convergence is gated on **blocking** findings. Each round records
@@ -223,6 +256,10 @@ finding churn from running the loop to `max_rounds` without converging.
   findings remain (`open_blocking_findings == 0`). Advisory (non-blocking)
   findings may still be open and recorded. A round whose accepted proposals are
   all non-blocking converges `resolved` without invoking the fixer.
+- `findings_open` — `--no-fix` was set and a round left open blocking findings.
+  Nothing can change the tree without the fixer, so the run stops instead of
+  churning reviewer-only rounds; the findings await the human in
+  `pactum review show`.
 - `clean_round` — the configured number of consecutive reviewer rounds reported
   no findings or warnings.
 - `stalemate` — fixer rounds repeatedly left the working-tree fingerprint

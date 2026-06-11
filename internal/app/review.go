@@ -24,10 +24,8 @@ const (
 	reviewerDryRunArtifact     = "review/reviewer-dry-run.json"
 	reviewerDryRunSchema       = "pactum.review_dry_run.v2"
 	reviewerAttemptsArtifact   = "review/reviewer-attempts"
-	reviewerLastResultArtifact = "review/reviewer-last-result.json"
 	reviewerRequestSchema      = "pactum.reviewer_request.v1"
 	reviewerResultSchema       = "pactum.reviewer_result.v1"
-	reviewerRunSchema          = "pactum.reviewer_run.v1"
 )
 
 // reviewLens is one specialist review lens. The set below is fixed in code and
@@ -239,7 +237,7 @@ type reviewResolveResponse struct {
 }
 
 // reviewStateMutationResponse is the review state plus the next affordance,
-// the --json response of the mutating review commands (prepare, approve).
+// the --json response of review approve.
 type reviewStateMutationResponse struct {
 	reviewStateResponse
 	Next []string `json:"next"`
@@ -316,16 +314,6 @@ type reviewerResultDocument struct {
 	processResult
 }
 
-// reviewerRunResponse aggregates the five lens attempts a single review run
-// spawns for the resolved reviewer.
-type reviewerRunResponse struct {
-	Schema   string                   `json:"schema"`
-	RunID    string                   `json:"run_id"`
-	Reviewer string                   `json:"reviewer"`
-	Attempts []reviewerResultDocument `json:"attempts"`
-	Next     []string                 `json:"next"`
-}
-
 // reviewPlanResponse is the reviewer dry-run plan plus the next affordance;
 // the plan artifact on disk stays unchanged. Running the reviewer is
 // human-approved, so the plan has no safe next.
@@ -334,64 +322,60 @@ type reviewPlanResponse struct {
 	Next []string `json:"next"`
 }
 
-func (a App) ReviewPrepare(stdout io.Writer, runID string, jsonOutput bool) error {
-	context, ok, err := a.loadReviewContext(stdout, runID)
-	if err != nil || !ok {
-		return err
-	}
+// ensureReviewRecord returns the run's review document, scaffolding the review
+// artifacts (review/review.json plus the append-only findings/resolutions
+// files) when they do not exist yet. The gate report is the only precondition:
+// the mutating review commands self-scaffold instead of requiring a separate
+// preparation step. action names the operation for the gate error message.
+func (a App) ensureReviewRecord(context reviewContext, action string) (reviewDocument, error) {
 	if !isRegularFile(context.RunPaths.GateReportJSON) {
-		return gateReportMissingError("prepare review", runID)
+		return reviewDocument{}, gateReportMissingError(action, context.State.RunID)
 	}
-
+	if isRegularFile(context.RunPaths.ReviewJSON) {
+		return readReviewDocument(context.RunPaths.ReviewJSON)
+	}
 	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
 	if err != nil {
-		return err
+		return reviewDocument{}, err
 	}
 	if err := activeStore.MkdirAll(context.RunPaths.ReviewDir); err != nil {
-		return err
+		return reviewDocument{}, err
 	}
 	if err := ensureAppendOnlyFile(context.RunPaths.ReviewFindingsJSONL); err != nil {
-		return err
+		return reviewDocument{}, err
 	}
 	if err := ensureAppendOnlyFile(context.RunPaths.ReviewResolutionsJSONL); err != nil {
-		return err
+		return reviewDocument{}, err
 	}
-
 	now := a.nowUTC()
-	review := newReviewDocument(runID, gateReport.Status, now.Format(time.RFC3339))
-	if isRegularFile(context.RunPaths.ReviewJSON) {
-		existing, err := readReviewDocument(context.RunPaths.ReviewJSON)
-		if err != nil {
-			return err
-		}
-		review = existing
-	}
+	review := newReviewDocument(context.State.RunID, gateReport.Status, now.Format(time.RFC3339))
 	findings, resolutions, err := readReviewRecords(context.RunPaths)
 	if err != nil {
-		return err
+		return reviewDocument{}, err
 	}
-	proposals, proposalDecisions, err := readReviewProposalRecords(context.RunPaths)
-	if err != nil {
-		return err
-	}
-	review = refreshReviewDocument(review, runID, gateReport.Status, findings, resolutions, now.Format(time.RFC3339))
+	review = refreshReviewDocument(review, context.State.RunID, gateReport.Status, findings, resolutions, now.Format(time.RFC3339))
 	if err := writeJSON(context.RunPaths.ReviewJSON, review); err != nil {
-		return err
+		return reviewDocument{}, err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_prepared", Timestamp: now, RunID: runID}); err != nil {
-		return err
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "review_scaffolded", Timestamp: now, RunID: context.State.RunID}); err != nil {
+		return reviewDocument{}, err
 	}
+	return review, nil
+}
 
-	state := buildReviewStateWithProposals(review, findings, resolutions, proposals, proposalDecisions)
-	if jsonOutput {
-		return writeJSONResponse(stdout, reviewStateMutationResponse{reviewStateResponse: state, Next: nextCommandsForRun(context.Paths, runID)})
+// loadOrDeriveReviewDocument reads the run's review record, or derives the
+// empty pending review state for a gated run whose review artifact does not
+// exist yet. Nothing is written: the scaffold belongs to the mutating review
+// commands; read paths only derive.
+func loadOrDeriveReviewDocument(runPaths contractRunPathSet, runID string, gateStatus string) (reviewDocument, error) {
+	if isRegularFile(runPaths.ReviewJSON) {
+		return readReviewDocument(runPaths.ReviewJSON)
 	}
-	writeReviewPrepared(stdout, state)
-	return nil
+	return newReviewDocument(runID, gateStatus, ""), nil
 }
 
 func (a App) ReviewStatus(stdout io.Writer, runID string, jsonOutput bool) error {
-	state, ok, err := a.loadPreparedReviewState(stdout, runID, jsonOutput)
+	state, ok, err := a.loadReviewState(stdout, runID, jsonOutput)
 	if err != nil || !ok {
 		return err
 	}
@@ -403,7 +387,7 @@ func (a App) ReviewStatus(stdout io.Writer, runID string, jsonOutput bool) error
 }
 
 func (a App) ReviewShow(stdout io.Writer, runID string, jsonOutput bool) error {
-	state, ok, err := a.loadPreparedReviewState(stdout, runID, jsonOutput)
+	state, ok, err := a.loadReviewState(stdout, runID, jsonOutput)
 	if err != nil || !ok {
 		return err
 	}
@@ -419,7 +403,7 @@ func (a App) ReviewAddFinding(stdout io.Writer, runID string, input reviewFindin
 	if err != nil || !ok {
 		return err
 	}
-	review, err := requireReviewPrepared(context.RunPaths, runID)
+	review, err := a.ensureReviewRecord(context, "add review finding")
 	if err != nil {
 		return err
 	}
@@ -490,10 +474,6 @@ func (a App) ReviewResolve(stdout io.Writer, runID string, findingID string, not
 	if err != nil || !ok {
 		return err
 	}
-	review, err := requireReviewPrepared(context.RunPaths, runID)
-	if err != nil {
-		return err
-	}
 	findings, resolutions, err := readReviewRecords(context.RunPaths)
 	if err != nil {
 		return err
@@ -502,6 +482,10 @@ func (a App) ReviewResolve(stdout io.Writer, runID string, findingID string, not
 		return fmt.Errorf("review finding not found: %s", findingID)
 	}
 	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
+	if err != nil {
+		return err
+	}
+	review, err := loadOrDeriveReviewDocument(context.RunPaths, runID, gateReport.Status)
 	if err != nil {
 		return err
 	}
@@ -542,12 +526,9 @@ func (a App) ReviewApprove(stdout io.Writer, runID string, approvedBy string, js
 	if err != nil || !ok {
 		return err
 	}
-	review, err := requireReviewPrepared(context.RunPaths, runID)
+	review, err := a.ensureReviewRecord(context, "approve review")
 	if err != nil {
 		return err
-	}
-	if !isRegularFile(context.RunPaths.GateReportJSON) {
-		return gateReportMissingError("approve review", runID)
 	}
 	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
 	if err != nil {
@@ -619,65 +600,23 @@ func (a App) ReviewPlan(stdout io.Writer, runID string, reviewerName string, jso
 	return nil
 }
 
-func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration, jsonOutput bool) error {
-	context, ok, err := a.loadReviewContext(stdout, runID)
-	if err != nil || !ok {
-		return err
-	}
-	timeout, err = resolveIdleTimeout(context.Paths.Config, timeout)
-	if err != nil {
-		return err
-	}
-	prep, err := a.prepareReviewer(context, reviewerName, "run reviewer")
-	if err != nil {
-		return err
-	}
-	plan, err := buildReviewerDryRunDocument(runID, a.nowUTC().Format(time.RFC3339), prep.ReviewerName, prep.Reviewer)
-	if err != nil {
-		return err
-	}
-	if err := writeReviewerDryRunArtifacts(prep, plan); err != nil {
-		return err
-	}
-	reviewer := reviewLoopReviewer{Name: prep.ReviewerName, Agent: prep.Reviewer, ModelSpec: prep.ModelSpec}
-	results, runErr := a.runReviewerLensAttempts(liveOutput, runID, prep, reviewer, timeout)
-	next := []string{}
-	if runErr == nil {
-		// Recorded reviewer output is parsed into proposals; collecting them is
-		// the safe next move.
-		next = []string{"pactum review proposal collect " + runID}
-	}
-	response := reviewerRunResponse{
-		Schema:   reviewerRunSchema,
-		RunID:    runID,
-		Reviewer: prep.ReviewerName,
-		Attempts: results,
-		Next:     next,
-	}
-	if jsonOutput {
-		if err := writeJSONResponse(stdout, response); err != nil {
-			return err
-		}
-		return runErr
-	}
-	writeReviewRun(stdout, response, prep.Reviewer, prep.ReviewerName, prep.ModelSpec)
-	return runErr
-}
-
-func (a App) loadPreparedReviewState(stdout io.Writer, runID string, jsonOutput bool) (reviewStateResponse, bool, error) {
+// loadReviewState builds the read-only review state. A gated run with no
+// review artifact yields the derived empty pending state (no file is written);
+// only a missing gate report is reported as not ready.
+func (a App) loadReviewState(stdout io.Writer, runID string, jsonOutput bool) (reviewStateResponse, bool, error) {
 	context, ok, err := a.loadReviewContext(stdout, runID)
 	if err != nil || !ok {
 		return reviewStateResponse{}, false, err
 	}
-	if !isRegularFile(context.RunPaths.GateReportJSON) || !isRegularFile(context.RunPaths.ReviewJSON) {
-		suggested := fmt.Sprintf("pactum review prepare %s", runID)
-		return reviewStateResponse{}, false, writeNotReady(stdout, jsonOutput, runID, "Review has not been prepared. Run: "+suggested, suggested)
+	if !isRegularFile(context.RunPaths.GateReportJSON) {
+		suggested := fmt.Sprintf("pactum gate run %s", runID)
+		return reviewStateResponse{}, false, writeNotReady(stdout, jsonOutput, runID, "Run has not been gated. Run: "+suggested, suggested)
 	}
 	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
 	if err != nil {
 		return reviewStateResponse{}, false, err
 	}
-	review, err := readReviewDocument(context.RunPaths.ReviewJSON)
+	review, err := loadOrDeriveReviewDocument(context.RunPaths, runID, gateReport.Status)
 	if err != nil {
 		return reviewStateResponse{}, false, err
 	}
@@ -706,17 +645,17 @@ func (a App) loadReviewContext(stdout io.Writer, runID string) (reviewContext, b
 	}, true, nil
 }
 
-// prepareReviewer loads the reviewer inputs for a prepared, approved run.
-// action names the operation for error messages, e.g. "run reviewer".
+// prepareReviewer loads the reviewer inputs for a gated, approved run. action
+// names the operation for error messages, e.g. "run reviewer".
 func (a App) prepareReviewer(context reviewContext, reviewerName string, action string) (reviewerDryRunPreparation, error) {
-	review, err := requireReviewPrepared(context.RunPaths, context.State.RunID)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
 	if !isRegularFile(context.RunPaths.GateReportJSON) {
 		return reviewerDryRunPreparation{}, gateReportMissingError(action, context.State.RunID)
 	}
 	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	review, err := loadOrDeriveReviewDocument(context.RunPaths, context.State.RunID, gateReport.Status)
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
@@ -771,14 +710,14 @@ func (a App) prepareReviewer(context reviewContext, reviewerName string, action 
 }
 
 func (a App) prepareReviewerForAgent(context reviewContext, reviewer agents.AgentDescriptor, modelSpec agents.ModelSpec, action string) (reviewerDryRunPreparation, error) {
-	review, err := requireReviewPrepared(context.RunPaths, context.State.RunID)
-	if err != nil {
-		return reviewerDryRunPreparation{}, err
-	}
 	if !isRegularFile(context.RunPaths.GateReportJSON) {
 		return reviewerDryRunPreparation{}, gateReportMissingError(action, context.State.RunID)
 	}
 	gateReport, err := readReviewGateReport(context.RunPaths.GateReportJSON)
+	if err != nil {
+		return reviewerDryRunPreparation{}, err
+	}
+	review, err := loadOrDeriveReviewDocument(context.RunPaths, context.State.RunID, gateReport.Status)
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}
@@ -877,13 +816,6 @@ func readReviewDocument(path string) (reviewDocument, error) {
 		return reviewDocument{}, err
 	}
 	return review, nil
-}
-
-func requireReviewPrepared(runPaths contractRunPathSet, runID string) (reviewDocument, error) {
-	if !isRegularFile(runPaths.ReviewJSON) {
-		return reviewDocument{}, reviewNotPreparedError(fmt.Sprintf("review has not been prepared: %s", runID), runID)
-	}
-	return readReviewDocument(runPaths.ReviewJSON)
 }
 
 func readReviewRecords(runPaths contractRunPathSet) ([]reviewFindingRecord, []reviewResolutionRecord, error) {
@@ -1358,20 +1290,6 @@ func valueOrNone(value string) string {
 	return value
 }
 
-func writeReviewPrepared(stdout io.Writer, state reviewStateResponse) {
-	fmt.Fprintln(stdout, "Review prepared")
-	fmt.Fprintln(stdout)
-	writeReviewRunAndGate(stdout, state)
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Review:")
-	fmt.Fprintf(stdout, "  status: %s\n", state.Review.Status)
-	fmt.Fprintf(stdout, "  findings: %d\n", state.Review.Summary.Findings)
-	fmt.Fprintf(stdout, "  blocking open: %d\n", state.Review.Summary.BlockingOpen)
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Artifacts:")
-	fmt.Fprintf(stdout, "  review: %s\n", runArtifactRepoRel(state.Review.RunID, reviewArtifact))
-}
-
 func writeReviewStatus(stdout io.Writer, state reviewStateResponse) {
 	fmt.Fprintln(stdout, "Review status")
 	fmt.Fprintln(stdout)
@@ -1488,7 +1406,7 @@ func writeReviewPlan(stdout io.Writer, plan reviewerDryRunDocument, reviewerName
 	fmt.Fprintf(stdout, "  command: %s\n", plan.Reviewer.Command)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Checks:")
-	fmt.Fprintln(stdout, "  review prepared: yes")
+	fmt.Fprintln(stdout, "  review: ready")
 	fmt.Fprintln(stdout, "  gate report: ready")
 	fmt.Fprintln(stdout, "  contract approved: yes")
 	fmt.Fprintln(stdout)
@@ -1503,32 +1421,6 @@ func writeReviewPlan(stdout io.Writer, plan reviewerDryRunDocument, reviewerName
 	}
 	fmt.Fprintf(stdout, "  reviewer context: %s\n", runArtifactRepoRel(plan.RunID, reviewerContextArtifact))
 	fmt.Fprintf(stdout, "  plan: %s\n", runArtifactRepoRel(plan.RunID, reviewerDryRunArtifact))
-}
-
-func writeReviewRun(stdout io.Writer, response reviewerRunResponse, reviewer agents.AgentDescriptor, reviewerName string, modelSpec agents.ModelSpec) {
-	fmt.Fprintln(stdout, "Reviewer attempts finished")
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Run:")
-	fmt.Fprintf(stdout, "  id: %s\n", response.RunID)
-	fmt.Fprintln(stdout)
-	writeResolved(stdout, reviewerName, modelSpec)
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Reviewer:")
-	fmt.Fprintf(stdout, "  name: %s\n", reviewer.Name)
-	fmt.Fprintf(stdout, "  command: %s\n", reviewer.Command)
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Attempts (one per lens):")
-	for _, result := range response.Attempts {
-		suffix := ""
-		if result.CompletedDespiteTimeout {
-			suffix = " (completed despite timeout)"
-		}
-		fmt.Fprintf(stdout, "  - %s [%s] exit code %d, timed out: %t%s\n", result.AttemptID, result.Lens, result.ExitCode, result.TimedOut, suffix)
-	}
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Artifacts:")
-	fmt.Fprintf(stdout, "  attempts: %s\n", runArtifactRepoRel(response.RunID, reviewerAttemptsArtifact))
-	fmt.Fprintf(stdout, "  last result: %s\n", runArtifactRepoRel(response.RunID, reviewerLastResultArtifact))
 }
 
 func writeReviewRunAndGate(stdout io.Writer, state reviewStateResponse) {

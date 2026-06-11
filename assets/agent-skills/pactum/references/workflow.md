@@ -42,9 +42,14 @@ design. Always confirm against the actual files before relying on them.
    `--kind code_item` excludes imports; `--kind import` returns them.
 
 6. **Clarify if needed.** For anything ambiguous:
-   `pactum clarify add "..." --blocking` then
-   `pactum clarify answer q_001 "..."`. Blocking questions must be answered
-   before the prompt can be built.
+   `pactum clarify add "..." --blocking`, then record the answer. A typed
+   `pactum clarify answer q_001 "..."` is the explicit human answer; when a
+   question carries a stored recommended answer the human agrees with, relay it
+   with `pactum clarify answer q_001 --recommended`, or answer every open
+   recommended question at once with `pactum clarify answer --all-recommended`.
+   Blocking questions must be answered before the prompt can be built.
+   (`pactum clarify run` launches a clarifier agent and is not part of the safe
+   default flow; `--no-auto --max-rounds 1` is its single manual pass.)
 
 7. **Write the contract.** `pactum contract revise` with:
    - `--goal` — one clear sentence.
@@ -60,7 +65,9 @@ design. Always confirm against the actual files before relying on them.
 
 9. **Build the prompt boundary.** `pactum prompt build`, then
    `pactum prompt show`. `prompt build` re-derives the run's search context from
-   the approved contract, so the executor context reflects the final scope.
+   the approved contract, so the executor context reflects the final scope. A
+   stale project map does not block it: the build refreshes the map itself and
+   records the self-heal (`map_refresh` in `--json` and the prompt manifest).
 
 10. **Safe plan step.** `pactum execute plan --agent codex`. This validates the
     contract hash, map freshness, and prompt manifest, and prints the command
@@ -70,6 +77,25 @@ design. Always confirm against the actual files before relying on them.
 11. **Report.** Summarize: current run id, the relevant files you found,
     the contract (goal/scope/acceptance/validation), the plan command, and
     the recommended next action.
+
+## After execution (when the user approved it)
+
+`pactum gate run` runs the contract's validation commands deterministically.
+Once a gate report exists, the review stage needs no preparation step:
+`review run`, `review finding add`, and `review approve` self-scaffold the
+review record (commands acting on existing records — `finding resolve`,
+`proposal accept`/`reject`, `fix run`/`apply` — still require those records).
+
+- `pactum review show` / `pactum review status` — read-only inspection (a gated
+  run with no review record shows the derived empty pending state).
+- `pactum review finding add` / `pactum review finding resolve` — manual
+  findings.
+- `pactum review run` — autonomous reviewer/fixer rounds (agent-running, needs
+  the same explicit approval as execution; `--no-fix --max-rounds 1` is a
+  single reviewer panel pass without the write-enabled fixer).
+- `pactum review approve --by manual` — the human approval gate.
+- `pactum memory propose` / `pactum memory accept --by manual` — capture
+  reusable project memory from the reviewed run.
 
 ## JSON affordances (`--json`)
 
@@ -90,16 +116,16 @@ Add `--json` to read Pactum's state machine instead of memorizing it:
 - Read-only `show` commands whose artifact does not exist yet return
   `pactum.not_ready.v1` with exit 0 and the remedial command in `fix`.
 
-The older `suggested_command` / `next_command` fields remain for
-compatibility; prefer `fix` and `next`.
+Read `next` and `error.fix` instead of memorizing stage order — they always
+speak the current grammar.
 
 ## Current-run usage
 
 `pactum task new` and `pactum task use` set the current run (recorded in
 `.heurema/pactum/cache/current-run`). Staged commands (`clarify`, `contract`,
-`prompt`, `execute`) then operate on it without a run id. Use
-`pactum status` (reports the current run) or `pactum task list` (the current
-run is marked with `*`) to inspect.
+`prompt`, `execute`, `gate`, `review`, `memory`) then operate on it without a
+run id. Use `pactum status` (reports the current run) or `pactum task list`
+(the current run is marked with `*`) to inspect.
 
 ## Stop conditions
 

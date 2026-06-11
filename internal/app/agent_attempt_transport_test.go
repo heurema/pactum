@@ -136,7 +136,7 @@ func TestReviewRunMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 	}
 }
 
-func TestClarifySuggestMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
+func TestClarifierRoundMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
 	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"})
@@ -150,17 +150,17 @@ func TestClarifySuggestMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 	app.AgentTransport = transport
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "claude"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "run", runID, "--no-auto", "--max-rounds", "1", "--reviewer", "claude"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify suggest exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify run exited %d, stderr: %s", code, stderr.String())
 	}
 
 	request := singleTransportRequest(t, transport)
 	if !request.ReadOnly {
-		t.Fatal("clarify suggest is a read-only stage and must set ReadOnly")
+		t.Fatal("the clarifier round is a read-only stage and must set ReadOnly")
 	}
 	if want := (agents.ModelSpec{Model: "claude-sonnet-4", Effort: "high"}); request.Model != want {
-		t.Fatalf("clarify suggest model spec = %+v, want %+v", request.Model, want)
+		t.Fatalf("clarifier round model spec = %+v, want %+v", request.Model, want)
 	}
 }
 
@@ -172,7 +172,7 @@ func setIdleTimeoutConfig(t *testing.T, paths artifacts.Paths, idle string) {
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 
-func TestClarifySuggestOmittedTimeoutUsesConfigIdleDefault(t *testing.T) {
+func TestClarifierRoundOmittedTimeoutUsesConfigIdleDefault(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
 	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4"})
@@ -181,9 +181,9 @@ func TestClarifySuggestOmittedTimeoutUsesConfigIdleDefault(t *testing.T) {
 	app.AgentTransport = transport
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "claude"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "run", runID, "--no-auto", "--max-rounds", "1", "--reviewer", "claude"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify suggest exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify run exited %d, stderr: %s", code, stderr.String())
 	}
 
 	request := singleTransportRequest(t, transport)
@@ -192,7 +192,7 @@ func TestClarifySuggestOmittedTimeoutUsesConfigIdleDefault(t *testing.T) {
 	}
 }
 
-func TestClarifySuggestExplicitTimeoutOverridesConfigIdleDefault(t *testing.T) {
+func TestClarifierRoundExplicitTimeoutOverridesConfigIdleDefault(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
 	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4"})
@@ -201,9 +201,9 @@ func TestClarifySuggestExplicitTimeoutOverridesConfigIdleDefault(t *testing.T) {
 	app.AgentTransport = transport
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "claude", "--timeout", "90s"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "run", runID, "--no-auto", "--max-rounds", "1", "--reviewer", "claude", "--timeout", "90s"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("clarify suggest exited %d, stderr: %s", code, stderr.String())
+		t.Fatalf("clarify run exited %d, stderr: %s", code, stderr.String())
 	}
 
 	request := singleTransportRequest(t, transport)
