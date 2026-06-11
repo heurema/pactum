@@ -307,7 +307,9 @@ machinery pactum already has: the tree-sitter code-items index carries
 `Signature`/`StartLine`/`EndLine` per symbol — the agents just never see it.
 Explicit non-goals, by the same survey: no embeddings/vector index (staleness,
 nondeterminism, infra cost vs marginal gain over FTS5 + symbols), no LSP
-runtime dependency, no model-based context compression.
+runtime dependency, no model-based context compression. The survey
+distillation lives in
+[agent-file-navigation-design.md](agent-file-navigation-design.md).
 
 - **Symbol-grade search results** (small): plumb `StartLine`/`EndLine`/
   `Signature` from the code-items index into `search.Result` for `code_item`
