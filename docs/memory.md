@@ -28,10 +28,17 @@ present, the review approved, and no pending reviewer proposals.
 
 `pactum memory show <run_id>` prints the candidate preview.
 
-`pactum memory accept <run_id> --by manual` appends the candidate as an accepted
-item (`mem_NNN`) to `memory/items.jsonl`, regenerates the human-readable
-`memory/project-memory.md`, and records the touched files' hashes as the item's
-baseline freshness.
+A candidate is pinned to the review state it was generated from: `propose`
+records a content hash over the run's review artifacts in
+`memory-candidate.json`. `pactum memory accept <run_id> --by manual` first
+verifies that pin — a candidate whose review changed since proposal (or whose
+pin is missing/unrecognized) is **stale** and refused without mutating
+anything; regenerate it with `pactum memory propose` (the error's `fix` says
+so, or points at `pactum review show` when the review state must be repaired
+first). A fresh accept appends the candidate as an accepted item (`mem_NNN`)
+to `memory/items.jsonl`, regenerates the human-readable
+`memory/project-memory.md`, and records the touched files' hashes as the
+item's baseline freshness.
 
 ```sh
 pactum memory propose <run_id>

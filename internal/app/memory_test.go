@@ -341,6 +341,166 @@ func TestAcceptedMemoryCandidateCannotBeOverwrittenWithChangedContent(t *testing
 	}
 }
 
+func TestMemoryProposeWritesFreshnessPin(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedReviewedMemoryRun(t, root)
+	runMemoryCommand(t, app, "memory", "propose", runID)
+
+	candidate := readMemoryCandidateForTest(t, runPaths.MemoryCandidateJSON)
+	if candidate.FreshnessPin.Schema != memoryFreshnessPinSchema || candidate.FreshnessPin.ReviewStateSHA256 == "" {
+		t.Fatalf("candidate freshness pin missing or unversioned: %#v", candidate.FreshnessPin)
+	}
+
+	// Unchanged full review state: re-proposing reproduces the identical
+	// candidate, pin included.
+	before := mustReadFile(t, runPaths.MemoryCandidateJSON)
+	runMemoryCommand(t, app, "memory", "propose", runID)
+	if mustReadFile(t, runPaths.MemoryCandidateJSON) != before {
+		t.Fatalf("re-propose over unchanged review state changed the candidate")
+	}
+
+	// The pin covers all five pinned review-state artifacts: changing any one
+	// of them changes the hash.
+	pin, err := reviewStateFreshnessPin(runPaths)
+	assertNoError(t, err)
+	for _, path := range []string{
+		runPaths.ReviewJSON,
+		runPaths.ReviewFindingsJSONL,
+		runPaths.ReviewResolutionsJSONL,
+		runPaths.ReviewProposalsJSONL,
+		runPaths.ReviewProposalDecisionsJSONL,
+	} {
+		assertNoError(t, activeStore.AppendBytes(path, []byte("{}\n")))
+		next, err := reviewStateFreshnessPin(runPaths)
+		assertNoError(t, err)
+		if next.ReviewStateSHA256 == pin.ReviewStateSHA256 {
+			t.Fatalf("freshness pin did not change after %s changed", path)
+		}
+		pin = next
+	}
+}
+
+func TestMemoryAcceptRefusesStaleCandidateWithReproposeFix(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedReviewedMemoryRun(t, root)
+	runMemoryCommand(t, app, "memory", "propose", runID)
+	// A proposal collected and rejected after the candidate changes the pinned
+	// review state but keeps the review approved and proposal-clean, so
+	// re-proposing stays legal.
+	appendReviewProposalForTest(t, runPaths, runID, "p_003", "late proposal", false)
+	runMemoryCommand(t, app, "review", "proposal", "reject", runID, "p_003", "--reason", "out of scope")
+
+	beforeAcceptance := mustReadFile(t, runPaths.MemoryAcceptanceJSON)
+	beforeItems := mustReadFile(t, paths.MemoryItems)
+	beforeProjectMemory := mustReadFile(t, paths.ProjectMemory)
+	beforeLedger := mustReadFile(t, paths.EventsJSONL)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"memory", "accept", runID, "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("memory accept of stale candidate exited %d, want 1, stdout: %s", code, stdout.String())
+	}
+	var envelope affordanceEnvelope
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	if envelope.Error.Code != "memory_candidate_stale" || !strings.Contains(envelope.Error.Message, "memory candidate is stale") {
+		t.Fatalf("stale accept envelope mismatch: %#v", envelope.Error)
+	}
+	if envelope.Error.Fix == nil || *envelope.Error.Fix != "pactum memory propose "+runID {
+		t.Fatalf("stale accept fix = %v, want pactum memory propose %s", envelope.Error.Fix, runID)
+	}
+	if envelope.Next != nil {
+		t.Fatalf("stale accept next = %v, want absent", *envelope.Next)
+	}
+	if mustReadFile(t, runPaths.MemoryAcceptanceJSON) != beforeAcceptance {
+		t.Fatalf("stale accept mutated acceptance")
+	}
+	if mustReadFile(t, paths.MemoryItems) != beforeItems {
+		t.Fatalf("stale accept appended a memory item")
+	}
+	if mustReadFile(t, paths.ProjectMemory) != beforeProjectMemory {
+		t.Fatalf("stale accept mutated project memory")
+	}
+	if mustReadFile(t, paths.EventsJSONL) != beforeLedger {
+		t.Fatalf("stale accept wrote ledger events")
+	}
+
+	// Regenerating from the current review state restores acceptance.
+	runMemoryCommand(t, app, "memory", "propose", runID)
+	runMemoryCommand(t, app, "memory", "accept", runID)
+	if items := readMemoryItemsForTest(t, paths.MemoryItems); len(items) != 1 || items[0].RunID != runID {
+		t.Fatalf("re-proposed candidate did not accept cleanly: %#v", items)
+	}
+}
+
+func TestMemoryAcceptStaleCandidatePointsAtReviewWhenReproposeIllegal(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedReviewedMemoryRun(t, root)
+	runMemoryCommand(t, app, "memory", "propose", runID)
+	// A pending proposal both changes the pinned review state and makes
+	// memory propose illegal, so the affordance points at inspection.
+	appendReviewProposalForTest(t, runPaths, runID, "p_003", "late proposal", false)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"memory", "accept", runID, "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("memory accept of stale candidate exited %d, want 1, stdout: %s", code, stdout.String())
+	}
+	var envelope affordanceEnvelope
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	if envelope.Error.Code != "memory_candidate_stale" {
+		t.Fatalf("stale accept code = %q, want memory_candidate_stale", envelope.Error.Code)
+	}
+	if envelope.Error.Fix != nil {
+		t.Fatalf("stale accept fix = %q, want absent: memory propose would be rejected", *envelope.Error.Fix)
+	}
+	if envelope.Next == nil || !equalStrings(*envelope.Next, []string{"pactum review show " + runID}) {
+		t.Fatalf("stale accept next = %v, want [pactum review show %s]", envelope.Next, runID)
+	}
+
+	// A blocking finding resets review approval: the other way reproposal
+	// becomes illegal, with the same inspection affordance.
+	runMemoryCommand(t, app, "review", "finding", "add", runID, "late blocker", "--blocking")
+	stdout.Reset()
+	code = app.Run([]string{"memory", "accept", runID, "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("memory accept of stale candidate exited %d, want 1, stdout: %s", code, stdout.String())
+	}
+	envelope = affordanceEnvelope{}
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	if envelope.Error.Code != "memory_candidate_stale" || envelope.Error.Fix != nil {
+		t.Fatalf("stale accept after approval reset envelope mismatch: %#v", envelope.Error)
+	}
+	if envelope.Next == nil || !equalStrings(*envelope.Next, []string{"pactum review show " + runID}) {
+		t.Fatalf("stale accept after approval reset next = %v, want [pactum review show %s]", envelope.Next, runID)
+	}
+}
+
+func TestMemoryAcceptRejectsCandidateWithoutFreshnessPin(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedReviewedMemoryRun(t, root)
+	runMemoryCommand(t, app, "memory", "propose", runID)
+	// A candidate generated before the pin existed cannot prove which review
+	// state it was built from: unverifiable is treated as stale.
+	raw := map[string]any{}
+	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, runPaths.MemoryCandidateJSON)), &raw))
+	delete(raw, "freshness_pin")
+	assertNoError(t, writeJSON(runPaths.MemoryCandidateJSON, raw))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"memory", "accept", runID, "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("memory accept of unpinned candidate exited %d, want 1, stdout: %s", code, stdout.String())
+	}
+	var envelope affordanceEnvelope
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	if envelope.Error.Code != "memory_candidate_stale" || !strings.Contains(envelope.Error.Message, "no recognized freshness pin") {
+		t.Fatalf("unpinned accept envelope mismatch: %#v", envelope.Error)
+	}
+	if envelope.Error.Fix == nil || *envelope.Error.Fix != "pactum memory propose "+runID {
+		t.Fatalf("unpinned accept fix = %v, want pactum memory propose %s", envelope.Error.Fix, runID)
+	}
+}
+
 func setupApprovedReviewedMemoryRun(t *testing.T, root string) (App, artifacts.Paths, string, contractRunPathSet) {
 	t.Helper()
 	app, paths, runID := runSuccessfulHelperAttempt(t, root)
@@ -431,4 +591,34 @@ func readMemoryItemsForTest(t *testing.T, path string) []memoryItemRecord {
 		items = append(items, item)
 	}
 	return items
+}
+
+func TestMemoryAcceptRejectsUnrecognizedFreshnessPinSchema(t *testing.T) {
+	// A pin with a future/unknown schema is unverifiable: accept must treat it
+	// exactly like a missing pin — stale, nothing mutated, re-propose fix.
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedReviewedMemoryRun(t, root)
+	runMemoryCommand(t, app, "memory", "propose", runID)
+
+	candidate := readMemoryCandidateForTest(t, runPaths.MemoryCandidateJSON)
+	candidate.FreshnessPin.Schema = "pactum.memory_freshness_pin.v999"
+	writeMemoryCandidateForTest(t, runPaths.MemoryCandidateJSON, candidate)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"memory", "accept", runID, "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("accept with unrecognized pin schema exited %d, want 1, stdout: %s", code, stdout.String())
+	}
+	var envelope affordanceEnvelope
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	if envelope.Error.Code != "memory_candidate_stale" {
+		t.Fatalf("unrecognized pin schema must read as stale, got %#v", envelope.Error)
+	}
+}
+
+func writeMemoryCandidateForTest(t *testing.T, path string, candidate memoryCandidateDocument) {
+	t.Helper()
+	data, err := indentedJSONBytes(candidate)
+	assertNoError(t, err)
+	mustWriteFile(t, path, string(data))
 }

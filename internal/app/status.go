@@ -130,10 +130,10 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 		// sole active run). Otherwise point the user at selecting a run.
 		switch {
 		case currentValid:
-			runs.NextCommand = nextCommandForStatus(deriveRunStatus(paths, currentID))
+			runs.NextCommand = nextCommandForStatus(paths, currentID, deriveRunStatus(paths, currentID))
 			next = nextCommandsForRun(paths, currentID)
 		case len(active) == 1:
-			runs.NextCommand = nextCommandForStatus(deriveRunStatus(paths, active[0]))
+			runs.NextCommand = nextCommandForStatus(paths, active[0], deriveRunStatus(paths, active[0]))
 			next = nextCommandsForRun(paths, active[0])
 		default:
 			runs.NextCommand = "pactum task use " + latestID

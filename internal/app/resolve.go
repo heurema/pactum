@@ -279,7 +279,15 @@ func nextCommandsForRun(paths artifacts.Paths, runID string) []string {
 		}
 		return []string{"pactum memory propose " + runID}
 	case "memory_proposed":
-		return []string{"pactum memory accept " + runID}
+		// A stale candidate cannot be accepted; it must be regenerated, which
+		// is only legal while the review state would still pass propose.
+		if memoryCandidateFresh(runPaths) {
+			return []string{"pactum memory accept " + runID}
+		}
+		if memoryReproposalLegal(runPaths) {
+			return []string{"pactum memory propose " + runID}
+		}
+		return []string{"pactum review show " + runID}
 	default:
 		return []string{}
 	}
@@ -316,6 +324,18 @@ func pendingReviewProposalCount(runPaths contractRunPathSet) (int, error) {
 	return summarizeReviewProposals(buildReviewProposalViews(proposals, decisions)).Pending, nil
 }
 
+// memoryReproposalLegal reports whether `pactum memory propose` would pass
+// its review preconditions against the current state: the review is still
+// approved and every proposal is decided. Unreadable records cannot prove
+// legality.
+func memoryReproposalLegal(runPaths contractRunPathSet) bool {
+	if !reviewApproved(runPaths.ReviewJSON) {
+		return false
+	}
+	pending, err := pendingReviewProposalCount(runPaths)
+	return err == nil && pending == 0
+}
+
 // nextReviewCommands picks the review affordance for a gated run: approval is
 // only legal when the gate did not fail, every proposal is decided, and no
 // blocking finding is open, so until then the safe move is inspecting the
@@ -342,7 +362,7 @@ func nextReviewCommands(runPaths contractRunPathSet, runID string) []string {
 
 // nextCommandForStatus maps a derived lifecycle status to the command a user
 // would typically run next.
-func nextCommandForStatus(status string) string {
+func nextCommandForStatus(paths artifacts.Paths, runID string, status string) string {
 	switch status {
 	case "contract_draft":
 		return "pactum contract revise"
@@ -359,7 +379,17 @@ func nextCommandForStatus(status string) string {
 	case "review_approved":
 		return "pactum memory propose"
 	case "memory_proposed":
-		return "pactum memory accept"
+		// Same staleness gate as nextCommandsForRun: a stale candidate cannot
+		// be accepted, only regenerated while the review state would still
+		// pass propose.
+		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+		if memoryCandidateFresh(runPaths) {
+			return "pactum memory accept"
+		}
+		if memoryReproposalLegal(runPaths) {
+			return "pactum memory propose"
+		}
+		return "pactum review show"
 	default:
 		return ""
 	}

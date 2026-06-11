@@ -404,6 +404,69 @@ func TestNextAffordancesAcrossLifecycleStages(t *testing.T) {
 	assertNext(t, next)
 }
 
+// TestNextSwitchesToProposeForStaleMemoryCandidate pins the staleness gate on
+// the memory_proposed affordance: a candidate whose pinned review state no
+// longer matches must be regenerated, so next advertises memory propose while
+// reproposal is legal and falls back to inspection when it is not.
+func TestNextSwitchesToProposeForStaleMemoryCandidate(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedReviewedMemoryRun(t, root)
+	runMemoryCommand(t, app, "memory", "propose", runID)
+
+	// Fresh candidate: accept is the legal move.
+	next := decodeNext(t, app, "task", "show", runID, "--json")
+	assertNext(t, next, "pactum memory accept "+runID)
+
+	// A proposal collected and rejected after the candidate changes the
+	// pinned review state while propose stays legal: advertise regeneration.
+	appendReviewProposalForTest(t, runPaths, runID, "p_003", "late proposal", false)
+	runMemoryCommand(t, app, "review", "proposal", "reject", runID, "p_003", "--reason", "out of scope")
+	next = decodeNext(t, app, "task", "show", runID, "--json")
+	assertNext(t, next, "pactum memory propose "+runID)
+
+	// A pending proposal makes propose illegal too: point at inspection.
+	appendReviewProposalForTest(t, runPaths, runID, "p_004", "later proposal", false)
+	next = decodeNext(t, app, "task", "show", runID, "--json")
+	assertNext(t, next, "pactum review show "+runID)
+}
+
+// TestNextCommandSwitchesToProposeForStaleMemoryCandidate pins the same
+// staleness gate on the legacy next_command compatibility field: task and
+// status surfaces must not advertise memory accept for a stale candidate.
+func TestNextCommandSwitchesToProposeForStaleMemoryCandidate(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedReviewedMemoryRun(t, root)
+	runMemoryCommand(t, app, "memory", "propose", runID)
+
+	if got := taskShowNextCommand(t, app, runID); got != "pactum memory accept" {
+		t.Fatalf("fresh candidate next_command = %q, want pactum memory accept", got)
+	}
+
+	// The pinned review state changed while propose stays legal: regenerate.
+	appendReviewProposalForTest(t, runPaths, runID, "p_003", "late proposal", false)
+	runMemoryCommand(t, app, "review", "proposal", "reject", runID, "p_003", "--reason", "out of scope")
+	if got := taskShowNextCommand(t, app, runID); got != "pactum memory propose" {
+		t.Fatalf("stale candidate next_command = %q, want pactum memory propose", got)
+	}
+
+	// A pending proposal makes propose illegal too: point at inspection.
+	appendReviewProposalForTest(t, runPaths, runID, "p_004", "later proposal", false)
+	if got := taskShowNextCommand(t, app, runID); got != "pactum review show" {
+		t.Fatalf("pending-proposal next_command = %q, want pactum review show", got)
+	}
+}
+
+func taskShowNextCommand(t *testing.T, app App, runID string) string {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"task", "show", runID, "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("task show exited %d, stderr: %s", code, stderr.String())
+	}
+	var show taskShowResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &show))
+	return show.NextCommand
+}
+
 // TestNextDoesNotAdvertiseApproveForFailedGate pins the failed-gate legality
 // gate: review approve rejects a failed gate, so a gated run with one keeps
 // pointing at inspection even with nothing open.

@@ -291,13 +291,16 @@ func TestMemoryAcceptPreservesLatestRefreshInProjectMemory(t *testing.T) {
 
 	runID := runContractOnlyForTask(t, app, "second memory item")
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	pin, err := reviewStateFreshnessPin(runPaths)
+	assertNoError(t, err)
 	candidate := memoryCandidateDocument{
-		Schema:    memoryCandidateSchema,
-		RunID:     runID,
-		CreatedAt: "2026-06-02T10:00:00Z",
-		Source:    "deterministic",
-		Status:    "proposed",
-		Contract:  memoryCandidateContract{Goal: "second memory item"},
+		Schema:       memoryCandidateSchema,
+		RunID:        runID,
+		CreatedAt:    "2026-06-02T10:00:00Z",
+		Source:       "deterministic",
+		Status:       "proposed",
+		FreshnessPin: pin,
+		Contract:     memoryCandidateContract{Goal: "second memory item"},
 		Outcome: memoryCandidateOutcome{
 			GateStatus:   "passed",
 			ReviewStatus: "approved",

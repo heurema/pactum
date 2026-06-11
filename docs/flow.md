@@ -301,8 +301,12 @@ events for that run. Entries are sorted, slash-separated, and normalized
 run are byte-for-byte identical.
 
 Export is read-only Pactum state: the only write is the archive itself,
-created via a temporary sibling file and an atomic rename. The command fails —
-removing any partial archive — if the output path already exists, its parent
-directory is missing, the path points inside the exported run directory, a
-selected file cannot be read, the workspace ledger is missing or malformed, or
-the run record contains symlinks or other non-regular entries.
+staged as a temporary sibling file and published through a no-replace link
+(falling back to a re-check plus rename on filesystems without hard links),
+so a file that appears at the output path mid-export is never overwritten.
+The command fails — removing any partial archive — if the output path already
+exists, its parent directory is missing, the path points inside the exported
+run directory, a selected file cannot be read, the workspace ledger is
+missing or malformed, the run record contains symlinks or other non-regular
+entries, or a run-record path would put a literal backslash into a ZIP entry
+name (non-portable).
