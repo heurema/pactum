@@ -14,25 +14,6 @@ import (
 	"github.com/heurema/pactum/internal/artifacts"
 )
 
-func TestContractDraftRequiresYesNonInteractive(t *testing.T) {
-	root := t.TempDir()
-	app, paths, runID := setupContractRun(t, root)
-	app = configureHelperContractDrafters(t, app, paths, "helper")
-	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "draft", runID, "--reviewer", "helper"}, &stdout, &stderr)
-	if code == 0 {
-		t.Fatalf("contract draft should fail without --yes in non-interactive use")
-	}
-	if got := stderr.String(); !strings.Contains(got, "refusing to run agent non-interactively without --yes") {
-		t.Fatalf("contract draft stderr mismatch:\n%s", got)
-	}
-	assertNoFile(t, runPaths.ContractDrafterPromptMD)
-	assertNoFile(t, runPaths.ContractDrafterContextMD)
-	assertNoFile(t, runPaths.ContractDraftProposalJSON)
-}
-
 func TestContractDraftRecordsProposalWithoutApplying(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
@@ -62,7 +43,7 @@ func TestContractDraftRecordsProposalWithoutApplying(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"contract", "draft", runID, "--yes"}, &stdout, &stderr)
+	code = app.Run([]string{"contract", "draft", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract draft exited %d, stderr: %s", code, stderr.String())
 	}
@@ -164,7 +145,7 @@ func TestContractShowDraftAndAcceptAppliesProposalThroughRevision(t *testing.T) 
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"contract", "draft", runID, "--reviewer", "helper", "--yes", "--json"}, &stdout, &stderr)
+	code = app.Run([]string{"contract", "draft", runID, "--reviewer", "helper", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract draft --json exited %d, stderr: %s", code, stderr.String())
 	}
@@ -233,6 +214,44 @@ func TestContractShowDraftAndAcceptAppliesProposalThroughRevision(t *testing.T) 
 			t.Fatalf("events missing %s:\n%v", want, eventTypes)
 		}
 	}
+}
+
+// TestContractAcceptDraftRecordsExplicitBy covers --by on contract accept: the
+// trimmed principal is persisted as the proposal's accepted_by, and repo-root
+// paths are sanitized before they land in the proposal artifact.
+func TestContractAcceptDraftRecordsExplicitBy(t *testing.T) {
+	acceptDraftWithBy := func(t *testing.T, root string, by string) (contractDraftProposalDocument, string) {
+		app, paths, runID := setupContractRun(t, root)
+		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+		assertNoError(t, writeJSON(runPaths.ContractDraftProposalJSON, contractDraftProposalDocument{
+			Schema:  contractDraftProposalSchema,
+			RunID:   runID,
+			Status:  "pending",
+			InScope: []string{"Apply one proposed scope item."},
+		}))
+		var stdout, stderr bytes.Buffer
+		code := app.Run([]string{"contract", "accept", runID, "--by", by}, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("contract accept --by exited %d, stderr: %s", code, stderr.String())
+		}
+		return readContractDraftProposalForTest(t, runPaths.ContractDraftProposalJSON), runPaths.ContractDraftProposalJSON
+	}
+
+	t.Run("trims the principal", func(t *testing.T) {
+		proposal, _ := acceptDraftWithBy(t, t.TempDir(), "  bob  ")
+		if proposal.Status != "accepted" || proposal.AcceptedBy == nil || *proposal.AcceptedBy != "bob" {
+			t.Fatalf("accepted_by mismatch: %#v", proposal)
+		}
+	})
+
+	t.Run("sanitizes repo-root paths", func(t *testing.T) {
+		root := t.TempDir()
+		proposal, proposalPath := acceptDraftWithBy(t, root, root+"/agent")
+		if proposal.AcceptedBy == nil || *proposal.AcceptedBy == "" || strings.Contains(*proposal.AcceptedBy, root) {
+			t.Fatalf("accepted_by not sanitized: %#v", proposal)
+		}
+		assertDoesNotContainRoot(t, "contract/draft-proposal.json", mustReadFile(t, proposalPath), root)
+	})
 }
 
 func configureHelperContractDrafters(t *testing.T, app App, paths artifacts.Paths, names ...string) App {

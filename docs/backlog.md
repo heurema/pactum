@@ -168,7 +168,7 @@ reviews across M8–M10. Rough priority in parentheses.
   approve` stays manual — that is the safety story for letting the clarifier's
   own high-confidence recommendations answer its questions. The **task-new
   integration** (M21.0, shipped) folds the loop into task creation: `pactum
-  task new "<task>" --clarify --yes` runs it right after the run is created and
+  task new "<task>" --clarify` runs it right after the run is created and
   surfaces the remaining open blocking questions with their recommendations —
   one command from task to a pre-interrogated contract; the loop pass-throughs
   (`--reviewer`, `--max-rounds`, `--timeout`) ride along, a loop failure leaves
@@ -276,12 +276,14 @@ human output stays terse and artifacts travel by path. Decision commands
 carry an optional `--by <principal>` (default `manual`) recording whose
 decision the agent relayed — attribution without ceremony.
 
-- **Slice 1 — grammar normalization** (in flight, M23.0): renames, nested
+- **Slice 1 — grammar normalization** (M23.0, shipped): renames, nested
   subcommands instead of hyphenated ones, duplicate/alias removal.
-- **Slice 2 — confirmation model** (med): remove interactive confirms,
-  `--yes`, and `gate run --allow-commands`; extend the optional
-  `--by`-with-default to the remaining decision verbs (`contract accept`,
-  `clarify answer`, `review proposal accept|reject`).
+- **Slice 2 — confirmation model** (M23.1, shipped): interactive confirms,
+  `--yes`, and `gate run --allow-commands` removed; the optional
+  `--by`-with-default extended to all decision verbs (`contract accept`,
+  `clarify answer`, `review proposal accept|reject`), recorded as
+  `decided_by`/`accepted_by`; automatic loop decisions carry only their
+  `source` (review-loop auto-accepts now record `review_loop`, not `manual`).
 - **Slice 3 — affordances** (med): structured error envelopes
   (`reason` + `fix`), a `next` array in every mutating command's `--json`
   output and in `pactum status`, so the skill never encodes the stage state
@@ -292,7 +294,64 @@ decision the agent relayed — attribution without ceremony.
   into `clarify run --rounds`, then rewrite `agent-skill.md` against the
   final grammar.
 
+## Agent file-navigation arc (research-backed)
+
+Agents (executor, reviewer lenses, clarifier, drafter) read large source files
+through their own grep/read tools; on big files (`internal/app/review.go` is
+~1.5k lines) the dominant pattern is a 3-hop loop — grep, read a window,
+re-read a wider window — multiplied across ten review lens attempts per
+round. A survey of 2024–2026 localization research (signatures-only file
+skeletons are sufficient for localization; symbol-boundary chunks beat line
+windows; symbol-level navigation is the highest-value primitive) maps onto
+machinery pactum already has: the tree-sitter code-items index carries
+`Signature`/`StartLine`/`EndLine` per symbol — the agents just never see it.
+Explicit non-goals, by the same survey: no embeddings/vector index (staleness,
+nondeterminism, infra cost vs marginal gain over FTS5 + symbols), no LSP
+runtime dependency, no model-based context compression.
+
+- **Symbol-grade search results** (small): plumb `StartLine`/`EndLine`/
+  `Signature` from the code-items index into `search.Result` for `code_item`
+  hits and render them in executor-context as `path:start-end signature`, so
+  the first Read is a ranged read; add a `--symbol <name>` filter to
+  `pactum search`.
+- **`pactum outline <path>`** (small-med): deterministic per-file skeleton
+  (signatures + line ranges + doc comments) from the code-items index,
+  content-hash-stamped; executor-prompt convention: for files over ~400
+  lines, outline first, then Read by range (line numbers valid until the
+  first edit of that file).
+- **Contract-scoped skeletons in executor-context** (med): at prompt build,
+  inline outlines of every file in the contract path scope under a token
+  budget (exported symbols first).
+- **Review hunk→symbol annotation** (med): annotate each diff hunk in the
+  review input with its enclosing symbol and full range, so verify-then-report
+  reads the whole enclosing function once instead of windowing around the
+  hunk — targets the multi-million-token review leg directly.
+
 ## Hardening / cleanup
+
+- **Security truth in docs + SECURITY.md** (small, P0). README still describes
+  the codex builtin as plain `codex exec` while `docs/agents.md` documents the
+  real `codex exec --dangerously-bypass-approvals-and-sandbox` — the README
+  must be honest exactly where a user first learns how agents run. Add a short
+  `SECURITY.md`: threat model (pactum is not a sandbox; the repo and runtime
+  environment are the boundary), safe-usage guidance (trusted repos, plan
+  before run, path scope review), private reporting, supported = `main` until
+  tagged releases exist.
+- **govulncheck in CI** (small). One workflow step; with sqlite + tree-sitter
+  in the dependency tree a vuln scan is cheap insurance.
+- **Committed run-record hygiene gate** (small). The pre-batch manual grep for
+  absolute local paths is convention, not a gate: add a `make` target + CI
+  check scanning staged/changed `.heurema/` content for absolute home paths
+  and credential-shaped strings, so a dogfood transcript can never smuggle
+  either into history.
+- **`internal/app` decomposition arc** (med, after the CLI polish arc). The
+  stage orchestration files have outgrown one package (`review.go` ~1.5k
+  lines, `gate.go` ~0.7k, `contract_draft.go` ~0.7k): extract per-stage domain
+  services (start with review), leaving `internal/app` as CLI binding + JSON
+  envelopes. Pays off twice: human navigation and agent reads — smaller files
+  sharpen contract path scopes, grep precision, outline quality, and cache
+  locality (see the file-navigation arc above; splitting is its cheapest
+  durable item).
 
 - **Lens fan-out test flakiness under full-suite race load** (small). Three
   different review tests (`TestReviewRunStoresCrossReviewerAttempts`,

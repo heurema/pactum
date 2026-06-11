@@ -459,8 +459,8 @@ func TestExecuteRunDerivesExecutedStatus(t *testing.T) {
 	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	if code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--yes"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("execute run --yes exited %d, stderr: %s", code, stderr.String())
+	if code := app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
 	}
 	if got := deriveRunStatus(paths, runID); got != "executed" {
 		t.Fatalf("derived status = %q, want executed", got)
@@ -577,66 +577,66 @@ func TestStatusNextCommandBareWhenSoleActiveRun(t *testing.T) {
 	}
 }
 
-// --- Execute run confirmation (Part I) --------------------------------------
+// --- Removed confirmation flags (Part I) -------------------------------------
 
-func TestExecuteRunWithoutYesFailsNonInteractive(t *testing.T) {
+// TestRemovedConfirmationFlagsAreRejected covers the hard removal of the
+// confirmation layer: --yes and gate run's --allow-commands no longer exist,
+// so the parser rejects them as unknown flags before resolving any run or
+// launching any agent.
+func TestRemovedConfirmationFlagsAreRejected(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID := setupApprovedBuiltPromptWithHelperAgent(t, root, "helper")
-	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("execute run without --yes exited %d, want 1, stderr: %s", code, stderr.String())
+	cases := []struct {
+		name string
+		args []string
+		flag string
+	}{
+		{"execute run", []string{"execute", "run", "--yes"}, "--yes"},
+		{"review run", []string{"review", "run", "--yes"}, "--yes"},
+		{"review fix run", []string{"review", "fix", "run", "--yes"}, "--yes"},
+		{"review loop", []string{"review", "loop", "--yes"}, "--yes"},
+		{"clarify suggest", []string{"clarify", "suggest", "--yes"}, "--yes"},
+		{"clarify run", []string{"clarify", "run", "--yes"}, "--yes"},
+		{"contract draft", []string{"contract", "draft", "--yes"}, "--yes"},
+		{"task new --clarify", []string{"task", "new", "some task", "--clarify", "--yes"}, "--yes"},
+		{"gate run", []string{"gate", "run", "--allow-commands"}, "--allow-commands"},
 	}
-	if !strings.Contains(stderr.String(), "without --yes") {
-		t.Fatalf("confirmation stderr mismatch:\n%s", stderr.String())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := testApp(root).Run(tc.args, &stdout, &stderr)
+			if code != 2 {
+				t.Fatalf("%v exited %d, want 2 (parser rejection)", tc.args, code)
+			}
+			if !strings.Contains(stderr.String(), tc.flag) {
+				t.Fatalf("%v stderr does not name the removed flag %s:\n%s", tc.args, tc.flag, stderr.String())
+			}
+		})
 	}
-	// It must refuse before launching any agent attempt.
-	assertNoFile(t, executionAttemptPaths(runPaths, "attempt_001").ResultJSON)
 }
 
-func TestReviewRunWithoutYesFailsNonInteractive(t *testing.T) {
+func TestHelpDoesNotMentionRemovedConfirmationFlags(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperReviewers(t, app, paths, "helper")
-
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper"}, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("review run without --yes exited %d, want 1, stderr: %s", code, stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "without --yes") {
-		t.Fatalf("review run confirmation stderr mismatch:\n%s", stderr.String())
-	}
-	// It must refuse before launching any reviewer attempt.
-	assertNoFile(t, reviewerAttemptPaths(runPaths, "reviewer_attempt_001").ResultJSON)
-}
-
-func TestReviewFixWithoutYesFailsNonInteractive(t *testing.T) {
-	root := t.TempDir()
-	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
-	app = configureHelperFixers(t, app, paths, "helper")
-	runReviewCommand(t, app, "review", "finding", "add", runID, "fixer requires explicit yes")
-
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "helper"}, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("review fix without --yes exited %d, want 1, stderr: %s", code, stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "without --yes") {
-		t.Fatalf("review fix confirmation stderr mismatch:\n%s", stderr.String())
-	}
-	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
-}
-
-func TestExecutePlanDoesNotNeedYes(t *testing.T) {
-	root := t.TempDir()
-	app, _, runID := setupApprovedAndBuiltPrompt(t, root)
-
-	var stdout, stderr bytes.Buffer
-	if code := app.Run([]string{"execute", "plan", runID, "--agent", "codex"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("execute plan exited %d, stderr: %s", code, stderr.String())
+	for _, args := range [][]string{
+		{"--help"},
+		{"execute", "run", "--help"},
+		{"review", "run", "--help"},
+		{"review", "fix", "run", "--help"},
+		{"review", "loop", "--help"},
+		{"clarify", "suggest", "--help"},
+		{"clarify", "run", "--help"},
+		{"contract", "draft", "--help"},
+		{"task", "new", "--help"},
+		{"gate", "run", "--help"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := testApp(root).Run(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("%v exited %d, want 0", args, code)
+		}
+		help := stdout.String()
+		if strings.Contains(help, "--yes") || strings.Contains(help, "--allow-commands") {
+			t.Fatalf("%v help still mentions a removed confirmation flag:\n%s", args, help)
+		}
 	}
 }
 

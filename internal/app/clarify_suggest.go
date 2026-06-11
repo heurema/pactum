@@ -100,7 +100,7 @@ type clarifySuggestResponse struct {
 	ApprovalReset bool `json:"approval_reset,omitempty"`
 }
 
-func (a App) ClarifySuggest(stdout io.Writer, liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration, confirm bool, jsonOutput bool) error {
+func (a App) ClarifySuggest(stdout io.Writer, liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration, jsonOutput bool) error {
 	context, ok, err := a.loadClarifyContext(stdout, runID, jsonOutput)
 	if err != nil || !ok {
 		return err
@@ -118,8 +118,6 @@ func (a App) ClarifySuggest(stdout io.Writer, liveOutput io.Writer, runID string
 		Stdout:          stdout,
 		LiveOutput:      liveOutput,
 		JSONOutput:      jsonOutput,
-		Confirm:         confirm,
-		CancelMessage:   "clarification suggestion cancelled",
 		Root:            context.Root,
 		EventsJSONL:     context.Paths.EventsJSONL,
 		RunID:           runID,

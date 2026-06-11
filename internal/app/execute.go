@@ -44,7 +44,7 @@ func (a App) ExecutePlan(stdout io.Writer, runID string, agentName string, jsonO
 	return nil
 }
 
-func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, agentName string, timeout time.Duration, confirm bool, jsonOutput bool) error {
+func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, agentName string, timeout time.Duration, jsonOutput bool) error {
 	root, _, ok, err := a.requireWorkspace(stdout, false)
 	if err != nil || !ok {
 		return err
@@ -64,8 +64,6 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 		Stdout:           stdout,
 		LiveOutput:       liveOutput,
 		JSONOutput:       jsonOutput,
-		Confirm:          confirm,
-		CancelMessage:    "execution cancelled",
 		Root:             root,
 		EventsJSONL:      prep.Paths.EventsJSONL,
 		RunID:            runID,

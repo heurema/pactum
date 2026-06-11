@@ -79,7 +79,7 @@ lexical search results for the task, and the accepted memory selected for the
 task. The new run is recorded as the **current run** (a local-only pointer at
 `cache/current-run`), so the staged commands below can omit the run id.
 
-`pactum task new "<task>" --clarify --yes` additionally runs autonomous
+`pactum task new "<task>" --clarify` additionally runs autonomous
 clarifier rounds (see [agents.md](agents.md)) against the new run as soon as it
 is created: suggest → auto-resolve high-confidence recommendations → re-suggest,
 until converged, `needs_human`, or the round cap. The command then prints the
@@ -87,8 +87,7 @@ created run, the loop summary, and a "questions awaiting you" section with the
 open blocking questions automation could not resolve — each with its kind,
 confidence, and recommended answer — so you answer only those and proceed to
 `pactum contract approve`. `--reviewer`, `--max-rounds`, and the idle
-`--timeout` pass through to the loop, and `--yes` is required because the loop
-runs clarifier agents directly. A loop failure never rolls back the run: it
+`--timeout` pass through to the loop. A loop failure never rolls back the run: it
 stays created (and current), and you can re-run `pactum clarify run` on it.
 Without `--clarify`, `task new` only creates the run and the draft contract as
 described above.
@@ -107,6 +106,13 @@ mark it as blocking contract approval. `pactum clarify answer <run_id> q_001
 "Answer"` records the answer and decision. `pactum clarify show <run_id>`
 summarizes open and answered questions. Open **blocking** questions prevent
 contract approval and prompt build.
+
+Every decision verb — `clarify answer`, `contract accept`, `contract approve`,
+`review proposal accept`/`reject`, `review approve`, `memory accept` — takes an
+optional `--by <principal>` (default `manual`) naming whose decision is being
+relayed; it is recorded in the decision artifact (`decided_by`/`accepted_by`/
+`approved_by`). Automatic loop decisions never carry a principal — their
+`source` field is the provenance.
 
 ### Contract
 
@@ -135,10 +141,10 @@ writes the exact command Pactum would run (`execute/dry-run.json`) without
 launching anything. `pactum execute run` runs the agent as a subprocess and
 captures the attempt (request, result, stdout, stderr) under
 `execute/attempts/`. An omitted `--agent` runs the first entry of the config
-agents registry; `--agent <name>` picks another registered entry. Because direct execution is
-unsandboxed, `execute run` asks for confirmation on an interactive terminal and
-**requires `--yes`** for non-interactive/automated use; `plan` never needs
-`--yes`. Both first re-verify the boundaries recorded at prompt build: the
+agents registry; `--agent <name>` picks another registered entry. Direct
+execution is unsandboxed and `execute run` never prompts — running it is
+itself the recorded decision.
+Both first re-verify the boundaries recorded at prompt build: the
 contract hash still matches the approval, the project map is still fresh and
 matches the prompt manifest, and the accepted-memory boundary is unchanged.
 `pactum execute show` inspects captured attempts: with no attempt id it shows
@@ -149,10 +155,9 @@ execution model.
 ### Gate
 
 `pactum gate run <run_id>` deterministically compares the working tree against
-the project map hashes to report changed/new/missing files, and summarizes the
-latest matching execution attempt. Validation commands from the contract run
-**only** when you pass `--allow-commands`; without it, Pactum refuses to run
-them and says so. When the approved contract declares `paths_in_scope` and/or
+the project map hashes to report changed/new/missing files, summarizes the
+latest matching execution attempt, and runs the validation commands from the
+contract. When the approved contract declares `paths_in_scope` and/or
 `paths_out_of_scope`, the gate also compares changed and new files against those
 globs. The project config controls enforcement:
 

@@ -45,6 +45,9 @@ type reviewProposalDecisionRecord struct {
 	Reason     string `json:"reason,omitempty"`
 	CreatedAt  string `json:"created_at"`
 	Source     string `json:"source"`
+	// DecidedBy is the explicit CLI principal (--by). Automatic loop decisions
+	// record only Source as their provenance and omit it.
+	DecidedBy string `json:"decided_by,omitempty"`
 }
 
 type reviewProposalView struct {
@@ -185,11 +188,21 @@ func (a App) ReviewProposeFindings(stdout io.Writer, runID string, reviewerAttem
 	return nil
 }
 
-func (a App) ReviewAcceptProposal(stdout io.Writer, runID string, proposalID string, jsonOutput bool) error {
+// ReviewAcceptProposal accepts a pending proposal as a review finding,
+// recording the explicit CLI principal (--by) per the uniform rule.
+func (a App) ReviewAcceptProposal(stdout io.Writer, runID string, proposalID string, decidedBy string, jsonOutput bool) error {
 	context, ok, err := a.loadReviewContext(stdout, runID)
 	if err != nil || !ok {
 		return err
 	}
+	return a.acceptReviewProposal(stdout, context, runID, proposalID, "manual", normalizePrincipal(context.Root, decidedBy), jsonOutput)
+}
+
+// acceptReviewProposal is the shared accept write path. Provenance is explicit:
+// the CLI verb passes source "manual" with the normalized principal, the
+// review loop's auto-accept passes source "review_loop" with no principal —
+// automatic decisions carry only their source.
+func (a App) acceptReviewProposal(stdout io.Writer, context reviewContext, runID string, proposalID string, source string, decidedBy string, jsonOutput bool) error {
 	review, err := requireReviewPrepared(context.RunPaths, runID)
 	if err != nil {
 		return err
@@ -232,7 +245,8 @@ func (a App) ReviewAcceptProposal(stdout io.Writer, runID string, proposalID str
 		Decision:   "accepted",
 		FindingID:  finding.ID,
 		CreatedAt:  now.Format(time.RFC3339),
-		Source:     "manual",
+		Source:     source,
+		DecidedBy:  decidedBy,
 	}
 
 	if err := appendJSONLine(context.RunPaths.ReviewFindingsJSONL, finding); err != nil {
@@ -274,7 +288,7 @@ func (a App) ReviewAcceptProposal(stdout io.Writer, runID string, proposalID str
 	return nil
 }
 
-func (a App) ReviewRejectProposal(stdout io.Writer, runID string, proposalID string, reason string, jsonOutput bool) error {
+func (a App) ReviewRejectProposal(stdout io.Writer, runID string, proposalID string, reason string, decidedBy string, jsonOutput bool) error {
 	context, ok, err := a.loadReviewContext(stdout, runID)
 	if err != nil || !ok {
 		return err
@@ -304,6 +318,7 @@ func (a App) ReviewRejectProposal(stdout io.Writer, runID string, proposalID str
 		Reason:     sanitizeRepoRootInText(context.Root, strings.TrimSpace(reason)),
 		CreatedAt:  now.Format(time.RFC3339),
 		Source:     "manual",
+		DecidedBy:  normalizePrincipal(context.Root, decidedBy),
 	}
 	if err := appendJSONLine(context.RunPaths.ReviewProposalDecisionsJSONL, decision); err != nil {
 		return err

@@ -120,7 +120,7 @@ type contractAcceptDraftResponse struct {
 	Contract      draftContract                 `json:"contract"`
 }
 
-func (a App) ContractDraft(stdout io.Writer, liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration, confirm bool, jsonOutput bool) error {
+func (a App) ContractDraft(stdout io.Writer, liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration, jsonOutput bool) error {
 	context, ok, err := a.loadContractContext(stdout, runID, jsonOutput)
 	if err != nil || !ok {
 		return err
@@ -138,8 +138,6 @@ func (a App) ContractDraft(stdout io.Writer, liveOutput io.Writer, runID string,
 		Stdout:          stdout,
 		LiveOutput:      liveOutput,
 		JSONOutput:      jsonOutput,
-		Confirm:         confirm,
-		CancelMessage:   "contract draft cancelled",
 		Root:            context.Root,
 		EventsJSONL:     context.Paths.EventsJSONL,
 		RunID:           runID,
@@ -219,7 +217,7 @@ func (a App) ContractShowDraft(stdout io.Writer, runID string, jsonOutput bool) 
 		return err
 	}
 	if !isRegularFile(context.RunPaths.ContractDraftProposalJSON) {
-		suggested := fmt.Sprintf("pactum contract draft %s --yes", runID)
+		suggested := fmt.Sprintf("pactum contract draft %s", runID)
 		return writeNotReady(stdout, jsonOutput, runID, "Contract draft proposal has not been created. Run: "+suggested, suggested)
 	}
 	proposal, err := readContractDraftProposal(context.RunPaths.ContractDraftProposalJSON)
@@ -242,7 +240,7 @@ func (a App) ContractShowDraft(stdout io.Writer, runID string, jsonOutput bool) 
 	return nil
 }
 
-func (a App) ContractAcceptDraft(stdout io.Writer, runID string, jsonOutput bool) error {
+func (a App) ContractAcceptDraft(stdout io.Writer, runID string, acceptedBy string, jsonOutput bool) error {
 	context, ok, err := a.loadContractContext(stdout, runID, jsonOutput)
 	if err != nil || !ok {
 		return err
@@ -273,7 +271,7 @@ func (a App) ContractAcceptDraft(stdout io.Writer, runID string, jsonOutput bool
 
 	now := a.nowUTC()
 	acceptedAt := now.Format(time.RFC3339)
-	acceptedBy := "manual"
+	acceptedBy = normalizePrincipal(context.Root, acceptedBy)
 	proposal.Status = "accepted"
 	proposal.AcceptedAt = &acceptedAt
 	proposal.AcceptedBy = &acceptedBy

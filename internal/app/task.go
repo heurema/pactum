@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -29,11 +28,10 @@ type taskCmd struct {
 
 type taskNewCmd struct {
 	Task       string        `arg:"" name:"task" help:"Task to prepare a contract for."`
-	Clarify    bool          `name:"clarify" help:"Run autonomous clarifier rounds on the new run (requires --yes)."`
+	Clarify    bool          `name:"clarify" help:"Run autonomous clarifier rounds on the new run."`
 	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the clarifier. Defaults to cross-model selection against the run executor."`
 	MaxRounds  int           `name:"max-rounds" help:"Maximum clarifier rounds. Defaults to clarify.max_rounds."`
 	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without clarifier output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
-	Yes        bool          `name:"yes" help:"Required confirmation for direct clarifier execution (with --clarify)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -58,7 +56,6 @@ func (c *taskNewCmd) Run(r *runner) error {
 		Reviewer:   c.Reviewer,
 		MaxRounds:  c.MaxRounds,
 		Timeout:    c.Timeout,
-		Yes:        c.Yes,
 		JSONOutput: c.JSONOutput,
 	})
 }
@@ -114,7 +111,6 @@ type taskNewOptions struct {
 	Reviewer   string
 	MaxRounds  int
 	Timeout    time.Duration
-	Yes        bool
 	JSONOutput bool
 }
 
@@ -129,9 +125,6 @@ type taskNewClarifyResponse struct {
 // --clarify it then runs the autonomous clarify loop against the new run, so
 // the human is left with only the questions automation could not resolve.
 func (a App) TaskNew(stdout io.Writer, liveOutput io.Writer, task string, options taskNewOptions) error {
-	if options.Clarify && !options.Yes {
-		return errors.New("task new --clarify requires --yes because it runs clarifier agents directly")
-	}
 	root, workspace, err := a.resolveStatusRoot()
 	if err != nil {
 		return err
@@ -170,7 +163,7 @@ func (a App) taskNewClarify(stdout io.Writer, liveOutput io.Writer, paths artifa
 	}
 	summary, err := a.runTaskNewClarifyLoop(liveOutput, state.RunID, options)
 	if err != nil {
-		return fmt.Errorf("run %s was created, but its clarify loop failed (re-run it with: pactum clarify run %s --yes): %w", state.RunID, state.RunID, err)
+		return fmt.Errorf("run %s was created, but its clarify loop failed (re-run it with: pactum clarify run %s): %w", state.RunID, state.RunID, err)
 	}
 	// Re-read the run state: the loop may have moved it (clarifying vs
 	// contract_draft), and both output paths must report the fresh status.
@@ -211,7 +204,6 @@ func (a App) runTaskNewClarifyLoop(liveOutput io.Writer, runID string, options t
 		Reviewer:   options.Reviewer,
 		MaxRounds:  options.MaxRounds,
 		Timeout:    options.Timeout,
-		Yes:        options.Yes,
 		JSONOutput: true,
 	}); err != nil {
 		return clarifyLoopSummaryDocument{}, err

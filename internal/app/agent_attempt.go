@@ -20,9 +20,6 @@ type agentAttemptLifecycle[Prepared any, Request any, Result any, Response any] 
 	LiveOutput io.Writer
 	JSONOutput bool
 
-	Confirm       bool
-	CancelMessage string
-
 	Root        string
 	EventsJSONL string
 	RunID       string
@@ -79,16 +76,6 @@ type agentAttemptContext[Prepared any] struct {
 }
 
 func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response any](a App, cfg agentAttemptLifecycle[Prepared, Request, Result, Response]) error {
-	if !cfg.Confirm {
-		proceed, err := confirmDirectExecution(cfg.Stdout)
-		if err != nil {
-			return err
-		}
-		if !proceed {
-			return fmt.Errorf("%s", cfg.CancelMessage)
-		}
-	}
-
 	now := a.nowUTC()
 	createdAt := now.Format(time.RFC3339)
 	prepared, err := cfg.Prepare(createdAt)

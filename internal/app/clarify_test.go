@@ -273,7 +273,7 @@ func TestClarifyAnswerSurfacesApprovalResetOnApprovedRun(t *testing.T) {
 		approveRunForTest(t, app, runID)
 
 		var stdout bytes.Buffer
-		assertNoError(t, app.ClarifyAnswer(&stdout, runID, "q_001", "LRU is fine.", false))
+		assertNoError(t, app.ClarifyAnswer(&stdout, runID, "q_001", "LRU is fine.", "", false))
 
 		got := stdout.String()
 		for _, want := range []string{
@@ -303,7 +303,7 @@ func TestClarifyAnswerSurfacesApprovalResetOnApprovedRun(t *testing.T) {
 		assertNoError(t, app.ClarifyAsk(&setup, runID, "Any preferred eviction policy?", false, false))
 
 		var jsonOut bytes.Buffer
-		assertNoError(t, app.ClarifyAnswer(&jsonOut, runID, "q_001", "LRU is fine.", true))
+		assertNoError(t, app.ClarifyAnswer(&jsonOut, runID, "q_001", "LRU is fine.", "", true))
 		if strings.Contains(jsonOut.String(), "approval_reset") {
 			t.Fatalf("non-approved run should omit approval_reset from JSON:\n%s", jsonOut.String())
 		}
@@ -314,11 +314,46 @@ func TestClarifyAnswerSurfacesApprovalResetOnApprovedRun(t *testing.T) {
 		}
 
 		var stdout bytes.Buffer
-		assertNoError(t, app.ClarifyAnswer(&stdout, runID, "q_001", "LRU again.", false))
+		assertNoError(t, app.ClarifyAnswer(&stdout, runID, "q_001", "LRU again.", "", false))
 		if strings.Contains(stdout.String(), "this run was approved") {
 			t.Fatalf("non-approved run should not warn about approval reset:\n%s", stdout.String())
 		}
 	})
+}
+
+// TestClarifyAnswerRecordsExplicitBy covers --by on clarify answer: the trimmed
+// principal is persisted as the decision record's decided_by, and repo-root
+// paths are sanitized before persistence (the manual default is pinned
+// byte-for-byte in TestClarifyAnswerManualRecordsStayByteIdentical).
+func TestClarifyAnswerRecordsExplicitBy(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var setup bytes.Buffer
+	assertNoError(t, app.ClarifyAsk(&setup, runID, "Which backend?", true, false))
+	assertNoError(t, app.ClarifyAsk(&setup, runID, "Which agent answered?", true, false))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"clarify", "answer", runID, "q_001", "Use SQLite.", "--by", "  bob  "}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify answer --by exited %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"clarify", "answer", runID, "q_002", "The executor.", "--by", root + "/agent"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify answer --by exited %d, stderr: %s", code, stderr.String())
+	}
+	decisions, err := readClarificationDecisions(runPaths.DecisionsJSONL)
+	assertNoError(t, err)
+	if len(decisions) != 2 || decisions[0].DecidedBy != "bob" || decisions[0].Source != "manual_answer" {
+		t.Fatalf("decided_by mismatch: %#v", decisions)
+	}
+	if decisions[1].DecidedBy == "" || strings.Contains(decisions[1].DecidedBy, root) {
+		t.Fatalf("decided_by not sanitized: %#v", decisions[1])
+	}
+	assertDoesNotContainRoot(t, "clarifications/decisions.jsonl", mustReadFile(t, runPaths.DecisionsJSONL), root)
 }
 
 func approveRunForTest(t *testing.T, app App, runID string) {

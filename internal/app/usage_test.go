@@ -19,7 +19,7 @@ func TestRunAgentAttemptLifecycleAppendsUsageRecord(t *testing.T) {
 	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
 	}
@@ -50,7 +50,7 @@ func TestExecuteRunRecordsCapturedCodexUsage(t *testing.T) {
 	t.Setenv("PACTUM_HELPER_CODEX_USAGE", "1")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "codex", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "run", runID, "--agent", "codex"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
 	}
@@ -87,7 +87,7 @@ func TestExecuteRunUsageRecordsRegistryAgentName(t *testing.T) {
 	t.Setenv("PACTUM_HELPER_CODEX_USAGE", "1")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "pinned-codex", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "run", runID, "--agent", "pinned-codex"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
 	}
@@ -113,7 +113,7 @@ func TestReviewRunRecordsCapturedCodexUsage(t *testing.T) {
 	t.Setenv("PACTUM_REVIEWER_CODEX_USAGE", "1")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "run", runID, "--reviewer", "codex", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "codex"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
 	}
@@ -146,7 +146,7 @@ func TestExecuteRunUsageParseMissWarnsButSucceeds(t *testing.T) {
 	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "codex", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "run", runID, "--agent", "codex"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute run with parse miss exited %d, stderr: %s", code, stderr.String())
 	}

@@ -257,7 +257,7 @@ func nextCommandForStatus(status string) string {
 	case "prompt_built":
 		return "pactum execute plan"
 	case "executed":
-		return "pactum gate run --allow-commands"
+		return "pactum gate run"
 	case "gated":
 		return "pactum review prepare"
 	case "review_prepared":

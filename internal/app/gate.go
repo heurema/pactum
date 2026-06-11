@@ -99,7 +99,7 @@ func (e gateProcessError) Error() string {
 	return fmt.Sprintf("gate status %s", e.Status)
 }
 
-func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOutput bool) error {
+func (a App) GateRun(stdout io.Writer, runID string, jsonOutput bool) error {
 	context, ok, err := a.loadGateContext(stdout, runID)
 	if err != nil || !ok {
 		return err
@@ -128,9 +128,6 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 	}
 
 	commands := nonEmptyValidationCommands(context.Contract.Validation.Commands)
-	if len(commands) > 0 && !allowCommands {
-		return errors.New("refusing to run validation commands without --allow-commands")
-	}
 	config, err := readConfig(context.Paths.Config)
 	if err != nil {
 		return err
@@ -145,10 +142,12 @@ func (a App) GateRun(stdout io.Writer, runID string, allowCommands bool, jsonOut
 	}
 
 	validation := gateValidationReport{
-		CommandsAllowed: allowCommands,
+		// Running the contract's validation commands is the gate's purpose, so
+		// they always run; the field stays for report-schema compatibility.
+		CommandsAllowed: true,
 		Commands:        []gateValidationCommandReport{},
 	}
-	if allowCommands && len(commands) > 0 {
+	if len(commands) > 0 {
 		if err := activeStore.MkdirAll(context.RunPaths.GateValidationDir); err != nil {
 			return err
 		}
@@ -214,7 +213,7 @@ func (a App) GateShow(stdout io.Writer, runID string, jsonOutput bool) error {
 		return err
 	}
 	if !isRegularFile(context.RunPaths.GateReportJSON) {
-		suggested := fmt.Sprintf("pactum gate run %s --allow-commands", runID)
+		suggested := fmt.Sprintf("pactum gate run %s", runID)
 		return writeNotReady(stdout, jsonOutput, runID, "Gate report has not been created. Run: "+suggested, suggested)
 	}
 

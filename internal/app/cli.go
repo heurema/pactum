@@ -45,6 +45,7 @@ type clarifyAddCmd struct {
 
 type clarifyAnswerCmd struct {
 	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <question_id> <answer>"`
+	By         string   `name:"by" default:"manual" help:"Decider name to record."`
 	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -52,7 +53,6 @@ type clarifySuggestCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to suggest clarifications for."`
 	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the clarifier. Defaults to cross-model selection against the run executor."`
 	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without clarifier output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
-	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -61,7 +61,6 @@ type clarifyRunCmd struct {
 	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the clarifier. Defaults to cross-model selection against the run executor."`
 	MaxRounds  int           `name:"max-rounds" help:"Maximum clarifier rounds. Defaults to clarify.max_rounds."`
 	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without clarifier output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
-	Yes        bool          `name:"yes" help:"Required confirmation for direct clarifier execution."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -142,12 +141,12 @@ type contractDraftCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to draft contract fields for."`
 	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the read-only drafter. Defaults to cross-model selection against the run executor."`
 	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without drafter output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
-	Yes        bool          `name:"yes" help:"Required confirmation for direct drafter execution."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type contractAcceptCmd struct {
 	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id whose latest draft proposal should be accepted."`
+	By         string `name:"by" default:"manual" help:"Acceptance name to record."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -190,7 +189,6 @@ type executeRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to execute."`
 	Agent      string        `name:"agent" help:"Registry name (config agents) of the executor. Defaults to the first registry entry."`
 	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without agent output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
-	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -207,9 +205,8 @@ type exportCmd struct {
 }
 
 type gateRunCmd struct {
-	RunID         string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
-	AllowCommands bool   `name:"allow-commands" help:"Required safety flag before running validation commands."`
-	JSONOutput    bool   `name:"json" help:"Print machine-readable JSON output."`
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type gateShowCmd struct {
@@ -264,7 +261,6 @@ type reviewRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to review."`
 	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the reviewer. Defaults to cross-model selection against the run executor."`
 	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without reviewer output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
-	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -272,7 +268,6 @@ type reviewFixRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id whose review findings should be fixed."`
 	Agent      string        `name:"agent" help:"Registry name (config agents) of the fixer. Defaults to the first registry entry."`
 	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without fixer output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
-	Yes        bool          `name:"yes" help:"Skip the interactive confirmation (required in non-interactive use)."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -284,7 +279,6 @@ type reviewLoopCmd struct {
 	Patience    int           `name:"patience" help:"Consecutive no-change fixer rounds before stopping as stalemate. Defaults to review.patience."`
 	CleanRounds int           `name:"clean-rounds" help:"Consecutive clean review rounds required before convergence. Defaults to review.clean_rounds."`
 	Timeout     time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without reviewer or fixer output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
-	Yes         bool          `name:"yes" help:"Required confirmation for direct reviewer/fixer execution."`
 	JSONOutput  bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -300,12 +294,14 @@ type reviewFixApplyCmd struct {
 
 type reviewProposalAcceptCmd struct {
 	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <proposal_id>"`
+	By         string   `name:"by" default:"manual" help:"Decider name to record."`
 	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewProposalRejectCmd struct {
 	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <proposal_id>"`
 	Reason     string   `name:"reason" help:"Reason for rejecting the proposal."`
+	By         string   `name:"by" default:"manual" help:"Decider name to record."`
 	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 

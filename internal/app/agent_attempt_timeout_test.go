@@ -59,7 +59,7 @@ func TestExecuteRunCompletedDespiteTimeoutTakesSuccessPath(t *testing.T) {
 	app.AgentTransport = &idleKilledAgentTransport{completed: true}
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "codex", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "run", runID, "--agent", "codex"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("completed-despite-timeout execute run should succeed, exited %d, stderr: %s", code, stderr.String())
 	}
@@ -90,7 +90,7 @@ func TestExecuteRunPlainTimeoutStillFailsWithTimeoutMessage(t *testing.T) {
 	app.AgentTransport = &idleKilledAgentTransport{}
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "codex", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "run", runID, "--agent", "codex"}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatal("plain timed-out execute run should fail")
 	}
@@ -125,7 +125,7 @@ func TestClarifySuggestCompletedDespiteTimeoutRunsAfterSuccess(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "claude", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "claude"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("completed-despite-timeout clarify suggest should succeed, exited %d, stderr: %s", code, stderr.String())
 	}

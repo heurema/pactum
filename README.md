@@ -151,14 +151,13 @@ pactum contract approve
 pactum prompt build
 
 # 6. Inspect the planned execution, then run the agent. `execute run` runs the
-#    agent directly in your repository; it asks for confirmation on a terminal,
-#    or pass --yes for non-interactive use. An omitted --agent runs the first
+#    agent directly in your repository. An omitted --agent runs the first
 #    entry of the config agents registry; --agent <name> picks another entry.
 pactum execute plan
-pactum execute run --yes
+pactum execute run
 
-# 7. Gate the result. Validation commands run only with --allow-commands.
-pactum gate run --allow-commands
+# 7. Gate the result: it runs the contract's validation commands.
+pactum gate run
 
 # 8. Review the run manually.
 pactum review prepare

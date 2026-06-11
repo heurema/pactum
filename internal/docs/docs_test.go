@@ -55,6 +55,10 @@ var forbiddenDocPhrases = []string{
 	"review reject-proposal",
 	"review apply-fix-outcomes",
 	"pactum task current",
+	// M23.1 removed the interactive confirmation layer and the gate's
+	// command-allow flag.
+	"--yes",
+	"--allow-commands",
 }
 
 // requiredDocMentions are current commands the user-facing docs must describe.
@@ -74,7 +78,6 @@ var requiredDocMentions = []string{
 	"pactum task list",
 	"pactum task use",
 	"pactum version",
-	"--yes",
 	// Release-readiness foundation (M5.4).
 	"CHANGELOG.md",
 }

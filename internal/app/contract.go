@@ -174,7 +174,7 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 	if err != nil {
 		return err
 	}
-	approval := approvedApprovalState(approvedBy, now, hash)
+	approval := approvedApprovalState(normalizePrincipal(context.Root, approvedBy), now, hash)
 	if err := writeJSON(context.RunPaths.ApprovalJSON, approval); err != nil {
 		return err
 	}
@@ -335,9 +335,6 @@ func pendingApprovalState() approvalState {
 }
 
 func approvedApprovalState(approvedBy string, approvedAt time.Time, contractSHA256 string) approvalState {
-	if strings.TrimSpace(approvedBy) == "" {
-		approvedBy = "manual"
-	}
 	approvedAtText := approvedAt.Format(time.RFC3339)
 	return approvalState{
 		Schema:         approvalSchema,

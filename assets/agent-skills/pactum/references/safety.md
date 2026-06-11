@@ -15,9 +15,8 @@ about this; the skill must be too.
   and report.
 - Run `pactum execute run` **only after** the user has explicitly approved
   unsandboxed, direct agent execution for this task. The same applies to
-  `pactum review run`.
-- Do not pass `--yes` to bypass confirmation unless that explicit approval has
-  been given.
+  `pactum review run`. These commands never prompt — running one is itself the
+  decision, so do not run them without that explicit approval.
 - Never hide a non-zero exit code. If a command fails, report it with its
   output rather than continuing.
 - Do not commit `.heurema/`. It is generated, machine-specific workspace state.

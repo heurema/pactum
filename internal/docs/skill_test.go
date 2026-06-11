@@ -189,6 +189,9 @@ func TestSkillDocsAvoidStaleAndPrematureClaims(t *testing.T) {
 		"/plugin install pactum@pactum",
 		"pactum install",
 		"pactum skill install",
+		// M23.1 removed the confirmation layer.
+		"--yes",
+		"--allow-commands",
 		// M23.0 removed these command spellings.
 		"pactum agents doctor",
 		"pactum clarify ask",

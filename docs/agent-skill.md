@@ -55,8 +55,8 @@ staged commands (`clarify`, `contract`, `prompt`, `execute`) need no run id.
 ## When real execution is allowed
 
 `pactum execute run` and `pactum review run` launch a real agent as a direct,
-**unsandboxed** subprocess. The skill does not run them by default and does not
-pass `--yes` unless the user explicitly approves direct agent execution. See
+**unsandboxed** subprocess. The skill does not run them by default: it runs
+them only after the user explicitly approves direct agent execution. See
 [`assets/agent-skills/pactum/references/safety.md`](../assets/agent-skills/pactum/references/safety.md).
 
 ## Source of truth
