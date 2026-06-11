@@ -1,0 +1,40 @@
+# Contract Draft Proposal
+
+## Status
+- Run id: run_20260611_080712
+- Status: accepted
+- Source: drafter_attempt
+- Drafter attempt: drafter_attempt_001
+- Drafter: codex
+- Accepted by: manual
+- Accepted at: 2026-06-11T08:17:22Z
+
+## In scope
+- Implement only the explicit CLI rename and removal list from the goal, with hard removal of old command-name spellings and no deprecation aliases.
+- Merge `execute status` behavior into `execute show` when no attempt id is provided, while preserving attempt-detail behavior for `execute show [run_id] <attempt_id>`.
+- Update help, usage, `Next:` hints, hand-written errors, generated agent prompt/context text, and machine-readable command-string values such as `next_command` and `suggested_command` to advertise only the new command grammar.
+- Update active current documentation and workflow consumers, including README, AGENTS.md, docs/flow.md, docs/agents.md, docs/agent-skill.md, docs/install.md, docs/skill-install.md, assets/agent-skills/pactum/**, and scripts/smoke.sh.
+- Update tests to use the new grammar and add positive, negative, help/usage, and `Next:` hint coverage for the renamed and removed commands.
+
+## Out of scope
+- Redesigning unlisted command groups such as task, prompt, gate, memory, map, search, status, usage, version, and export.
+- Renaming durable artifact paths, JSON schema names, or JSON field names, including dry-run artifact filenames and `dry_run` fields.
+- Removing flexible optional `[run_id]` argument resolution forms.
+- Updating changelog, dogfood reports, backlog notes, or other explicitly historical text unless it presents current guidance.
+- Running real unsandboxed agents such as `pactum execute run` or `pactum review run`.
+
+## Acceptance criteria
+- Each new command spelling named in the goal is accepted by the CLI, and each removed old spelling, including `clarify list`, `execute status`, and `task current`, is rejected as a command.
+- `pactum execute show` with no attempt id shows the former execute-status summary; `pactum execute show --json` with no attempt id returns the former execute-status summary shape.
+- `pactum execute show [run_id] <attempt_id>` keeps the existing attempt-detail behavior, and `--logs` affects only attempt-detail output.
+- Human-facing current workflow labels, headings, help, usage text, `Next:` hints, suggestions, and hand-written errors use `plan` and the new command names; parser diagnostics may echo an invalid old token only as the rejected input.
+- Current docs, bundled Pactum skill files, active agent guidance, scripts, generated prompt/context text, and JSON command-string values no longer instruct users or agents to run removed command spellings.
+- Tests include positive coverage for new spellings, negative parser/help coverage for removed spellings, and assertions that usage strings and `Next:` hints advertise only the new command names.
+
+## Validation commands
+- make check
+
+## Assumptions
+- Historical files are identified by context and filename purpose; changelog, dogfood, backlog, and dated report content can retain old commands when describing past behavior.
+- Preserving existing JSON output schemas includes preserving schema identifiers and field names even when the CLI command that emits them is renamed or merged.
+

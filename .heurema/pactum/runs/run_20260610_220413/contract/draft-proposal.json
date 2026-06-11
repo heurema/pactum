@@ -1,0 +1,49 @@
+{
+  "schema": "pactum.contract_draft_proposal.v1",
+  "run_id": "run_20260610_220413",
+  "status": "accepted",
+  "created_at": "2026-06-11T06:28:38Z",
+  "source": "drafter_attempt",
+  "drafter_attempt_id": "drafter_attempt_001",
+  "drafter": "codex",
+  "in_scope": [
+    "Add a top-level read-oriented CLI command `pactum export [run_id] --output \u003cpath\u003e [--json]`.",
+    "Resolve an omitted `run_id` using the same current-run or sole-active-run behavior as existing read-only run commands.",
+    "Export all regular files currently under `.heurema/pactum/runs/\u003crun_id\u003e/`, including `.log` files when present.",
+    "Add an export-only filtered copy of `.heurema/pactum/ledger/events.jsonl` containing only events for the exported run.",
+    "Produce a deterministic ZIP archive with slash-separated entries rooted at `pactum-run-\u003crun_id\u003e/` and no absolute local paths.",
+    "Normalize ZIP metadata: stable sorted entry order, fixed timestamps, regular file mode `0644`, directory mode `0755`, and no owner/group metadata.",
+    "Support human output and `--json` success output using schema `pactum.export.v1` with at least `schema`, `run_id`, `output`, `archive_format`, `archive_root`, `entries`, `bytes`, and `filtered_events`.",
+    "Write the archive through a temporary sibling file and atomically rename it on success when possible."
+  ],
+  "out_of_scope": [
+    "Do not export project map, cache, tmp, locks, or global accepted memory unless those files already exist inside the run directory.",
+    "Do not add overwrite or `--force` behavior.",
+    "Do not mutate Pactum state during export: no `run.json`, contract, approval, ledger, or memory updates.",
+    "Do not follow or preserve symlinks, FIFOs, sockets, device files, or other non-regular filesystem entries."
+  ],
+  "acceptance": [
+    "`pactum export \u003crun_id\u003e --output \u003cpath\u003e` creates a ZIP archive containing the expected run files under `pactum-run-\u003crun_id\u003e/`.",
+    "The archive includes a filtered ledger events sidecar containing only events for the exported run; if there are no events for that run, the sidecar is present and empty.",
+    "The archive entries are slash-separated, sorted deterministically, rooted at `pactum-run-\u003crun_id\u003e/`, and contain no absolute local paths.",
+    "Repeated exports of unchanged inputs are byte-for-byte stable even when source mtimes or permissions differ.",
+    "`pactum export --output \u003cpath\u003e` resolves the run using existing current-run or sole-active behavior.",
+    "`--json` emits a valid `pactum.export.v1` object with at least `schema`, `run_id`, `output`, `archive_format`, `archive_root`, `entries`, `bytes`, and `filtered_events`.",
+    "Human output reports the export essentials without printing the archive contents.",
+    "The command fails for a missing run.",
+    "The command fails when the output path already exists.",
+    "The command fails when the output parent directory does not exist.",
+    "Relative output paths are resolved against the invocation working directory, while absolute output paths are accepted.",
+    "The command rejects output paths inside the exported run directory.",
+    "The command fails and removes any partial archive if a selected run file cannot be read during archive creation.",
+    "The command fails and removes any partial archive if `.heurema/pactum/ledger/events.jsonl` is missing, unreadable, or contains malformed JSONL.",
+    "The command fails if any symlink or non-regular filesystem entry is encountered under the selected run record.",
+    "Tests prove that exporting leaves Pactum run files and ledger state unchanged."
+  ],
+  "validation": [
+    "make check"
+  ],
+  "assumptions": [],
+  "accepted_at": "2026-06-11T06:29:51Z",
+  "accepted_by": "manual"
+}

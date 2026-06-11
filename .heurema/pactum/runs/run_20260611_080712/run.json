@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260611_080712",
+  "status": "contract_approved",
+  "task": "Normalize the CLI command grammar for agent-first use: every stage exposes a uniform verb set, duplicates and aliases are removed, hyphenated pseudo-subcommands become nested subcommands. Renames (hard, no deprecation aliases — the project has no users yet): agents doctor -\u003e doctor; clarify ask -\u003e clarify add; clarify loop -\u003e clarify run; clarify status (and its list alias) -\u003e clarify show; contract show-draft -\u003e contract show --draft; contract accept-draft -\u003e contract accept; execute dry-run -\u003e execute plan; execute status merges into execute show; review dry-run -\u003e review plan; review add-finding -\u003e review finding add; review resolve -\u003e review finding resolve; review accept-proposal -\u003e review proposal accept; review reject-proposal -\u003e review proposal reject; review propose-findings -\u003e review proposal collect; review fix -\u003e review fix run; review apply-fix-outcomes -\u003e review fix apply; task current is dropped (pactum status already reports the current run). All human-output Next: hints, error messages, and docs (flow.md, agents.md, agent-skill.md, README if it lists commands) must reference the new names. Existing JSON output schemas keep their names. Tests updated to invoke the new grammar.",
+  "created_at": "2026-06-11T08:07:12.529476Z",
+  "updated_at": "2026-06-11T08:17:22.625202Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260611_063009",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}
