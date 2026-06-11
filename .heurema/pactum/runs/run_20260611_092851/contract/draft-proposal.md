@@ -1,0 +1,40 @@
+# Contract Draft Proposal
+
+## Status
+- Run id: run_20260611_092851
+- Status: accepted
+- Source: drafter_attempt
+- Drafter attempt: drafter_attempt_001
+- Drafter: codex
+- Accepted by: manual
+- Accepted at: 2026-06-11T09:37:27Z
+
+## In scope
+- Remove Pactum's own interactive confirmation implementation and every current `--yes` CLI flag/guard from agent-running commands, including clarify suggest/run, contract draft, execute run, review run, review fix run, review loop, task new --clarify, and any other current `Yes` command field.
+- Remove `gate run --allow-commands` so `gate run` always executes contract validation commands and reports `validation.commands_allowed: true` with an empty commands array when no validation commands exist.
+- Add optional `--by` with default `manual` to contract accept, clarify answer, review proposal accept, and review proposal reject; keep/default it on contract approve, review approve, and memory accept.
+- Persist explicit CLI principals only in semantic decision artifacts: `accepted_by` for contract draft proposal acceptance and `decided_by` for clarification and review proposal decisions; leave ledger event schema unchanged.
+- Update current CLI help, Next hints, hand-written errors, README, AGENTS guidance, docs current guidance, bundled Pactum skill references, scripts, and tests so `--yes` and `--allow-commands` are not presented as current guidance.
+
+## Out of scope
+- Changing built-in agent transport permission prompts, sandbox behavior, read-only/write-scope behavior, or external agent approval semantics.
+- Adding principal fields to automatic loop-created decisions such as clarify-loop auto answers or review-loop duplicate proposal records.
+- Adding `--by` to commands other than contract approve, review approve, memory accept, contract accept, clarify answer, review proposal accept, and review proposal reject.
+- Rewriting clearly historical backlog or dogfood transcripts solely because they contain old `--yes` or `--allow-commands` examples.
+
+## Acceptance criteria
+- `pactum --help` and subcommand help no longer expose `--yes` or `--allow-commands`; passing either removed flag to formerly affected commands is rejected as an unknown flag.
+- Formerly guarded Pactum commands run without Pactum confirmation prompts or non-interactive `--yes` refusal errors; no code path calls `confirmDirectExecution`.
+- `gate run` runs configured validation commands without an allow flag and successful gate reports always include `validation.commands_allowed: true`.
+- `contract accept`, `clarify answer`, `review proposal accept`, and `review proposal reject` accept optional `--by`, default to `manual`, trim whitespace, sanitize repo-root absolute path text consistently with memory acceptance, and persist the resulting principal in the clarified artifact fields.
+- Tests cover removed flag rejection, no-prompt execution behavior, gate execution without `--allow-commands`, and `--by` persistence/defaulting for all explicitly principal-bearing decision verbs.
+- Current guidance in README, AGENTS.md, docs/agents.md, docs/flow.md, docs/agent-skill.md, bundled Pactum skill files, helper text, Next hints, and scripts no longer instruct users to pass `--yes` or `--allow-commands`.
+
+## Validation commands
+- go test ./internal/app ./internal/docs
+- make check
+
+## Assumptions
+- The CLI parser's normal unknown-flag behavior is sufficient for removed `--yes` and `--allow-commands` flags.
+- Historical documents may retain old command transcripts when they are clearly archival rather than current instructions.
+

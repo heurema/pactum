@@ -1,0 +1,109 @@
+{
+  "schema": "pactum.gate_report.v1",
+  "run_id": "run_20260611_113834",
+  "created_at": "2026-06-11T12:51:50Z",
+  "status": "needs_review",
+  "execution": {
+    "attempt_id": "attempt_001",
+    "exit_code": 0,
+    "timed_out": false,
+    "result": "execute/last-result.json"
+  },
+  "changes": {
+    "status": "changed",
+    "changed_files": [
+      "assets/agent-skills/pactum/SKILL.md",
+      "assets/agent-skills/pactum/references/workflow.md",
+      "docs/agent-skill.md",
+      "internal/app/agent_attempt.go",
+      "internal/app/app_test.go",
+      "internal/app/clarify.go",
+      "internal/app/clarify_loop.go",
+      "internal/app/clarify_suggest.go",
+      "internal/app/commands.go",
+      "internal/app/contract.go",
+      "internal/app/contract_draft.go",
+      "internal/app/errors.go",
+      "internal/app/execute.go",
+      "internal/app/gate.go",
+      "internal/app/map.go",
+      "internal/app/memory.go",
+      "internal/app/memory_freshness.go",
+      "internal/app/prompt.go",
+      "internal/app/prompt_test.go",
+      "internal/app/readiness.go",
+      "internal/app/resolve.go",
+      "internal/app/review.go",
+      "internal/app/review_fix.go",
+      "internal/app/review_fix_outcomes.go",
+      "internal/app/review_loop.go",
+      "internal/app/review_proposals.go",
+      "internal/app/status.go",
+      "internal/app/task.go"
+    ],
+    "new_files": [
+      "internal/app/affordances_test.go"
+    ],
+    "missing_files": [],
+    "reasons": [
+      "changed file: assets/agent-skills/pactum/SKILL.md",
+      "changed file: assets/agent-skills/pactum/references/workflow.md",
+      "changed file: docs/agent-skill.md",
+      "changed file: internal/app/agent_attempt.go",
+      "changed file: internal/app/app_test.go",
+      "changed file: internal/app/clarify.go",
+      "changed file: internal/app/clarify_loop.go",
+      "changed file: internal/app/clarify_suggest.go",
+      "changed file: internal/app/commands.go",
+      "changed file: internal/app/contract.go",
+      "changed file: internal/app/contract_draft.go",
+      "changed file: internal/app/errors.go",
+      "changed file: internal/app/execute.go",
+      "changed file: internal/app/gate.go",
+      "changed file: internal/app/map.go",
+      "changed file: internal/app/memory.go",
+      "changed file: internal/app/memory_freshness.go",
+      "changed file: internal/app/prompt.go",
+      "changed file: internal/app/prompt_test.go",
+      "changed file: internal/app/readiness.go",
+      "changed file: internal/app/resolve.go",
+      "changed file: internal/app/review.go",
+      "changed file: internal/app/review_fix.go",
+      "changed file: internal/app/review_fix_outcomes.go",
+      "changed file: internal/app/review_loop.go",
+      "changed file: internal/app/review_proposals.go",
+      "changed file: internal/app/status.go",
+      "changed file: internal/app/task.go",
+      "new file: internal/app/affordances_test.go"
+    ]
+  },
+  "validation": {
+    "commands_allowed": true,
+    "commands": [
+      {
+        "id": "command_001",
+        "command": "go test ./...",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_001/stdout.log",
+        "stderr": "gate/validation/command_001/stderr.log",
+        "result": "gate/validation/command_001/result.json"
+      },
+      {
+        "id": "command_002",
+        "command": "make check",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_002/stdout.log",
+        "stderr": "gate/validation/command_002/stderr.log",
+        "result": "gate/validation/command_002/result.json"
+      }
+    ]
+  },
+  "summary": {
+    "execution_passed": true,
+    "validation_passed": true,
+    "changes_need_review": true,
+    "scope_blocked": false
+  }
+}

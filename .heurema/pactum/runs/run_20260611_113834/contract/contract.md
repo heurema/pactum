@@ -1,0 +1,100 @@
+# Contract Draft
+
+## Goal
+Make the CLI announce legal moves so an agent never guesses the pipeline state machine: (1) structured error envelopes — when a command fails on a recognizable precondition (workspace not initialized, project map stale, contract not approved, prompt not built, no execution attempt, gate report missing, review not prepared, open blocking clarifications, run not found, pending proposals), the --json output emits a versioned error envelope carrying a stable machine-readable reason code, the human message, and a fix field holding the exact remedial pactum command when one exists; human output keeps the existing Suggested:/guidance text; exit codes stay nonzero and unchanged. (2) next affordances — every mutating command's --json response gains a next array of full pactum command strings mirroring the human Next: block (commands that already print Next: hints must emit the same set in JSON), and pactum status --json gains a next array for the current run's stage. There is precedent to build on: the pactum.not_ready.v1 envelope with suggested_command, next_command fields in run resolution, and the human Next: blocks — unify these into one consistent affordance convention rather than inventing a parallel one. The bundled skill and docs describe the convention briefly (agents should read next/fix instead of memorizing stage order). Tests pin: a representative precondition failure per stage emits the envelope with the right reason and fix; next arrays match the human hints; non-error and non-mutating outputs are unchanged.
+
+## Current status
+Contract status: approved
+Manual clarification, contract approval, prompt build, and agent execution are available through staged Pactum commands.
+
+## Relevant repository context
+- Map run: map_20260611_111353
+- Repo map: .heurema/pactum/map/repo-map.md
+- Search results: context/search-results.json (0 result(s))
+
+## Clarifications
+- q_001 [blocking] — What exactly counts as a 'mutating command' for the required `next` array: every command that writes anything (`init`, `map refresh`, `task use`, `export`, `memory refresh`, etc.), or only workflow/run-stage commands such as `task new`, `contract approve`, `prompt build`, `execute plan/run`, `gate run`, `review ...`, and `memory propose/accept`?
+  Rationale: The repo has many commands that write files, but only a few currently print human `Next:` blocks (`task new`, `task show`, `contract accept`, `prompt build`, `memory propose`). The implementation and tests differ substantially depending on whether non-stage mutations like `export` and `memory refresh` must gain `next`.
+  Answer: Define `mutating command` as commands that create or update Pactum workflow state and already support `--json`; exclude pure read-only commands and exclude `export` because it writes an archive but does not advance the Pactum state machine. For in-scope mutating commands with no meaningful next action, emit `next: []`.
+- q_002 [blocking] — For the JSON error envelope, should the stable machine-readable field be named `error.code` as in the existing `pactum.error.v1` implementation, or `error.reason` as described in the backlog phrase '`reason` + `fix`'?
+  Rationale: The current code has `pactum.error.v1` with `error.message` and `error.code`; the draft says 'reason code' and the backlog says `reason`. This is an external schema decision for agents.
+  Answer: Keep `error.code` as the canonical reason-code field for compatibility with the existing `pactum.error.v1` envelope, and add `error.fix` when an exact remedial command exists. Do not add a parallel `error.reason` field in this slice.
+- q_003 [blocking] — Should existing JSON affordance fields such as `suggested_command` and `next_command` remain for compatibility while the new `fix` and `next` fields are added, or should they be removed/renamed immediately?
+  Rationale: The repo currently exposes `suggested_command` in `pactum.not_ready.v1` and prompt-not-built responses, plus `next_command` in task/status responses. Removing them would break existing tests and consumers; keeping them temporarily creates two conventions.
+  Answer: Preserve existing `suggested_command` and `next_command` fields where they already exist, add the new `fix` and `next` fields, and update the bundled skill/docs to prefer `fix` and `next`.
+- q_004 [blocking] — How should read-only not-ready responses behave, such as `gate show --json` before a gate report exists or `review show --json` before review is prepared: keep the current exit-0 `pactum.not_ready.v1` response, or convert them to nonzero `pactum.error.v1` envelopes?
+  Rationale: The draft says error envelopes apply when a command fails and exit codes stay unchanged. The repo currently treats these read-only guidance cases as successful `pactum.not_ready.v1` JSON with `ready:false` and `suggested_command`.
+  Answer: Keep read-only not-ready responses exit 0 and keep `pactum.not_ready.v1`; add `fix` mirroring the exact remedial command while preserving `suggested_command` for compatibility.
+- q_005 [blocking] — For the 'no completed execution attempt' precondition on `pactum gate run --json`, should `fix` ever suggest `pactum execute run`, even though real agent execution is unsandboxed and requires explicit human approval?
+  Rationale: The repository and AGENTS.md safety rules say not to run real agents without explicit approval. But the exact remedial command for a missing execution attempt could be interpreted as `pactum execute run`, which is unsafe for an agent to follow automatically.
+  Answer: Do not put `pactum execute run` in `fix`. For this precondition, omit `fix` and use the human message to say a completed execution attempt is required; `next` may point to the safe preparation command `pactum execute plan <run_id> --agent codex`.
+- q_006 [blocking] — When there is no single exact remedial command, such as multiple open blocking clarification questions, multiple pending review proposals, or no current run with multiple active runs, should `fix` be omitted, set to an empty string, or contain a command with placeholders?
+  Rationale: The draft says `fix` holds the exact remedial pactum command when one exists. Some current guidance is multi-step or requires choosing IDs, so placeholder commands could make agents guess again.
+  Answer: Make `fix` optional and omit it when no single exact runnable command exists. Never emit placeholder commands in `fix`; keep multi-step guidance in the human-readable message and expose concrete legal commands through `next` only when they are directly runnable.
+- q_007 — Which precondition failures must be pinned by acceptance tests for this slice?
+  Rationale: The draft says 'a representative precondition failure per stage' but does not name the test matrix. The repo already has partial coverage for `run_not_found`, `contract_not_approved`, readiness responses, and status next commands.
+  Answer: Pin at least: `not_initialized`, `project_map_stale`, `contract_not_approved`, `blocking_clarifications_open`, `prompt_not_built`, `no_execution_attempt`, `gate_report_missing`, `review_not_prepared`, `pending_review_proposals`, and `run_not_found`; each test should assert schema, code, message, optional fix, unchanged exit code, and empty stderr in `--json` mode.
+- q_008 [blocking] — Besides mutating commands, should the new plural `next` array be added to read-only JSON responses that already expose next-step affordances, specifically `pactum task show --json`, `pactum task list --json`, and `pactum status --json`?
+  Rationale: The draft says non-error and non-mutating outputs are unchanged, but also says commands already printing human `Next:` hints must emit the same set in JSON, and explicitly names `pactum status --json`. In the repo, `task show` prints a human `Next:` block and has `next_command`; `task list` has per-run `next_command` in JSON but no human `Next:` block; `status` has `runs.next_command` and human `next:` output.
+  Answer: Add plural `next` to `pactum status --json` and `pactum task show --json` because they are current-run guidance surfaces; leave `pactum task list --json` unchanged except for preserving existing per-run `next_command` fields because it is an inventory view and does not print a human `Next:` block.
+- q_009 [blocking] — Where should the new plural `next` array live in JSON responses: as a top-level `next` field on each command response, or nested beside existing affordance fields such as `runs.next_command` and per-run `next_command`?
+  Rationale: The repo currently stores next-step affordances in different places: `status.runs.next_command`, `task show` top-level `next_command`, and `task list` item-level `next_command`. The draft says each response 'gains a `next` array' and says `status --json` gains one, but does not pin the field location.
+  Answer: Use a top-level `next: []` array on each in-scope command response, including `pactum status --json`; preserve existing `next_command` fields for compatibility where they already exist.
+- q_010 [blocking] — For JSON `next`, should Pactum mirror the human `Next:` block byte-for-byte, or normalize it into concrete directly runnable commands when the human hint is bare, multi-step, or contains placeholders such as `<question_id>` and `"<answer>"`?
+  Rationale: Current human hints vary: `prompt build` prints `pactum execute plan --agent codex` without a run id, `task show` uses bare commands from `nextCommandForStatus`, `memory propose` prints two concrete commands with run ids, and `task new --clarify` may print placeholder guidance for answering clarification questions. The draft simultaneously says 'full pactum command strings', 'mirroring the human Next block', and that agents should not guess.
+  Answer: Define JSON `next` as concrete directly runnable command strings. It may fill known run ids and omit placeholder-only templates; human output can keep its existing explanatory `Next:` text. Preserve exact set/order only where the human hints are already concrete commands.
+- q_011 — When the current stage has no safe automatic next command because human input is required, for example open blocking clarification questions after `task new --clarify`, should `next` be empty or contain a safe inspection command such as `pactum clarify status <run_id>`?
+  Rationale: The contract wants agents to read legal moves from `next`, but answering clarification questions requires human-authored content and cannot be represented as an exact runnable command. The repo already distinguishes safe preparation commands from unsandboxed or human-decision commands in the existing clarification around `execute run`.
+  Answer: Emit only safe, concrete commands in `next`; for open blocking clarifications, prefer `next: ["pactum clarify status <run_id>"]` and keep answer templates in the human-readable message, not in `next`.
+- q_012 [blocking] — Where should the new JSON `fix` field live: inside the existing `error` object as `error.fix`, or as a top-level sibling to `schema` and `error`?
+  Rationale: The current repo defines `pactum.error.v1` as `{schema, error: {message, code}}` in `internal/app/errors.go`. Existing questions cover `code` versus `reason` and optional fixes, but not the field location. This affects the public schema and tests.
+  Answer: Add `fix` as `error.fix` inside the existing `error` object, alongside `error.message` and `error.code`. Omit `error.fix` when no exact runnable remedial command exists.
+- q_013 [blocking] — Should this slice cover only the named precondition list, or also secondary artifact-boundary failures such as `approved contract hash does not match current contract`, `executor prompt was built for a different project map`, `memory context changed after prompt build`, and `executor prompt does not match current approved contract`?
+  Rationale: The contract lists specific recognizable preconditions, but the repo has additional boundary checks in `internal/app/execute.go`, `internal/app/gate.go`, and `internal/app/contract.go`. Including all of them expands the reason-code taxonomy and fix-command matrix; excluding them leaves some agent-facing failures as generic `command_failed`.
+  Answer: For this slice, require stable codes and `fix` only for the named preconditions in the contract. Leave secondary artifact-integrity and boundary-mismatch errors as `command_failed` unless they already match an existing code such as `project_map_stale`; handle a fuller taxonomy in a follow-up.
+- q_014 [blocking] — For the partial-success scenario where `pactum task new --clarify --json` creates a run but the clarify loop fails before a normal JSON response, should the command emit an error envelope, a partial success response, or both?
+  Rationale: `internal/app/task.go` explicitly preserves the created run when the clarify loop fails and returns an error telling the user to re-run `pactum clarify run <run_id>`. In `--json` mode, the new envelope convention needs to say whether agents get structured recovery data or a normal task response.
+  Answer: Keep the nonzero exit and emit a `pactum.error.v1` envelope, not the normal task response. Use a stable code such as `clarify_loop_failed`, keep the human message indicating the run was created, and set `error.fix` to `pactum clarify run <run_id>`.
+- q_015 — What concrete files count as the 'bundled skill and docs' that must briefly describe `next` and `fix`: only `assets/agent-skills/pactum/SKILL.md`, the reference files under `assets/agent-skills/pactum/references/`, or also human docs such as `docs/agent-skill.md` and `docs/flow.md`?
+  Rationale: The repo guidance names `assets/agent-skills/pactum/` as the canonical skill package and `docs/agent-skill.md` as the human overview. The draft says 'bundled skill and docs' without naming files, so acceptance could vary from one small skill update to a wider documentation pass.
+  Answer: Update `assets/agent-skills/pactum/SKILL.md` and `assets/agent-skills/pactum/references/workflow.md` as the required bundled skill docs, and update `docs/agent-skill.md` as the human overview. Do not require broad README, `docs/flow.md`, or backlog rewrites for this slice.
+
+## In scope
+- Add `pactum.error.v1` JSON envelopes for the named failing preconditions with stable `error.code`, existing human-readable `error.message`, and optional `error.fix` when a single exact runnable remedial command exists.
+- Add `error.fix` inside the existing `error` object; preserve existing `suggested_command` and `next_command` fields where they already exist.
+- Add `fix` to exit-0 `pactum.not_ready.v1` read-only guidance responses while preserving `suggested_command`.
+- Add top-level `next: []` arrays to in-scope workflow-state mutating `--json` responses, `pactum status --json`, and `pactum task show --json`.
+- Populate JSON `next` only with safe, concrete, directly runnable pactum command strings; fill known run IDs and omit placeholder-only templates.
+- Document the `fix` and `next` convention in `assets/agent-skills/pactum/SKILL.md`, `assets/agent-skills/pactum/references/workflow.md`, and `docs/agent-skill.md`.
+
+## Out of scope
+- Do not rename `error.code` to `error.reason` or add a parallel `error.reason` field.
+- Do not remove existing compatibility fields such as `suggested_command` or `next_command`.
+- Do not add top-level `next` to `pactum task list --json` beyond preserving existing per-run `next_command` fields.
+- Do not require `next` for `export` or other commands that write artifacts without advancing Pactum workflow state.
+- Do not emit `pactum execute run` as `error.fix`; real agent execution remains human-approved.
+- Do not expand the stable reason-code taxonomy to secondary artifact-integrity or boundary-mismatch failures unless they already map to a named precondition such as `project_map_stale`.
+
+## Acceptance criteria
+- `--json` failures for `not_initialized`, `project_map_stale`, `contract_not_approved`, `blocking_clarifications_open`, `prompt_not_built`, `no_execution_attempt`, `gate_report_missing`, `review_not_prepared`, `pending_review_proposals`, and `run_not_found` emit schema `pactum.error.v1` when the command fails.
+- Each pinned failure test asserts `error.code`, `error.message`, optional `error.fix`, unchanged nonzero exit code, and empty stderr in `--json` mode.
+- No `error.fix` is emitted when no single exact runnable remedial command exists; no `fix` value contains placeholders.
+- `pactum gate run --json` with no completed execution attempt omits `error.fix` and may expose safe preparation through `next`, but never suggests `pactum execute run` as a fix.
+- `pactum task new --clarify --json` partial clarify-loop failure exits nonzero with `schema: pactum.error.v1`, `error.code: clarify_loop_failed`, a message that the run was created, and `error.fix: pactum clarify run <run_id>`.
+- Read-only not-ready JSON responses keep schema `pactum.not_ready.v1`, keep exit code 0, preserve `suggested_command`, and add `fix` when an exact remedial command exists.
+- In-scope JSON responses expose a top-level `next` array; responses with no meaningful next action expose `next: []`.
+- `pactum status --json` and `pactum task show --json` expose top-level `next` while preserving existing `next_command` compatibility fields.
+- For open blocking clarifications, JSON `next` contains safe inspection commands such as `pactum clarify status <run_id>` and does not contain answer templates.
+- Human output keeps existing Suggested:/guidance/Next: behavior except for any necessary consistency fixes.
+- Every command string emitted in JSON next arrays and error.fix values uses the current command grammar (pactum clarify show, not the removed clarify status; pactum execute plan, not execute dry-run) — pinned by a test that walks the emitted affordances
+
+## Validation commands
+- go test ./...
+- make check
+
+## Assumptions
+- The accepted stable reason code for pending proposal failures in this slice is `pending_review_proposals`.
+- Exact command strings in `next` should include the resolved run ID whenever the command otherwise would rely on current-run inference.
+
+## Open questions
+- None

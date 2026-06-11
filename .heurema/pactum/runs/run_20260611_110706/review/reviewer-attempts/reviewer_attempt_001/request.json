@@ -1,0 +1,40 @@
+{
+  "schema": "pactum.reviewer_request.v1",
+  "run_id": "run_20260611_110706",
+  "attempt_id": "reviewer_attempt_001",
+  "created_at": "2026-06-11T11:21:04Z",
+  "reviewer": {
+    "name": "claude",
+    "command": "claude",
+    "args": [
+      "-p",
+      "--output-format",
+      "json",
+      "--model",
+      "claude-fable-5"
+    ],
+    "input": "prompt_file"
+  },
+  "lens": "implementation",
+  "artifacts": {
+    "reviewer_prompt": "review/reviewer-prompt-fable-implementation.md",
+    "reviewer_context": "review/reviewer-context.md",
+    "review": "review/review.json",
+    "findings": "review/findings.jsonl",
+    "resolutions": "review/resolutions.jsonl",
+    "proposals": "review/proposals.jsonl",
+    "proposal_decisions": "review/proposal-decisions.jsonl",
+    "gate_report": "gate/gate-report.json"
+  },
+  "would_run": {
+    "command": "claude",
+    "args": [
+      "-p",
+      "--output-format",
+      "json",
+      "--model",
+      "claude-fable-5"
+    ],
+    "stdin": ".heurema/pactum/runs/run_20260611_110706/review/reviewer-prompt-fable-implementation.md"
+  }
+}
