@@ -48,7 +48,8 @@ type exportEntry struct {
 
 // Export archives a run's on-disk record into a deterministic ZIP at output.
 // It is read-only on Pactum state: the only write is the archive itself,
-// staged as a temporary sibling file and renamed into place on success.
+// staged as a temporary sibling file and published through a no-replace
+// finalize on success.
 func (a App) Export(stdout io.Writer, runID string, output string, jsonOutput bool) error {
 	_, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
 	if err != nil || !ok {
@@ -162,9 +163,16 @@ func collectExportEntries(runDir string, archiveRoot string) ([]exportEntry, err
 			if rel != "." {
 				name += filepath.ToSlash(rel) + "/"
 			}
+			if err := validateExportEntryName(name, rel); err != nil {
+				return err
+			}
 			entries = append(entries, exportEntry{name: name, dir: true})
 		case entry.Type().IsRegular():
-			entries = append(entries, exportEntry{name: archiveRoot + filepath.ToSlash(rel), source: path})
+			name := archiveRoot + filepath.ToSlash(rel)
+			if err := validateExportEntryName(name, rel); err != nil {
+				return err
+			}
+			entries = append(entries, exportEntry{name: name, source: path})
 		default:
 			return fmt.Errorf("run record entry is not a regular file or directory: %s", rel)
 		}
@@ -174,6 +182,17 @@ func collectExportEntries(runDir string, archiveRoot string) ([]exportEntry, err
 		return nil, err
 	}
 	return entries, nil
+}
+
+// validateExportEntryName rejects archive entry names that still hold a
+// literal backslash after filepath.ToSlash: on Unix a backslash is an ordinary
+// filename character, but some Windows extractors treat it as a separator, so
+// the entry would unpack to a different path than it names.
+func validateExportEntryName(name string, rel string) error {
+	if strings.Contains(name, `\`) {
+		return fmt.Errorf("run record path contains a backslash in its archive entry name: %s", rel)
+	}
+	return nil
 }
 
 // filterRunEvents reads the workspace events ledger and returns the verbatim
@@ -247,16 +266,19 @@ func appendEventsSidecar(entries []exportEntry, archiveRoot string, events []byt
 }
 
 // writeExportArchive stages the ZIP as a hidden temporary sibling of output
-// and renames it into place only after a fully successful write, so a failed
-// export never leaves a partial archive behind. Entry metadata is normalized
-// (fixed timestamp, 0644 files, 0755 directories, no owner/group) so the
-// archive bytes depend only on the exported contents.
+// and publishes it through a no-replace hard link only after a fully
+// successful write, so a failed export never leaves a partial archive behind
+// and an output that appeared after the early existence check is never
+// overwritten. Entry metadata is normalized (fixed timestamp, 0644 files,
+// 0755 directories, no owner/group) so the archive bytes depend only on the
+// exported contents.
 func writeExportArchive(output string, entries []exportEntry) (int64, error) {
 	temp, err := os.CreateTemp(filepath.Dir(output), ".pactum-export-*.zip")
 	if err != nil {
 		return 0, err
 	}
-	// No-op after the final rename; otherwise cleans up the partial archive.
+	// Cleans up the staged file: the partial archive on failure, the leftover
+	// staging name after a link-based finalize.
 	defer os.Remove(temp.Name())
 	defer temp.Close()
 
@@ -296,9 +318,32 @@ func writeExportArchive(output string, entries []exportEntry) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if err := os.Rename(temp.Name(), output); err != nil {
-		return 0, err
+	// Publish without ever replacing an existing file: rename would silently
+	// clobber an output that appeared after the early existence check — on
+	// Windows too, where os.Rename replaces an existing destination — while
+	// link fails with EEXIST (ERROR_ALREADY_EXISTS on Windows).
+	if err := os.Link(temp.Name(), output); err != nil {
+		if os.IsExist(err) {
+			return 0, fmt.Errorf("output path already exists: %s", output)
+		}
+		// Filesystems without hard-link support (exFAT, some network
+		// mounts) fail here with their own errno: fall back to a re-check
+		// plus rename instead of failing the export outright. The
+		// no-replace window narrows to the gap between the two calls; a
+		// real failure (permissions, missing dir) surfaces from the rename.
+		if _, statErr := os.Lstat(output); statErr == nil {
+			return 0, fmt.Errorf("output path already exists: %s", output)
+		} else if !os.IsNotExist(statErr) {
+			return 0, statErr
+		}
+		if renameErr := os.Rename(temp.Name(), output); renameErr != nil {
+			return 0, renameErr
+		}
+		return info.Size(), nil
 	}
+	// The link published a second name for the staged bytes; drop the staged
+	// name now rather than leaning on the deferred cleanup alone.
+	_ = os.Remove(temp.Name())
 	return info.Size(), nil
 }
 

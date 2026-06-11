@@ -106,6 +106,23 @@ func pendingReviewProposalsError(runID string) error {
 	}
 }
 
+// staleMemoryCandidateError carries a context-sensitive affordance: fix names
+// the exact re-propose command only while reproposal is legal (review still
+// approved, every proposal decided); otherwise the review state needs repair
+// first, so next points at safe inspection.
+func staleMemoryCandidateError(reason string, runPaths contractRunPathSet, runID string) error {
+	stale := &preconditionError{
+		msg:  "cannot accept memory: " + reason,
+		code: "memory_candidate_stale",
+	}
+	if memoryReproposalLegal(runPaths) {
+		stale.fix = "pactum memory propose " + runID
+	} else {
+		stale.next = []string{"pactum review show " + runID}
+	}
+	return stale
+}
+
 func clarifyLoopFailedError(runID string, err error) error {
 	return &preconditionError{
 		msg:  fmt.Sprintf("run %s was created, but its clarify loop failed (re-run it with: pactum clarify run %s): %v", runID, runID, err),

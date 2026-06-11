@@ -2,6 +2,8 @@ package app
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,9 +18,10 @@ import (
 )
 
 const (
-	memoryCandidateSchema  = "pactum.memory_candidate.v1"
-	memoryAcceptanceSchema = "pactum.memory_acceptance.v1"
-	memoryItemSchema       = "pactum.memory_item.v1"
+	memoryCandidateSchema    = "pactum.memory_candidate.v1"
+	memoryAcceptanceSchema   = "pactum.memory_acceptance.v1"
+	memoryItemSchema         = "pactum.memory_item.v1"
+	memoryFreshnessPinSchema = "pactum.memory_freshness_pin.v1"
 
 	memoryCandidateArtifact   = "memory/memory-candidate.json"
 	memoryCandidateMDArtifact = "memory/memory-candidate.md"
@@ -31,6 +34,7 @@ type memoryCandidateDocument struct {
 	CreatedAt      string                         `json:"created_at"`
 	Source         string                         `json:"source"`
 	Status         string                         `json:"status"`
+	FreshnessPin   memoryCandidateFreshnessPin    `json:"freshness_pin"`
 	Contract       memoryCandidateContract        `json:"contract"`
 	Outcome        memoryCandidateOutcome         `json:"outcome"`
 	Changes        memoryCandidateChanges         `json:"changes"`
@@ -38,6 +42,15 @@ type memoryCandidateDocument struct {
 	Review         memoryCandidateReview          `json:"review"`
 	Decisions      []memoryCandidateDecision      `json:"decisions"`
 	Artifacts      memoryCandidateArtifacts       `json:"artifacts"`
+}
+
+// memoryCandidateFreshnessPin pins the review state a candidate was built
+// from: a versioned, deterministic content hash over the five review
+// artifacts that feed buildReviewStateWithProposals. accept refuses a
+// candidate whose pin no longer matches the current state.
+type memoryCandidateFreshnessPin struct {
+	Schema            string `json:"schema"`
+	ReviewStateSHA256 string `json:"review_state_sha256"`
 }
 
 type memoryCandidateContract struct {
@@ -244,6 +257,13 @@ func (a App) MemoryAccept(stdout io.Writer, runID string, acceptedBy string, jso
 	if acceptance.Status == "accepted" {
 		return fmt.Errorf("memory candidate already accepted: %s", runID)
 	}
+	staleReason, err := memoryCandidateStaleReason(context.RunPaths, candidate)
+	if err != nil {
+		return err
+	}
+	if staleReason != "" {
+		return staleMemoryCandidateError(staleReason, context.RunPaths, runID)
+	}
 
 	items, err := readMemoryItems(context.Paths.MemoryItems)
 	if err != nil {
@@ -342,7 +362,11 @@ func (a App) prepareMemoryCandidate(context runContext) (preparedMemoryCandidate
 		}
 	}
 
-	candidate := buildMemoryCandidate(context, gateReport, reviewState, createdAt)
+	pin, err := reviewStateFreshnessPin(context.RunPaths)
+	if err != nil {
+		return preparedMemoryCandidate{}, err
+	}
+	candidate := buildMemoryCandidate(context, gateReport, reviewState, createdAt, pin)
 	nextBytes, err := indentedJSONBytes(candidate)
 	if err != nil {
 		return preparedMemoryCandidate{}, err
@@ -364,16 +388,17 @@ func ensureMemoryContractApproved(context runContext) error {
 	return err
 }
 
-func buildMemoryCandidate(context runContext, gateReport gateReportDocument, reviewState reviewStateResponse, createdAt string) memoryCandidateDocument {
+func buildMemoryCandidate(context runContext, gateReport gateReportDocument, reviewState reviewStateResponse, createdAt string, pin memoryCandidateFreshnessPin) memoryCandidateDocument {
 	contract := context.Contract
 	clarifications := memoryClarificationsFromContract(context.Root, contract)
 	findings := memoryFindingsFromReviewState(context.Root, reviewState)
 	return memoryCandidateDocument{
-		Schema:    memoryCandidateSchema,
-		RunID:     context.State.RunID,
-		CreatedAt: createdAt,
-		Source:    "deterministic",
-		Status:    "proposed",
+		Schema:       memoryCandidateSchema,
+		RunID:        context.State.RunID,
+		CreatedAt:    createdAt,
+		Source:       "deterministic",
+		Status:       "proposed",
+		FreshnessPin: pin,
 		Contract: memoryCandidateContract{
 			Goal:               sanitizeMemoryText(context.Root, contract.Goal),
 			InScope:            sanitizeMemoryTexts(context.Root, contract.Scope.In),
@@ -504,6 +529,63 @@ func pendingMemoryAcceptance() memoryAcceptanceDocument {
 		AcceptedBy:   nil,
 		MemoryItemID: nil,
 	}
+}
+
+// reviewStateFreshnessPin hashes the on-disk review state a memory candidate
+// is built from. Each artifact is length-framed so content cannot shift
+// between files without changing the hash; a missing artifact hashes as
+// empty, matching how the review-state readers treat it.
+func reviewStateFreshnessPin(runPaths contractRunPathSet) (memoryCandidateFreshnessPin, error) {
+	hash := sha256.New()
+	for _, path := range []string{
+		runPaths.ReviewJSON,
+		runPaths.ReviewFindingsJSONL,
+		runPaths.ReviewResolutionsJSONL,
+		runPaths.ReviewProposalsJSONL,
+		runPaths.ReviewProposalDecisionsJSONL,
+	} {
+		data, err := activeStore.ReadBytes(path)
+		if err != nil && !os.IsNotExist(err) {
+			return memoryCandidateFreshnessPin{}, err
+		}
+		fmt.Fprintf(hash, "%d\n", len(data))
+		hash.Write(data)
+	}
+	return memoryCandidateFreshnessPin{
+		Schema:            memoryFreshnessPinSchema,
+		ReviewStateSHA256: hex.EncodeToString(hash.Sum(nil)),
+	}, nil
+}
+
+// memoryCandidateStaleReason explains why a candidate cannot be proven fresh
+// against the current review state; empty means fresh. A missing or
+// unrecognized pin (candidates from before the pin existed) is unverifiable
+// and reads as stale. The artifact-read error is returned separately so
+// callers can distinguish I/O failure from staleness.
+func memoryCandidateStaleReason(runPaths contractRunPathSet, candidate memoryCandidateDocument) (string, error) {
+	if candidate.FreshnessPin.Schema != memoryFreshnessPinSchema || candidate.FreshnessPin.ReviewStateSHA256 == "" {
+		return "memory candidate has no recognized freshness pin", nil
+	}
+	current, err := reviewStateFreshnessPin(runPaths)
+	if err != nil {
+		return "", err
+	}
+	if candidate.FreshnessPin.ReviewStateSHA256 != current.ReviewStateSHA256 {
+		return "memory candidate is stale: review state changed after it was proposed", nil
+	}
+	return "", nil
+}
+
+// memoryCandidateFresh reports whether the candidate's freshness pin matches
+// the current review state. Unreadable artifacts cannot prove freshness, so
+// they read as stale.
+func memoryCandidateFresh(runPaths contractRunPathSet) bool {
+	candidate, err := readMemoryCandidate(runPaths.MemoryCandidateJSON)
+	if err != nil {
+		return false
+	}
+	reason, err := memoryCandidateStaleReason(runPaths, candidate)
+	return err == nil && reason == ""
 }
 
 func readMemoryCandidate(path string) (memoryCandidateDocument, error) {

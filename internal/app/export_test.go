@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -214,6 +215,44 @@ func TestExportFailsWhenOutputExists(t *testing.T) {
 	if mustReadFile(t, output) != "occupied" {
 		t.Fatalf("existing output file was modified")
 	}
+}
+
+// TestExportFinalizeRefusesToReplaceOutputCreatedAfterStaging simulates a
+// concurrent export winning the race between the early existence check and
+// finalization: the output exists by the time the staged archive is
+// published, and the finalize must refuse to replace it.
+func TestExportFinalizeRefusesToReplaceOutputCreatedAfterStaging(t *testing.T) {
+	dir := t.TempDir()
+	output := filepath.Join(dir, "winner.zip")
+	mustWriteFile(t, output, "concurrent winner")
+
+	_, err := writeExportArchive(output, []exportEntry{{name: "pactum-run-x/", dir: true}})
+	if err == nil || !strings.Contains(err.Error(), "output path already exists") {
+		t.Fatalf("finalize over existing output err = %v, want output path already exists", err)
+	}
+	if mustReadFile(t, output) != "concurrent winner" {
+		t.Fatalf("existing output file was overwritten")
+	}
+	assertNoExportLeftovers(t, dir)
+}
+
+func TestExportRejectsBackslashInEntryName(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("backslash is the path separator on Windows, not a filename character")
+	}
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	offending := `back\slash.md`
+	mustWriteFile(t, filepath.Join(paths.RunsDir, runID, offending), "not portable\n")
+	output := filepath.Join(root, "out.zip")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"export", runID, "--output", output}, &stdout, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "backslash") || !strings.Contains(stderr.String(), offending) {
+		t.Fatalf("export exited %d, stderr: %s", code, stderr.String())
+	}
+	assertNotExists(t, output)
+	assertNoExportLeftovers(t, root)
 }
 
 func TestExportFailsWhenOutputParentMissing(t *testing.T) {
@@ -504,4 +543,25 @@ func assertNoExportLeftovers(t *testing.T, dir string) {
 	if len(leftovers) != 0 {
 		t.Fatalf("failed export left temporary files: %v", leftovers)
 	}
+}
+
+func TestExportRejectsBackslashInDirectoryEntryName(t *testing.T) {
+	// Directory entry names get a trailing slash through a separate call site
+	// of the backslash validation; pin that arm too.
+	if runtime.GOOS == "windows" {
+		t.Skip("backslash is the path separator on Windows, not a filename character")
+	}
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	offending := `back\slash-dir`
+	assertNoError(t, os.MkdirAll(filepath.Join(paths.RunsDir, runID, offending), 0o755))
+	output := filepath.Join(root, "out.zip")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"export", runID, "--output", output}, &stdout, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "backslash") || !strings.Contains(stderr.String(), offending) {
+		t.Fatalf("export exited %d, stderr: %s", code, stderr.String())
+	}
+	assertNotExists(t, output)
+	assertNoExportLeftovers(t, root)
 }

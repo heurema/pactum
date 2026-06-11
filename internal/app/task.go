@@ -264,7 +264,7 @@ func (a App) TaskList(stdout io.Writer, jsonOutput bool) error {
 			Task:        task,
 			Status:      status,
 			Current:     id == current,
-			NextCommand: nextCommandForStatus(status),
+			NextCommand: nextCommandForStatus(paths, id, status),
 		})
 	}
 	response := taskListResponse{Schema: taskListSchema, CurrentRunID: current, Runs: items}
@@ -297,7 +297,7 @@ func (a App) TaskShow(stdout io.Writer, runID string, jsonOutput bool) error {
 		Task:        state.Task,
 		Status:      status,
 		Current:     runID == current,
-		NextCommand: nextCommandForStatus(status),
+		NextCommand: nextCommandForStatus(paths, runID, status),
 		CreatedAt:   state.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:   state.UpdatedAt.Format(time.RFC3339),
 		Next:        nextCommandsForRun(paths, runID),

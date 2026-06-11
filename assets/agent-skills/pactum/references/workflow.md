@@ -95,7 +95,9 @@ review record (commands acting on existing records — `finding resolve`,
   single reviewer panel pass without the write-enabled fixer).
 - `pactum review approve --by manual` — the human approval gate.
 - `pactum memory propose` / `pactum memory accept --by manual` — capture
-  reusable project memory from the reviewed run.
+  reusable project memory from the reviewed run. Candidates are pinned to the
+  review state they were proposed from: if the review changed since, `accept`
+  refuses the stale candidate and `error.fix` says to re-propose.
 
 ## JSON affordances (`--json`)
 
