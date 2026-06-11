@@ -50,22 +50,33 @@ deterministic checks around the agent — not a security boundary.
 
 Pactum ships two built-in agents:
 
-- `codex` — runs `codex exec`.
-- `claude` — runs `claude -p`.
+- `codex` — over the default ACP transport, launches the external adapter
+  `npx -y @zed-industries/codex-acp@latest`; over the CLI transport, the
+  executor runs `codex exec --json --dangerously-bypass-approvals-and-sandbox`.
+- `claude` — over the default ACP transport, launches the external adapter
+  `npx -y @agentclientprotocol/claude-agent-acp@latest`; over the CLI
+  transport, the executor runs
+  `claude -p --output-format json --dangerously-skip-permissions`.
 
 Agents are invoked through the required `agents` registry in
-`.heurema/pactum/config.yaml`: each entry names an agent (with the built-in it
-runs on plus optional model/effort pins), and `--agent`/`--reviewer` accept
-those registry names. The generated default registers a single unpinned
-`claude` entry, and an omitted `--agent` runs the first registry entry. See
-[docs/agents.md](docs/agents.md) for the registry and selection rules.
+`.heurema/pactum/config.yaml`: each entry is `{name, model, effort}` — the
+engine is inferred from the required model — and `--agent`/`--reviewer`
+accept those registry names. The generated default registers a single
+`claude` entry pinned to a current model, and an omitted `--agent` runs the
+first registry entry. See [docs/agents.md](docs/agents.md) for the registry
+and selection rules.
 
 Both built-ins read their prompt from a prompt file that Pactum prepares. Check
 that the agent CLIs are installed and visible on your `PATH` with
 `pactum doctor`.
 
 Pactum runs these agents as **direct subprocesses in your repository**. There is
-no Pactum-managed isolation, container, or virtual machine around them.
+no Pactum-managed isolation, container, or virtual machine around them. Both the
+ACP adapters and the agent CLIs are external tooling with direct access to your
+repository, your runtime, and your inherited environment variables — real agent
+execution is **unsandboxed** and appropriate only for a repository and task
+context you trust with that access. See [SECURITY.md](SECURITY.md) for the
+threat model and safe usage.
 
 ## Not in the MVP
 
@@ -191,6 +202,8 @@ pactum version
   parts are generated vs durable, and what to commit.
 - [docs/agents.md](docs/agents.md) — the built-in agents, `pactum doctor`,
   plan vs run, and the direct-subprocess execution model.
+- [SECURITY.md](SECURITY.md) — the threat model, the agent-launching commands,
+  safe usage, and private vulnerability reporting.
 - [docs/memory.md](docs/memory.md) — deterministic project memory: propose,
   accept, search, refresh/stale, and the prompt boundary.
 - [docs/agent-skill.md](docs/agent-skill.md) — the repo-local, cross-agent
