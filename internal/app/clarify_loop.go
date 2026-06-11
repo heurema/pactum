@@ -24,7 +24,6 @@ type clarifyLoopOptions struct {
 	Reviewer   string
 	MaxRounds  int
 	Timeout    time.Duration
-	Yes        bool
 	JSONOutput bool
 }
 
@@ -69,10 +68,6 @@ type clarifyLoopRoundSummary struct {
 // progress without a human, or the round cap is reached. The loop automates
 // only the question-and-answer churn; contract approval stays manual.
 func (a App) ClarifyLoop(stdout io.Writer, liveOutput io.Writer, runID string, options clarifyLoopOptions) error {
-	if !options.Yes {
-		return fmt.Errorf("clarify run requires --yes because it runs clarifier agents directly")
-	}
-
 	context, ok, err := a.loadClarifyContext(io.Discard, runID, options.JSONOutput)
 	if err != nil || !ok {
 		return err
@@ -226,7 +221,7 @@ func (a App) resolveClarifyLoopMaxRounds(configPath string, override int) (int, 
 // dedupe via the existing-questions context) and parses its JSON response.
 func (a App) runClarifyLoopSuggestRound(liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration) (clarifySuggestResponse, error) {
 	var stdout bytes.Buffer
-	if err := a.ClarifySuggest(&stdout, liveOutput, runID, reviewerName, timeout, true, true); err != nil {
+	if err := a.ClarifySuggest(&stdout, liveOutput, runID, reviewerName, timeout, true); err != nil {
 		return clarifySuggestResponse{}, err
 	}
 	var response clarifySuggestResponse
@@ -278,7 +273,7 @@ func (a App) autoResolveClarifications(context clarifyContext, now time.Time) ([
 		if blocked {
 			continue
 		}
-		answerRecord, _, err := recordClarificationAnswer(context.RunPaths, context.State.RunID, question.ID, question.RecommendedAnswer, "auto_recommended", "clarify_loop_auto", now)
+		answerRecord, _, err := recordClarificationAnswer(context.RunPaths, context.State.RunID, question.ID, question.RecommendedAnswer, "auto_recommended", "clarify_loop_auto", "", now)
 		if err != nil {
 			return nil, err
 		}

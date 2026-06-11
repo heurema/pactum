@@ -993,7 +993,7 @@ func TestReviewRunStreamsLiveOutputToStderr(t *testing.T) {
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1024,7 +1024,7 @@ func TestReviewRunWritesAttemptArtifacts(t *testing.T) {
 	beforeResolutions := mustReadFile(t, runPaths.ReviewResolutionsJSONL)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1120,7 +1120,7 @@ func TestReviewRunNonZeroWritesArtifactsAndReturnsNonZero(t *testing.T) {
 	t.Setenv("PACTUM_REVIEWER_EXIT", "7")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper"}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("review run should return non-zero for reviewer failure")
 	}
@@ -1150,7 +1150,7 @@ func TestReviewRunCreatesIncrementingAttempts(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		var stdout, stderr bytes.Buffer
-		code := app.Run([]string{"review", "run", runID, "--reviewer", "helper", "--yes"}, &stdout, &stderr)
+		code := app.Run([]string{"review", "run", runID, "--reviewer", "helper"}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("review run %d exited %d, stderr: %s", i+1, code, stderr.String())
 		}
@@ -1170,8 +1170,8 @@ func TestReviewRunStoresCrossReviewerAttempts(t *testing.T) {
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 
-	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper-a", "--yes")
-	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper-b", "--yes")
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper-a")
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper-b")
 
 	// The first run's lens attempts come first, the second run's after them.
 	// Attempt artifacts record the engine, and both helper entries infer the
@@ -1199,7 +1199,7 @@ func TestReviewRunAutoBuildsDryRunArtifacts(t *testing.T) {
 	_ = os.Remove(runPaths.ReviewDryRunJSON)
 	_ = os.Remove(runPaths.ReviewContextMD)
 
-	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper", "--yes")
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper")
 	assertFile(t, runPaths.ReviewDryRunJSON)
 	assertFile(t, runPaths.ReviewContextMD)
 	for _, lens := range reviewLenses {
@@ -1216,7 +1216,7 @@ func TestReviewRunRequestWouldRunMatchesDryRun(t *testing.T) {
 
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
-	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper", "--yes")
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper")
 
 	planByLens := map[string]reviewerLensAttemptPlan{}
 	for _, attempt := range plan.Attempts {
@@ -1242,7 +1242,7 @@ func TestReviewRunArtifactsArePortable(t *testing.T) {
 	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 
-	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper", "--yes")
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper")
 	attemptPaths := reviewerAttemptPaths(runPaths, "reviewer_attempt_001")
 	for name, content := range map[string]string{
 		"review/request.json":              mustReadFile(t, attemptPaths.RequestJSON),
@@ -1262,7 +1262,7 @@ func TestReviewRunDoesNotCreateFindingsFromReviewerOutput(t *testing.T) {
 	t.Setenv("PACTUM_REVIEWER_FINDING_TEXT", "1")
 	beforeFindings := mustReadFile(t, runPaths.ReviewFindingsJSONL)
 
-	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper", "--yes")
+	runReviewCommand(t, app, "review", "run", runID, "--reviewer", "helper")
 	if got := mustReadFile(t, runPaths.ReviewFindingsJSONL); got != beforeFindings {
 		t.Fatalf("review run should not create findings from stdout")
 	}
@@ -1279,7 +1279,7 @@ func TestReviewRunJSONOutput(t *testing.T) {
 	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper", "--yes", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "helper", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review run --json exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1456,7 +1456,7 @@ func TestReviewFixRunWritesAttemptArtifacts(t *testing.T) {
 	beforeResolutions := mustReadFile(t, runPaths.ReviewResolutionsJSONL)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "helper"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review fix exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1537,7 +1537,7 @@ func TestReviewFixStreamsLiveOutputToStderr(t *testing.T) {
 	t.Setenv("PACTUM_FIXER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "helper"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review fix exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1571,7 +1571,7 @@ func TestReviewFixResolvedBlockShowsExecutorModel(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "codex", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "codex"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review fix exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1599,7 +1599,7 @@ func TestReviewFixJSONOutput(t *testing.T) {
 	t.Setenv("PACTUM_FIXER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "helper", "--yes", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "helper", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review fix --json exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1921,8 +1921,11 @@ func TestReviewAcceptProposalCreatesFinding(t *testing.T) {
 		t.Fatalf("unexpected findings: %#v", findings)
 	}
 	decisions := readReviewProposalDecisions(t, runPaths.ReviewProposalDecisionsJSONL)
-	if len(decisions) != 1 || decisions[0].ID != "pd_001" || decisions[0].Decision != "accepted" || decisions[0].FindingID != "f_001" {
+	if len(decisions) != 1 || decisions[0].ID != "pd_001" || decisions[0].Decision != "accepted" || decisions[0].FindingID != "f_001" || decisions[0].DecidedBy != "manual" {
 		t.Fatalf("unexpected decisions: %#v", decisions)
+	}
+	if decisions[0].Source != "manual" {
+		t.Fatalf("CLI accept must record source manual: %#v", decisions[0])
 	}
 	review := readReviewDoc(t, runPaths.ReviewJSON)
 	if review.Status != "changes_requested" || review.Summary.Findings != 1 || review.Summary.BlockingOpen != 1 {
@@ -1992,7 +1995,7 @@ func TestReviewRejectProposalRecordsDecisionOnly(t *testing.T) {
 		t.Fatalf("reject should not create findings: %#v", findings)
 	}
 	decisions := readReviewProposalDecisions(t, runPaths.ReviewProposalDecisionsJSONL)
-	if len(decisions) != 1 || decisions[0].Decision != "rejected" || decisions[0].Reason != "not relevant" {
+	if len(decisions) != 1 || decisions[0].Decision != "rejected" || decisions[0].Reason != "not relevant" || decisions[0].DecidedBy != "manual" {
 		t.Fatalf("unexpected decisions: %#v", decisions)
 	}
 	if got := mustReadFile(t, runPaths.ReviewJSON); got != beforeReview {
@@ -2005,6 +2008,33 @@ func TestReviewRejectProposalRecordsDecisionOnly(t *testing.T) {
 	if indexOfEvent(eventTypes, "review_proposal_rejected") == -1 {
 		t.Fatalf("events missing review_proposal_rejected:\n%v", eventTypes)
 	}
+}
+
+// TestReviewProposalDecisionsRecordExplicitBy covers the uniform --by rule on
+// proposal decisions: whitespace is trimmed, blank and exact-empty values fall
+// back to manual, and repo-root paths are sanitized before decided_by is
+// persisted.
+func TestReviewProposalDecisionsRecordExplicitBy(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	appendReviewProposalForTest(t, runPaths, runID, "p_001", "accept with principal", false)
+	appendReviewProposalForTest(t, runPaths, runID, "p_002", "reject with principal", false)
+	appendReviewProposalForTest(t, runPaths, runID, "p_003", "accept with blank principal", false)
+	appendReviewProposalForTest(t, runPaths, runID, "p_004", "accept with empty principal", false)
+
+	runReviewCommand(t, app, "review", "proposal", "accept", runID, "p_001", "--by", "  alice  ")
+	runReviewCommand(t, app, "review", "proposal", "reject", runID, "p_002", "--reason", "duplicate", "--by", root+"/agent")
+	runReviewCommand(t, app, "review", "proposal", "accept", runID, "p_003", "--by", "   ")
+	runReviewCommand(t, app, "review", "proposal", "accept", runID, "p_004", "--by", "")
+
+	decisions := readReviewProposalDecisions(t, runPaths.ReviewProposalDecisionsJSONL)
+	if len(decisions) != 4 || decisions[0].DecidedBy != "alice" || decisions[2].DecidedBy != "manual" || decisions[3].DecidedBy != "manual" {
+		t.Fatalf("unexpected decision principals: %#v", decisions)
+	}
+	if decisions[1].DecidedBy == "" || strings.Contains(decisions[1].DecidedBy, root) {
+		t.Fatalf("reject decided_by not sanitized: %#v", decisions[1])
+	}
+	assertDoesNotContainRoot(t, "review/proposal-decisions.jsonl", mustReadFile(t, runPaths.ReviewProposalDecisionsJSONL), root)
 }
 
 func TestReviewProposalCannotBeDecidedTwice(t *testing.T) {

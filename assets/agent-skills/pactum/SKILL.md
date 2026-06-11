@@ -32,9 +32,9 @@ reference files next to it — **read them with your file tools before acting**:
 - **Do not run `pactum execute run` by default.** The default stop point is
   `pactum execute plan`.
 - **Do not run `pactum review run` by default.**
-- Do not pass `--yes` unless the user has explicitly approved unsandboxed,
-  direct agent execution. Pactum runs agents as real subprocesses; this is not
-  sandboxed.
+- Agent-running commands never prompt: running one IS the approval. Run them
+  only after the user has explicitly approved unsandboxed, direct agent
+  execution. Pactum runs agents as real subprocesses; this is not sandboxed.
 - Do not commit `.heurema/` — it is generated, machine-specific workspace state.
 - Source files are the source of truth. Pactum's map, wiki, code-items, and
   memory are navigation and audit context, not semantic truth — verify against

@@ -298,7 +298,7 @@ func runSuccessfulHelperAttempt(t *testing.T, root string) (App, artifacts.Paths
 	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
 	}

@@ -12,30 +12,6 @@ import (
 // the fixed test clock (reserveContractRunDir suffixes same-second runs).
 const taskNewSecondRunID = "run_20260531_184012_02"
 
-func TestTaskNewClarifyRequiresYes(t *testing.T) {
-	root := t.TempDir()
-	app, paths, _ := setupContractRun(t, root)
-	app = configureHelperClarifiers(t, app, paths, "helper")
-
-	runsBefore, err := listRunIDs(paths)
-	assertNoError(t, err)
-
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"task", "new", "integrate clarify", "--clarify", "--reviewer", "helper"}, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("task new --clarify without --yes exited %d, want 1, stderr: %s", code, stderr.String())
-	}
-	if got := stderr.String(); !strings.Contains(got, "task new --clarify requires --yes") {
-		t.Fatalf("task new --clarify confirmation stderr mismatch:\n%s", got)
-	}
-	// The refusal fires before run creation: nothing to clean up or re-use.
-	runsAfter, err := listRunIDs(paths)
-	assertNoError(t, err)
-	if len(runsAfter) != len(runsBefore) {
-		t.Fatalf("refused task new --clarify must not create a run: before %v, after %v", runsBefore, runsAfter)
-	}
-}
-
 // TestTaskNewClarifyConvergesAndRendersSummary drives task new --clarify with
 // the standard clarifier helper (one blocking high-confidence question, one
 // non-blocking medium question): the loop converges in round 1 by auto-resolving
@@ -50,7 +26,7 @@ func TestTaskNewClarifyConvergesAndRendersSummary(t *testing.T) {
 	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"task", "new", "integrate clarify", "--clarify", "--reviewer", "helper", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"task", "new", "integrate clarify", "--clarify", "--reviewer", "helper"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("task new --clarify exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
@@ -101,7 +77,7 @@ func TestTaskNewClarifyListsRemainingBlockingQuestions(t *testing.T) {
 	setClarifyLoopHelperEnv(t, filepath.Join(stateDir, "sequence"), "medium_then_empty")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"task", "new", "integrate clarify", "--clarify", "--reviewer", clarifyLoopClarifierName, "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"task", "new", "integrate clarify", "--clarify", "--reviewer", clarifyLoopClarifierName}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("task new --clarify exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
@@ -136,7 +112,7 @@ func TestTaskNewClarifyJSONEmbedsRunAndLoopSummary(t *testing.T) {
 	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"task", "new", "integrate clarify", "--clarify", "--reviewer", "helper", "--yes", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"task", "new", "integrate clarify", "--clarify", "--reviewer", "helper", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("task new --clarify --json exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
@@ -173,13 +149,13 @@ func TestTaskNewClarifyLoopFailureLeavesRunCreated(t *testing.T) {
 	setClarifyLoopHelperEnv(t, filepath.Join(stateDir, "sequence"), "broken")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"task", "new", "integrate clarify", "--clarify", "--reviewer", clarifyLoopClarifierName, "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"task", "new", "integrate clarify", "--clarify", "--reviewer", clarifyLoopClarifierName}, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("task new --clarify with broken clarifier exited %d, want 1, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
 	for _, want := range []string{
 		"run " + taskNewSecondRunID + " was created, but its clarify loop failed",
-		"pactum clarify run " + taskNewSecondRunID + " --yes",
+		"pactum clarify run " + taskNewSecondRunID,
 	} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("loop failure stderr missing %q:\n%s", want, stderr.String())

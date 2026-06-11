@@ -62,22 +62,6 @@ func TestGateRunWithoutExecutionAttemptsFails(t *testing.T) {
 	}
 }
 
-func TestGateRunRefusesWithoutAllowCommands(t *testing.T) {
-	root := t.TempDir()
-	app, paths, runID := setupGatePreparedRun(t, root, []string{gateValidationCommandForTest()}, true)
-	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("gate run without allow exited %d, want 1, stderr: %s", code, stderr.String())
-	}
-	if got := stderr.String(); !strings.Contains(got, "refusing to run validation commands without --allow-commands") {
-		t.Fatalf("refusal stderr mismatch:\n%s", got)
-	}
-	assertNoFile(t, runPaths.GateReportJSON)
-}
-
 func TestGateRunSucceedsWithNoValidationCommands(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
@@ -89,7 +73,9 @@ func TestGateRunSucceedsWithNoValidationCommands(t *testing.T) {
 		t.Fatalf("gate run exited %d, stderr: %s", code, stderr.String())
 	}
 	report := readGateReport(t, runPaths.GateReportJSON)
-	if report.Status != "passed" || report.Changes.Status != "clean" || len(report.Validation.Commands) != 0 || report.Validation.CommandsAllowed {
+	// commands_allowed stays true even with zero validation commands: the gate
+	// always runs whatever the contract declares.
+	if report.Status != "passed" || report.Changes.Status != "clean" || len(report.Validation.Commands) != 0 || !report.Validation.CommandsAllowed {
 		t.Fatalf("unexpected gate report: %#v", report)
 	}
 	if got := stdout.String(); !strings.Contains(got, "Gate report created") || !strings.Contains(got, "status: passed") {
@@ -104,12 +90,12 @@ func TestGateRunExecutesValidationCommand(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"gate", "run", runID, "--allow-commands"}, &stdout, &stderr)
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("gate run exited %d, stderr: %s", code, stderr.String())
 	}
 	report := readGateReport(t, runPaths.GateReportJSON)
-	if report.Status != "passed" || len(report.Validation.Commands) != 1 || report.Validation.Commands[0].ExitCode != 0 {
+	if report.Status != "passed" || !report.Validation.CommandsAllowed || len(report.Validation.Commands) != 1 || report.Validation.Commands[0].ExitCode != 0 {
 		t.Fatalf("unexpected gate report: %#v", report)
 	}
 	commandDir := filepath.Join(runPaths.GateValidationDir, "command_001")
@@ -129,7 +115,7 @@ func TestGateRunValidationFailureWritesReportAndReturnsNonZero(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"gate", "run", runID, "--allow-commands"}, &stdout, &stderr)
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("gate run should return non-zero for validation failure")
 	}
@@ -150,7 +136,7 @@ func TestGateRunDetectsChangedFile(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"gate", "run", runID, "--allow-commands"}, &stdout, &stderr)
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("gate run changed file exited %d, stderr: %s", code, stderr.String())
 	}
@@ -350,7 +336,7 @@ func TestGateRunDetectsValidationCommandChanges(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"gate", "run", runID, "--allow-commands"}, &stdout, &stderr)
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("gate run with validation write exited %d, stderr: %s", code, stderr.String())
 	}
@@ -420,7 +406,7 @@ func TestGateShowBeforeReportPrintsGuidance(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("gate show before report exited %d, stderr: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Gate report has not been created. Run: pactum gate run "+runID+" --allow-commands") {
+	if got := stdout.String(); !strings.Contains(got, "Gate report has not been created. Run: pactum gate run "+runID) {
 		t.Fatalf("gate show guidance mismatch:\n%s", got)
 	}
 }
@@ -508,7 +494,7 @@ func TestGateReportPathsArePortable(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"gate", "run", runID, "--allow-commands"}, &stdout, &stderr)
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("gate run exited %d, stderr: %s", code, stderr.String())
 	}
@@ -524,7 +510,7 @@ func TestGateValidationCommandParsingUsesWhitespaceFields(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"gate", "run", runID, "--allow-commands"}, &stdout, &stderr)
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("gate run exited %d, stderr: %s", code, stderr.String())
 	}
@@ -600,7 +586,7 @@ func setupGatePreparedRunWithRevision(t *testing.T, root string, reviseFlags []s
 		t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
 		stdout.Reset()
 		stderr.Reset()
-		code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--yes"}, &stdout, &stderr)
+		code := app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
 		}

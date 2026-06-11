@@ -63,7 +63,10 @@ yet — everything lives under **Unreleased**.
   represented rather than the most specific one draining every slot) and
   import-like hits are de-prioritized below definitions/files/wiki.
 - Replaced the old top-level `run` command with `task new`.
-- `execute run` and `review run` require confirmation or `--yes`.
+- Removed the interactive confirmation layer: commands never prompt, `--yes`
+  and `gate run --allow-commands` are gone, and every decision verb carries an
+  optional `--by <principal>` (default `manual`) recorded in the decision
+  artifact.
 - Made the project map wiki-first in place: `repo-map.md` and `llms.txt` now
   route to the wiki before the code surface, and code items are framed as
   best-effort symbol hints (incomplete by design) rather than semantic truth.

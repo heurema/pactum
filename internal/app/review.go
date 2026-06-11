@@ -548,9 +548,7 @@ func (a App) ReviewApprove(stdout io.Writer, runID string, approvedBy string, js
 	}
 
 	now := a.nowUTC()
-	if strings.TrimSpace(approvedBy) == "" {
-		approvedBy = "manual"
-	}
+	approvedBy = normalizePrincipal(context.Root, approvedBy)
 	approvedAt := now.Format(time.RFC3339)
 	review.Gate.Status = gateReport.Status
 	review.Summary = summary
@@ -603,7 +601,7 @@ func (a App) ReviewPlan(stdout io.Writer, runID string, reviewerName string, jso
 	return nil
 }
 
-func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration, confirm bool, jsonOutput bool) error {
+func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration, jsonOutput bool) error {
 	context, ok, err := a.loadReviewContext(stdout, runID)
 	if err != nil || !ok {
 		return err
@@ -615,17 +613,6 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, rev
 	prep, err := a.prepareReviewer(context, reviewerName, "run reviewer")
 	if err != nil {
 		return err
-	}
-	// Confirm once before the fan-out: the five lens attempts run concurrently
-	// and must not each prompt the operator.
-	if !confirm {
-		proceed, err := confirmDirectExecution(stdout)
-		if err != nil {
-			return err
-		}
-		if !proceed {
-			return fmt.Errorf("review cancelled")
-		}
 	}
 	plan, err := buildReviewerDryRunDocument(runID, a.nowUTC().Format(time.RFC3339), prep.ReviewerName, prep.Reviewer)
 	if err != nil {

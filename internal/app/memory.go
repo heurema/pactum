@@ -239,13 +239,10 @@ func (a App) MemoryAccept(stdout io.Writer, runID string, acceptedBy string, jso
 		return err
 	}
 	now := a.nowUTC()
-	if strings.TrimSpace(acceptedBy) == "" {
-		acceptedBy = "manual"
-	}
-	acceptedBy = sanitizeMemoryText(context.Root, acceptedBy)
+	acceptedBy = normalizePrincipal(context.Root, acceptedBy)
 	acceptedAt := now.Format(time.RFC3339)
 	itemID := nextMemoryItemID(len(items) + 1)
-	item := memoryItemFromCandidate(candidate, itemID, acceptedAt, strings.TrimSpace(acceptedBy))
+	item := memoryItemFromCandidate(candidate, itemID, acceptedAt, acceptedBy)
 	item.Freshness = buildAcceptedMemoryItemFreshness(context.Root, item.Files, acceptedAt)
 	if err := appendJSONLine(context.Paths.MemoryItems, item); err != nil {
 		return err

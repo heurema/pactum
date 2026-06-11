@@ -32,7 +32,6 @@ type reviewLoopOptions struct {
 	Patience    int
 	CleanRounds int
 	Timeout     time.Duration
-	Yes         bool
 	JSONOutput  bool
 }
 
@@ -143,10 +142,6 @@ func (w *synchronizedWriter) Write(p []byte) (int, error) {
 }
 
 func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, options reviewLoopOptions) error {
-	if !options.Yes {
-		return fmt.Errorf("review loop requires --yes because it runs reviewer/fixer agents directly")
-	}
-
 	context, ok, err := a.loadReviewContext(io.Discard, runID)
 	if err != nil || !ok {
 		return err
@@ -254,7 +249,7 @@ func (a App) ReviewLoop(stdout io.Writer, liveOutput io.Writer, runID string, op
 				duplicates++
 				continue
 			}
-			finding, err := a.acceptReviewLoopProposal(runID, proposal.ID)
+			finding, err := a.acceptReviewLoopProposal(context, proposal.ID)
 			if err != nil {
 				loopErr = err
 				break
@@ -710,13 +705,9 @@ func (a App) runReviewLoopReviewerWithAgent(liveOutput io.Writer, runID string, 
 
 func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration) error {
 	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[reviewerLensAttemptPlan, reviewerRequestDocument, reviewerResultDocument, struct{}]{
-		Stdout:     stdout,
-		LiveOutput: liveOutput,
-		JSONOutput: true,
-		// Callers confirm before the lens fan-out; a per-attempt prompt would
-		// ask five times.
-		Confirm:         true,
-		CancelMessage:   "review cancelled",
+		Stdout:          stdout,
+		LiveOutput:      liveOutput,
+		JSONOutput:      true,
 		Root:            prep.Context.Root,
 		EventsJSONL:     prep.Context.Paths.EventsJSONL,
 		RunID:           runID,
@@ -786,9 +777,9 @@ func (a App) runReviewLoopProposeFindings(runID string, reviewerAttemptID string
 	return response, nil
 }
 
-func (a App) acceptReviewLoopProposal(runID string, proposalID string) (reviewFindingRecord, error) {
+func (a App) acceptReviewLoopProposal(context reviewContext, proposalID string) (reviewFindingRecord, error) {
 	var stdout bytes.Buffer
-	if err := a.ReviewAcceptProposal(&stdout, runID, proposalID, true); err != nil {
+	if err := a.acceptReviewProposal(&stdout, context, context.State.RunID, proposalID, "review_loop", "", true); err != nil {
 		return reviewFindingRecord{}, err
 	}
 	var response reviewAcceptProposalResponse
@@ -874,7 +865,7 @@ func reviewSeverityRank(severity string) int {
 
 func (a App) runReviewLoopFixRound(liveOutput io.Writer, runID string, agent string, timeout time.Duration) (reviewFixResultDocument, error) {
 	var stdout bytes.Buffer
-	if err := a.ReviewFix(&stdout, liveOutput, runID, agent, timeout, true, true); err != nil {
+	if err := a.ReviewFix(&stdout, liveOutput, runID, agent, timeout, true); err != nil {
 		return reviewFixResultDocument{}, err
 	}
 	var result reviewFixResultDocument
@@ -898,7 +889,7 @@ func (a App) applyReviewLoopFixOutcomes(runID string, fixerAttemptID string) (re
 
 func (a App) runReviewLoopGate(runID string) (gateReportDocument, error) {
 	var stdout bytes.Buffer
-	if err := a.GateRun(&stdout, runID, true, true); err != nil {
+	if err := a.GateRun(&stdout, runID, true); err != nil {
 		var gateErr gateProcessError
 		if errors.As(err, &gateErr) {
 			var report gateReportDocument

@@ -76,7 +76,7 @@ func (c *clarifyAnswerCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	return r.App.ClarifyAnswer(r.Stdout, runID, questionID, answer, c.JSONOutput)
+	return r.App.ClarifyAnswer(r.Stdout, runID, questionID, answer, c.By, c.JSONOutput)
 }
 
 func (c *clarifySuggestCmd) Run(r *runner) error {
@@ -84,7 +84,7 @@ func (c *clarifySuggestCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	return r.App.ClarifySuggest(r.Stdout, r.Stderr, runID, c.Reviewer, c.Timeout, c.Yes, c.JSONOutput)
+	return r.App.ClarifySuggest(r.Stdout, r.Stderr, runID, c.Reviewer, c.Timeout, c.JSONOutput)
 }
 
 func (c *clarifyRunCmd) Run(r *runner) error {
@@ -96,7 +96,6 @@ func (c *clarifyRunCmd) Run(r *runner) error {
 		Reviewer:   c.Reviewer,
 		MaxRounds:  c.MaxRounds,
 		Timeout:    c.Timeout,
-		Yes:        c.Yes,
 		JSONOutput: c.JSONOutput,
 	})
 }
@@ -125,7 +124,7 @@ func (c *contractDraftCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	return r.App.ContractDraft(r.Stdout, r.Stderr, runID, c.Reviewer, c.Timeout, c.Yes, c.JSONOutput)
+	return r.App.ContractDraft(r.Stdout, r.Stderr, runID, c.Reviewer, c.Timeout, c.JSONOutput)
 }
 
 func (c *contractAcceptCmd) Run(r *runner) error {
@@ -133,7 +132,7 @@ func (c *contractAcceptCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	return r.App.ContractAcceptDraft(r.Stdout, runID, c.JSONOutput)
+	return r.App.ContractAcceptDraft(r.Stdout, runID, c.By, c.JSONOutput)
 }
 
 func (c *contractReviseCmd) Run(r *runner) error {
@@ -191,7 +190,7 @@ func (c *executeRunCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	return r.App.ExecuteRun(r.Stdout, r.Stderr, runID, c.Agent, c.Timeout, c.Yes, c.JSONOutput)
+	return r.App.ExecuteRun(r.Stdout, r.Stderr, runID, c.Agent, c.Timeout, c.JSONOutput)
 }
 
 func (c *executeShowCmd) Run(r *runner) error {
@@ -223,7 +222,7 @@ func (c *gateRunCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	return r.App.GateRun(r.Stdout, runID, c.AllowCommands, c.JSONOutput)
+	return r.App.GateRun(r.Stdout, runID, c.JSONOutput)
 }
 
 func (c *gateShowCmd) Run(r *runner) error {
@@ -315,7 +314,7 @@ func (c *reviewRunCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	return r.App.ReviewRun(r.Stdout, r.Stderr, runID, c.Reviewer, c.Timeout, c.Yes, c.JSONOutput)
+	return r.App.ReviewRun(r.Stdout, r.Stderr, runID, c.Reviewer, c.Timeout, c.JSONOutput)
 }
 
 func (c *reviewFixRunCmd) Run(r *runner) error {
@@ -323,7 +322,7 @@ func (c *reviewFixRunCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	return r.App.ReviewFix(r.Stdout, r.Stderr, runID, c.Agent, c.Timeout, c.Yes, c.JSONOutput)
+	return r.App.ReviewFix(r.Stdout, r.Stderr, runID, c.Agent, c.Timeout, c.JSONOutput)
 }
 
 func (c *reviewLoopCmd) Run(r *runner) error {
@@ -338,7 +337,6 @@ func (c *reviewLoopCmd) Run(r *runner) error {
 		Patience:    c.Patience,
 		CleanRounds: c.CleanRounds,
 		Timeout:     c.Timeout,
-		Yes:         c.Yes,
 		JSONOutput:  c.JSONOutput,
 	})
 }
@@ -388,7 +386,7 @@ func (c *reviewProposalAcceptCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	return r.App.ReviewAcceptProposal(r.Stdout, runID, proposalID, c.JSONOutput)
+	return r.App.ReviewAcceptProposal(r.Stdout, runID, proposalID, c.By, c.JSONOutput)
 }
 
 func (c *reviewProposalRejectCmd) Run(r *runner) error {
@@ -404,7 +402,7 @@ func (c *reviewProposalRejectCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	return r.App.ReviewRejectProposal(r.Stdout, runID, proposalID, c.Reason, c.JSONOutput)
+	return r.App.ReviewRejectProposal(r.Stdout, runID, proposalID, c.Reason, c.By, c.JSONOutput)
 }
 
 func (c *doctorCmd) Run(r *runner) error {

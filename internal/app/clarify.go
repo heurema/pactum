@@ -54,6 +54,9 @@ type clarificationDecisionRecord struct {
 	Decision   string    `json:"decision"`
 	CreatedAt  time.Time `json:"created_at"`
 	Source     string    `json:"source"`
+	// DecidedBy is the explicit CLI principal (--by). Automatic loop decisions
+	// record only Source as their provenance and omit it.
+	DecidedBy string `json:"decided_by,omitempty"`
 }
 
 type contractClarifySet struct {
@@ -165,7 +168,7 @@ func (a App) ClarifyAsk(stdout io.Writer, runID string, question string, blockin
 	return nil
 }
 
-func (a App) ClarifyAnswer(stdout io.Writer, runID string, questionID string, answer string, jsonOutput bool) error {
+func (a App) ClarifyAnswer(stdout io.Writer, runID string, questionID string, answer string, decidedBy string, jsonOutput bool) error {
 	context, ok, err := a.loadClarifyContext(stdout, runID, jsonOutput)
 	if err != nil || !ok {
 		return err
@@ -178,7 +181,7 @@ func (a App) ClarifyAnswer(stdout io.Writer, runID string, questionID string, an
 		return fmt.Errorf("question not found: %s", questionID)
 	}
 	now := a.nowUTC()
-	answerRecord, decisionRecord, err := recordClarificationAnswer(context.RunPaths, runID, questionID, answer, "manual", "manual_answer", now)
+	answerRecord, decisionRecord, err := recordClarificationAnswer(context.RunPaths, runID, questionID, answer, "manual", "manual_answer", normalizePrincipal(context.Root, decidedBy), now)
 	if err != nil {
 		return err
 	}
@@ -204,11 +207,12 @@ func (a App) ClarifyAnswer(stdout io.Writer, runID string, questionID string, an
 // recordClarificationAnswer creates and appends the answer record and its
 // mirroring decision record for a question, with the given record sources, so
 // the manual ClarifyAnswer path and the clarify loop's auto-resolve share one
-// write path. It neither refreshes the clarification artifacts nor appends
-// ledger events — callers own those (the loop refreshes once per round, after
-// all of the round's auto-resolves).
+// write path. decidedBy is the explicit CLI principal; automatic callers pass
+// "" so their decisions carry only the source. It neither refreshes the
+// clarification artifacts nor appends ledger events — callers own those (the
+// loop refreshes once per round, after all of the round's auto-resolves).
 // TODO: Later revisions may reject duplicate answers or model answer revisions explicitly.
-func recordClarificationAnswer(runPaths contractRunPathSet, runID string, questionID string, answer string, answerSource string, decisionSource string, now time.Time) (clarificationAnswerRecord, clarificationDecisionRecord, error) {
+func recordClarificationAnswer(runPaths contractRunPathSet, runID string, questionID string, answer string, answerSource string, decisionSource string, decidedBy string, now time.Time) (clarificationAnswerRecord, clarificationDecisionRecord, error) {
 	answers, err := readClarificationAnswers(runPaths.AnswersJSONL)
 	if err != nil {
 		return clarificationAnswerRecord{}, clarificationDecisionRecord{}, err
@@ -234,6 +238,7 @@ func recordClarificationAnswer(runPaths contractRunPathSet, runID string, questi
 		Decision:   answer,
 		CreatedAt:  now,
 		Source:     decisionSource,
+		DecidedBy:  decidedBy,
 	}
 	if err := appendJSONLine(runPaths.AnswersJSONL, answerRecord); err != nil {
 		return clarificationAnswerRecord{}, clarificationDecisionRecord{}, err

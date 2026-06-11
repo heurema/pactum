@@ -66,7 +66,7 @@ func TestExecuteRunPassesModelSpecAndStaysWriteStage(t *testing.T) {
 	app.AgentTransport = transport
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "codex", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "run", runID, "--agent", "codex"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
 	}
@@ -92,7 +92,7 @@ func TestReviewFixPassesModelSpecAndStaysWriteStage(t *testing.T) {
 	app.AgentTransport = transport
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "codex", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "codex"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review fix exited %d, stderr: %s", code, stderr.String())
 	}
@@ -117,7 +117,7 @@ func TestReviewRunMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 	app.AgentTransport = transport
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "run", runID, "--reviewer", "codex", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "codex"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
 	}
@@ -150,7 +150,7 @@ func TestClarifySuggestMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 	app.AgentTransport = transport
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "claude", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "claude"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("clarify suggest exited %d, stderr: %s", code, stderr.String())
 	}
@@ -181,7 +181,7 @@ func TestClarifySuggestOmittedTimeoutUsesConfigIdleDefault(t *testing.T) {
 	app.AgentTransport = transport
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "claude", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "claude"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("clarify suggest exited %d, stderr: %s", code, stderr.String())
 	}
@@ -201,7 +201,7 @@ func TestClarifySuggestExplicitTimeoutOverridesConfigIdleDefault(t *testing.T) {
 	app.AgentTransport = transport
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "claude", "--timeout", "90s", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "claude", "--timeout", "90s"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("clarify suggest exited %d, stderr: %s", code, stderr.String())
 	}
@@ -219,7 +219,7 @@ func TestExecuteRunNegativeTimeoutIsRejected(t *testing.T) {
 	app.AgentTransport = transport
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "codex", "--timeout=-5s", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "run", runID, "--agent", "codex", "--timeout=-5s"}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatal("execute run with a negative --timeout should fail")
 	}
@@ -239,7 +239,7 @@ func TestContractDraftMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 	app.AgentTransport = transport
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "draft", runID, "--reviewer", "claude", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "draft", runID, "--reviewer", "claude"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract draft exited %d, stderr: %s", code, stderr.String())
 	}

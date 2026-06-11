@@ -320,10 +320,10 @@ There is also **no Docker support yet**.
   `timeouts.idle` workspace config key (a duration string, e.g. `15m`), then
   the built-in 25 minutes — the same resolution applies to every agent-running
   command that honors `--timeout`. The generated config carries no `timeouts`
-  section; set `timeouts.idle` only to deviate from the built-in. Because execution is **unsandboxed**, `execute
-  run` asks for confirmation on an interactive terminal and **requires `--yes`**
-  when stdin is not a terminal (CI/automation), so it never launches an agent
-  unattended by accident. `execute plan` never needs `--yes`.
+  section; set `timeouts.idle` only to deviate from the built-in. Execution is
+  **unsandboxed** and `execute run` never prompts: the CLI's consumer is an
+  agent relaying decisions already made in conversation, so launching the
+  executor is itself the recorded decision.
 
 The idle timeout is **completion-aware**: when the watchdog fires but the
 captured output already carries the agent's successful terminal marker —
@@ -360,12 +360,12 @@ write-side mirror of the discipline rules the built-in reviewer checks (style ru
 [`review-prompt-design.md`](review-prompt-design.md)), so the writer is told
 the rules it will be reviewed against.
 
-After execution, gate the result with `pactum gate run <run_id>` (validation
-commands run only with `--allow-commands`).
+After execution, gate the result with `pactum gate run <run_id>`, which runs
+the contract's validation commands.
 
 ## Clarify suggest
 
-`pactum clarify suggest <run_id> --reviewer codex --yes` launches a read-only
+`pactum clarify suggest <run_id> --reviewer codex` launches a read-only
 reviewer-role agent to propose clarification questions from the contract goal,
 repository context, first-pass search results, and existing clarifications. It
 writes `clarify/clarifier-prompt.md`, `clarify/clarifier-context.md`, captures
@@ -392,13 +392,11 @@ question object carries:
 
 Pactum parses those suggestions directly into **open clarification questions** in
 `clarify/questions.jsonl` for a human to answer later with `pactum clarify answer`;
-the agent never answers questions, revises the contract, or edits code. Like other
-agent-running commands, it asks for confirmation on an interactive terminal and
-**requires `--yes`** for non-interactive/automated use.
+the agent never answers questions, revises the contract, or edits code.
 
 ## Clarify run
 
-`pactum clarify run <run_id> --yes` composes `clarify suggest` and the
+`pactum clarify run <run_id>` composes `clarify suggest` and the
 per-question recommendation into autonomous clarification rounds. Each round:
 
 1. **Suggest** — runs the clarifier exactly as `clarify suggest` does (same
@@ -433,15 +431,14 @@ The loop writes `clarify/loop-summary.json`
 auto-resolved, open blocking after), the terminal reason, the converged flag,
 and the final per-dimension coverage; `--json` prints the same document.
 `--reviewer` selects the clarifier explicitly (same resolution as `clarify
-suggest`), the idle `--timeout` applies to each clarifier attempt, and `--yes`
-is required because the loop runs clarifier agents directly. Running the loop
-on an approved run surfaces the same approval-reset warning as `clarify
-suggest`.
+suggest`), and the idle `--timeout` applies to each clarifier attempt. Running
+the loop on an approved run surfaces the same approval-reset warning as
+`clarify suggest`.
 
-`pactum task new "<task>" --clarify --yes` runs this same loop immediately
+`pactum task new "<task>" --clarify` runs this same loop immediately
 after creating the run — one command from task to a pre-interrogated contract.
-The flag is opt-in and demands `--yes` exactly like the loop itself;
-`--reviewer`, `--max-rounds`, and `--timeout` pass through unchanged. The
+The flag is opt-in; `--reviewer`, `--max-rounds`, and `--timeout` pass through
+unchanged. The
 command renders the created run, the loop summary, and the open blocking
 questions with their kind, confidence, and recommended answer (the human's
 working set); `--json` embeds the loop summary document alongside the task
@@ -455,7 +452,7 @@ question-and-answer churn, never the human decision to approve the contract.
 
 ## Contract draft
 
-`pactum contract draft <run_id> --reviewer codex --yes` launches a read-only
+`pactum contract draft <run_id> --reviewer codex` launches a read-only
 reviewer-role agent to propose missing contract fields from the contract goal,
 answered clarifications, repository context, and first-pass search results. It
 writes `contract/drafter-prompt.md`, `contract/drafter-context.md`, captures
@@ -475,8 +472,8 @@ approve`.
 
 The drafter never answers clarification questions, changes the contract goal, or
 edits code. Like other agent-running commands, `contract draft` streams live
-agent output to stderr, honors `--timeout` as an idle no-output timeout, supports
-`--json`, and **requires `--yes`** for non-interactive/automated use.
+agent output to stderr, honors `--timeout` as an idle no-output timeout, and
+supports `--json`.
 
 ## Review: plan vs run
 
@@ -507,10 +504,8 @@ dedup, keeping the maximum severity.
   attempts concurrently (same direct-subprocess model as execution, with the
   idle `--timeout` per attempt) and captures each attempt under
   `review/reviewer-attempts/`, with the lens recorded in the attempt's
-  request and result. Like `execute run`, it is
-  unsandboxed agent execution, so it asks for confirmation on an interactive
-  terminal and **requires `--yes`** for non-interactive/automated use; `review
-  plan` never needs `--yes`. All lens attempts run to completion, but if any
+  request and result. Like `execute run`, it is unsandboxed agent execution.
+  All lens attempts run to completion, but if any
   attempt fails the command (and a review-loop round) fails as a whole — the
   completed lenses' output stays on disk in their attempt artifacts.
 
@@ -535,7 +530,7 @@ are inert until a person accepts them.
 
 ## Review fix
 
-`pactum review fix run <run_id> --agent codex --yes` launches a fresh
+`pactum review fix run <run_id> --agent codex` launches a fresh
 executor-role fixer against the run's current `review/findings.jsonl`. The
 fixer prompt includes the approved contract goal/scope/acceptance criteria and
 the current review findings, and instructs the agent to trace each finding to
@@ -551,13 +546,12 @@ as execution, captures request/result/stdout/stderr artifacts under
 `review/fix/fixer-context.md`, `review/fix/fixer-dry-run.json`, and
 `review/fix/last-result.json`.
 
-Like `execute run` and `review run`, `review fix run` is unsandboxed and requires
-`--yes` for non-interactive/automated use. It does not approve reviews, resolve
-findings, or re-run the gate.
+Like `execute run` and `review run`, `review fix run` is unsandboxed. It does
+not approve reviews, resolve findings, or re-run the gate.
 
 ## Review loop
 
-`pactum review loop <run_id> --reviewer codex --agent codex --yes` runs the
+`pactum review loop <run_id> --reviewer codex --agent codex` runs the
 reviewer round — five concurrent lens attempts per resolved reviewer, with each
 member's per-lens prompts written before the round launches and the lens
 surfaced per attempt in the round summary — parses structured finding

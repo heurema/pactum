@@ -15,25 +15,6 @@ import (
 	"github.com/heurema/pactum/internal/artifacts"
 )
 
-func TestClarifySuggestRequiresYesNonInteractive(t *testing.T) {
-	root := t.TempDir()
-	app, paths, runID := setupContractRun(t, root)
-	app = configureHelperClarifiers(t, app, paths, "helper")
-
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "helper"}, &stdout, &stderr)
-	if code == 0 {
-		t.Fatalf("clarify suggest should fail without --yes in non-interactive use")
-	}
-	if got := stderr.String(); !strings.Contains(got, "refusing to run agent non-interactively without --yes") {
-		t.Fatalf("clarify suggest stderr mismatch:\n%s", got)
-	}
-
-	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-	assertNoFile(t, runPaths.ClarifierPromptMD)
-	assertNoFile(t, runPaths.ClarifierContextMD)
-}
-
 func TestClarifySuggestRunsClarifierAndRecordsOpenQuestions(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
@@ -47,7 +28,7 @@ func TestClarifySuggestRunsClarifierAndRecordsOpenQuestions(t *testing.T) {
 	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "suggest", runID, "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "suggest", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("clarify suggest exited %d, stderr: %s", code, stderr.String())
 	}
@@ -166,7 +147,7 @@ func TestClarifySuggestJSONOutput(t *testing.T) {
 	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "helper", "--yes", "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "helper", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("clarify suggest --json exited %d, stderr: %s", code, stderr.String())
 	}
@@ -199,7 +180,7 @@ func TestClarifySuggestSurfacesApprovalResetOnApprovedRun(t *testing.T) {
 	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "helper", "--yes"}, &stdout, &stderr)
+	code := app.Run([]string{"clarify", "suggest", runID, "--reviewer", "helper"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("clarify suggest exited %d, stderr: %s", code, stderr.String())
 	}
@@ -231,7 +212,7 @@ func TestClarifySuggestSurfacesApprovalResetOnApprovedRun(t *testing.T) {
 	t.Setenv("PACTUM_CLARIFIER_EXPECTED_CWD", jsonRoot)
 
 	var jsonOut, jsonErr bytes.Buffer
-	if code := jsonApp.Run([]string{"clarify", "suggest", jsonRunID, "--reviewer", "helper", "--yes", "--json"}, &jsonOut, &jsonErr); code != 0 {
+	if code := jsonApp.Run([]string{"clarify", "suggest", jsonRunID, "--reviewer", "helper", "--json"}, &jsonOut, &jsonErr); code != 0 {
 		t.Fatalf("clarify suggest --json exited %d, stderr: %s", code, jsonErr.String())
 	}
 	var response clarifySuggestResponse
@@ -534,7 +515,7 @@ func TestRecordClarifierSuggestionsResolvesDependsOnAndBlocks(t *testing.T) {
 
 	// Answering the prerequisite clears the block on q_002.
 	var answerStdout bytes.Buffer
-	assertNoError(t, app.ClarifyAnswer(&answerStdout, runID, "q_001", "Use SQLite.", false))
+	assertNoError(t, app.ClarifyAnswer(&answerStdout, runID, "q_001", "Use SQLite.", "", false))
 	afterStatus, err := buildClarificationStatus(runPaths, state)
 	assertNoError(t, err)
 	if got := clarifyQuestionStatusByID(t, afterStatus, "q_002"); got.Blocked {

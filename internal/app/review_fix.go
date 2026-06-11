@@ -79,7 +79,7 @@ type reviewFixResultDocument struct {
 	processResult
 }
 
-func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, agentName string, timeout time.Duration, confirm bool, jsonOutput bool) error {
+func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, agentName string, timeout time.Duration, jsonOutput bool) error {
 	context, ok, err := a.loadReviewContext(stdout, runID)
 	if err != nil || !ok {
 		return err
@@ -97,8 +97,6 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 		Stdout:           stdout,
 		LiveOutput:       liveOutput,
 		JSONOutput:       jsonOutput,
-		Confirm:          confirm,
-		CancelMessage:    "review fix cancelled",
 		Root:             context.Root,
 		EventsJSONL:      context.Paths.EventsJSONL,
 		RunID:            runID,
