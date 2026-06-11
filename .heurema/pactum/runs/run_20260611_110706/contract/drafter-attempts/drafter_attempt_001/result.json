@@ -1,0 +1,13 @@
+{
+  "schema": "pactum.contract_drafter_result.v1",
+  "run_id": "run_20260611_110706",
+  "attempt_id": "drafter_attempt_001",
+  "drafter": "codex",
+  "started_at": "2026-06-11T11:12:57.304425Z",
+  "finished_at": "2026-06-11T11:13:35.865426Z",
+  "duration_ms": 38561,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "contract/drafter-attempts/drafter_attempt_001/stdout.log",
+  "stderr": "contract/drafter-attempts/drafter_attempt_001/stderr.log"
+}

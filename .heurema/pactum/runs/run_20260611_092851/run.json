@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260611_092851",
+  "status": "contract_approved",
+  "task": "Remove the interactive confirmation layer from the CLI: the consumer is an AI agent relaying decisions already made in conversation, so the CLI must never prompt. Delete interactive confirm prompts and the --yes flag from every command that has one (execute run, review run, review loop via clarify run, clarify run, clarify suggest, contract draft, task new --clarify, and any other); after the change the commands simply run, and --yes is rejected as an unknown flag (hard removal, no users yet). Delete gate run --allow-commands: running the contract validation commands is the gate's purpose, so gate run always runs them. Make the --by principal flag uniform across all decision verbs: optional with default value manual on contract approve, review approve, memory accept (today it may be required there), and extend it to contract accept, clarify answer, review proposal accept, review proposal reject — recorded in the respective decision artifacts and ledger events the same way approved_by is recorded today. The task new --clarify guard requiring --yes is removed together with the flag. All Next: hints, hand-written errors, helper text, docs (README, AGENTS.md, docs tree, bundled skill under assets/agent-skills/pactum), and scripts must stop mentioning --yes and --allow-commands as current guidance. Tests updated: confirmation-prompt tests removed or inverted, --by recording covered for the newly extended verbs, and negative coverage that --yes and --allow-commands are rejected.",
+  "created_at": "2026-06-11T09:28:51.977609Z",
+  "updated_at": "2026-06-11T09:37:27.696939Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260611_081729",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

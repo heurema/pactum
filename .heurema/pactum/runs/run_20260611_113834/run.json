@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260611_113834",
+  "status": "contract_approved",
+  "task": "Make the CLI announce legal moves so an agent never guesses the pipeline state machine: (1) structured error envelopes — when a command fails on a recognizable precondition (workspace not initialized, project map stale, contract not approved, prompt not built, no execution attempt, gate report missing, review not prepared, open blocking clarifications, run not found, pending proposals), the --json output emits a versioned error envelope carrying a stable machine-readable reason code, the human message, and a fix field holding the exact remedial pactum command when one exists; human output keeps the existing Suggested:/guidance text; exit codes stay nonzero and unchanged. (2) next affordances — every mutating command's --json response gains a next array of full pactum command strings mirroring the human Next: block (commands that already print Next: hints must emit the same set in JSON), and pactum status --json gains a next array for the current run's stage. There is precedent to build on: the pactum.not_ready.v1 envelope with suggested_command, next_command fields in run resolution, and the human Next: blocks — unify these into one consistent affordance convention rather than inventing a parallel one. The bundled skill and docs describe the convention briefly (agents should read next/fix instead of memorizing stage order). Tests pin: a representative precondition failure per stage emits the envelope with the right reason and fix; next arrays match the human hints; non-error and non-mutating outputs are unchanged.",
+  "created_at": "2026-06-11T11:38:34.541619Z",
+  "updated_at": "2026-06-11T11:47:46.598222Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260611_111353",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}
