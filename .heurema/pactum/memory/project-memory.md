@@ -36,3 +36,10 @@
 - Files: assets/agent-skills/pactum/SKILL.md, assets/agent-skills/pactum/references/workflow.md, docs/agent-skill.md, internal/app/affordances_test.go, internal/app/agent_attempt.go, internal/app/app.go, internal/app/app_test.go, internal/app/clarify.go, internal/app/clarify_loop.go, internal/app/clarify_suggest.go, internal/app/commands.go, internal/app/contract.go, internal/app/contract_draft.go, internal/app/errors.go, internal/app/execute.go, internal/app/gate.go, internal/app/map.go, internal/app/memory.go, internal/app/memory_freshness.go, internal/app/prompt.go, internal/app/prompt_test.go, internal/app/readiness.go, internal/app/resolve.go, internal/app/review.go, internal/app/review_fix.go, internal/app/review_fix_outcomes.go, internal/app/review_loop.go, internal/app/review_proposals.go, internal/app/status.go, internal/app/task.go
 - Summary: Reviewed run run_20260611_113834 with gate status needs_review and review status approved. Goal: Make the CLI announce legal moves so an agent never guesses the pipeline state machine: (1) structured error envelopes — when a command fail...
 - Candidate: runs/run_20260611_113834/memory/memory-candidate.json
+
+### mem_006 - Smooth the pipeline so no command is pure ritual, then compress the agent ski...
+- Run: run_20260611_160606
+- Freshness: fresh
+- Files: README.md, assets/agent-skills/pactum/references/workflow.md, docs/real-agent-execution-dogfood.md, internal/app/clarify_loop.go, internal/app/clarify_round.go, internal/app/commands.go, internal/app/gate.go, internal/app/prompt.go, internal/app/review.go
+- Summary: Reviewed run run_20260611_160606 with gate status passed and review status approved. Goal: Smooth the pipeline so no command is pure ritual, then compress the agent skill against the final grammar. This is the last grammar break; hard re...
+- Candidate: runs/run_20260611_160606/memory/memory-candidate.json
