@@ -202,6 +202,30 @@ func TestRunSubprocessClaudeFiltersNestedAgentMarker(t *testing.T) {
 	}
 }
 
+func TestRunSubprocessFiresOnFirstOutput(t *testing.T) {
+	root := t.TempDir()
+	promptRepoPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
+	writePrompt(t, root, promptRepoPath, "prompt body")
+
+	// recordingRunner writes one stdout line and one stderr line; the shared
+	// once-guard must fire OnFirstOutput exactly once across both streams.
+	fires := 0
+	_, err := runSubprocessWithRunner(RunRequest{
+		RepoRoot:       root,
+		RunID:          "run_123",
+		AttemptID:      "attempt_001",
+		Agent:          AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec"}, Input: InputPromptFile},
+		PromptRepoPath: promptRepoPath,
+		OnFirstOutput:  func() { fires++ },
+	}, &recordingRunner{})
+	if err != nil {
+		t.Fatalf("RunSubprocess returned error: %v", err)
+	}
+	if fires != 1 {
+		t.Fatalf("OnFirstOutput fired %d times, want exactly 1", fires)
+	}
+}
+
 func TestRunSubprocessTeesLiveOutput(t *testing.T) {
 	root := t.TempDir()
 	promptRepoPath := ".heurema/pactum/runs/run_123/contract/prompt.md"

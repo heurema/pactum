@@ -68,6 +68,13 @@ type RunRequest struct {
 	// the operator's stderr so multi-minute runs are not a silent black box.
 	// Leaving it nil preserves capture-only behavior.
 	LiveOutput io.Writer
+	// OnFirstOutput, when set, is invoked exactly once the moment the attempt
+	// produces its first visible output: over ACP the first non-empty agent
+	// message chunk written to the attempt stdout.log, over the CLI the first
+	// non-empty stdout or stderr write. The review fan-out uses it to release a
+	// staggered same-model Claude group once the lead has warmed the prompt
+	// cache. Leaving it nil is a no-op for every other caller.
+	OnFirstOutput func()
 	// WritePathAllowed, when non-nil, is consulted by the ACP transport at the
 	// file-write boundary: it reports whether a write to the given repo-relative
 	// slash path is within the contract scope. The ACP transport denies (errors,

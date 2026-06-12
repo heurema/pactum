@@ -48,6 +48,22 @@ func (w activityWriter) Write(p []byte) (int, error) {
 	return w.w.Write(p)
 }
 
+// firstOutputWriter fires a callback (guarded by a shared once) the first time
+// a non-empty slice is written through it. The CLI transport wraps both stdout
+// and stderr with one shared once so the first visible output on either stream
+// releases a staggered same-model group.
+type firstOutputWriter struct {
+	w    io.Writer
+	fire func()
+}
+
+func (w firstOutputWriter) Write(p []byte) (int, error) {
+	if len(p) > 0 {
+		w.fire()
+	}
+	return w.w.Write(p)
+}
+
 type processRunner interface {
 	Run(ctx context.Context, spec processSpec) error
 }
@@ -117,6 +133,12 @@ func runSubprocessWithRunner(request RunRequest, runner processRunner) (RunResul
 		stdoutWriter = activityWriter{w: stdoutWriter, activity: activity}
 		stderrWriter = activityWriter{w: stderrWriter, activity: activity}
 		stopIdleTimeout = startIdleTimeout(request.Timeout, activity, cancel, &idleTimedOut)
+	}
+	if request.OnFirstOutput != nil {
+		var once sync.Once
+		fire := func() { once.Do(request.OnFirstOutput) }
+		stdoutWriter = firstOutputWriter{w: stdoutWriter, fire: fire}
+		stderrWriter = firstOutputWriter{w: stderrWriter, fire: fire}
 	}
 	defer cancel()
 
