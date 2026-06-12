@@ -26,6 +26,9 @@ jobs:
       - name: Check (test + vet + git diff --check)
         run: make check
 
+      - name: Heurema hygiene (run-record leak gate)
+        run: make heurema-hygiene
+
       - name: Build
         run: make build
 
@@ -48,3 +51,23 @@ jobs:
 
       - name: Race detector
         run: make test-race
+
+  # Separate job so a slow vulndb fetch never delays the main check feedback
+  # loop. Blocking: any nonzero govulncheck exit (finding, fetch failure, or
+  # tool failure) fails the PR; retry transient fetch errors explicitly.
+  vuln:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Vulnerability scan (govulncheck)
+        run: make vuln

@@ -4,7 +4,7 @@
 # that building, testing, and installing Pactum from source is a single command.
 # There is no release, packaging, or Docker automation here.
 
-.PHONY: build test vet deadcode test-race check install clean smoke
+.PHONY: build test vet deadcode test-race vuln heurema-hygiene check install clean smoke
 
 # Version metadata stamped into the binary. Override on the command line, e.g.
 # `make build VERSION=0.1.0`.
@@ -44,6 +44,22 @@ deadcode:
 		echo "deadcode: unreachable functions found (above); remove them"; \
 		exit 1; \
 	fi
+
+# vuln scans dependencies and stdlib usage for known vulnerabilities
+# (golang.org/x/vuln, pinned via the go.mod tool directive). CI runs it as its
+# own blocking job so a slow vulndb fetch never delays the main check loop;
+# any nonzero exit — finding, fetch failure, or tool failure — fails the gate.
+vuln:
+	go tool govulncheck ./...
+
+# heurema-hygiene is the deterministic leak gate for the committed .heurema
+# run record: it scans tracked and staged-added .heurema files (the git index,
+# never unrelated untracked files) for absolute home-directory paths and
+# credential-shaped strings, and fails listing file:line, detector name, and a
+# redacted preview for every finding. Detectors live in cmd/heurema-hygiene,
+# which is itself outside the scanned tree.
+heurema-hygiene:
+	go run ./cmd/heurema-hygiene
 
 # check is the local gate: tests, vet, dead-code, and a whitespace/conflict-marker check.
 check: test vet deadcode

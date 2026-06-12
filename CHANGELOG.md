@@ -51,6 +51,11 @@ yet — everything lives under **Unreleased**.
 - Gate, review, reviewer proposal, and memory workflows.
 - Local build/install/smoke story (`Makefile`, `scripts/smoke.sh`).
 - CLI v0.2 cleanup: current run, JSON error envelopes, `pactum version`.
+- CI hardening: `make vuln` runs `govulncheck` (pinned via a go.mod tool
+  directive) as a separate blocking CI job, and `make heurema-hygiene`
+  deterministically scans tracked and staged-added `.heurema` run records for
+  absolute home-directory paths and credential-shaped strings, failing with
+  redacted `file:line` findings (also run as a CI step).
 
 ### Changed
 - Improved run-context search retrieval: instead of running the whole task

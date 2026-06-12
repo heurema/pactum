@@ -358,13 +358,14 @@ distillation lives in
   environment are the boundary), safe-usage guidance (trusted repos, plan
   before run, path scope review), private reporting, supported = `main` until
   tagged releases exist.
-- **govulncheck in CI** (small). One workflow step; with sqlite + tree-sitter
-  in the dependency tree a vuln scan is cheap insurance.
-- **Committed run-record hygiene gate** (small). The pre-batch manual grep for
-  absolute local paths is convention, not a gate: add a `make` target + CI
-  check scanning staged/changed `.heurema/` content for absolute home paths
-  and credential-shaped strings, so a dogfood transcript can never smuggle
-  either into history.
+- **govulncheck in CI** (M24.3, shipped). Pinned via the go.mod tool
+  directive (mirroring deadcode), `make vuln`, and a separate blocking CI job
+  so a slow vulndb fetch never delays the main check loop.
+- **Committed run-record hygiene gate** (M24.3, shipped). `make
+  heurema-hygiene` (`cmd/heurema-hygiene`) deterministically scans tracked +
+  staged `.heurema` index content — git index, not the worktree — for
+  absolute home-directory paths and credential-shaped strings, fails listing
+  file:line + detector + redacted preview, and runs in the main CI check job.
 - **`internal/app` decomposition arc** (med, after the CLI polish arc). The
   stage orchestration files have outgrown one package (`review.go` ~1.5k
   lines, `gate.go` ~0.7k, `contract_draft.go` ~0.7k): extract per-stage domain
