@@ -71,3 +71,10 @@
 - Files: docs/backlog.md, docs/loop-architecture-design.md, internal/app/app_test.go, internal/app/map.go, internal/app/status.go, internal/app/usage.go, internal/app/usage_test.go
 - Summary: Reviewed run run_20260612_161619 with gate status needs_review and review status approved. Goal: Combined config and usage polish slice. (1) Hide the unfinished budget surface: review.budget (mode/max_tokens) gates nothing real — remove ...
 - Candidate: runs/run_20260612_161619/memory/memory-candidate.json
+
+### mem_011 - Stagger the cold start of same-model reviewer groups in the review panel fan-...
+- Run: run_20260612_175035
+- Freshness: fresh
+- Files: docs/agents.md, docs/cost-budget-design.md, internal/agents/acp_transport.go, internal/agents/acp_transport_test.go, internal/agents/executor_test.go, internal/agents/runner.go, internal/agents/types.go, internal/app/agent_attempt.go, internal/app/app.go, internal/app/review_loop.go, internal/app/review_stagger_test.go
+- Summary: Reviewed run run_20260612_175035 with gate status needs_review and review status approved. Goal: Stagger the cold start of same-model reviewer groups in the review panel fan-out to stop paying duplicate prompt-cache write premiums. Backg...
+- Candidate: runs/run_20260612_175035/memory/memory-candidate.json

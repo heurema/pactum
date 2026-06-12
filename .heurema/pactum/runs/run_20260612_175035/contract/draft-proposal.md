@@ -1,0 +1,44 @@
+# Contract Draft Proposal
+
+## Status
+- Run id: run_20260612_175035
+- Status: accepted
+- Source: drafter_attempt
+- Drafter attempt: drafter_attempt_001
+- Drafter: codex
+- Accepted by: manual
+- Accepted at: 2026-06-12T17:54:03Z
+
+## In scope
+- Implement `review run` reviewer lens scheduling after roster resolution for explicit reviewers, configured panels, and empty-panel cross-model fallback.
+- Group reviewer lens attempts across the whole review round by normalized `(engine, model, effort)`, independent of registry name.
+- For Claude groups with more than one attempt, launch exactly one lead attempt, hold the rest, and release held attempts concurrently on first visible output, lead completion before output, or a 60 second hold timeout.
+- Add a transport-agnostic first-visible-output callback: ACP fires on the first non-empty agent message chunk written to `stdout.log`; CLI fires on the first non-empty stdout or stderr write.
+- Emit live output lines when a Claude group is held and when it is released.
+- Add tests covering Claude first-output release, timeout release, completion-before-output release, cross-registry grouping by normalized model and effort, Codex immediate launch, and single-attempt immediate launch.
+- Update `docs/agents.md` and `docs/cost-budget-design.md` to describe the implemented same-model Claude review stagger behavior.
+
+## Out of scope
+- `review plan`, proposal collection commands, proposal accept/reject commands, fixer execution, execute stages, clarify stages, and contract-draft stages.
+- Adding a config knob, environment flag, or user-facing option for enabling or disabling staggered review launches.
+- Changing prompt contents, attempt artifact naming, attempt ID allocation order, reviewer lens set, model resolution rules, or Codex prompt cache key behavior.
+- Running real `pactum review run` agent subprocesses as validation without explicit human approval.
+
+## Acceptance criteria
+- A `review run` with a multi-attempt Claude group starts exactly one transport invocation for that normalized `(engine, model, effort)` group before any held attempts start.
+- Held Claude attempts are not invoked until the lead attempt produces first visible output, exits before visible output, or the 60 second timeout elapses.
+- When release is triggered, all held attempts in the Claude group are launched without intentional serialization.
+- Two different reviewer registry names resolving to the same Claude model and effort share one stagger group with one lead attempt.
+- Codex groups, non-Claude groups, and single-attempt groups launch immediately with no stagger hold.
+- Artifact schemas, artifact paths, attempt ID ordering, request prompt references, round summary ordering, proposal parsing, and proposal decision semantics remain compatible with the unstaggered path; timestamps, durations, usage values, scheduling order, and new live-output hold/release lines may differ.
+- `docs/agents.md` no longer describes all review lens attempts as always launching concurrently without qualification, and `docs/cost-budget-design.md` describes the Claude stagger as implemented rather than only planned.
+
+## Validation commands
+- go test ./internal/app ./internal/agents
+- make check
+
+## Assumptions
+- Existing test doubles can observe transport invocation ordering without launching real agents.
+- A fixed 60 second production timeout can be tested through an injectable clock or timeout duration so tests do not actually wait 60 seconds.
+- Normalized effort uses the same resolved value currently recorded for reviewer attempts and registry/model inference.
+
