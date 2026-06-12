@@ -359,6 +359,8 @@ func renderExecutorContext(state contractRunState, mapRunID string, contractSHA2
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Retrieval guidance")
 	fmt.Fprintln(&buffer, "- Use `pactum search \"<term>\"` before adding new code.")
+	fmt.Fprintln(&buffer, "- Resolve a known identifier with `pactum search --symbol <name>`.")
+	fmt.Fprintln(&buffer, "- When a result shows a `path:start-end` range, read that line range directly instead of scanning the whole file; line numbers hold until you edit that file.")
 	fmt.Fprintln(&buffer, "- Prefer existing code items when applicable.")
 	fmt.Fprintln(&buffer, "- If ownership is unclear, stop and ask for clarification.")
 	fmt.Fprintln(&buffer, "- Do not rely on this map as complete semantic truth.")
@@ -388,9 +390,14 @@ func renderExecutorContext(state contractRunState, mapRunID string, contractSHA2
 	} else {
 		fmt.Fprintln(&buffer, "Results:")
 		for i, result := range searchResults.Results {
-			line := fmt.Sprintf("%d. %s %s", i+1, result.Kind, result.Path)
-			if result.Kind == "code_item" && result.Title != "" {
-				line += " (" + result.Title + ")"
+			line := fmt.Sprintf("%d. %s %s", i+1, result.Kind, result.Address())
+			if result.Kind == "code_item" {
+				if result.Title != "" {
+					line += " (" + result.Title + ")"
+				}
+				if result.Signature != "" {
+					line += " — " + result.Signature
+				}
 			}
 			fmt.Fprintln(&buffer, line)
 		}

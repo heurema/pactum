@@ -42,6 +42,11 @@ type Document struct {
 	Language  string
 	CodeKind  string
 	CreatedAt string
+	// StartLine, EndLine, and Signature carry symbol-precise addressing and are
+	// populated for kind=code_item documents only; other kinds leave them zero.
+	StartLine int
+	EndLine   int
+	Signature string
 }
 
 type IndexInput struct {
@@ -57,6 +62,9 @@ type QueryOptions struct {
 	Query string
 	Limit int
 	Kind  string
+	// Symbol restricts results to code_item hits whose symbol name (Result.Title)
+	// matches exactly, case-insensitively. It may be set without a Query.
+	Symbol string
 }
 
 // ResponseSchema identifies the machine-readable search response shape.
@@ -69,15 +77,42 @@ type Response struct {
 }
 
 type Result struct {
-	Rank     int     `json:"rank"`
-	ID       string  `json:"id"`
-	Kind     string  `json:"kind"`
-	Path     string  `json:"path"`
-	Title    string  `json:"title"`
-	Language string  `json:"language"`
-	CodeKind string  `json:"code_kind"`
-	Score    float64 `json:"score"`
-	Snippet  string  `json:"snippet"`
+	Rank     int    `json:"rank"`
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	Path     string `json:"path"`
+	Title    string `json:"title"`
+	Language string `json:"language"`
+	CodeKind string `json:"code_kind"`
+	// StartLine, EndLine, and Signature address a code_item hit's symbol. They
+	// are emitted only for kind=code_item hits with valid metadata; non-code_item
+	// results omit them so their JSON shape is unchanged.
+	StartLine int     `json:"start_line,omitempty"`
+	EndLine   int     `json:"end_line,omitempty"`
+	Signature string  `json:"signature,omitempty"`
+	Score     float64 `json:"score"`
+	Snippet   string  `json:"snippet"`
+}
+
+// validRange reports whether a code_item carries a usable line range: both lines
+// positive and the end not before the start.
+func validRange(start, end int) bool {
+	return start > 0 && end >= start
+}
+
+// HasRange reports whether the result carries a valid code_item line range. Only
+// code_item hits ever do.
+func (r Result) HasRange() bool {
+	return r.Kind == KindCodeItem && validRange(r.StartLine, r.EndLine)
+}
+
+// Address returns the symbol-precise address "path:start-end" when the result
+// has a valid range, otherwise the bare path. It never renders "path:0-0".
+func (r Result) Address() string {
+	if r.HasRange() {
+		return fmt.Sprintf("%s:%d-%d", r.Path, r.StartLine, r.EndLine)
+	}
+	return r.Path
 }
 
 func NormalizeKind(kind string) (string, error) {
@@ -170,7 +205,7 @@ func Documents(input IndexInput) []Document {
 		if item.IsImportLike() {
 			kind = KindImport
 		}
-		documents = append(documents, Document{
+		document := Document{
 			ID:        fmt.Sprintf("%s:%s:%s:%s:%d", kind, item.Path, item.Kind, item.Name, item.StartLine),
 			Kind:      kind,
 			Path:      item.Path,
@@ -179,7 +214,15 @@ func Documents(input IndexInput) []Document {
 			Language:  item.Language,
 			CodeKind:  item.Kind,
 			CreatedAt: createdAt,
-		})
+		}
+		// Symbol-precise addressing rides on code_item definitions only; import
+		// markers carry no range or signature worth surfacing.
+		if kind == KindCodeItem {
+			document.StartLine = item.StartLine
+			document.EndLine = item.EndLine
+			document.Signature = item.Signature
+		}
+		documents = append(documents, document)
 	}
 
 	sort.Slice(documents, func(i, j int) bool {
@@ -250,5 +293,25 @@ func (e missingIndexError) Error() string {
 
 func IsMissingIndex(err error) bool {
 	var target missingIndexError
+	return errors.As(err, &target)
+}
+
+func ErrStaleIndex(path string) error {
+	return staleIndexError{path: path}
+}
+
+type staleIndexError struct {
+	path string
+}
+
+func (e staleIndexError) Error() string {
+	return "search index schema is stale: " + e.path
+}
+
+// IsStaleIndex reports whether err signals an index built against an older,
+// incompatible stored shape. Callers should treat it as a prompt to run
+// `pactum map refresh` rather than reading the stale rows.
+func IsStaleIndex(err error) bool {
+	var target staleIndexError
 	return errors.As(err, &target)
 }

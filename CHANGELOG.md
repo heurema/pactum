@@ -17,6 +17,11 @@ yet — everything lives under **Unreleased**.
 - Deterministic search ranking polish: import-like entries are penalized and
   the entrypoints/commands/config wiki pages are boosted in unfiltered
   searches, with a small exact title/path-match boost.
+- Symbol-addressable search: `code_item` results carry the symbol's line
+  range and signature (`path:start-end` in human output;
+  `start_line`/`end_line`/`signature` in `--json`), and
+  `pactum search --symbol <name>` resolves a known identifier directly
+  (exact, case-insensitive, positional query optional).
 - Map quality fixture coverage (Go CLI, TS/Vue/Vite, Python, .NET, Java/Maven,
   Gradle, Rust, config-heavy) and wiki overclaiming checks.
 - .NET project detection in the map wiki: `.csproj`/`.fsproj`/`.vbproj`/`.sln`/

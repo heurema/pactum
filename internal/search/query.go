@@ -2,6 +2,8 @@ package search
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"os"
 	"path"
 	"sort"
@@ -56,9 +58,16 @@ func Query(dbPath string, options QueryOptions) (Response, error) {
 		limit = defaultLimit
 	}
 
+	symbol := strings.TrimSpace(options.Symbol)
 	match := ftsQuery(options.Query)
-	if match == "" {
+	if match == "" && symbol == "" {
 		return response, nil
+	}
+	// --symbol resolves a known identifier straight to its address, so it only
+	// ever yields code_item hits. The CLI rejects incompatible --kind values
+	// before reaching here; forcing the kind keeps the candidate pool relevant.
+	if symbol != "" {
+		kind = KindCodeItem
 	}
 
 	db, err := sql.Open("sqlite", dbPath)
@@ -66,6 +75,21 @@ func Query(dbPath string, options QueryOptions) (Response, error) {
 		return response, err
 	}
 	defer db.Close()
+
+	if err := ensureSchemaCurrent(db, dbPath); err != nil {
+		return response, err
+	}
+
+	// Symbol-only lookup needs no lexical match: resolve the identifier directly
+	// against code_item titles in deterministic order.
+	if match == "" {
+		results, err := querySymbol(db, symbol, limit)
+		if err != nil {
+			return response, err
+		}
+		response.Results = results
+		return response, nil
+	}
 
 	// Fetch a larger candidate pool ordered by raw bm25 so the deterministic
 	// re-rank below has material to reorder; without this, a strong import
@@ -76,6 +100,18 @@ func Query(dbPath string, options QueryOptions) (Response, error) {
 		pool = 50
 	}
 
+	// --symbol restricts the pool to exact (case-insensitive) symbol-name matches
+	// in SQL, mirroring querySymbol. Filtering in Go after the bm25 LIMIT could
+	// drop an exact match that ranks below the pool cutoff; the predicate keeps
+	// every match in the pool so the cap applies to symbol hits only.
+	where := "documents_fts MATCH ? AND (? = 'any' OR d.kind = ?)"
+	queryArgs := []any{match, kind, kind}
+	if symbol != "" {
+		where += " AND lower(d.title) = lower(?)"
+		queryArgs = append(queryArgs, symbol)
+	}
+	queryArgs = append(queryArgs, pool)
+
 	rows, err := db.Query(`
 SELECT
 	d.id,
@@ -84,14 +120,17 @@ SELECT
 	d.title,
 	COALESCE(d.language, ''),
 	COALESCE(d.code_kind, ''),
+	d.start_line,
+	d.end_line,
+	d.signature,
 	-- SQLite FTS5 bm25 uses lower scores for better matches; values are often negative.
 	bm25(documents_fts) AS score,
 	snippet(documents_fts, 1, '', '', '...', 16) AS snippet
 FROM documents_fts
 JOIN documents d ON documents_fts.rowid = d.rowid
-WHERE documents_fts MATCH ? AND (? = 'any' OR d.kind = ?)
+WHERE `+where+`
 ORDER BY score ASC, d.kind ASC, d.path ASC, d.title ASC
-LIMIT ?`, match, kind, kind, pool)
+LIMIT ?`, queryArgs...)
 	if err != nil {
 		return response, err
 	}
@@ -104,6 +143,8 @@ LIMIT ?`, match, kind, kind, pool)
 	var candidates []ranked
 	for rows.Next() {
 		var result Result
+		var startLine, endLine int
+		var signature string
 		if err := rows.Scan(
 			&result.ID,
 			&result.Kind,
@@ -111,11 +152,15 @@ LIMIT ?`, match, kind, kind, pool)
 			&result.Title,
 			&result.Language,
 			&result.CodeKind,
+			&startLine,
+			&endLine,
+			&signature,
 			&result.Score,
 			&result.Snippet,
 		); err != nil {
 			return response, err
 		}
+		hydrateSymbolMetadata(&result, startLine, endLine, signature)
 		result.Snippet = strings.TrimSpace(result.Snippet)
 		candidates = append(candidates, ranked{
 			result:   result,
@@ -149,6 +194,88 @@ LIMIT ?`, match, kind, kind, pool)
 		response.Results = append(response.Results, result)
 	}
 	return response, nil
+}
+
+// ensureSchemaCurrent treats an index whose stored shape predates the current
+// schema marker as stale, so the caller can prompt for `pactum map refresh`
+// instead of reading rows with the wrong columns. A legacy index has no meta
+// table, which surfaces as a query error here.
+func ensureSchemaCurrent(db *sql.DB, dbPath string) error {
+	var version string
+	err := db.QueryRow(`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&version)
+	switch {
+	case err == nil:
+		if version != indexSchemaVersion {
+			return ErrStaleIndex(dbPath)
+		}
+		return nil
+	case errors.Is(err, sql.ErrNoRows), isMissingTableError(err):
+		// No meta table or no version row: an index written by an older
+		// binary. Anything else (I/O, corruption, locking) is a real failure
+		// that refresh guidance would only hide.
+		return ErrStaleIndex(dbPath)
+	default:
+		return fmt.Errorf("search index meta: %w", err)
+	}
+}
+
+// isMissingTableError matches SQLite's "no such table" failure shape, the one
+// non-ErrNoRows error an older index legitimately produces.
+func isMissingTableError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no such table")
+}
+
+// querySymbol resolves a bare --symbol lookup (no lexical query) to its
+// code_item hits, matching Result.Title exactly and case-insensitively. Results
+// are ordered deterministically by path then range so duplicate symbol names
+// across packages return stably.
+func querySymbol(db *sql.DB, symbol string, limit int) ([]Result, error) {
+	rows, err := db.Query(`
+SELECT id, kind, path, title, COALESCE(language, ''), COALESCE(code_kind, ''), start_line, end_line, signature
+FROM documents
+WHERE kind = ? AND lower(title) = lower(?)
+ORDER BY path ASC, start_line ASC, id ASC
+LIMIT ?`, KindCodeItem, symbol, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []Result
+	for rows.Next() {
+		var result Result
+		var startLine, endLine int
+		var signature string
+		if err := rows.Scan(
+			&result.ID,
+			&result.Kind,
+			&result.Path,
+			&result.Title,
+			&result.Language,
+			&result.CodeKind,
+			&startLine,
+			&endLine,
+			&signature,
+		); err != nil {
+			return nil, err
+		}
+		hydrateSymbolMetadata(&result, startLine, endLine, signature)
+		result.Rank = len(results) + 1
+		results = append(results, result)
+	}
+	return results, rows.Err()
+}
+
+// hydrateSymbolMetadata copies stored symbol metadata onto a result, but only
+// when the range is valid. Invalid rows surface neither a "path:0-0" address nor
+// a dangling signature, so --json carries start_line, end_line, and signature
+// solely for code_item hits with usable metadata.
+func hydrateSymbolMetadata(result *Result, startLine, endLine int, signature string) {
+	if validRange(startLine, endLine) {
+		result.StartLine = startLine
+		result.EndLine = endLine
+		result.Signature = signature
+	}
 }
 
 // rankAdjustment returns the deterministic delta added to a result's bm25 score

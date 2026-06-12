@@ -333,6 +333,28 @@ distillation lives in
 
 ## Hardening / cleanup
 
+- **Config + usage polish slice** (small-med, next after the symbol-search
+  slice; one combined contract):
+  (1) **Hide the unfinished budget surface.** `review.budget`
+  (`mode`/`max_tokens`) gates nothing real (warn-mode plumbing only): remove
+  it from the config surface entirely — not generated, not accepted (loud
+  leftover-key error, like the old `agent:` key), and delete the warn-mode
+  code path in the review loop. Token accounting in the usage ledger stays
+  untouched. Budget enforcement returns later as a designed feature
+  ([cost-budget-design.md](cost-budget-design.md) is its home).
+  (2) **Usage display polish.** `pactum usage --all` is an unreadable
+  60-line dump: sort runs by total tokens descending, add `--top N`, and
+  surface a per-workspace one-line summary first. Mark uncaptured calls
+  explicitly (e.g. `codex: usage not reported over ACP — N calls`) instead
+  of zero-valued rows that mud the aggregates. Optional stretch: per-lens
+  breakdown of the review stage.
+  (3) **Map staleness pin narrowed to the `map:` section.** The map manifest
+  pins the SHA-256 of the whole `config.yaml` (`map.go:75`; checked at
+  `status.go:264`), so editing `agents:` or `review.panel` — which cannot
+  affect map output — falsely invalidates the map (bit us live when swapping
+  the review panel). Pin a hash of the canonicalized `map:` section instead:
+  map-parameter changes still invalidate, agent/review/panel edits do not.
+
 - **Gate validation command parsing + negative-match semantics** (med). The
   gate runner tokenizes validation commands with `strings.Fields` — quote
   blind, so a quoted pattern argument shatters into garbage args (the M24.1
