@@ -59,13 +59,22 @@ reviews across M8–M10. Rough priority in parentheses.
   hang (bad). Surfaced in the M12.9 dogfood (claude silent ~30 min, finished cleanly, never
   killed). Fix: run the claude executor with `--output-format stream-json` (streams events
   → resets the idle timer, like codex), and/or arm the idle watchdog from process start.
-- **ACP tool-call progress in the live output** (small). Over ACP, silent agent
-  activity (tool calls, thoughts, plans) now ticks the idle watchdog (M17.1), but
-  the live output still shows only streamed agent text — a tool-heavy run can
-  look frozen for minutes while it is healthily working. Surface a compact
-  progress trace (e.g. one short line per tool call / tool-call update) in the
-  live output, without polluting the attempt `stdout.log` whose content stays
-  text-only.
+- **Agent tool-call trace + live progress feed** (med, research-backed —
+  design in [agent-tool-trace-design.md](agent-tool-trace-design.md);
+  absorbs the earlier "ACP tool-call progress in the live output" item).
+  Both ACP adapters already deliver full tool-call payloads (command lines,
+  ranged-read offsets, locations, outputs, status lifecycle) to
+  `acpClient.SessionUpdate`, which ticks the watchdog and discards them.
+  Record a per-attempt `tool-trace.jsonl` beside `stdout.log` (gitignored
+  like `*.log`): ts, call/update, tool_call_id, kind, title, status,
+  locations, input/output byte sizes, duration + exit code on the terminal
+  update; content (`raw_input`/`raw_output`) only behind an explicit opt-in
+  with truncation bounds, copying the sizes-by-default redaction model.
+  Emit a one-line live feed per call (closes the "tool-heavy run looks
+  frozen" gap). Trace counts are honest lower bounds (adapter event coverage
+  is per-type and has had gaps). Follow-up rides the navigation arc: an
+  adoption report over traces (ranged-read share, repo-CLI usage) replaces
+  narration-grep as evidence.
 - **Workspace config leaks across runs/branches** — structurally resolved by the
   M16.0 config redesign: model pins became per-agent entries, so a pin can no
   longer reach a different agent (the M10.2 failure mode — a leaked claude pin
