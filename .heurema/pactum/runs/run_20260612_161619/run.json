@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260612_161619",
+  "status": "contract_approved",
+  "task": "Combined config and usage polish slice. (1) Hide the unfinished budget surface: review.budget (mode/max_tokens) gates nothing real — remove it from the config surface entirely: writeDefaultConfigIfMissing stops emitting it, readConfig rejects a leftover review.budget key with a loud configuration error naming the key (the same pattern as the removed agent: key), and the warn-mode budget plumbing in the review loop is deleted. Token accounting in the usage ledger and the usage command are untouched by the removal; budget enforcement returns later as a designed feature whose home is docs/cost-budget-design.md. (2) Usage display polish: pactum usage --all leads with the workspace summary, sorts the per-run rows by total tokens descending, and gains a --top N flag to cap the run list; uncaptured calls stop rendering as zero-valued rows — by-agent and by-run breakdowns annotate them honestly (for example: codex — N calls, usage not reported by the agent) and zero-token captured rows remain distinguishable from uncaptured ones. (3) Effective cost units: usage output (per-run and --all, human and JSON) adds an effective-units metric computed per provider with documented multipliers — for anthropic: fresh input x1.0, cache write x1.25, cache read x0.1, output x5.0; for codex/openai: fresh input x1.0 (cache writes are free and count as fresh), cached read x0.1, output x5.0 — the multipliers live as named constants with a comment citing the standard price ratios, and a per-stage/per-attempt cache hit-rate (cache_read / (fresh + cache_write + cache_read)) is shown where cache fields exist. (4) Map staleness pin narrowed: the map manifest currently pins the SHA-256 of the whole config.yaml, so editing agents or review.panel falsely invalidates the map; pin a deterministic hash of only the canonicalized map: config section instead — map-parameter changes still invalidate, other config edits do not; a legacy manifest holding the old whole-file hash is treated as stale once (one final refresh migrates it). (5) docs/cost-budget-design.md gains a verified cache-economics section recording the researched facts the future budget feature must account in: per-provider write/read multipliers, cache scoping (anthropic org+workspace, machine+directory effective scope for Claude Code; openai machine-local routing with prompt_cache_key), the concurrent cold-start write race and the staggered-launch savings model for panel fan-out (planned as its own slice), and the rule that budgets must be denominated in effective units rather than raw tokens. Usage docs (flow.md or wherever usage is documented) and CHANGELOG updated; tests pin the budget-key rejection, the sorted/top output, the uncaptured annotation, the effective-units math per provider, the hit-rate, and the map-pin behavior (agents-edit keeps map fresh, map-edit invalidates, legacy manifest migrates).",
+  "created_at": "2026-06-12T16:16:19.912688Z",
+  "updated_at": "2026-06-12T16:25:00.615587Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260612_073609",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

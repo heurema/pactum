@@ -1,0 +1,140 @@
+# Executor Prompt
+
+This prompt is prepared from an approved Pactum contract.
+This prompt is prepared for the selected built-in agent when `pactum execute run` is used.
+Pactum records execution artifacts and validates contract, map, and memory boundaries before execution.
+
+## Contract status
+- Run: run_20260612_070427
+- Approval: approved
+- Contract hash: 7973cf8750a225e481b9ad305607081197e53a40fc295b6dfc5daa101f5ff5ef
+
+## Goal
+Slice 1 of the agent file-navigation arc (design reference: docs/agent-file-navigation-design.md). Make search results symbol-addressable so an agent's first read of a large file is a ranged read instead of a grep-window-rewindow loop. (1) Plumb the per-symbol data the code-items index already stores — StartLine, EndLine, and Signature (see codeindex.Item) — through the search layer into code_item results: extend the FTS5 document metadata or result hydration so search.Result carries start_line, end_line, and signature for kind=code_item hits (other kinds leave them empty), expose them in pactum search human output as path:start-end and the signature, and in search --json. (2) Add a --symbol <name> filter to pactum search that restricts results to code_item hits whose symbol name matches (exact match preferred, case-insensitive; document the matching rule), so an agent can resolve a known identifier straight to its address. (3) Render the same addresses in the executor context: renderExecutorContext search-result lines gain the line range and signature for code_item hits (path:start-end — signature), and the prompt guidance text tells the agent to read symbol ranges directly instead of scanning whole files. (4) The map/search index rebuild stays deterministic; index schema or stored-shape changes must keep pactum map refresh reproducible — same tree in, same index out; bump internal schema markers if the stored shape changes rather than silently rereading stale rows. Tests pin: a code_item search result carries the correct range and signature; --symbol returns exactly the matching symbols; executor-context rendering shows ranged addresses; non-code_item results are unchanged.
+
+## In scope
+- Extend search indexing and result hydration so kind=code_item results can carry StartLine, EndLine, and Signature from codeindex.Item as start_line, end_line, and signature.
+- Update pactum search human output to render valid code_item ranges as path:start-end and include the signature when present.
+- Update pactum search --json so valid code_item symbol metadata is emitted as start_line, end_line, and signature while non-code_item result JSON remains unchanged.
+- Add pactum search --symbol <name> with exact case-insensitive matching against codeindex.Item.Name as exposed by search.Result.Title.
+- Allow --symbol without a positional query; when both query and --symbol are provided, apply the lexical query first and then restrict to exact symbol-name matches.
+- Reject --symbol combined with any --kind value other than omitted/default any or explicit code_item, with a clear usage error.
+- Return all duplicate exact symbol-name matches, ordered by existing deterministic ranking and tie-breakers and capped by --limit.
+- Update executor context search-result rendering so code_item hits with valid range metadata render as path:start-end and include the signature when present.
+- Update executor-context retrieval guidance to tell agents to read symbol ranges directly when ranged code_item results are available.
+- Update run-context search deduplication so distinct code_item document IDs or distinct valid start_line/end_line ranges are preserved.
+- Handle legacy or incompatible search index schemas as stale and instruct the user to run pactum map refresh.
+- Bump internal search index schema or stored-shape markers if the FTS5 stored shape changes.
+- Add focused tests for search result symbol metadata, --symbol behavior, executor-context rendering, stale schema handling, invalid metadata omission, and unchanged non-code_item output.
+
+## Out of scope
+- Do not change the contract goal.
+- Do not add embeddings, vector search, model-based context compression, or an LSP runtime dependency.
+- Do not implement pactum outline or contract-scoped skeleton rendering from later slices of docs/agent-file-navigation-design.md.
+- Do not change codeindex.Item extraction semantics except as needed to consume existing StartLine, EndLine, and Signature fields.
+- Do not include start_line, end_line, or signature fields in JSON results for repo_map, llms, wiki, file, or import hits.
+- Do not match --symbol against Parent, Package, Signature, CodeKind, import path, or synthesized qualified names.
+- Do not treat duplicate symbol names as an ambiguity error.
+
+## Acceptance criteria
+- A code_item search result created from a codeindex.Item with StartLine=3, EndLine=3, and Signature="type Runner struct" carries start_line=3, end_line=3, and signature="type Runner struct".
+- Human pactum search output for a code_item hit with valid range metadata shows the address as path:start-end and includes the signature.
+- pactum search --json includes start_line, end_line, and signature only for code_item hits with valid symbol metadata.
+- JSON output for repo_map, llms, wiki, file, and import hits does not gain start_line, end_line, or signature fields.
+- pactum search --symbol Runner works without a positional query and returns exact case-insensitive code_item title/name matches.
+- pactum search runner --symbol Runner applies the lexical query and then restricts results to exact case-insensitive symbol-name matches.
+- --symbol does not match Parent, Package, Signature, CodeKind, import path, or qualified names when the plain symbol name differs.
+- When multiple code_item results share the same exact symbol name, --symbol returns all matching results in deterministic result order subject to --limit.
+- pactum search --symbol Runner --kind file and other non-code_item kind filters fail with a clear usage error explaining that --symbol only applies to code_item results.
+- Executor context renders code_item search results with valid metadata as path:start-end and includes the signature when present.
+- Executor context preserves distinct code_item hits with different document IDs or different valid start_line/end_line ranges, even when path, title, and code_kind match.
+- Code_item hits with missing or invalid range metadata are still returned but do not render path:0-0 or dangling separators.
+- An incompatible or legacy search index schema is treated as stale and produces guidance to run pactum map refresh instead of silently reading stale rows.
+- Given the same tree and generated_at input, rebuilding the search index produces deterministic documents and result metadata.
+
+## Validation commands
+- go test ./internal/search
+- go test ./internal/app
+- make check
+
+## Assumptions
+- The implementation may either store the new code_item metadata directly in the FTS5/index schema or hydrate it from deterministic document metadata, as long as stale-schema detection and deterministic rebuild behavior are preserved.
+- Valid range metadata means both start_line and end_line are positive and end_line is not before start_line.
+- The existing result ranking and tie-breakers remain authoritative for ordering --symbol matches.
+- The exact wording of the stale-index and usage-error messages may follow existing CLI error style, provided the messages are clear and testable.
+
+## Clarifications
+- q_001 [blocking] For `pactum search --symbol <name>`, should "symbol name" mean only `codeindex.Item.Name` / `search.Result.Title`, or should it also match qualified forms such as `Parent.Name`, package-qualified names, `Signature`, or `CodeKind`?
+  Rationale: The repository's code-item documents carry several identifier-like fields (`Name`, `Parent`, `Package`, `Signature`, `Kind`). The contract says exact case-insensitive symbol name matching is preferred, but does not name which field is authoritative.
+  Decision: `--symbol <name>` matches only `codeindex.Item.Name` as exposed in `search.Result.Title`, using exact case-insensitive comparison. It does not match `Parent`, `Package`, `Signature`, `CodeKind`, or synthesized qualified names.
+- q_002 [blocking] Should `--symbol` be usable as a standalone lookup (`pactum search --symbol Runner`) even though the current CLI requires a positional query, or only as a filter on an existing query (`pactum search Runner --symbol Runner`)?
+  Rationale: The design doc and contract phrase the feature as `pactum search --symbol <name>` so agents can resolve a known identifier directly, but the current `searchCmd` requires `Query string arg`. This changes CLI grammar and query execution.
+  Decision: Make the positional query optional when `--symbol` is provided. With only `--symbol`, return matching `code_item` symbols directly. When both query and `--symbol` are present, keep the lexical query and then restrict results to the exact symbol match.
+- q_003 [blocking] What should happen for an incompatible kind filter such as `pactum search Runner --symbol Runner --kind file` or `--kind import`?
+  Rationale: The existing CLI supports `--kind any|repo_map|llms|wiki|file|code_item|import`, while the contract says `--symbol` restricts results to `code_item` hits. Silent empty results and implicit override would be different user-facing semantics.
+  Decision: Allow `--symbol` only with omitted/default `--kind any` or explicit `--kind code_item`. Reject other `--kind` values with a clear usage error explaining that `--symbol` only applies to `code_item` results.
+- q_004 If multiple files or parents define the same symbol name, for example two `Runner` code items in different packages, should `--symbol Runner` return all exact matches or treat the duplicate as ambiguous?
+  Rationale: The code index can contain repeated `Name` values across paths, packages, methods, and tests. The contract says `--symbol` returns exactly matching symbols, but does not state whether duplicates are an error, all results, or only the top-ranked result.
+  Decision: Return all exact case-insensitive `code_item` matches, ordered by the existing deterministic ranking and tie-breakers, capped by `--limit`. Do not report duplicates as an error; users can raise `--limit` if needed.
+- q_005 [blocking] For `pactum search --json`, should `start_line`, `end_line`, and `signature` be omitted from non-`code_item` results to keep their JSON shape unchanged, or included with zero/empty values because `search.Result` now has those fields?
+  Rationale: The contract says only `kind=code_item` hits carry symbol metadata and that non-code_item results are unchanged, but it also says other kinds leave the new fields empty. The current `search.Result` JSON shape emits fixed fields, so adding non-omitempty fields would visibly change file/wiki/import JSON results.
+  Decision: In JSON output, include `start_line`, `end_line`, and `signature` only for `kind=code_item` hits with valid symbol metadata. Omit those fields for `repo_map`, `llms`, `wiki`, `file`, and `import` results so non-code_item JSON results remain unchanged.
+- q_006 If a `code_item` hit has incomplete range metadata, for example `StartLine=5` and `EndLine=0` in a fixture or an incompatible `search.sqlite` built before the new stored columns, what should search and executor-context rendering do?
+  Rationale: Tree-sitter extraction normally sets 1-based start/end lines, but current tests and future fixtures can construct partial `codeindex.Item` values, and the existing search index has no schema marker today. The contract requires deterministic rebuilds and says stored-shape changes should not silently reread stale rows.
+  Decision: Treat an incompatible/legacy search index schema as stale and tell the user to run `pactum map refresh`. For an individual `code_item` row with missing or invalid range data, still return the result but omit the ranged address and absent signature; never render `path:0-0` or a dangling separator.
+- q_007 If two distinct `code_item` hits have the same `path`, `title`, and `code_kind` but different parents or ranges, for example `Cache.Start` and `Worker.Start` methods in the same file, should executor-context search results keep both ranged addresses or dedupe them as one result?
+  Rationale: `runContextSearch` currently dedupes by `(kind, path, title, code_kind)`, while `codeindex.Item` can represent same-name methods/functions distinguished by `Parent`, `StartLine`, and `EndLine`. The contract's goal is symbol-addressable navigation, so collapsing distinct ranges would hide a valid symbol address from the executor context.
+  Decision: Treat distinct `code_item` document IDs or distinct valid `start_line`/`end_line` ranges as distinct results in run-context search and executor-context rendering. Dedupe only the same underlying result resurfaced by multiple targeted queries.
+
+## Project context
+- Executor context: context/executor-context.md
+- Repo map: .heurema/pactum/map/repo-map.md
+- Search results: context/search-results.json
+- Accepted memory context: context/memory-context.md
+
+## Accepted memory
+
+Memory context:
+- context/memory-context.md
+
+Selected memory:
+- total: 5
+- fresh: 4
+- stale: 1
+- unknown: 0
+
+Items:
+- mem_007 [fresh] score=36 — Fix three valid external review findings. (1) pactum export must preserve its...
+- mem_005 [fresh] score=36 — Make the CLI announce legal moves so an agent never guesses the pipeline stat...
+- mem_004 [fresh] score=31 — Tell the security truth in the user-facing docs and add a security policy. RE...
+- mem_002 [stale] score=29 — Normalize the CLI command grammar for agent-first use: every stage exposes a ...
+  reason: missing file internal/app/agents_doctor.go
+  reason: missing file internal/app/agents_doctor_test.go
+- mem_006 [fresh] score=27 — Smooth the pipeline so no command is pure ritual, then compress the agent ski...
+
+Rules:
+- Accepted memory is context, not semantic truth.
+- Stale memory may be outdated; verify before using.
+- Use `pactum search "<term>"` and inspect current source files before relying on memory.
+- Do not implement from memory alone.
+
+## Instructions for future executor
+- Follow the approved contract.
+- Do not implement out-of-scope work.
+- Search before creating new code.
+- Prefer existing code items when applicable.
+- If the contract is ambiguous, stop and request clarification.
+- Use the listed validation commands as expected checks.
+- Pactum gate can run approved validation commands after execution.
+
+## House style
+- Match the surrounding code: idiom, naming, comment density.
+- Comment only where the code is not self-explanatory; do not narrate the obvious.
+- Search for and reuse existing helpers before writing new ones.
+- Keep the diff small and focused: change only what the contract requires.
+- Simplicity first: no enterprise patterns for simple problems, question every new abstraction, no premature generalization or optimization.
+- Over-engineering DON'Ts: wrappers that add nothing, factories or abstractions for a single case, unused extension points, dual implementations where the old path has no callers, silent fallbacks that hide failures.
+- No dead code, no commented-out code, no unused parameters.
+- Handle errors per the project's existing convention; no silent failures.
+- Tests verify behavior, not implementation details, and cover error paths.
+- Fake-test DON'Ts: always-pass tests, hardcoded-value checks, assertions on mock behavior instead of the code under test, ignored errors, commented-out cases.

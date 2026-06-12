@@ -1,0 +1,71 @@
+{
+  "schema": "pactum.clarify_loop_summary.v1",
+  "run_id": "run_20260612_161619",
+  "run_status": "clarifying",
+  "started_at": "2026-06-12T16:16:19Z",
+  "finished_at": "2026-06-12T16:23:27Z",
+  "clarifier": "codex",
+  "max_rounds": 3,
+  "terminal_reason": "needs_human",
+  "converged": false,
+  "rounds": [
+    {
+      "round": 1,
+      "clarifier_attempt_id": "clarifier_attempt_001",
+      "questions_created": 9,
+      "auto_resolved": 4,
+      "open_blocking_after": 3
+    },
+    {
+      "round": 2,
+      "clarifier_attempt_id": "clarifier_attempt_002",
+      "questions_created": 0,
+      "auto_resolved": 0,
+      "open_blocking_after": 3,
+      "warnings": [
+        "structured suggestion block skipped: invalid JSON",
+        "suggestions schema marker present but no suggestions block parsed: zero questions is a parse miss, not convergence (inspect the attempt stdout)"
+      ]
+    }
+  ],
+  "coverage": [
+    {
+      "kind": "terminology",
+      "total": 3,
+      "open": 1,
+      "answered": 2,
+      "blocking_open": 1
+    },
+    {
+      "kind": "scope",
+      "total": 1,
+      "open": 1,
+      "answered": 0,
+      "blocking_open": 0
+    },
+    {
+      "kind": "acceptance",
+      "total": 1,
+      "open": 1,
+      "answered": 0,
+      "blocking_open": 1
+    },
+    {
+      "kind": "edge_case",
+      "total": 3,
+      "open": 2,
+      "answered": 1,
+      "blocking_open": 1
+    },
+    {
+      "kind": "assumption",
+      "total": 1,
+      "open": 0,
+      "answered": 1,
+      "blocking_open": 0
+    }
+  ],
+  "artifacts": {
+    "summary": "clarify/loop-summary.json"
+  }
+}
