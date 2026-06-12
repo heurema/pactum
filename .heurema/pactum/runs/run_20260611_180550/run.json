@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260611_180550",
+  "status": "contract_approved",
+  "task": "Fix three valid external review findings. (1) pactum export must preserve its no-overwrite guarantee at rename time: today two concurrent exports targeting the same --output can both pass the early existence check and the final os.Rename silently replaces the file that appeared in the window; finalize through a no-replace path (e.g. os.Link from the staged temp file to the output then remove the temp, treating link EEXIST as the existing 'output path already exists' error; keep behavior correct on Windows where os.Rename already refuses to replace) so a concurrent winner is never clobbered. (2) pactum export must reject run-record relative paths containing backslashes before writing ZIP entry names: on Unix a backslash is a valid filename character and filepath.ToSlash does not rewrite it, which would emit a non-portable entry name that some Windows extractors treat as a separator; fail the export with a clear error naming the offending path. (3) memory accept must not accept a stale candidate: memory propose records a freshness pin of the review state (for example the review document's updated_at or a content hash) inside memory-candidate.json; memory accept verifies the pin against the current review document and fails with a clear error plus error.fix pactum memory propose \u003crun_id\u003e when the review changed after the candidate was generated; the next-affordance selection that advertises memory accept applies the same staleness check and advertises memory propose instead when stale. Tests cover: concurrent-window overwrite refusal (simulate by creating the output file between staging and finalize), backslash rejection, stale-candidate refusal with the fix affordance, and the next selector switching to propose on staleness.",
+  "created_at": "2026-06-11T18:05:50.406241Z",
+  "updated_at": "2026-06-11T18:11:36.268242Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260611_173351",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

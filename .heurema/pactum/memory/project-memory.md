@@ -43,3 +43,17 @@
 - Files: README.md, assets/agent-skills/pactum/references/workflow.md, docs/real-agent-execution-dogfood.md, internal/app/clarify_loop.go, internal/app/clarify_round.go, internal/app/commands.go, internal/app/gate.go, internal/app/prompt.go, internal/app/review.go
 - Summary: Reviewed run run_20260611_160606 with gate status passed and review status approved. Goal: Smooth the pipeline so no command is pure ritual, then compress the agent skill against the final grammar. This is the last grammar break; hard re...
 - Candidate: runs/run_20260611_160606/memory/memory-candidate.json
+
+### mem_007 - Fix three valid external review findings. (1) pactum export must preserve its...
+- Run: run_20260611_180550
+- Freshness: fresh
+- Files: docs/flow.md, docs/memory.md, internal/app/affordances_test.go, internal/app/errors.go, internal/app/export.go, internal/app/export_test.go, internal/app/export_unix.go, internal/app/export_windows.go, internal/app/memory.go, internal/app/memory_freshness_test.go, internal/app/memory_test.go, internal/app/resolve.go, internal/app/status.go, internal/app/task.go
+- Summary: Reviewed run run_20260611_180550 with gate status needs_review and review status approved. Goal: Fix three valid external review findings. (1) pactum export must preserve its no-overwrite guarantee at rename time: today two concurrent ex...
+- Candidate: runs/run_20260611_180550/memory/memory-candidate.json
+
+### mem_008 - Two small CI hardening items from the project audit. (1) Vulnerability scanni...
+- Run: run_20260611_191330
+- Freshness: fresh
+- Files: .github/workflows/ci.yml, CHANGELOG.md, Makefile, README.md, cmd/heurema-hygiene/main.go, cmd/heurema-hygiene/main_test.go, docs/backlog.md, docs/install.md, go.mod, go.sum
+- Summary: Reviewed run run_20260611_191330 with gate status needs_review and review status approved. Goal: Two small CI hardening items from the project audit. (1) Vulnerability scanning: add govulncheck to the repository toolchain the same way de...
+- Candidate: runs/run_20260611_191330/memory/memory-candidate.json
