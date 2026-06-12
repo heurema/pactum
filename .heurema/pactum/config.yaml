@@ -16,9 +16,6 @@ review:
   max_rounds: 10
   patience: 2
   clean_rounds: 1
-  budget:
-    mode: warn
-    max_tokens: null
   panel:
     - fable
     - codex

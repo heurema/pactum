@@ -14,17 +14,21 @@ import (
 )
 
 type Manifest struct {
-	Schema       string            `json:"schema"`
-	RunID        string            `json:"run_id"`
-	GeneratedAt  time.Time         `json:"generated_at"`
-	RepoRoot     string            `json:"repo_root"`
-	ConfigHash   string            `json:"config_hash,omitempty"`
-	FilesIndexed int               `json:"files_indexed"`
-	FilesIgnored int               `json:"files_ignored"`
-	FilesSkipped int               `json:"files_skipped"`
-	CodeIndex    CodeIndexManifest `json:"code_index"`
-	Warnings     []string          `json:"warnings,omitempty"`
-	Artifacts    map[string]string `json:"artifacts"`
+	Schema      string    `json:"schema"`
+	RunID       string    `json:"run_id"`
+	GeneratedAt time.Time `json:"generated_at"`
+	RepoRoot    string    `json:"repo_root"`
+	ConfigHash  string    `json:"config_hash,omitempty"`
+	// ConfigHashScope marks what ConfigHash pins. "map" means the canonicalized
+	// map: config section only; an empty scope is a legacy whole-file pin and is
+	// treated as stale once so the next refresh migrates it.
+	ConfigHashScope string            `json:"config_hash_scope,omitempty"`
+	FilesIndexed    int               `json:"files_indexed"`
+	FilesIgnored    int               `json:"files_ignored"`
+	FilesSkipped    int               `json:"files_skipped"`
+	CodeIndex       CodeIndexManifest `json:"code_index"`
+	Warnings        []string          `json:"warnings,omitempty"`
+	Artifacts       map[string]string `json:"artifacts"`
 }
 
 type CodeIndexManifest struct {

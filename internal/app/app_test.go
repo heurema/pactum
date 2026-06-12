@@ -84,19 +84,16 @@ func helper() {}
 	if config.Gate.ScopeEnforcement != gateScopeEnforcementBlock {
 		t.Fatalf("config gate.scope_enforcement = %q, want block", config.Gate.ScopeEnforcement)
 	}
-	if config.Review.Budget.Mode != budgetModeBlock || config.Review.Budget.MaxTokens != nil {
-		t.Fatalf("config review.budget mismatch: %#v", config.Review.Budget)
-	}
 	if len(config.Agents) != 1 || config.Agents[0].Name != "claude" || config.Agents[0].Model != "claude-opus-4-8" {
 		t.Fatalf("config agents should register the single pinned claude entry: %#v", config.Agents)
 	}
 	configYAML := mustReadFile(t, paths.Config)
-	for _, want := range []string{"agents:", "- name: claude", "model: claude-opus-4-8", "map:", "gate:", "scope_enforcement: block", "review:", "budget:", "mode: block", "max_tokens:", "panel: []"} {
+	for _, want := range []string{"agents:", "- name: claude", "model: claude-opus-4-8", "map:", "gate:", "scope_enforcement: block", "review:", "panel: []"} {
 		if !strings.Contains(configYAML, want) {
 			t.Fatalf("config.yaml missing %q:\n%s", want, configYAML)
 		}
 	}
-	for _, forbidden := range []string{"execute:", "models:", "adapters:", "default_executor:", "default_reviewer:", "include_go_ast", "tree_sitter", "tree_sitter_languages", "entrypoints", "default_profile:", "project_map:", "limits:", "memory:", "max_usd"} {
+	for _, forbidden := range []string{"execute:", "models:", "adapters:", "default_executor:", "default_reviewer:", "include_go_ast", "tree_sitter", "tree_sitter_languages", "entrypoints", "default_profile:", "project_map:", "limits:", "memory:", "max_usd", "budget:", "max_tokens:"} {
 		if strings.Contains(configYAML, forbidden) {
 			t.Fatalf("config.yaml should not contain %q:\n%s", forbidden, configYAML)
 		}
@@ -272,6 +269,9 @@ func helper() {}
 	if manifest.ConfigHash == "" {
 		t.Fatalf("manifest config_hash should be populated")
 	}
+	if manifest.ConfigHashScope != "map" {
+		t.Fatalf("manifest config_hash_scope = %q, want map", manifest.ConfigHashScope)
+	}
 
 	events := readLines(t, paths.EventsJSONL)
 	if len(events) != 6 {
@@ -363,86 +363,29 @@ gate:
 	}
 }
 
-func TestReadConfigNormalizesBudgetMode(t *testing.T) {
+// TestReadConfigRejectsRemovedReviewBudget pins that a leftover review.budget
+// block fails strict config loading with an error naming the full review.budget
+// path, so the removed surface migrates loudly rather than parsing silently.
+func TestReadConfigRejectsRemovedReviewBudget(t *testing.T) {
 	root := t.TempDir()
 	paths := artifacts.New(root)
 	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
-
-	tests := []struct {
-		name    string
-		content string
-		want    string
-	}{
-		{
-			name:    "missing",
-			content: "schema: pactum.config.v1\nagents:\n  - name: claude\n    model: claude-opus-4-8\n",
-			want:    budgetModeBlock,
-		},
-		{
-			name: "empty",
-			content: `schema: pactum.config.v1
-agents:
-  - name: claude
-    model: claude-opus-4-8
-review:
-  budget:
-    mode: ""
-`,
-			want: budgetModeBlock,
-		},
-		{
-			name: "block",
-			content: `schema: pactum.config.v1
+	mustWriteFile(t, paths.Config, `schema: pactum.config.v1
 agents:
   - name: claude
     model: claude-opus-4-8
 review:
   budget:
     mode: block
-`,
-			want: budgetModeBlock,
-		},
-		{
-			name: "warn",
-			content: `schema: pactum.config.v1
-agents:
-  - name: claude
-    model: claude-opus-4-8
-review:
-  budget:
-    mode: warn
-`,
-			want: budgetModeWarn,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mustWriteFile(t, paths.Config, tt.content)
-			config, err := readConfig(paths.Config)
-			assertNoError(t, err)
-			if config.Review.Budget.Mode != tt.want {
-				t.Fatalf("review.budget.mode = %q, want %q", config.Review.Budget.Mode, tt.want)
-			}
-		})
-	}
-}
-
-func TestReadConfigRejectsInvalidBudgetMode(t *testing.T) {
-	root := t.TempDir()
-	paths := artifacts.New(root)
-	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
-	mustWriteFile(t, paths.Config, `schema: pactum.config.v1
-review:
-  budget:
-    mode: advisory
+    max_tokens: 1000
 `)
 
 	_, err := readConfig(paths.Config)
 	if err == nil {
-		t.Fatalf("readConfig should reject invalid review.budget.mode")
+		t.Fatal("readConfig should reject a leftover review.budget key")
 	}
-	if !strings.Contains(err.Error(), "review.budget.mode") {
-		t.Fatalf("invalid review.budget.mode error mismatch: %v", err)
+	if !strings.Contains(err.Error(), "review.budget") {
+		t.Fatalf("error should name review.budget: %v", err)
 	}
 }
 
@@ -666,11 +609,131 @@ func TestStatusReportsMissingArtifactAndConfigChange(t *testing.T) {
 		"status: stale",
 		"search index: missing",
 		"missing artifact: map/search.sqlite",
-		"config changed: .heurema/pactum/config.yaml",
+		"map config changed: .heurema/pactum/config.yaml",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("status missing %q:\n%s", want, got)
 		}
+	}
+}
+
+// TestMapStalenessPinsOnlyMapSection pins that the map staleness check narrows
+// to the map: config section: editing a non-map section (here the agents
+// registry) keeps the map fresh, while editing map.max_file_bytes makes it
+// stale.
+func TestMapStalenessPinsOnlyMapSection(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+	var stdout, stderr bytes.Buffer
+	if code := testApp(root).Run([]string{"init"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+	paths := artifacts.New(root)
+
+	// Editing a non-map section must not invalidate the map.
+	config, err := readConfig(paths.Config)
+	assertNoError(t, err)
+	config.Agents = append(config.Agents, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
+	config.Review.Panel = []string{"codex"}
+	assertNoError(t, writeYAML(paths.Config, config))
+
+	statusReasons := func() []string {
+		var out, errOut bytes.Buffer
+		if code := testApp(root).Run([]string{"status", "--json"}, &out, &errOut); code != 0 {
+			t.Fatalf("status --json exited %d, stderr: %s", code, errOut.String())
+		}
+		var response statusResponse
+		assertNoError(t, json.Unmarshal(out.Bytes(), &response))
+		return response.ProjectMap.StaleReasons
+	}
+	for _, reason := range statusReasons() {
+		if strings.Contains(reason, "config") {
+			t.Fatalf("editing a non-map section must not make the map stale: %v", reason)
+		}
+	}
+
+	// Editing a map parameter must invalidate the map.
+	config, err = readConfig(paths.Config)
+	assertNoError(t, err)
+	config.Map.MaxFileBytes = 4096
+	assertNoError(t, writeYAML(paths.Config, config))
+	found := false
+	for _, reason := range statusReasons() {
+		if strings.Contains(reason, "map config changed") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("editing map.max_file_bytes should make the map stale: %v", statusReasons())
+	}
+}
+
+// TestLegacyMapManifestStaleOnceThenMigrates pins that a manifest without the
+// config_hash_scope marker (the legacy whole-file pin) is reported stale once,
+// and the next map refresh writes the map-section hash plus the scope marker so
+// status is fresh again.
+func TestLegacyMapManifestStaleOnceThenMigrates(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+	var stdout, stderr bytes.Buffer
+	if code := testApp(root).Run([]string{"init"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+	paths := artifacts.New(root)
+
+	// Simulate a manifest written before the scope marker: a whole-file pin with
+	// no config_hash_scope.
+	manifest, err := readMapManifest(paths.MapManifest)
+	assertNoError(t, err)
+	manifest.ConfigHashScope = ""
+	manifest.ConfigHash = "legacy-whole-file-hash"
+	assertNoError(t, writeJSON(paths.MapManifest, manifest))
+
+	var out, errOut bytes.Buffer
+	if code := testApp(root).Run([]string{"status", "--json"}, &out, &errOut); code != 0 {
+		t.Fatalf("status --json exited %d, stderr: %s", code, errOut.String())
+	}
+	var response statusResponse
+	assertNoError(t, json.Unmarshal(out.Bytes(), &response))
+	if response.ProjectMap.Status != "stale" {
+		t.Fatalf("legacy manifest should be stale: %#v", response.ProjectMap)
+	}
+	legacyReported := false
+	for _, reason := range response.ProjectMap.StaleReasons {
+		if strings.Contains(reason, "map config pin format changed") {
+			legacyReported = true
+		}
+	}
+	if !legacyReported {
+		t.Fatalf("legacy manifest should report the pin-format change once: %#v", response.ProjectMap.StaleReasons)
+	}
+
+	// A refresh migrates the manifest: map-section hash + scope marker.
+	out.Reset()
+	errOut.Reset()
+	if code := testApp(root).Run([]string{"map", "refresh"}, &out, &errOut); code != 0 {
+		t.Fatalf("map refresh exited %d, stderr: %s", code, errOut.String())
+	}
+	migrated, err := readMapManifest(paths.MapManifest)
+	assertNoError(t, err)
+	if migrated.ConfigHashScope != "map" {
+		t.Fatalf("refresh should write config_hash_scope=map, got %q", migrated.ConfigHashScope)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := testApp(root).Run([]string{"status", "--json"}, &out, &errOut); code != 0 {
+		t.Fatalf("status --json exited %d, stderr: %s", code, errOut.String())
+	}
+	var afterRefresh statusResponse
+	assertNoError(t, json.Unmarshal(out.Bytes(), &afterRefresh))
+	for _, reason := range afterRefresh.ProjectMap.StaleReasons {
+		if strings.Contains(reason, "config") {
+			t.Fatalf("migrated manifest should not be config-stale: %v", reason)
+		}
+	}
+	if afterRefresh.ProjectMap.Status != "fresh" {
+		t.Fatalf("migrated manifest must be fresh, got %q (reasons: %v)", afterRefresh.ProjectMap.Status, afterRefresh.ProjectMap.StaleReasons)
 	}
 }
 

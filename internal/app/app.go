@@ -19,9 +19,6 @@ const (
 
 	gateScopeEnforcementBlock = "block"
 	gateScopeEnforcementWarn  = "warn"
-
-	budgetModeBlock = "block"
-	budgetModeWarn  = "warn"
 )
 
 type App struct {

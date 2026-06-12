@@ -10,9 +10,11 @@ review phases.
 Today every Pactum stage is one-shot and human-driven. `pactum execute run`
 launches exactly one agent subprocess per invocation; multiple attempts exist only
 because a human re-runs the command. The config schema already *declares* iteration
-limits — `clarify.max_iterations`, `clarify.max_questions_per_round`,
-`review.max_rounds`, and a `budget` block — but nothing reads or enforces them.
-They are placeholders for loops that do not exist yet.
+limits — `clarify.max_iterations`, `clarify.max_questions_per_round`, and
+`review.max_rounds` — but nothing reads or enforces them. They are placeholders for
+loops that do not exist yet. (A `review.budget` block once sat here too; it gated
+nothing and was removed in M25.1 — the budget stop returns as designed config in
+[`cost-budget-design.md`](cost-budget-design.md).)
 
 This document defines where those loops should live.
 
@@ -190,10 +192,12 @@ stops:
   (`computeGateChanges`) and is robust precisely because it ignores finding *text* —
   if no bytes changed and the reviewer still objects, the loop is stuck.
 - **`review.max_rounds`** — hard cap on rounds.
-- **Budget stop** — `review.budget.mode` / `review.budget.max_tokens`, a distinct
-  ceiling independent of round count (review at high reasoning effort is expensive).
-  This is the stop a pure iteration-count model lacks; for unattended runs on
-  metered models it is the real backstop.
+- **Budget stop** — a distinct ceiling independent of round count, denominated in
+  effective units (review at high reasoning effort is expensive). This is the stop
+  a pure iteration-count model lacks; for unattended runs on metered models it is
+  the real backstop. The earlier `review.budget` placeholder gated nothing and was
+  removed (M25.1); the designed stop lives in
+  [`cost-budget-design.md`](cost-budget-design.md).
 - **Final human gate** — `review approve --by manual` even after the loop converges.
 
 ---
@@ -253,14 +257,16 @@ flowchart TD
 
 ## Alignment with existing config
 
-The config schema already anticipates these loops; the values are declared but
-unenforced. Wiring them is the implementation — not new config surface.
+The config schema already anticipates these loops; the surviving caps are declared
+but unenforced. Wiring them is the implementation — not new config surface. The
+budget stop is the exception: its `review.budget` placeholder was removed (M25.1)
+and is now rejected if present, so it returns as designed config per
+[`cost-budget-design.md`](cost-budget-design.md).
 
 | Config (today) | Used by |
 |----------------|---------|
 | `clarify.max_rounds` (removed as dead in M16.0; live again since M17.0) | Phase 1 round cap — enforced by `pactum clarify run` |
 | `review.max_rounds` | Phase 3 round cap |
-| `review.budget.mode`, `review.budget.max_tokens` | Phase 3 budget stop |
 | `clarify --blocking`, review `blocking` findings | severity gate (critical ⇄ blocking) |
 
 ## Supporting principles
@@ -286,7 +292,7 @@ unenforced. Wiring them is the implementation — not new config surface.
 - Review has a real reviewer agent: `review run` → `review proposal collect`,
   plus `review finding resolve` / `review approve` and a `blocking` attribute
   on findings.
-- Config caps and the `budget` block are declared.
+- Config caps are declared (the removed `review.budget` block aside — see above).
 - The contract has an `Assumptions` section.
 - Two agent stages exist (execute, review), each a fresh subprocess.
 - Per-stage `model[:effort]` (executor + reviewer) with a resolved-config header, and

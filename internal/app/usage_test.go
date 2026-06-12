@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -231,7 +232,7 @@ func TestStatusAndUsageCommandSumRunUsage(t *testing.T) {
 		t.Fatalf("usage exited %d, stderr: %s", code, stderr.String())
 	}
 	got := stdout.String()
-	for _, want := range []string{"Pactum usage", "total tokens: 450", "cache read ratio: 25.00%", "execute:", "codex:"} {
+	for _, want := range []string{"Pactum usage", "total tokens: 450", "effective units: 985.00", "cache hit rate: 25.00%", "execute:", "codex:"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("usage output missing %q:\n%s", want, got)
 		}
@@ -349,29 +350,35 @@ func TestUsageAllAggregatesAcrossRuns(t *testing.T) {
 	if got.Runs != 2 || got.Calls != 4 || got.CapturedCalls != 3 || got.UncapturedCalls != 1 {
 		t.Fatalf("workspace counts mismatch: %#v", got)
 	}
-	if got.Total.TotalTokens != 1020 || got.Total.InputTokens != 700 || got.Total.OutputTokens != 320 {
+	// The uncaptured fix record (usage_b2) is unknown usage: it is counted as a
+	// call but contributes no tokens to any total or breakdown.
+	if got.Total.TotalTokens != 900 || got.Total.InputTokens != 600 || got.Total.OutputTokens != 300 {
 		t.Fatalf("workspace token totals mismatch: %#v", got.Total)
 	}
 	if got.Total.CacheReadTokens != 175 || got.Total.CacheCreationTokens != 10 {
 		t.Fatalf("workspace cache totals mismatch: %#v", got.Total)
 	}
-	if got.CacheReadRatio != 0.25 {
-		t.Fatalf("cache read ratio = %v, want 0.25", got.CacheReadRatio)
+	if got.CacheReadRatio != float64(175)/float64(600) {
+		t.Fatalf("cache read ratio = %v, want 175/600", got.CacheReadRatio)
 	}
 
 	byRun := indexUsageBreakdowns(got.ByRun, func(b usageBreakdown) string { return b.Run })
-	if len(byRun) != 2 || byRun[runA].TotalTokens != 450 || byRun[runB].TotalTokens != 570 {
+	if len(byRun) != 2 || byRun[runA].TotalTokens != 450 || byRun[runB].TotalTokens != 450 {
 		t.Fatalf("by-run breakdown mismatch: %#v", got.ByRun)
 	}
 	byStage := indexUsageBreakdowns(got.ByStage, func(b usageBreakdown) string { return b.Stage })
 	if len(byStage) != 3 || byStage["execute"].TotalTokens != 600 || byStage["execute"].Calls != 2 {
 		t.Fatalf("by-stage breakdown mismatch: %#v", got.ByStage)
 	}
-	if byStage["execute"].CacheReadTokens != 125 || byStage["review"].TotalTokens != 300 || byStage["fix"].TotalTokens != 120 {
+	if byStage["execute"].CacheReadTokens != 125 || byStage["review"].TotalTokens != 300 || byStage["fix"].TotalTokens != 0 {
 		t.Fatalf("by-stage detail mismatch: %#v", got.ByStage)
 	}
+	// The fix stage holds only the uncaptured record: a call, but no tokens.
+	if byStage["fix"].Calls != 1 || byStage["fix"].CapturedCalls != 0 || byStage["fix"].UncapturedCalls != 1 {
+		t.Fatalf("uncaptured fix stage should count a call with no tokens: %#v", byStage["fix"])
+	}
 	byAgent := indexUsageBreakdowns(got.ByAgent, func(b usageBreakdown) string { return b.Agent })
-	if len(byAgent) != 2 || byAgent["codex"].TotalTokens != 720 || byAgent["codex"].Calls != 3 {
+	if len(byAgent) != 2 || byAgent["codex"].TotalTokens != 600 || byAgent["codex"].Calls != 3 {
 		t.Fatalf("by-agent breakdown mismatch: %#v", got.ByAgent)
 	}
 	if byAgent["codex"].CapturedCalls != 2 || byAgent["codex"].UncapturedCalls != 1 || byAgent["codex"].Provider != "codex" {
@@ -381,7 +388,7 @@ func TestUsageAllAggregatesAcrossRuns(t *testing.T) {
 		t.Fatalf("by-agent claude mismatch: %#v", byAgent["claude"])
 	}
 	byModel := indexUsageBreakdowns(got.ByModel, func(b usageBreakdown) string { return b.Model })
-	if len(byModel) != 2 || byModel["gpt-5-codex"].TotalTokens != 720 || byModel["claude-opus"].TotalTokens != 300 {
+	if len(byModel) != 2 || byModel["gpt-5-codex"].TotalTokens != 600 || byModel["claude-opus"].TotalTokens != 300 {
 		t.Fatalf("by-model breakdown mismatch: %#v", got.ByModel)
 	}
 
@@ -391,7 +398,7 @@ func TestUsageAllAggregatesAcrossRuns(t *testing.T) {
 		t.Fatalf("usage --all exited %d, stderr: %s", code, stderr.String())
 	}
 	text := stdout.String()
-	for _, want := range []string{"Pactum usage (workspace)", "runs: 2", "total tokens: 1020", "cache read ratio: 25.00%", "By run:", "By stage:", "By agent:", "By model:"} {
+	for _, want := range []string{"Pactum usage (workspace)", "runs: 2", "total tokens: 900", "cache hit rate:", "By run:", "By stage:", "By agent:", "By model:"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("workspace usage output missing %q:\n%s", want, text)
 		}
@@ -502,6 +509,309 @@ func TestUsageAllRejectsRunIDArg(t *testing.T) {
 	}
 }
 
+// TestUsageEffectiveUnitsPerProvider pins the per-provider effective-unit math:
+// Anthropic weights cache writes 1.25x, Codex prices them as fresh; both weight
+// cache reads 0.1x and output 5x.
+func TestUsageEffectiveUnitsPerProvider(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	// Codex: fresh=75, read=25, output=50 -> 75 + 25*0.1 + 50*5 = 327.5
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u_codex", RunID: runID, AttemptID: "attempt_001", Stage: "execute",
+		Provider: "codex", Agent: "codex", InputTokens: 100, OutputTokens: 50, TotalTokens: 150,
+		CacheReadTokens: 25, Captured: true, CreatedAt: "2026-06-07T18:00:00Z",
+	})
+	// Anthropic: fresh=140, write=10, read=50, output=100 ->
+	// 140 + 10*1.25 + 50*0.1 + 100*5 = 657.5
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u_claude", RunID: runID, AttemptID: "attempt_002", Stage: "review",
+		Provider: "anthropic", Agent: "claude", InputTokens: 200, OutputTokens: 100, TotalTokens: 300,
+		CacheReadTokens: 50, CacheCreationTokens: 10, Captured: true, CreatedAt: "2026-06-07T18:05:00Z",
+	})
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"usage", runID, "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var got usageResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &got))
+	if units := fmtUnits(got.Total.EffectiveUnits); units != "985.00" {
+		t.Fatalf("total effective units = %s, want 985.00", units)
+	}
+	byAgent := indexUsageBreakdowns(got.ByAgent, func(b usageBreakdown) string { return b.Agent })
+	if units := fmtUnits(byAgent["codex"].EffectiveUnits); units != "327.50" {
+		t.Fatalf("codex effective units = %s, want 327.50", units)
+	}
+	if units := fmtUnits(byAgent["claude"].EffectiveUnits); units != "657.50" {
+		t.Fatalf("claude effective units = %s, want 657.50", units)
+	}
+}
+
+// TestUsagePerRunByAttempt pins the per-run by_attempt breakdown: one row per
+// attempt_id carrying stage, agent, provider, tokens, effective_units, and the
+// cache hit ratio. The workspace view does not add by_attempt.
+func TestUsagePerRunByAttempt(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u1", RunID: runID, AttemptID: "attempt_001", Stage: "execute",
+		Provider: "codex", Agent: "codex", InputTokens: 100, OutputTokens: 50, TotalTokens: 150,
+		CacheReadTokens: 25, Captured: true, CreatedAt: "2026-06-07T18:00:00Z",
+	})
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u2", RunID: runID, AttemptID: "attempt_002", Stage: "review",
+		Provider: "anthropic", Agent: "claude", InputTokens: 200, OutputTokens: 100, TotalTokens: 300,
+		CacheReadTokens: 50, CacheCreationTokens: 10, Captured: true, CreatedAt: "2026-06-07T18:05:00Z",
+	})
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"usage", runID, "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var got usageResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &got))
+	byAttempt := indexUsageBreakdowns(got.ByAttempt, func(b usageBreakdown) string { return b.Attempt })
+	if len(byAttempt) != 2 {
+		t.Fatalf("by_attempt rows = %d, want 2: %#v", len(byAttempt), got.ByAttempt)
+	}
+	first := byAttempt["attempt_001"]
+	if first.Stage != "execute" || first.Agent != "codex" || first.Provider != "codex" || first.TotalTokens != 150 {
+		t.Fatalf("attempt_001 row mismatch: %#v", first)
+	}
+	if fmtUnits(first.EffectiveUnits) != "327.50" || first.CacheReadRatio != 0.25 {
+		t.Fatalf("attempt_001 derived metrics mismatch: %#v", first)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"usage", "--all", "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage --all --json exited %d, stderr: %s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "by_attempt") {
+		t.Fatalf("workspace usage must not add by_attempt:\n%s", stdout.String())
+	}
+}
+
+// TestUsagePerRunByAttemptStageScopedKeys pins that attempt_001 from the execute
+// stage and attempt_001 from a fix round — distinct attempts whose IDs collide
+// because numbering restarts per stage — stay separate by_attempt rows rather
+// than merging their tokens under one mislabeled row.
+func TestUsagePerRunByAttemptStageScopedKeys(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u_exec", RunID: runID, AttemptID: "attempt_001", Stage: "execute",
+		Provider: "codex", Agent: "codex", InputTokens: 100, OutputTokens: 50, TotalTokens: 150,
+		Captured: true, CreatedAt: "2026-06-07T18:00:00Z",
+	})
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u_fix", RunID: runID, AttemptID: "attempt_001", Stage: "fix",
+		Provider: "anthropic", Agent: "claude", InputTokens: 200, OutputTokens: 100, TotalTokens: 300,
+		Captured: true, CreatedAt: "2026-06-07T18:05:00Z",
+	})
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"usage", runID, "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var got usageResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &got))
+	if len(got.ByAttempt) != 2 {
+		t.Fatalf("colliding attempt_001 ids must stay separate rows, got %d: %#v", len(got.ByAttempt), got.ByAttempt)
+	}
+	byStage := indexUsageBreakdowns(got.ByAttempt, func(b usageBreakdown) string { return b.Stage })
+	if byStage["execute"].Attempt != "attempt_001" || byStage["execute"].TotalTokens != 150 || byStage["execute"].Agent != "codex" {
+		t.Fatalf("execute attempt row mismatch: %#v", byStage["execute"])
+	}
+	if byStage["fix"].Attempt != "attempt_001" || byStage["fix"].TotalTokens != 300 || byStage["fix"].Agent != "claude" {
+		t.Fatalf("fix attempt row mismatch: %#v", byStage["fix"])
+	}
+}
+
+// TestUsageMixedCapturedRowAnnotatesUnreported pins that a breakdown row mixing
+// captured and uncaptured calls keeps its captured token counts but also flags
+// the uncaptured remainder, rather than silently dropping it.
+func TestUsageMixedCapturedRowAnnotatesUnreported(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u_cap", RunID: runID, AttemptID: "attempt_001", Stage: "execute",
+		Provider: "codex", Agent: "codex", InputTokens: 100, OutputTokens: 50, TotalTokens: 150,
+		Captured: true, CreatedAt: "2026-06-07T18:00:00Z",
+	})
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u_uncap", RunID: runID, AttemptID: "attempt_002", Stage: "review",
+		Provider: "codex", Agent: "codex", Captured: false, CreatedAt: "2026-06-07T18:05:00Z",
+	})
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"usage", runID}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage exited %d, stderr: %s", code, stderr.String())
+	}
+	text := stdout.String()
+	// The by-agent codex row mixes one captured and one uncaptured call.
+	if !strings.Contains(text, "total_tokens=150") || !strings.Contains(text, "(1 calls: usage not reported)") {
+		t.Fatalf("mixed by-agent row should keep captured tokens and flag the uncaptured call:\n%s", text)
+	}
+}
+
+// TestUsageAllSortsByRunDescendingWithTop pins that by_run is sorted by captured
+// total tokens descending and that --top caps only that list while the totals
+// still aggregate every run.
+func TestUsageAllSortsByRunDescendingWithTop(t *testing.T) {
+	root := t.TempDir()
+	app, paths, _ := setupContractRun(t, root)
+	runs := map[string]int64{
+		"run_20260101_000001": 100,
+		"run_20260101_000002": 500,
+		"run_20260101_000003": 300,
+	}
+	for runID, total := range runs {
+		appendWorkspaceUsageRecord(t, paths, runID, UsageRecord{
+			RecordID: "u_" + runID, RunID: runID, AttemptID: "attempt_001", Stage: "execute",
+			Provider: "codex", Agent: "codex", InputTokens: total, OutputTokens: 0, TotalTokens: total,
+			Captured: true, CreatedAt: "2026-06-07T18:00:00Z",
+		})
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"usage", "--all", "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage --all --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var got usageWorkspaceResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &got))
+	if len(got.ByRun) != 3 {
+		t.Fatalf("by_run rows = %d, want 3: %#v", len(got.ByRun), got.ByRun)
+	}
+	if got.ByRun[0].Run != "run_20260101_000002" || got.ByRun[1].Run != "run_20260101_000003" || got.ByRun[2].Run != "run_20260101_000001" {
+		t.Fatalf("by_run not sorted by total tokens descending: %#v", got.ByRun)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"usage", "--all", "--top", "2", "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage --all --top 2 exited %d, stderr: %s", code, stderr.String())
+	}
+	var capped usageWorkspaceResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &capped))
+	if len(capped.ByRun) != 2 || capped.ByRun[0].Run != "run_20260101_000002" || capped.ByRun[1].Run != "run_20260101_000003" {
+		t.Fatalf("--top 2 should keep the two heaviest runs: %#v", capped.ByRun)
+	}
+	// Totals still aggregate every run even though the list is capped.
+	if capped.Runs != 3 || capped.Total.TotalTokens != 900 {
+		t.Fatalf("--top must not change workspace totals: %#v", capped)
+	}
+}
+
+// TestUsageTopValidation pins that --top requires --all and rejects non-positive
+// values, with each error naming --top.
+func TestUsageTopValidation(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+	cases := [][]string{
+		{"usage", runID, "--top", "2"},
+		{"usage", "--all", "--top", "0"},
+		{"usage", "--all", "--top", "-1"},
+	}
+	for _, args := range cases {
+		var stdout, stderr bytes.Buffer
+		if code := app.Run(args, &stdout, &stderr); code == 0 {
+			t.Fatalf("%v should fail, got exit 0:\n%s", args, stdout.String())
+		}
+		if !strings.Contains(stderr.String(), "--top") {
+			t.Fatalf("%v error should name --top, got: %s", args, stderr.String())
+		}
+	}
+}
+
+// TestUsageUncapturedRowsAnnotatedNotZero pins that an uncaptured call renders as
+// "usage not reported" rather than a misleading zero row, while a genuine
+// captured zero-token row stays a real zero.
+func TestUsageUncapturedRowsAnnotatedNotZero(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	// Captured but genuinely zero tokens.
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u_zero", RunID: runID, AttemptID: "attempt_001", Stage: "execute",
+		Provider: "codex", Agent: "codex", Captured: true, CreatedAt: "2026-06-07T18:00:00Z",
+	})
+	// Uncaptured: token fields present but unknown usage, must not total.
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u_uncaptured", RunID: runID, AttemptID: "attempt_002", Stage: "review",
+		Provider: "codex", Agent: "codex", InputTokens: 999, OutputTokens: 999, TotalTokens: 1998,
+		Captured: false, CreatedAt: "2026-06-07T18:05:00Z",
+	})
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"usage", runID, "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var got usageResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &got))
+	if got.Total.TotalTokens != 0 || got.CapturedCalls != 1 || got.UncapturedCalls != 1 {
+		t.Fatalf("uncaptured tokens must not total: %#v", got)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"usage", runID}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage exited %d, stderr: %s", code, stderr.String())
+	}
+	text := stdout.String()
+	if !strings.Contains(text, "review: calls=1, usage not reported by the agent") {
+		t.Fatalf("uncaptured stage row should be annotated honestly:\n%s", text)
+	}
+	if !strings.Contains(text, "execute: calls=1 captured=1 total_tokens=0") {
+		t.Fatalf("captured zero-token row should stay a real zero:\n%s", text)
+	}
+}
+
+// TestUsageUnsupportedProviderEffectiveUnitsUnavailable pins that a captured
+// record from a provider with no multipliers keeps its raw tokens, reports zero
+// effective units, and is counted and annotated as effective-units-unavailable.
+func TestUsageUnsupportedProviderEffectiveUnitsUnavailable(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u_future", RunID: runID, AttemptID: "attempt_001", Stage: "execute",
+		Provider: "future-llm", Agent: "future", InputTokens: 100, OutputTokens: 50, TotalTokens: 150,
+		Captured: true, CreatedAt: "2026-06-07T18:00:00Z",
+	})
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"usage", runID, "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var got usageResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &got))
+	if got.Total.TotalTokens != 150 || got.Total.EffectiveUnits != 0 || got.EffectiveUnitsUnavailableCalls != 1 {
+		t.Fatalf("unsupported provider should keep tokens but no effective units: %#v", got)
+	}
+	byAgent := indexUsageBreakdowns(got.ByAgent, func(b usageBreakdown) string { return b.Agent })
+	if byAgent["future"].EffectiveUnitsUnavailableCalls != 1 || byAgent["future"].EffectiveUnits != 0 || byAgent["future"].TotalTokens != 150 {
+		t.Fatalf("by-agent unsupported row mismatch: %#v", byAgent["future"])
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"usage", runID}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage exited %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "effective units unavailable") {
+		t.Fatalf("unsupported-provider row should be annotated:\n%s", stdout.String())
+	}
+}
+
+func fmtUnits(value float64) string {
+	return strconv.FormatFloat(value, 'f', 2, 64)
+}
+
 func appendWorkspaceUsageRecord(t *testing.T, paths artifacts.Paths, runID string, record UsageRecord) {
 	t.Helper()
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
@@ -537,4 +847,111 @@ func codexReviewerHelperAgentDescriptor() agents.AgentDescriptor {
 func appendUsageRecordForTest(t *testing.T, path string, record UsageRecord) {
 	t.Helper()
 	assertNoError(t, appendJSONLine(path, record))
+}
+
+// TestUsageEffectiveUnitsOpenAIProvider pins the "openai" arm of the provider
+// switch: writes are free (counted as fresh input), cached reads cost 0.1x.
+func TestUsageEffectiveUnitsOpenAIProvider(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	// fresh=60, read=40, output=20 -> 60 + 40*0.1 + 20*5 = 164
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u_openai", RunID: runID, AttemptID: "attempt_001", Stage: "execute",
+		Provider: "openai", Agent: "codex", InputTokens: 100, OutputTokens: 20, TotalTokens: 120,
+		CacheReadTokens: 40, Captured: true, CreatedAt: "2026-06-07T18:00:00Z",
+	})
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"usage", runID, "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var got usageResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &got))
+	if units := fmtUnits(got.Total.EffectiveUnits); units != "164.00" {
+		t.Fatalf("openai effective units = %s, want 164.00", units)
+	}
+}
+
+// TestUsageAllWorkspaceEffectiveUnitsAggregation pins workspace-level
+// effective_units: the sum over runs appears in the workspace total (JSON and
+// the human summary block).
+func TestUsageAllWorkspaceEffectiveUnitsAggregation(t *testing.T) {
+	root := t.TempDir()
+	app, paths, _ := setupContractRun(t, root)
+	// Two runs: codex 100 fresh (=100.0) and anthropic 100 fresh + 100 output
+	// (= 100 + 500 = 600.0) -> workspace total 700.00.
+	appendWorkspaceUsageRecord(t, paths, "run_20260101_000001", UsageRecord{
+		RecordID: "u_1", RunID: "run_20260101_000001", AttemptID: "attempt_001", Stage: "execute",
+		Provider: "codex", Agent: "codex", InputTokens: 100, TotalTokens: 100,
+		Captured: true, CreatedAt: "2026-06-07T18:00:00Z",
+	})
+	appendWorkspaceUsageRecord(t, paths, "run_20260101_000002", UsageRecord{
+		RecordID: "u_2", RunID: "run_20260101_000002", AttemptID: "attempt_001", Stage: "execute",
+		Provider: "anthropic", Agent: "claude", InputTokens: 100, OutputTokens: 100, TotalTokens: 200,
+		Captured: true, CreatedAt: "2026-06-07T18:05:00Z",
+	})
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"usage", "--all", "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage --all --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var got usageWorkspaceResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &got))
+	if units := fmtUnits(got.Total.EffectiveUnits); units != "700.00" {
+		t.Fatalf("workspace effective units = %s, want 700.00", units)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"usage", "--all"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage --all exited %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "effective units: 700.00") {
+		t.Fatalf("human summary must show workspace effective units:\n%s", stdout.String())
+	}
+}
+
+// TestUsageAllHumanOrderingAndTop pins the human output: by-run lines appear
+// sorted by total tokens descending, and --top caps the printed list.
+func TestUsageAllHumanOrderingAndTop(t *testing.T) {
+	root := t.TempDir()
+	app, paths, _ := setupContractRun(t, root)
+	runs := map[string]int64{
+		"run_20260101_000001": 100,
+		"run_20260101_000002": 500,
+		"run_20260101_000003": 300,
+	}
+	for runID, total := range runs {
+		appendWorkspaceUsageRecord(t, paths, runID, UsageRecord{
+			RecordID: "u_" + runID, RunID: runID, AttemptID: "attempt_001", Stage: "execute",
+			Provider: "codex", Agent: "codex", InputTokens: total, TotalTokens: total,
+			Captured: true, CreatedAt: "2026-06-07T18:00:00Z",
+		})
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"usage", "--all"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage --all exited %d, stderr: %s", code, stderr.String())
+	}
+	out := stdout.String()
+	i1 := strings.Index(out, "run_20260101_000002")
+	i2 := strings.Index(out, "run_20260101_000003")
+	i3 := strings.Index(out, "run_20260101_000001")
+	if i1 == -1 || i2 == -1 || i3 == -1 || !(i1 < i2 && i2 < i3) {
+		t.Fatalf("human by-run lines not sorted descending (%d, %d, %d):\n%s", i1, i2, i3, out)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"usage", "--all", "--top", "1"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage --all --top 1 exited %d, stderr: %s", code, stderr.String())
+	}
+	out = stdout.String()
+	if !strings.Contains(out, "run_20260101_000002") {
+		t.Fatalf("--top 1 must keep the largest run:\n%s", out)
+	}
+	if strings.Contains(out, "run_20260101_000001") || strings.Contains(out, "run_20260101_000003") {
+		t.Fatalf("--top 1 must cap the human by-run list:\n%s", out)
+	}
 }

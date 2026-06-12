@@ -1,8 +1,17 @@
 # Token accounting, budget, and estimation — design
 
 Status: **draft for review**. Supersedes the one-paragraph "Budget stop" sketch in
-[`loop-architecture-design.md`](loop-architecture-design.md) and fills in the
-`budget` config block that today is declared but unenforced.
+[`loop-architecture-design.md`](loop-architecture-design.md).
+
+> **Budget surface removed (M25.1).** The earlier `review.budget` config block
+> (`mode` / `max_tokens`) gated nothing real and has been removed: the default
+> config no longer emits it, `readConfig` rejects a leftover `review.budget` key
+> with a loud configuration error, and the warn/block budget plumbing in the
+> review loop is deleted. Token accounting (the usage ledger and `pactum usage`)
+> is untouched. Budget enforcement returns later as a designed feature; this
+> document is its home. A budget must be denominated in **effective units**
+> (the provider-weighted cost proxy below), not raw tokens — a cache-heavy run
+> can read an order of magnitude cheaper than its raw token count suggests.
 
 ## Why
 
@@ -141,6 +150,73 @@ OutputTokens        = output_tokens                        // already inclusive 
 TotalTokens         = InputTokens + OutputTokens
 ```
 
+## Cache economics (verified for the budget feature)
+
+A future budget must price token classes, not count them, and the dominant lever
+is the cache. The facts below are verified against current official provider
+documentation (cited inline); anything not directly supported by official docs is
+labelled an **implementation assumption**. These are the inputs the effective-unit
+metric (`pactum usage`) already encodes and the budget feature must account in.
+
+### Per-provider write/read multipliers (relative to fresh input = 1.0×)
+
+| Class | Anthropic | OpenAI / Codex |
+|---|---|---|
+| Fresh input | 1.0× | 1.0× |
+| Cache **write** | **1.25×** (5-minute TTL; 2× for 1-hour) | **free** → priced as fresh (1.0×) |
+| Cache **read** | **0.1×** | **0.1×** (cached input is discounted up to ~90%) |
+| Output | **5×** (Opus 4.8 is $5/MTok in, $25/MTok out) | 5× (standard ratio) |
+
+- **Anthropic** charges a 1.25× premium to *write* the cache and bills cache
+  *reads* at ~0.1× of base input; output is ~5× input at current Opus pricing.
+  Source: Anthropic prompt-caching docs (`platform.claude.com/docs/en/build-with-claude/prompt-caching`)
+  and pricing (`platform.claude.com/docs/en/pricing`).
+- **OpenAI/Codex** charge **no** premium for cache writes ("caching happens
+  automatically, with no … extra cost"), so a write prices as fresh input; cached
+  reads are discounted by up to ~90% (≈0.1×). Source: OpenAI prompt-caching guide
+  (`developers.openai.com/api/docs/guides/prompt-caching`).
+
+These ratios live as named constants (`anthropicCacheWriteMultiplier`,
+`openAICacheWriteMultiplier`, `effectiveCacheReadMultiplier`,
+`effectiveOutputMultiplier`) in `internal/app/usage.go`.
+
+### Cache scoping and routing
+
+- **Anthropic.** Caches are scoped to the **organization** (and, within it, the
+  workspace); a cache entry is keyed by the exact prompt prefix and is
+  model-scoped. Source: Anthropic prompt-caching docs. *Implementation
+  assumption:* for headless Claude Code the **effective** cache scope is
+  machine + working directory — the run's prompt prefix embeds the repo/working
+  directory, so two runs in different directories never share a prefix and thus
+  never share a cache entry, even within one org.
+- **OpenAI/Codex.** Caches are **not shared between organizations**; requests are
+  routed to a machine by a hash of the prompt's first ~256 tokens, so the KV
+  cache is effectively **machine-local**, and `prompt_cache_key` increases routing
+  stickiness (same prefix → same engine → higher hit rate). Source: OpenAI
+  prompt-caching guide. Minimum cacheable prefix is 1024 tokens.
+
+### The concurrent cold-start write race (panel fan-out)
+
+A cache entry becomes readable only **after the first response that wrote it
+begins streaming**. So when the review panel fans N reviewers out concurrently
+over an identical prompt prefix, all N start before any cache exists and each pays
+the full cold-write price — N redundant writes, zero reads. Source: Anthropic
+prompt-caching docs (concurrent-request timing).
+
+The savings model is a **staggered launch**: send one request, await its first
+streamed token (the cache is now warm), then fire the remaining N−1, which read
+the prefix at 0.1× instead of writing it at 1.0–1.25×. For a five-lens, five-member
+panel the cold-start writes dominate the prefix cost, so staggering is the single
+largest lever. This is planned as its **own slice** (not implemented here) and is
+recorded so the budget feature can model expected spend with vs. without it.
+
+### Rule: budgets are denominated in effective units
+
+Because cache reads are ~0.1× and writes 1.0–1.25×, a raw-token budget would
+misprice a cache-heavy run by an order of magnitude. The budget feature must cap
+**effective units** — `fresh×1.0 + write×{1.25 anthropic | 1.0 openai} + read×0.1
++ output×5` — the same per-provider proxy `pactum usage` reports today.
+
 ## Capturing usage
 
 ### Where
@@ -184,13 +260,26 @@ Getting the rich, structured split requires `--json` (codex) / `--output-format 
   This is already in the committed set under the M11.9 VCS policy (the durable record).
 - **Global rollup (derived, rebuildable):** scan run files to aggregate by
   run / stage / agent / model / day. Never the source of truth. The static
-  cross-run aggregate (by run / stage / agent / model + cache-read ratio) is
-  implemented as `pactum usage --all` (M13.0); the per-day trend series is a
-  deferred follow-up.
+  cross-run aggregate (by run / stage / agent / model) is implemented as
+  `pactum usage --all` (M13.0); the per-day trend series is a deferred follow-up.
+  `--all` leads with the workspace summary, sorts the `by_run` rows by captured
+  total tokens descending, and takes `--top N` to cap that run list (totals and
+  the other breakdowns still aggregate every run).
 - **"Tokens for this task"** = fold the run's `usage.jsonl` (sum each class, count
-  calls). Replace the hardcoded zeros in `status` with the live per-run total + a
-  by-stage / by-agent breakdown, and add a `pactum usage [run_id]` command. Show the
-  cache-hit ratio (cache_read vs input) — caching is the biggest cost lever in the loop.
+  calls). `pactum usage [run_id]` reports the per-run total + by-stage / by-agent /
+  by-attempt breakdowns; `status` carries the per-run total. Both report the cache
+  **hit rate** (cache_read vs input, JSON field `cache_read_ratio`) — caching is the
+  biggest cost lever in the loop.
+- **Effective units (M25.1).** Every total and breakdown also reports
+  `effective_units`: the provider-weighted cost proxy (fresh×1.0 +
+  write×{1.25 anthropic | 1.0 openai} + read×0.1 + output×5) from *Cache economics*
+  above. It is computed on demand from the ledger and is **not** persisted in
+  `UsageRecord`. Unsupported providers keep their raw token totals but report
+  `effective_units: 0` and increment `effective_units_unavailable_calls`.
+- **Uncaptured is unknown, not zero.** A `captured=false` record is unknown usage:
+  it counts as a call (and toward `uncaptured_calls`) but contributes no tokens or
+  effective units, and renders as "usage not reported by the agent" rather than a
+  misleading zero row. A `captured=true` record with zero tokens stays a real zero.
 
 ## Forward layers (designed-for, deferred)
 
@@ -201,17 +290,17 @@ These read the same records; no schema change.
   block. Prefer an agent-reported cost where trustworthy; otherwise compute. (claude's
   headless `-p` becomes cleanly $-denominated once Anthropic's separate Agent-SDK
   credit takes effect.)
-- **Budget stop (implemented for the review rounds):** primitive is **`max_tokens` per
-  run** (exact, no price table). Truth = post-call accumulation of the run's
-  **captured** usage records; uncaptured records do not count toward the stop. At the
-  start of rounds after the first, when the captured total reaches the configured
-  ceiling, `mode: block` terminates the loop with **`budget_exceeded`** and records
-  the mode, `max_tokens`, and captured token total in `review/loop-summary.json`.
-  `mode: warn` records a budget warning and continues. A single round may overshoot
-  by its own calls because there is no pre-call estimation gate in this slice.
-  (`max_usd` was later removed from the config as dead — the M16.0 config redesign
-  keeps only the enforced `review.budget.{mode, max_tokens}`; a USD ceiling can
-  return with the cost layer.)
+- **Budget stop (designed, not yet implemented):** an earlier slice shipped a
+  token-`max_tokens` stop wired to `review.budget.{mode, max_tokens}`, but that
+  surface gated nothing useful in practice and was removed (M25.1) — see the note
+  at the top of this document. When it returns it must cap **effective units**, not
+  raw tokens (see Cache economics above), and the primitive is **post-call
+  accumulation of the run's captured usage**: at the start of rounds after the
+  first, when the accumulated effective units reach the configured ceiling, a
+  `block` mode terminates the loop and records the cap and the spent units; a
+  `warn` mode records a warning and continues. A single round may overshoot by its
+  own calls because there is no pre-call estimation gate. (`max_usd` was removed
+  earlier as dead; a USD ceiling can return with the cost layer.)
 - **Estimation:** input is countable before a call (provider count-tokens endpoint /
   local tokenizer / `chars/4`); output is not (per-stage historical ratios from our own
   ledger + `max_tokens` ceiling); a loop total must model quadratic context growth and
@@ -220,8 +309,9 @@ These read the same records; no schema change.
 
 ## Phased plan
 
-Slice 4 was implemented ahead of the cost slice because token-native enforcement
-does not need pricing data.
+Slice 4 once shipped ahead of the cost slice but was rolled back (M25.1) because
+the `review.budget` surface it exposed enforced nothing useful; it returns later
+denominated in effective units.
 
 1. **Slice 1 — token accounting + visibility (this milestone).** `UsageRecord` schema +
    per-agent parser in the runner (`--json` for write stages: execute, fix) +
@@ -233,9 +323,10 @@ does not need pricing data.
    reading fenced JSON, so read-stage usage is captured in full-run totals.
 3. **Slice 3 — cost ($) overlay.** Versioned per-class price table → `Cost` block;
    `pactum usage` shows $ alongside tokens (flagged estimate under subscription).
-4. **Slice 4 — budget stop (implemented).** `max_tokens` per run; accumulate
-   captured usage + terminal `budget_exceeded`; `mode` warn/block; compose with the
-   loop. Post-call only; no dollar enforcement.
+4. **Slice 4 — budget stop (designed; earlier token-only version rolled back in
+   M25.1).** Cap **effective units** per run; accumulate captured usage + terminal
+   stop; `warn`/`block`; compose with the loop. Post-call only; no dollar
+   enforcement.
 5. **Slice 5 — estimation.** Pre-call input count + historical output ratios →
    used/remaining/projected range; context-window gauge.
 

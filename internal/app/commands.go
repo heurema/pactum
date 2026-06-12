@@ -26,17 +26,37 @@ func (c *statusCmd) Run(r *runner) error {
 }
 
 func (c *usageCmd) Run(r *runner) error {
+	top, err := c.resolveTop()
+	if err != nil {
+		return err
+	}
 	if c.All {
 		if strings.TrimSpace(c.RunID) != "" {
 			return errors.New("usage: pass either a run_id or --all, not both")
 		}
-		return r.App.UsageAll(r.Stdout, c.JSONOutput)
+		return r.App.UsageAll(r.Stdout, c.JSONOutput, top)
 	}
 	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
 	if err != nil || !ok {
 		return err
 	}
 	return r.App.Usage(r.Stdout, runID, c.JSONOutput)
+}
+
+// resolveTop validates --top, which caps the --all by-run list. A nil pointer
+// means the flag was not given (no cap). The flag is meaningful only with --all,
+// and a non-positive value is rejected — both errors name --top.
+func (c *usageCmd) resolveTop() (int, error) {
+	if c.Top == nil {
+		return 0, nil
+	}
+	if !c.All {
+		return 0, errors.New("usage: --top is only valid with --all")
+	}
+	if *c.Top <= 0 {
+		return 0, errors.New("usage: --top must be a positive integer")
+	}
+	return *c.Top, nil
 }
 
 func (c *versionCmd) Run(r *runner) error {
