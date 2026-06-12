@@ -207,8 +207,27 @@ The savings model is a **staggered launch**: send one request, await its first
 streamed token (the cache is now warm), then fire the remaining N−1, which read
 the prefix at 0.1× instead of writing it at 1.0–1.25×. For a five-lens, five-member
 panel the cold-start writes dominate the prefix cost, so staggering is the single
-largest lever. This is planned as its **own slice** (not implemented here) and is
-recorded so the budget feature can model expected spend with vs. without it.
+largest lever.
+
+**Implemented (M25.2) for `review run`.** Each review round groups its reviewer
+lens attempts by the resolved `(engine, model, effort)` — across the whole
+panel, independent of registry name, since the model and effort are part of the
+effective cache key. A Claude group with more than one attempt launches exactly
+one lead attempt and holds the rest; the held attempts release the moment the
+lead streams its first visible output (the cache is now warm), or immediately if
+the lead finishes without producing any, or after a 60-second hold so a silent
+lead can never serialize the panel. Codex groups launch unchanged — codex sets a
+per-thread `prompt_cache_key` and OpenAI charges no write premium, so there is no
+benefit and no cost. The stagger is built-in default behavior with no config
+knob (like the lens fan-out itself); it prints one held line and one released
+line to the live output, and it only reorders launches — artifact schemas and
+paths, attempt ID ordering, request prompt references, and proposal semantics
+match the unstaggered path (timing fields and usage values naturally differ —
+that is the point). The first-visible-output signal is transport-agnostic: over ACP it is the
+first non-empty agent message chunk written to `stdout.log`, over the CLI the
+first non-empty stdout or stderr write. See
+[`agents.md`](agents.md#review-plan-vs-run). The budget feature can model
+expected spend with vs. without it.
 
 ### Rule: budgets are denominated in effective units
 

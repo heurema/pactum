@@ -498,9 +498,11 @@ automatically.
 Every review spawns five built-in specialist reviewers — one per review lens:
 `correctness`, `implementation`, `tests`, `over_engineering`, `docs`. The lens
 set is fixed in code and deliberately not configurable. Each resolved reviewer
-(the explicit `--reviewer` or each panel member) expands into five concurrent
-lens attempts, each reading its own per-member, per-lens prompt
-(`review/reviewer-prompt-<name>-<lens>.md`). A lens prompt carries only that
+(the explicit `--reviewer` or each panel member) expands into five lens
+attempts, each reading its own per-member, per-lens prompt
+(`review/reviewer-prompt-<name>-<lens>.md`). The attempts run concurrently,
+except that `review run` staggers the launch of same-model Claude groups (see
+that command below). A lens prompt carries only that
 lens's checklist plus a focus note — the attempt is told it is the `<lens>`
 reviewer, that the other lenses are covered by reviewers running in parallel,
 and to report only findings within its lens without silently expanding scope.
@@ -519,10 +521,20 @@ dedup, keeping the maximum severity.
   next section). Each round launches the lens attempts concurrently (same
   direct-subprocess model as execution, with the idle `--timeout` per attempt)
   and captures each attempt under `review/reviewer-attempts/`, with the lens
-  recorded in the attempt's request and result. Like `execute run`, it is
-  unsandboxed agent execution. All lens attempts run to completion, but if any
-  attempt fails the round fails as a whole — the completed lenses' output
-  stays on disk in their attempt artifacts.
+  recorded in the attempt's request and result. **Same-model Claude groups are
+  staggered:** the round groups every lens attempt by its resolved `(engine,
+  model, effort)` — across the whole panel, independent of registry name — and a
+  Claude group with more than one attempt launches a single lead first and holds
+  the rest until the lead streams its first output (or finishes without any, or
+  a 60-second hold elapses), so the held attempts read the warmed prompt cache
+  instead of each paying Anthropic's cache-write premium on the shared prefix
+  (see [`cost-budget-design.md`](cost-budget-design.md)). A held and a released
+  line print to the live output so a watching operator sees the brief pause.
+  Codex groups and single-attempt groups launch immediately. The stagger only
+  reorders launches — attempt artifacts, IDs, and proposal semantics are
+  unchanged. Like `execute run`, it is unsandboxed agent execution. All lens
+  attempts run to completion, but if any attempt fails the round fails as a
+  whole — the completed lenses' output stays on disk in their attempt artifacts.
 
 Beyond the lens checklist, every lens prompt shares the same hardened review
 methodology: findings must be certain-or-silent (with an explicit NOT-to-flag
@@ -569,9 +581,11 @@ not approve reviews, resolve findings, or re-run the gate.
 ## Review run rounds
 
 `pactum review run <run_id> --reviewer codex --agent codex` runs the
-reviewer round — five concurrent lens attempts per resolved reviewer, with each
-member's per-lens prompts written before the round launches and the lens
-surfaced per attempt in the round summary — parses structured finding
+reviewer round — five lens attempts per resolved reviewer, launched concurrently
+except that same-model Claude groups are staggered (one lead warms the prompt
+cache before the rest), with each member's per-lens prompts written before the
+round launches and the lens surfaced per attempt in the round summary — parses
+structured finding
 proposals, accepts the proposals into review
 findings, and runs the fixer when the current round creates open blocking
 findings. After each fixer attempt, Pactum re-runs the gate with the approved

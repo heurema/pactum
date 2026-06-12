@@ -465,6 +465,45 @@ func TestACPClientNilActivityIsSafe(t *testing.T) {
 	}
 }
 
+func TestACPClientFiresFirstOutputOnFirstAgentMessage(t *testing.T) {
+	ctx := context.Background()
+	var out strings.Builder
+	fires := 0
+	c := &acpClient{out: &out, onFirstOutput: func() { fires++ }}
+
+	update := func(u acp.SessionUpdate) {
+		if err := c.SessionUpdate(ctx, acp.SessionNotification{Update: u}); err != nil {
+			t.Fatalf("session update: %v", err)
+		}
+	}
+
+	// A thought chunk writes nothing visible; an empty message chunk writes
+	// nothing either. Neither is first output.
+	update(acp.SessionUpdate{AgentThoughtChunk: &acp.SessionUpdateAgentThoughtChunk{Content: acp.TextBlock("thinking")}})
+	update(acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Content: acp.TextBlock("")}})
+	if fires != 0 {
+		t.Fatalf("first output fired %d times before any visible text, want 0", fires)
+	}
+
+	// The first non-empty agent message chunk fires exactly once; later chunks
+	// do not fire again.
+	update(acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Content: acp.TextBlock("hello")}})
+	update(acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Content: acp.TextBlock(" world")}})
+	if fires != 1 {
+		t.Fatalf("first output fired %d times, want exactly 1", fires)
+	}
+}
+
+func TestACPClientNilFirstOutputIsSafe(t *testing.T) {
+	var out strings.Builder
+	c := &acpClient{out: &out}
+	if err := c.SessionUpdate(context.Background(), acp.SessionNotification{Update: acp.SessionUpdate{
+		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Content: acp.TextBlock("hi")},
+	}}); err != nil {
+		t.Fatalf("session update with nil first-output callback: %v", err)
+	}
+}
+
 func TestACPClientReadOnlyRefusesPermissionRequests(t *testing.T) {
 	readOnly := &acpClient{readOnly: true}
 

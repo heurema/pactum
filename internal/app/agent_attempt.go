@@ -52,6 +52,11 @@ type agentAttemptLifecycle[Prepared any, Request any, Result any, Response any] 
 	// stages (execute, review fix) leave it false. The CLI transport ignores it.
 	ReadOnly bool
 
+	// OnFirstOutput is threaded to the RunRequest so a caller can observe the
+	// attempt's first visible output. Only the lead attempt of a staggered
+	// same-model Claude review group sets it; every other attempt leaves it nil.
+	OnFirstOutput func()
+
 	StartedEvent  string
 	FinishedEvent string
 
@@ -133,6 +138,7 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 		WritePathAllowed: cfg.WritePathAllowed,
 		Model:            cfg.Model,
 		ReadOnly:         cfg.ReadOnly,
+		OnFirstOutput:    cfg.OnFirstOutput,
 	})
 	if runErr != nil && runResult.StartedAt == "" {
 		return runErr

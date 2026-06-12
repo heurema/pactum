@@ -99,7 +99,7 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 		return RunResult{}, err
 	}
 
-	client := &acpClient{out: stdoutWriter, activity: clientActivity, repoRoot: request.RepoRoot, writePathAllowed: request.WritePathAllowed, readOnly: request.ReadOnly}
+	client := &acpClient{out: stdoutWriter, activity: clientActivity, onFirstOutput: request.OnFirstOutput, repoRoot: request.RepoRoot, writePathAllowed: request.WritePathAllowed, readOnly: request.ReadOnly}
 	conn := acp.NewClientSideConnection(client, adapterIn, adapterOut)
 	runErr := driveACPSession(ctx, conn, request.RepoRoot, string(prompt), client)
 
@@ -224,6 +224,12 @@ type acpClient struct {
 	// an acpClient); ticking is signal-only and never writes to the log.
 	activity func()
 
+	// onFirstOutput fires once on the first non-empty agent message chunk
+	// written to the log — the protocol signal that the prompt cache is now
+	// warm. Nil unless the caller is staggering a same-model group.
+	onFirstOutput   func()
+	firstOutputOnce sync.Once
+
 	// repoRoot and writePathAllowed implement the real-time write scope guard.
 	// repoRoot anchors the conversion of an absolute ACP path to a repo-relative
 	// path; writePathAllowed (nil = allow all) reports whether that path is in
@@ -255,6 +261,15 @@ var _ acp.Client = (*acpClient)(nil)
 func (c *acpClient) tick() {
 	if c.activity != nil {
 		c.activity()
+	}
+}
+
+// fireFirstOutput signals the first visible output exactly once. Streamed
+// agent text is the protocol's earliest "the cache is warm" marker, so the
+// staggered review fan-out releases its held attempts here.
+func (c *acpClient) fireFirstOutput() {
+	if c.onFirstOutput != nil {
+		c.firstOutputOnce.Do(c.onFirstOutput)
 	}
 }
 
@@ -378,6 +393,9 @@ func (c *acpClient) SessionUpdate(ctx context.Context, p acp.SessionNotification
 		}
 		c.textEndedNewline = strings.HasSuffix(text, "\n")
 		c.mu.Unlock()
+		// The first non-empty chunk reached the log: the cache is warm. Fire
+		// outside the lock so the callback cannot deadlock against it.
+		c.fireFirstOutput()
 	}
 	return nil
 }

@@ -26,6 +26,11 @@ type App struct {
 	Now            func() time.Time
 	AgentRegistry  agents.Registry
 	AgentTransport agents.Transport
+	// reviewStaggerHold overrides the same-model Claude review hold timeout.
+	// Zero means the production default (reviewStaggerHoldTimeoutDefault); tests
+	// shrink it so a silent lead does not actually serialize the panel for a
+	// minute.
+	reviewStaggerHold time.Duration
 }
 
 type runner struct {

@@ -543,23 +543,26 @@ func (a App) runReviewLoopReviewRound(context reviewContext, liveOutput io.Write
 	}
 
 	memberResults := make([][]reviewerResultDocument, len(reviewers))
-	errs := make([]error, len(reviewers))
-	var wg sync.WaitGroup
+	errs := make([][]error, len(reviewers))
+	for index := range reviewers {
+		memberResults[index] = make([]reviewerResultDocument, len(reviewLenses))
+		errs[index] = make([]error, len(reviewLenses))
+	}
 	var sharedLive io.Writer = liveOutput
 	if liveOutput != nil {
 		sharedLive = &synchronizedWriter{w: liveOutput}
 	}
-	for index, reviewer := range reviewers {
-		wg.Add(1)
-		go func(index int, reviewer reviewLoopReviewer) {
-			defer wg.Done()
-			memberResults[index], errs[index] = a.runReviewerLensAttempts(sharedLive, runID, prep, reviewer, timeout)
-		}(index, reviewer)
-	}
-	wg.Wait()
-	for _, err := range errs {
-		if err != nil {
-			return reviewLoopReviewRoundResult{}, err
+
+	a.runReviewerLensFanOut(sharedLive, runID, prep, reviewers, timeout, memberResults, errs)
+
+	// First error in (reviewer, lens) order wins, wrapped exactly as the
+	// unstaggered per-reviewer path did, so callers see the same failure surface
+	// regardless of which group held which attempt.
+	for reviewerIndex, reviewer := range reviewers {
+		for lensIndex, err := range errs[reviewerIndex] {
+			if err != nil {
+				return reviewLoopReviewRoundResult{}, fmt.Errorf("reviewer %s lens %s: %w", reviewer.Name, reviewLenses[lensIndex].Key, err)
+			}
 		}
 	}
 
@@ -593,38 +596,192 @@ func (a App) runReviewLoopReviewRound(context reviewContext, liveOutput io.Write
 	}, nil
 }
 
-// runReviewerLensAttempts spawns the fixed lens fan-out for one resolved
-// reviewer: five concurrent attempts, one per lens, each reading its own
-// per-member, per-lens prompt artifact (written before the launch). Results
-// keep the lens order even when an attempt fails, so callers can render
-// whatever completed.
-func (a App) runReviewerLensAttempts(liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, timeout time.Duration) ([]reviewerResultDocument, error) {
-	results := make([]reviewerResultDocument, len(reviewLenses))
-	errs := make([]error, len(reviewLenses))
-	var wg sync.WaitGroup
-	var sharedLive io.Writer = liveOutput
-	if liveOutput != nil {
-		sharedLive = &synchronizedWriter{w: liveOutput}
+// reviewStaggerHoldTimeoutDefault is the production ceiling on how long the
+// held attempts of a same-model Claude group wait for the lead to warm the
+// prompt cache: a silent lead can never serialize the panel for longer.
+const reviewStaggerHoldTimeoutDefault = 60 * time.Second
+
+func (a App) reviewStaggerHoldTimeout() time.Duration {
+	if a.reviewStaggerHold > 0 {
+		return a.reviewStaggerHold
 	}
-	for index, lens := range reviewLenses {
-		wg.Add(1)
-		go func(index int, lens reviewLens) {
-			defer wg.Done()
-			results[index], errs[index] = a.runReviewLoopReviewerWithAgent(sharedLive, runID, prep, reviewer, lens, timeout)
-		}(index, lens)
-	}
-	wg.Wait()
-	for index, err := range errs {
-		if err != nil {
-			return results, fmt.Errorf("reviewer %s lens %s: %w", reviewer.Name, reviewLenses[index].Key, err)
-		}
-	}
-	return results, nil
+	return reviewStaggerHoldTimeoutDefault
 }
 
-func (a App) runReviewLoopReviewerWithAgent(liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration) (reviewerResultDocument, error) {
+// reviewerLensTask is one (reviewer, lens) attempt of the round's fan-out,
+// carrying the indices that place its result back into the per-reviewer,
+// per-lens result/error grids so collection order stays independent of when the
+// attempt actually ran.
+type reviewerLensTask struct {
+	reviewerIndex int
+	lensIndex     int
+	reviewer      reviewLoopReviewer
+	lens          reviewLens
+}
+
+// reviewerStaggerKey groups lens attempts by the cache-relevant dimensions of
+// their resolved reviewer: the inferred engine, the model, and the effort. Two
+// registry names that resolve to the same Claude model and effort share one key
+// (and thus one lead), because they share the same prompt-cache prefix.
+type reviewerStaggerKey struct {
+	engine string
+	model  string
+	effort string
+}
+
+// reviewerLensGroup is all the round's lens attempts that share one stagger
+// key. claude marks a group whose inferred engine warms a write-premium cache;
+// such a group with more than one attempt is staggered.
+type reviewerLensGroup struct {
+	key    reviewerStaggerKey
+	claude bool
+	tasks  []reviewerLensTask
+}
+
+func (g reviewerLensGroup) staggered() bool {
+	return g.claude && len(g.tasks) > 1
+}
+
+// groupReviewerLensTasks builds the round's lens attempts and groups them by
+// normalized (engine, model, effort). Tasks keep (reviewer index, lens index)
+// order within a group, and groups keep first-appearance order, so the lead of
+// a staggered group is deterministically the first reviewer's first lens.
+func groupReviewerLensTasks(reviewers []reviewLoopReviewer) []reviewerLensGroup {
+	order := make([]reviewerStaggerKey, 0, len(reviewers))
+	byKey := make(map[reviewerStaggerKey]*reviewerLensGroup, len(reviewers))
+	for reviewerIndex, reviewer := range reviewers {
+		key := reviewerStaggerKey{
+			engine: reviewer.Agent.Name,
+			model:  reviewer.ModelSpec.Model,
+			effort: reviewer.ModelSpec.Effort,
+		}
+		group, ok := byKey[key]
+		if !ok {
+			order = append(order, key)
+			group = &reviewerLensGroup{key: key, claude: reviewer.Agent.Name == agents.BuiltinClaude}
+			byKey[key] = group
+		}
+		for lensIndex, lens := range reviewLenses {
+			group.tasks = append(group.tasks, reviewerLensTask{
+				reviewerIndex: reviewerIndex,
+				lensIndex:     lensIndex,
+				reviewer:      reviewer,
+				lens:          lens,
+			})
+		}
+	}
+	groups := make([]reviewerLensGroup, 0, len(order))
+	for _, key := range order {
+		groups = append(groups, *byKey[key])
+	}
+	return groups
+}
+
+// runReviewerLensFanOut launches the round's reviewer lens attempts grouped by
+// normalized (engine, model, effort). Each group runs concurrently with the
+// others; a staggered Claude group launches one lead first and holds the rest
+// (see runReviewerLensGroup). Results and errors land in the caller's
+// per-reviewer, per-lens grids, so the round's collection order is unchanged.
+func (a App) runReviewerLensFanOut(sharedLive io.Writer, runID string, prep reviewerDryRunPreparation, reviewers []reviewLoopReviewer, timeout time.Duration, memberResults [][]reviewerResultDocument, errs [][]error) {
+	groups := groupReviewerLensTasks(reviewers)
+	var wg sync.WaitGroup
+	for _, group := range groups {
+		wg.Add(1)
+		go func(group reviewerLensGroup) {
+			defer wg.Done()
+			a.runReviewerLensGroup(sharedLive, runID, prep, group, timeout, memberResults, errs)
+		}(group)
+	}
+	wg.Wait()
+}
+
+// runReviewerLensGroup runs one stagger group. A non-Claude group and a
+// single-attempt group launch every attempt at once. A multi-attempt Claude
+// group launches exactly one lead attempt and holds the rest until the lead
+// streams its first output, finishes before producing any, or a hold timeout
+// elapses — so the held attempts read the warmed prompt cache (0.1x) instead of
+// each paying the 1.25x cold-write premium on the shared prefix.
+func (a App) runReviewerLensGroup(sharedLive io.Writer, runID string, prep reviewerDryRunPreparation, group reviewerLensGroup, timeout time.Duration, memberResults [][]reviewerResultDocument, errs [][]error) {
+	runTask := func(task reviewerLensTask, onFirstOutput func()) {
+		result, err := a.runReviewLoopReviewerWithAgent(sharedLive, runID, prep, task.reviewer, task.lens, timeout, onFirstOutput)
+		memberResults[task.reviewerIndex][task.lensIndex] = result
+		errs[task.reviewerIndex][task.lensIndex] = err
+	}
+
+	if !group.staggered() {
+		launchReviewerLensTasks(group.tasks, runTask)
+		return
+	}
+
+	lead := group.tasks[0]
+	held := group.tasks[1:]
+	released := make(chan struct{})
+	var releaseOnce sync.Once
+	var releaseReason string
+	release := func(reason string) {
+		releaseOnce.Do(func() {
+			releaseReason = reason
+			close(released)
+		})
+	}
+
+	if sharedLive != nil {
+		fmt.Fprintf(sharedLive, "review stagger: holding %d %s %s attempt(s) until the lead warms the prompt cache\n", len(held), group.key.engine, reviewerStaggerModelLabel(group.key))
+	}
+
+	var leadWG sync.WaitGroup
+	leadWG.Add(1)
+	go func() {
+		defer leadWG.Done()
+		// First streamed output releases the held attempts; if the lead finishes
+		// without producing any, completion releases them. release() is
+		// idempotent, so both firing (output then completion) is safe.
+		runTask(lead, func() { release("lead streamed first output") })
+		release("lead finished before output")
+	}()
+
+	timer := time.NewTimer(a.reviewStaggerHoldTimeout())
+	defer timer.Stop()
+	select {
+	case <-released:
+	case <-timer.C:
+		release("hold timeout elapsed")
+	}
+
+	if sharedLive != nil {
+		fmt.Fprintf(sharedLive, "review stagger: releasing %d held %s attempt(s) (%s)\n", len(held), group.key.engine, releaseReason)
+	}
+
+	launchReviewerLensTasks(held, runTask)
+	leadWG.Wait()
+}
+
+// launchReviewerLensTasks runs every task concurrently and waits for all to
+// finish; held attempts pass nil for the first-output callback.
+func launchReviewerLensTasks(tasks []reviewerLensTask, runTask func(reviewerLensTask, func())) {
+	var wg sync.WaitGroup
+	for _, task := range tasks {
+		wg.Add(1)
+		go func(task reviewerLensTask) {
+			defer wg.Done()
+			runTask(task, nil)
+		}(task)
+	}
+	wg.Wait()
+}
+
+// reviewerStaggerModelLabel renders a group's model (and effort, when pinned)
+// for the held/released live-output lines.
+func reviewerStaggerModelLabel(key reviewerStaggerKey) string {
+	if key.effort != "" {
+		return key.model + "/" + key.effort
+	}
+	return key.model
+}
+
+func (a App) runReviewLoopReviewerWithAgent(liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration, onFirstOutput func()) (reviewerResultDocument, error) {
 	var stdout bytes.Buffer
-	runErr := a.runReviewerAttempt(&stdout, liveOutput, runID, prep, reviewer, lens, timeout)
+	runErr := a.runReviewerAttempt(&stdout, liveOutput, runID, prep, reviewer, lens, timeout, onFirstOutput)
 	var result reviewerResultDocument
 	if stdout.Len() > 0 {
 		if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
@@ -637,10 +794,11 @@ func (a App) runReviewLoopReviewerWithAgent(liveOutput io.Writer, runID string, 
 	return result, runErr
 }
 
-func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration) error {
+func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration, onFirstOutput func()) error {
 	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[reviewerLensAttemptPlan, reviewerRequestDocument, reviewerResultDocument, struct{}]{
 		Stdout:          stdout,
 		LiveOutput:      liveOutput,
+		OnFirstOutput:   onFirstOutput,
 		JSONOutput:      true,
 		Root:            prep.Context.Root,
 		EventsJSONL:     prep.Context.Paths.EventsJSONL,
