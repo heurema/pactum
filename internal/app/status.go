@@ -85,15 +85,11 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 	if err != nil {
 		return statusResponse{}, err
 	}
-	configHash, err := storeFileSHA256(paths.Config)
-	if err != nil {
-		return statusResponse{}, err
-	}
 	manifest, err := readWorkspaceManifest(paths.Manifest)
 	if err != nil {
 		return statusResponse{}, err
 	}
-	mapStatus, err := inspectProjectMap(root, paths, config, configHash, manifest.Map.CurrentRunID)
+	mapStatus, err := inspectProjectMap(root, paths, config, manifest.Map.CurrentRunID)
 	if err != nil {
 		return statusResponse{}, err
 	}
@@ -235,7 +231,8 @@ func isTerminalRunStatus(status string) bool {
 	}
 }
 
-func inspectProjectMap(root string, paths artifacts.Paths, config configFile, configHash string, currentRunID string) (projectMapStatus, error) {
+func inspectProjectMap(root string, paths artifacts.Paths, config configFile, currentRunID string) (projectMapStatus, error) {
+	configHash := mapConfigHash(config.Map)
 	status := projectMapStatus{
 		Status:       "fresh",
 		RunID:        currentRunID,
@@ -261,8 +258,13 @@ func inspectProjectMap(root string, paths artifacts.Paths, config configFile, co
 			status.RunID = mapManifest.RunID
 			status.FilesIndexed = mapManifest.FilesIndexed
 			status.CodeItems = mapManifest.CodeIndex.Items
-			if mapManifest.ConfigHash != "" && mapManifest.ConfigHash != configHash {
-				status.StaleReasons = append(status.StaleReasons, "config changed: .heurema/pactum/config.yaml")
+			if mapManifest.ConfigHashScope != mapConfigHashScope {
+				// Legacy whole-file pin (no scope marker): the hash semantics
+				// changed, so it cannot be compared. Stale once; the next refresh
+				// writes the map-section hash plus the scope marker.
+				status.StaleReasons = append(status.StaleReasons, "map config pin format changed: .heurema/pactum/config.yaml")
+			} else if mapManifest.ConfigHash != "" && mapManifest.ConfigHash != configHash {
+				status.StaleReasons = append(status.StaleReasons, "map config changed: .heurema/pactum/config.yaml")
 			}
 		}
 	}

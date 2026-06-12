@@ -120,15 +120,17 @@ reviews across M8–M10. Rough priority in parentheses.
   cross-lens duplicates collapse through the existing fingerprint dedup with
   severity-max.
 - **Loop stop conditions.** Stalemate-by-fingerprint and K-consecutive-clean —
-  **done (M10.3)**. Token-native `max_tokens` budget stop is **done** with a
-  `budget_exceeded` terminal. Remaining cost-layer follow-ups live in
+  **done (M10.3)**. The earlier `review.budget` token-stop plumbing gated nothing
+  real and was removed (M25.1, including the `budget_exceeded` terminal); a
+  designed budget stop, denominated in effective units, returns later per
   [`cost-budget-design.md`](cost-budget-design.md).
 - **Cost/budget remaining slices** (see [`cost-budget-design.md`](cost-budget-design.md)).
-  Slices 1-2 (write- and read-stage token accounting) done (M12.0, M12.1);
-  Slice 4 (`max_tokens` budget stop) done. Remaining: cost ($) overlay and
-  estimation. Also: harden the claude usage parser to tolerate incidental
-  leading/trailing stdout (today any non-JSON stdout degrades claude capture to
-  `captured=false`; safe but brittle).
+  Slices 1-2 (write- and read-stage token accounting) done (M12.0, M12.1). The
+  earlier `max_tokens` budget stop was removed (M25.1) as it gated nothing real;
+  the budget feature returns later denominated in effective units, alongside cost
+  ($) overlay and estimation. Also: harden the claude usage parser to tolerate
+  incidental leading/trailing stdout (today any non-JSON stdout degrades claude
+  capture to `captured=false`; safe but brittle).
 - **Cross-run / workspace usage stats command** — static aggregate **done (M13.0)**.
   `pactum usage --all` scans every run's `usage.jsonl` and reports workspace total
   tokens with by-run / by-stage / by-agent / by-model breakdowns and the cache-read
@@ -333,27 +335,26 @@ distillation lives in
 
 ## Hardening / cleanup
 
-- **Config + usage polish slice** (small-med, next after the symbol-search
-  slice; one combined contract):
-  (1) **Hide the unfinished budget surface.** `review.budget`
-  (`mode`/`max_tokens`) gates nothing real (warn-mode plumbing only): remove
-  it from the config surface entirely — not generated, not accepted (loud
-  leftover-key error, like the old `agent:` key), and delete the warn-mode
-  code path in the review loop. Token accounting in the usage ledger stays
-  untouched. Budget enforcement returns later as a designed feature
+- **Config + usage polish slice** (M25.1, shipped; one combined contract):
+  (1) **Hid the unfinished budget surface.** `review.budget`
+  (`mode`/`max_tokens`) gated nothing real (warn-mode plumbing only): removed
+  from the config surface entirely — not generated, not accepted (loud
+  leftover-key error, like the old `agent:` key), and the warn-mode review-loop
+  code path deleted. Token accounting in the usage ledger stays untouched.
+  Budget enforcement returns later as a designed feature
   ([cost-budget-design.md](cost-budget-design.md) is its home).
-  (2) **Usage display polish.** `pactum usage --all` is an unreadable
-  60-line dump: sort runs by total tokens descending, add `--top N`, and
-  surface a per-workspace one-line summary first. Mark uncaptured calls
-  explicitly (e.g. `codex: usage not reported over ACP — N calls`) instead
-  of zero-valued rows that mud the aggregates. Optional stretch: per-lens
-  breakdown of the review stage.
+  (2) **Usage display polish.** `pactum usage --all` leads with the workspace
+  summary, sorts runs by total tokens descending, and gained `--top N`.
+  Uncaptured calls are marked explicitly (usage not reported by the agent)
+  instead of zero-valued rows that mud the aggregates, plus an `effective_units`
+  cost proxy and per-run `by_attempt` breakdown. Optional stretch (deferred):
+  per-lens breakdown of the review stage.
   (3) **Map staleness pin narrowed to the `map:` section.** The map manifest
-  pins the SHA-256 of the whole `config.yaml` (`map.go:75`; checked at
-  `status.go:264`), so editing `agents:` or `review.panel` — which cannot
-  affect map output — falsely invalidates the map (bit us live when swapping
-  the review panel). Pin a hash of the canonicalized `map:` section instead:
-  map-parameter changes still invalidate, agent/review/panel edits do not.
+  previously pinned the SHA-256 of the whole `config.yaml`, so editing `agents:`
+  or `review.panel` — which cannot affect map output — falsely invalidated the
+  map (bit us live when swapping the review panel). It now pins a hash of the
+  canonicalized `map:` section: map-parameter changes still invalidate,
+  agent/review/panel edits do not; a legacy whole-file manifest is stale once.
 
 - **Gate validation command parsing + negative-match semantics** (med). The
   gate runner tokenizes validation commands with `strings.Fields` — quote

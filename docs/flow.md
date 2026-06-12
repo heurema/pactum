@@ -280,11 +280,6 @@ finding churn from running the loop to `max_rounds` without converging.
 - `gate_failed` — a fixer round completed, the gate ran, and the gate report
   status was `failed`. The loop stops cleanly and records the gate report
   artifact for human escalation.
-- `budget_exceeded` — `budget.max_tokens` is set, `budget.mode` is `block`, and
-  the run's cumulative captured token total reached the configured ceiling
-  before the next round began. The loop stops cleanly; the summary records the
-  budget mode, `max_tokens`, and captured token total. With `budget.mode: warn`,
-  the same condition is recorded as a budget warning and the loop continues.
 - `error` — Pactum could not run or record part of the loop, such as a missing
   or unreadable execution artifact. This remains an infrastructure/tooling
   failure and returns a command error.

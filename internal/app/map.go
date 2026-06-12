@@ -20,6 +20,23 @@ const mapManifestSchema = "pactum.map.manifest.v1"
 
 const mapRefreshSchema = "pactum.map_refresh.v1"
 
+// mapConfigHashScope marks a manifest whose config_hash pins only the
+// canonicalized map: config section (see mapConfigHash). A manifest without this
+// marker holds the legacy whole-file pin and is treated as stale once.
+const mapConfigHashScope = "map"
+
+// mapConfigHash pins the map-relevant config: a deterministic hash of the
+// normalized map: section only (max_file_bytes and code_index). The code_index
+// is normalized through codeindex.NormalizeMode — the same folding Scan applies
+// — so aliases and the empty default that all resolve to "auto" hash alike and
+// do not falsely invalidate the map. Editing unrelated sections such as agents
+// or review.panel — or only comments and key order — never changes this hash;
+// changing a map parameter does.
+func mapConfigHash(m mapConfig) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("max_file_bytes=%d\x00code_index=%s", m.MaxFileBytes, codeindex.NormalizeMode(m.CodeIndex))))
+	return hex.EncodeToString(sum[:])
+}
+
 type MapRefreshResult struct {
 	Schema       string    `json:"schema"`
 	RunID        string    `json:"run_id"`
@@ -72,10 +89,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 	if err != nil {
 		return MapRefreshResult{}, err
 	}
-	configHash, err := storeFileSHA256(paths.Config)
-	if err != nil {
-		return MapRefreshResult{}, err
-	}
+	configHash := mapConfigHash(config.Map)
 
 	scan, err := projectmap.Scan(root, projectmap.ScanOptions{
 		MaxFileBytes:  int64(config.Map.MaxFileBytes),
@@ -131,14 +145,15 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 	}
 
 	mapManifest := projectmap.Manifest{
-		Schema:       mapManifestSchema,
-		RunID:        runID,
-		GeneratedAt:  startedAt,
-		RepoRoot:     ".",
-		ConfigHash:   configHash,
-		FilesIndexed: len(scan.Files),
-		FilesIgnored: scan.FilesIgnored,
-		FilesSkipped: scan.FilesSkipped,
+		Schema:          mapManifestSchema,
+		RunID:           runID,
+		GeneratedAt:     startedAt,
+		RepoRoot:        ".",
+		ConfigHash:      configHash,
+		ConfigHashScope: mapConfigHashScope,
+		FilesIndexed:    len(scan.Files),
+		FilesIgnored:    scan.FilesIgnored,
+		FilesSkipped:    scan.FilesSkipped,
 		CodeIndex: projectmap.CodeIndexManifest{
 			Mode:               scan.CodeIndexMode,
 			SupportedLanguages: codeindex.SupportedLanguages(),

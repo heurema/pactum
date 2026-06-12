@@ -63,6 +63,26 @@ yet — everything lives under **Unreleased**.
   redacted `file:line` findings (also run as a CI step).
 
 ### Changed
+- `pactum usage` now reports an `effective_units` cost proxy on every total and
+  breakdown (per-provider weights: fresh input x1.0, cache write x1.25 for
+  Anthropic / free-as-fresh for Codex/OpenAI, cache read x0.1, output x5 —
+  documented in `docs/cost-budget-design.md`), computed on demand and never
+  persisted. Unsupported providers keep raw token totals but report
+  `effective_units: 0` and an `effective_units_unavailable_calls` count.
+- `pactum usage --all` leads with the workspace summary, sorts `by_run` by
+  captured total tokens descending, and gains `--top N` to cap that run list
+  (totals and the other breakdowns still aggregate every run; `--top` is rejected
+  without `--all` and for non-positive N).
+- Uncaptured usage records are treated as unknown usage: they count as calls but
+  contribute no tokens or effective units and render as "usage not reported by
+  the agent" instead of misleading zero rows; captured zero-token rows stay
+  distinct. Per-run usage adds a `by_attempt` breakdown, and human output labels
+  the existing cache ratio as "cache hit rate" (JSON keeps `cache_read_ratio`).
+- Map staleness now pins only the canonicalized `map:` config section: editing
+  unrelated config (agents, `review.panel`) no longer invalidates the project
+  map, while changing `map.max_file_bytes` or `map.code_index` does. Refreshed
+  manifests carry `config_hash_scope: "map"`; a legacy manifest without the
+  marker is reported stale once and migrated by the next `map refresh`.
 - Improved run-context search retrieval: instead of running the whole task
   sentence as one (all-tokens-must-match) FTS query — which returned nothing for
   natural-language tasks — the run now extracts targeted queries (paths, code
@@ -97,6 +117,15 @@ yet — everything lives under **Unreleased**.
   evidence (`.vue`/`.svelte`, an app entrypoint, Vite config plus an entrypoint,
   or a framework dependency plus app-like structure) — Vite as a devDependency
   alone no longer qualifies.
+
+### Removed
+- The `review.budget` config surface (`mode` / `max_tokens`) and the warn/block
+  budget plumbing in the review loop, which gated nothing useful: the default
+  config no longer emits it, `readConfig` rejects a leftover `review.budget` key
+  with a loud error naming the key, and the loop no longer stops, warns, or emits
+  `budget_exceeded`. Token accounting (`usage.jsonl`, `pactum usage`) is
+  unaffected. Budget enforcement returns later as a designed feature denominated
+  in effective units — see `docs/cost-budget-design.md`.
 
 ### Not yet included
 - Release publishing automation.

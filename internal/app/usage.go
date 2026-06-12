@@ -22,6 +22,29 @@ const (
 	usageWorkspaceResponseSchema = "pactum.usage.workspace.v1"
 )
 
+// Effective-unit multipliers normalize each token class to a "fresh input"
+// unit (= 1.0) using the providers' standard published price ratios, so a
+// cache-heavy run reads far cheaper than its raw token count suggests. The
+// ratios below are relative to fresh input:
+//   - Anthropic: cache write 1.25x, cache read 0.1x, output 5x — the prompt
+//     caching premium and the ~5x output:input ratio
+//     (platform.claude.com/docs prompt caching + pricing).
+//   - OpenAI/Codex: cached read 0.1x, output 5x; OpenAI charges no cache-write
+//     premium, so writes price as fresh input (1.0x)
+//     (developers.openai.com prompt caching).
+//
+// effective_units is a derived display metric only — it is never persisted in
+// UsageRecord. It is computed per record from the record's own provider, so a
+// breakdown aggregating several providers sums each record's units.
+const (
+	effectiveFreshInputMultiplier = 1.0
+	effectiveOutputMultiplier     = 5.0
+	effectiveCacheReadMultiplier  = 0.1
+	anthropicCacheWriteMultiplier = 1.25
+	// OpenAI/Codex cache writes carry no premium: they price as fresh input.
+	openAICacheWriteMultiplier = 1.0
+)
+
 type UsageRecord struct {
 	SchemaVersion int    `json:"schema_version"`
 	RecordID      string `json:"record_id"`
@@ -55,31 +78,41 @@ type usageCounts struct {
 	CacheReadTokens     int64 `json:"cache_read_tokens"`
 	CacheCreationTokens int64 `json:"cache_creation_tokens"`
 	ReasoningTokens     int64 `json:"reasoning_tokens"`
+	// EffectiveUnits is the provider-weighted cost proxy described above. It is
+	// derived on demand and never written to the ledger.
+	EffectiveUnits float64 `json:"effective_units"`
 }
 
 type usageBreakdown struct {
-	Run             string  `json:"run,omitempty"`
-	Stage           string  `json:"stage,omitempty"`
-	Agent           string  `json:"agent,omitempty"`
-	Model           string  `json:"model,omitempty"`
-	Provider        string  `json:"provider,omitempty"`
-	Calls           int     `json:"calls"`
-	CapturedCalls   int     `json:"captured_calls"`
-	UncapturedCalls int     `json:"uncaptured_calls"`
-	CacheReadRatio  float64 `json:"cache_read_ratio"`
+	Run      string `json:"run,omitempty"`
+	Stage    string `json:"stage,omitempty"`
+	Agent    string `json:"agent,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	Attempt  string `json:"attempt_id,omitempty"`
+	Calls    int    `json:"calls"`
+	// EffectiveUnitsUnavailableCalls counts captured calls whose provider has no
+	// effective-unit multipliers: their raw tokens still total, but they add no
+	// effective units.
+	CapturedCalls                  int     `json:"captured_calls"`
+	UncapturedCalls                int     `json:"uncaptured_calls"`
+	EffectiveUnitsUnavailableCalls int     `json:"effective_units_unavailable_calls"`
+	CacheReadRatio                 float64 `json:"cache_read_ratio"`
 	usageCounts
 }
 
 type usageResponse struct {
-	Schema          string           `json:"schema"`
-	RunID           string           `json:"run_id"`
-	Calls           int              `json:"calls"`
-	CapturedCalls   int              `json:"captured_calls"`
-	UncapturedCalls int              `json:"uncaptured_calls"`
-	CacheReadRatio  float64          `json:"cache_read_ratio"`
-	Total           usageCounts      `json:"total"`
-	ByStage         []usageBreakdown `json:"by_stage"`
-	ByAgent         []usageBreakdown `json:"by_agent"`
+	Schema                         string           `json:"schema"`
+	RunID                          string           `json:"run_id"`
+	Calls                          int              `json:"calls"`
+	CapturedCalls                  int              `json:"captured_calls"`
+	UncapturedCalls                int              `json:"uncaptured_calls"`
+	EffectiveUnitsUnavailableCalls int              `json:"effective_units_unavailable_calls"`
+	CacheReadRatio                 float64          `json:"cache_read_ratio"`
+	Total                          usageCounts      `json:"total"`
+	ByStage                        []usageBreakdown `json:"by_stage"`
+	ByAgent                        []usageBreakdown `json:"by_agent"`
+	ByAttempt                      []usageBreakdown `json:"by_attempt"`
 }
 
 // usageWorkspaceResponse is the cross-run aggregate produced by `pactum usage
@@ -87,17 +120,18 @@ type usageResponse struct {
 // ledgers, never an authoritative store. Runs counts only the run ledgers that
 // contributed at least one usage record.
 type usageWorkspaceResponse struct {
-	Schema          string           `json:"schema"`
-	Runs            int              `json:"runs"`
-	Calls           int              `json:"calls"`
-	CapturedCalls   int              `json:"captured_calls"`
-	UncapturedCalls int              `json:"uncaptured_calls"`
-	CacheReadRatio  float64          `json:"cache_read_ratio"`
-	Total           usageCounts      `json:"total"`
-	ByRun           []usageBreakdown `json:"by_run"`
-	ByStage         []usageBreakdown `json:"by_stage"`
-	ByAgent         []usageBreakdown `json:"by_agent"`
-	ByModel         []usageBreakdown `json:"by_model"`
+	Schema                         string           `json:"schema"`
+	Runs                           int              `json:"runs"`
+	Calls                          int              `json:"calls"`
+	CapturedCalls                  int              `json:"captured_calls"`
+	UncapturedCalls                int              `json:"uncaptured_calls"`
+	EffectiveUnitsUnavailableCalls int              `json:"effective_units_unavailable_calls"`
+	CacheReadRatio                 float64          `json:"cache_read_ratio"`
+	Total                          usageCounts      `json:"total"`
+	ByRun                          []usageBreakdown `json:"by_run"`
+	ByStage                        []usageBreakdown `json:"by_stage"`
+	ByAgent                        []usageBreakdown `json:"by_agent"`
+	ByModel                        []usageBreakdown `json:"by_model"`
 }
 
 func (a App) Usage(stdout io.Writer, runID string, jsonOutput bool) error {
@@ -123,8 +157,10 @@ func (a App) Usage(stdout io.Writer, runID string, jsonOutput bool) error {
 // UsageAll reports the workspace-wide cross-run token aggregate. It reads the
 // per-run usage ledgers as a derived view and is best-effort: a missing or
 // corrupt ledger contributes nothing and is skipped, never fatal. An empty
-// workspace reports a clean zero result.
-func (a App) UsageAll(stdout io.Writer, jsonOutput bool) error {
+// workspace reports a clean zero result. A positive top caps only the sorted
+// by-run list; the workspace totals and other breakdowns still aggregate every
+// run.
+func (a App) UsageAll(stdout io.Writer, jsonOutput bool, top int) error {
 	_, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
 	if err != nil || !ok {
 		return err
@@ -132,6 +168,9 @@ func (a App) UsageAll(stdout io.Writer, jsonOutput bool) error {
 	response, err := workspaceUsage(paths)
 	if err != nil {
 		return err
+	}
+	if top > 0 && len(response.ByRun) > top {
+		response.ByRun = response.ByRun[:top]
 	}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
@@ -252,7 +291,7 @@ func workspaceUsage(paths artifacts.Paths) (usageWorkspaceResponse, error) {
 		}
 		response.Runs++
 		for _, record := range records {
-			addRecordToUsageTotals(&response.Calls, &response.CapturedCalls, &response.UncapturedCalls, &response.Total, record)
+			addRecordToUsageTotals(&response.Calls, &response.CapturedCalls, &response.UncapturedCalls, &response.EffectiveUnitsUnavailableCalls, &response.Total, record)
 			accumulateUsageByRun(byRun, runID, record)
 			accumulateUsageByStage(byStage, record)
 			accumulateUsageByAgent(byAgent, record)
@@ -260,7 +299,7 @@ func workspaceUsage(paths artifacts.Paths) (usageWorkspaceResponse, error) {
 		}
 	}
 	response.CacheReadRatio = cacheReadRatio(response.Total)
-	response.ByRun = sortedUsageBreakdowns(byRun)
+	response.ByRun = sortUsageBreakdownsByTotalTokensDesc(byRun)
 	response.ByStage = sortedUsageBreakdowns(byStage)
 	response.ByAgent = sortedUsageBreakdowns(byAgent)
 	response.ByModel = sortedUsageBreakdowns(byModel)
@@ -297,21 +336,25 @@ func readUsageRecords(path string) ([]UsageRecord, error) {
 
 func summarizeUsage(runID string, records []UsageRecord) usageResponse {
 	response := usageResponse{
-		Schema:  usageResponseSchema,
-		RunID:   runID,
-		ByStage: []usageBreakdown{},
-		ByAgent: []usageBreakdown{},
+		Schema:    usageResponseSchema,
+		RunID:     runID,
+		ByStage:   []usageBreakdown{},
+		ByAgent:   []usageBreakdown{},
+		ByAttempt: []usageBreakdown{},
 	}
 	byStage := map[string]*usageBreakdown{}
 	byAgent := map[string]*usageBreakdown{}
+	byAttempt := map[string]*usageBreakdown{}
 	for _, record := range records {
-		addRecordToUsageTotals(&response.Calls, &response.CapturedCalls, &response.UncapturedCalls, &response.Total, record)
+		addRecordToUsageTotals(&response.Calls, &response.CapturedCalls, &response.UncapturedCalls, &response.EffectiveUnitsUnavailableCalls, &response.Total, record)
 		accumulateUsageByStage(byStage, record)
 		accumulateUsageByAgent(byAgent, record)
+		accumulateUsageByAttempt(byAttempt, record)
 	}
 	response.CacheReadRatio = cacheReadRatio(response.Total)
 	response.ByStage = sortedUsageBreakdowns(byStage)
 	response.ByAgent = sortedUsageBreakdowns(byAgent)
+	response.ByAttempt = sortedUsageBreakdowns(byAttempt)
 	return response
 }
 
@@ -360,6 +403,30 @@ func accumulateUsageByModel(byModel map[string]*usageBreakdown, record UsageReco
 	addRecordToUsageBreakdown(model, record)
 }
 
+func accumulateUsageByAttempt(byAttempt map[string]*usageBreakdown, record UsageRecord) {
+	attemptID := strings.TrimSpace(record.AttemptID)
+	if attemptID == "" {
+		attemptID = "unknown"
+	}
+	stage := normalizeUsageStage(record.Stage)
+	// Attempt IDs restart at 1 per stage (execute vs review-fix keep separate
+	// attempts directories), so attempt_001 collides across stages. Key by
+	// stage+attempt — the same disambiguation usageRecordID uses — so each
+	// distinct attempt is its own row.
+	key := stage + "\x00" + attemptID
+	attempt := byAttempt[key]
+	if attempt == nil {
+		attempt = &usageBreakdown{
+			Attempt:  attemptID,
+			Stage:    stage,
+			Agent:    record.Agent,
+			Provider: record.Provider,
+		}
+		byAttempt[key] = attempt
+	}
+	addRecordToUsageBreakdown(attempt, record)
+}
+
 // usageRecordModel resolves the model dimension for a record: the response
 // model when set (reserved for future use — the current recording path does
 // not populate ResponseModel, so this keys on the requested model today), else
@@ -374,14 +441,16 @@ func usageRecordModel(record UsageRecord) string {
 	return "unknown"
 }
 
-func addRecordToUsageTotals(calls *int, capturedCalls *int, uncapturedCalls *int, counts *usageCounts, record UsageRecord) {
+func addRecordToUsageTotals(calls *int, capturedCalls *int, uncapturedCalls *int, unavailableCalls *int, counts *usageCounts, record UsageRecord) {
 	*calls += 1
 	if record.Captured {
 		*capturedCalls += 1
 	} else {
 		*uncapturedCalls += 1
 	}
-	addUsageCounts(counts, record)
+	if !addUsageCounts(counts, record) {
+		*unavailableCalls += 1
+	}
 }
 
 func addRecordToUsageBreakdown(breakdown *usageBreakdown, record UsageRecord) {
@@ -391,17 +460,59 @@ func addRecordToUsageBreakdown(breakdown *usageBreakdown, record UsageRecord) {
 	} else {
 		breakdown.UncapturedCalls++
 	}
-	addUsageCounts(&breakdown.usageCounts, record)
+	if !addUsageCounts(&breakdown.usageCounts, record) {
+		breakdown.EffectiveUnitsUnavailableCalls++
+	}
 	breakdown.CacheReadRatio = cacheReadRatio(breakdown.usageCounts)
 }
 
-func addUsageCounts(counts *usageCounts, record UsageRecord) {
+// addUsageCounts folds one record's tokens and effective units into counts. An
+// uncaptured record is unknown usage: it contributes nothing (it is tracked
+// separately as an uncaptured call), so this returns true without touching the
+// counts. A captured record adds its raw tokens; it adds effective units only
+// when its provider has multipliers — when it does not, the raw tokens still
+// count but the function returns false so the caller records an
+// effective-units-unavailable call.
+func addUsageCounts(counts *usageCounts, record UsageRecord) bool {
+	if !record.Captured {
+		return true
+	}
 	counts.InputTokens += record.InputTokens
 	counts.OutputTokens += record.OutputTokens
 	counts.TotalTokens += record.TotalTokens
 	counts.CacheReadTokens += record.CacheReadTokens
 	counts.CacheCreationTokens += record.CacheCreationTokens
 	counts.ReasoningTokens += record.ReasoningTokens
+	units, ok := recordEffectiveUnits(record)
+	if !ok {
+		return false
+	}
+	counts.EffectiveUnits += units
+	return true
+}
+
+// recordEffectiveUnits weights a captured record's token classes into the
+// provider-neutral effective-unit proxy. It reports false for providers with no
+// multipliers so the caller can flag the row as effective-units-unavailable.
+func recordEffectiveUnits(record UsageRecord) (float64, bool) {
+	write := float64(record.CacheCreationTokens)
+	read := float64(record.CacheReadTokens)
+	// Both providers normalize InputTokens to include cache reads (and, for
+	// Anthropic, cache writes), so fresh input is what remains.
+	fresh := float64(record.InputTokens) - read - write
+	if fresh < 0 {
+		fresh = 0
+	}
+	output := float64(record.OutputTokens)
+	base := fresh*effectiveFreshInputMultiplier + read*effectiveCacheReadMultiplier + output*effectiveOutputMultiplier
+	switch record.Provider {
+	case "anthropic":
+		return base + write*anthropicCacheWriteMultiplier, true
+	case "codex", "openai":
+		return base + write*openAICacheWriteMultiplier, true
+	default:
+		return 0, false
+	}
 }
 
 func cacheReadRatio(counts usageCounts) float64 {
@@ -424,6 +535,17 @@ func sortedUsageBreakdowns(values map[string]*usageBreakdown) []usageBreakdown {
 	return breakdowns
 }
 
+// sortUsageBreakdownsByTotalTokensDesc orders run rows by captured total tokens
+// descending so the heaviest runs lead; ties fall back to the deterministic key
+// order (run id ascending) for stable output.
+func sortUsageBreakdownsByTotalTokensDesc(values map[string]*usageBreakdown) []usageBreakdown {
+	breakdowns := sortedUsageBreakdowns(values)
+	sort.SliceStable(breakdowns, func(i, j int) bool {
+		return breakdowns[i].TotalTokens > breakdowns[j].TotalTokens
+	})
+	return breakdowns
+}
+
 func writeUsage(stdout io.Writer, response usageResponse) {
 	fmt.Fprintln(stdout, "Pactum usage")
 	fmt.Fprintln(stdout)
@@ -431,25 +553,41 @@ func writeUsage(stdout io.Writer, response usageResponse) {
 	fmt.Fprintf(stdout, "  id: %s\n", response.RunID)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Usage:")
-	fmt.Fprintf(stdout, "  calls: %d\n", response.Calls)
-	fmt.Fprintf(stdout, "  captured calls: %d\n", response.CapturedCalls)
-	fmt.Fprintf(stdout, "  uncaptured calls: %d\n", response.UncapturedCalls)
-	writeUsageCounts(stdout, "  ", response.Total)
-	fmt.Fprintf(stdout, "  cache read ratio: %.2f%%\n", response.CacheReadRatio*100)
-	if len(response.ByStage) > 0 {
-		fmt.Fprintln(stdout)
-		fmt.Fprintln(stdout, "By stage:")
-		for _, item := range response.ByStage {
-			fmt.Fprintf(stdout, "  %s: calls=%d captured=%d total_tokens=%d input_tokens=%d output_tokens=%d\n", item.Stage, item.Calls, item.CapturedCalls, item.TotalTokens, item.InputTokens, item.OutputTokens)
-		}
+	writeUsageSummary(stdout, response.Calls, response.CapturedCalls, response.UncapturedCalls, response.EffectiveUnitsUnavailableCalls, response.Total, response.CacheReadRatio)
+	writeUsageBreakdownGroup(stdout, "By stage:", response.ByStage, func(item usageBreakdown) string { return item.Stage })
+	writeUsageBreakdownGroup(stdout, "By agent:", response.ByAgent, func(item usageBreakdown) string { return item.Agent })
+	writeUsageBreakdownGroup(stdout, "By attempt:", response.ByAttempt, func(item usageBreakdown) string {
+		return fmt.Sprintf("%s (stage=%s, agent=%s, provider=%s)", item.Attempt, item.Stage, item.Agent, item.Provider)
+	})
+}
+
+func writeWorkspaceUsage(stdout io.Writer, response usageWorkspaceResponse) {
+	fmt.Fprintln(stdout, "Pactum usage (workspace)")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Workspace:")
+	fmt.Fprintf(stdout, "  runs: %d\n", response.Runs)
+	writeUsageSummary(stdout, response.Calls, response.CapturedCalls, response.UncapturedCalls, response.EffectiveUnitsUnavailableCalls, response.Total, response.CacheReadRatio)
+	writeUsageBreakdownGroup(stdout, "By run:", response.ByRun, func(item usageBreakdown) string { return item.Run })
+	writeUsageBreakdownGroup(stdout, "By stage:", response.ByStage, func(item usageBreakdown) string { return item.Stage })
+	writeUsageBreakdownGroup(stdout, "By agent:", response.ByAgent, func(item usageBreakdown) string {
+		return fmt.Sprintf("%s (provider=%s)", item.Agent, item.Provider)
+	})
+	writeUsageBreakdownGroup(stdout, "By model:", response.ByModel, func(item usageBreakdown) string { return item.Model })
+}
+
+// writeUsageSummary renders the shared call/token summary that leads both the
+// per-run and workspace human output: call counts, token classes, the derived
+// effective units, and the cache hit rate.
+func writeUsageSummary(stdout io.Writer, calls, capturedCalls, uncapturedCalls, unavailableCalls int, counts usageCounts, cacheHitRate float64) {
+	fmt.Fprintf(stdout, "  calls: %d\n", calls)
+	fmt.Fprintf(stdout, "  captured calls: %d\n", capturedCalls)
+	fmt.Fprintf(stdout, "  uncaptured calls: %d\n", uncapturedCalls)
+	if unavailableCalls > 0 {
+		fmt.Fprintf(stdout, "  effective units unavailable calls: %d\n", unavailableCalls)
 	}
-	if len(response.ByAgent) > 0 {
-		fmt.Fprintln(stdout)
-		fmt.Fprintln(stdout, "By agent:")
-		for _, item := range response.ByAgent {
-			fmt.Fprintf(stdout, "  %s: provider=%s calls=%d captured=%d total_tokens=%d input_tokens=%d output_tokens=%d\n", item.Agent, item.Provider, item.Calls, item.CapturedCalls, item.TotalTokens, item.InputTokens, item.OutputTokens)
-		}
-	}
+	writeUsageCounts(stdout, "  ", counts)
+	fmt.Fprintf(stdout, "  effective units: %.2f\n", counts.EffectiveUnits)
+	fmt.Fprintf(stdout, "  cache hit rate: %.2f%%\n", cacheHitRate*100)
 }
 
 func writeUsageCounts(stdout io.Writer, indent string, counts usageCounts) {
@@ -461,32 +599,38 @@ func writeUsageCounts(stdout io.Writer, indent string, counts usageCounts) {
 	fmt.Fprintf(stdout, "%sreasoning tokens: %d\n", indent, counts.ReasoningTokens)
 }
 
-func writeWorkspaceUsage(stdout io.Writer, response usageWorkspaceResponse) {
-	fmt.Fprintln(stdout, "Pactum usage (workspace)")
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Workspace:")
-	fmt.Fprintf(stdout, "  runs: %d\n", response.Runs)
-	fmt.Fprintf(stdout, "  calls: %d\n", response.Calls)
-	fmt.Fprintf(stdout, "  captured calls: %d\n", response.CapturedCalls)
-	fmt.Fprintf(stdout, "  uncaptured calls: %d\n", response.UncapturedCalls)
-	writeUsageCounts(stdout, "  ", response.Total)
-	fmt.Fprintf(stdout, "  cache read ratio: %.2f%%\n", response.CacheReadRatio*100)
-	writeWorkspaceUsageGroup(stdout, "By run:", response.ByRun, func(item usageBreakdown) string { return item.Run })
-	writeWorkspaceUsageGroup(stdout, "By stage:", response.ByStage, func(item usageBreakdown) string { return item.Stage })
-	writeWorkspaceUsageGroup(stdout, "By agent:", response.ByAgent, func(item usageBreakdown) string {
-		return fmt.Sprintf("%s (provider=%s)", item.Agent, item.Provider)
-	})
-	writeWorkspaceUsageGroup(stdout, "By model:", response.ByModel, func(item usageBreakdown) string { return item.Model })
-}
-
-func writeWorkspaceUsageGroup(stdout io.Writer, heading string, items []usageBreakdown, label func(usageBreakdown) string) {
+func writeUsageBreakdownGroup(stdout io.Writer, heading string, items []usageBreakdown, label func(usageBreakdown) string) {
 	if len(items) == 0 {
 		return
 	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, heading)
 	for _, item := range items {
-		fmt.Fprintf(stdout, "  %s: calls=%d captured=%d total_tokens=%d input_tokens=%d output_tokens=%d cache_read_tokens=%d\n",
-			label(item), item.Calls, item.CapturedCalls, item.TotalTokens, item.InputTokens, item.OutputTokens, item.CacheReadTokens)
+		fmt.Fprintf(stdout, "  %s: %s\n", label(item), usageBreakdownDetail(item))
 	}
+}
+
+// usageBreakdownDetail renders one breakdown row's token detail. A row with no
+// captured calls is unknown usage — the agent reported nothing — so it is
+// annotated honestly rather than printed as a misleading zero. Captured rows
+// (including genuine zero-token rows) print their counts, effective units, and,
+// where input exists, the cache hit rate; a mixed row whose tokens cover only
+// some of its calls flags the uncaptured remainder, and a trailing note flags
+// any calls whose provider has no effective-unit multipliers.
+func usageBreakdownDetail(item usageBreakdown) string {
+	if item.Calls > 0 && item.CapturedCalls == 0 {
+		return fmt.Sprintf("calls=%d, usage not reported by the agent", item.Calls)
+	}
+	detail := fmt.Sprintf("calls=%d captured=%d total_tokens=%d input_tokens=%d output_tokens=%d cache_read_tokens=%d effective_units=%.2f",
+		item.Calls, item.CapturedCalls, item.TotalTokens, item.InputTokens, item.OutputTokens, item.CacheReadTokens, item.EffectiveUnits)
+	if item.InputTokens > 0 {
+		detail += fmt.Sprintf(" cache_hit_rate=%.2f%%", item.CacheReadRatio*100)
+	}
+	if item.UncapturedCalls > 0 {
+		detail += fmt.Sprintf(" (%d calls: usage not reported)", item.UncapturedCalls)
+	}
+	if item.EffectiveUnitsUnavailableCalls > 0 {
+		detail += " effective units unavailable"
+	}
+	return detail
 }

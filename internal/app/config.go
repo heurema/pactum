@@ -53,16 +53,10 @@ type clarifyConfig struct {
 }
 
 type reviewConfig struct {
-	MaxRounds   int                `yaml:"max_rounds"`
-	Patience    int                `yaml:"patience"`
-	CleanRounds int                `yaml:"clean_rounds"`
-	Budget      reviewBudgetConfig `yaml:"budget"`
-	Panel       []string           `yaml:"panel"`
-}
-
-type reviewBudgetConfig struct {
-	Mode      string `yaml:"mode"`
-	MaxTokens *int64 `yaml:"max_tokens"`
+	MaxRounds   int      `yaml:"max_rounds"`
+	Patience    int      `yaml:"patience"`
+	CleanRounds int      `yaml:"clean_rounds"`
+	Panel       []string `yaml:"panel"`
 }
 
 // timeoutsConfig carries the project-wide timeout defaults for the
@@ -118,11 +112,7 @@ func defaultConfigFile() configFile {
 			MaxRounds:   10,
 			Patience:    2,
 			CleanRounds: 1,
-			Budget: reviewBudgetConfig{
-				Mode:      budgetModeBlock,
-				MaxTokens: nil,
-			},
-			Panel: []string{},
+			Panel:       []string{},
 		},
 		// No Timeouts: the generated config carries only deviations from the
 		// built-in defaults, and the absent section falls back to
@@ -161,6 +151,9 @@ func readConfig(path string) (configFile, error) {
 	if err != nil {
 		return configFile{}, err
 	}
+	if err := rejectRemovedReviewBudget(data); err != nil {
+		return configFile{}, err
+	}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	// Reject unknown keys so removed or mistyped keys fail loudly instead of
 	// accumulating silently as dead config.
@@ -176,11 +169,6 @@ func readConfig(path string) (configFile, error) {
 		return configFile{}, err
 	}
 	config.Gate.ScopeEnforcement = scopeEnforcement
-	budgetMode, err := normalizeBudgetMode(config.Review.Budget.Mode)
-	if err != nil {
-		return configFile{}, err
-	}
-	config.Review.Budget.Mode = budgetMode
 	idleTimeout, err := normalizeIdleTimeout(config.Timeouts.Idle)
 	if err != nil {
 		return configFile{}, err
@@ -328,15 +316,23 @@ func resolveIdleTimeout(configPath string, override time.Duration) (time.Duratio
 	return time.ParseDuration(config.Timeouts.Idle)
 }
 
-func normalizeBudgetMode(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return budgetModeBlock, nil
+// rejectRemovedReviewBudget fails loudly on a leftover review.budget key. The
+// budget surface gated nothing real and was removed; a designed budget feature
+// will return later (see docs/cost-budget-design.md). The strict decoder would
+// already reject the now-unknown key, but this names the full review.budget
+// path so the migration is obvious rather than a bare "field budget not found".
+func rejectRemovedReviewBudget(data []byte) error {
+	var probe struct {
+		Review struct {
+			Budget yaml.Node `yaml:"budget"`
+		} `yaml:"review"`
 	}
-	switch value {
-	case budgetModeBlock, budgetModeWarn:
-		return value, nil
-	default:
-		return "", fmt.Errorf("config review.budget.mode must be %q or %q, got %q", budgetModeBlock, budgetModeWarn, value)
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		// Leave the real parse error to the strict decoder below.
+		return nil
 	}
+	if !probe.Review.Budget.IsZero() {
+		return errors.New("config review.budget was removed; delete it (budget enforcement will return later, see docs/cost-budget-design.md)")
+	}
+	return nil
 }
