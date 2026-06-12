@@ -48,11 +48,13 @@ make build VERSION=0.1.0   # sets `pactum version` output
 Other useful targets:
 
 ```sh
-make test     # go test ./...
-make vet      # go vet ./...
-make check    # test + vet + git diff --check
-make smoke    # build + run scripts/smoke.sh
-make clean    # remove ./bin
+make test             # go test ./...
+make vet              # go vet ./...
+make check            # test + vet + deadcode + git diff --check
+make vuln             # govulncheck ./... (pinned via the go.mod tool directive)
+make heurema-hygiene  # scan committed .heurema run records for local paths/credentials
+make smoke            # build + run scripts/smoke.sh
+make clean            # remove ./bin
 ```
 
 ## Install into your Go bin
@@ -124,7 +126,8 @@ cleans up.
 ## Continuous integration
 
 GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on every pull
-request and push to `main`: `make check`, `make build`, and `scripts/smoke.sh`.
+request and push to `main`: `make check`, `make heurema-hygiene`, `make build`,
+and `scripts/smoke.sh`, plus separate `make test-race` and `make vuln` jobs.
 CI does not need `codex`/`claude` installed and never runs a real agent.
 
 See [CHANGELOG.md](../CHANGELOG.md) for notable changes. Everything is currently

@@ -221,6 +221,8 @@ pactum version
 
 Every pull request and push to `main` runs GitHub Actions
 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)), which executes the same
-local checks shipped in this repo: `make check` (tests, vet, and
-`git diff --check`), `make build`, and `scripts/smoke.sh`. CI does not require
-`codex`/`claude` to be installed and never runs a real agent.
+local checks shipped in this repo: `make check` (tests, vet, deadcode, and
+`git diff --check`), `make heurema-hygiene` (the committed run-record leak
+gate), `make build`, and `scripts/smoke.sh`, plus separate `make test-race`
+and `make vuln` (govulncheck) jobs. CI does not require `codex`/`claude` to be
+installed and never runs a real agent.

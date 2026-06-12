@@ -24,6 +24,6 @@ Instructions for coding agents working in this repository.
 
 ## Before reporting code changes
 
-- Run `make check` (tests, vet, and the whitespace/conflict-marker check).
+- Run `make check` (tests, vet, deadcode, and the whitespace/conflict-marker check).
 - Report failures honestly with their output; do not claim code changed unless
   it actually changed.
