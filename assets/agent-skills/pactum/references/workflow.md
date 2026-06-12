@@ -34,12 +34,17 @@ design. Always confirm against the actual files before relying on them.
 
 5. **Search and read.** Run targeted searches rather than one long sentence:
    - identifiers: `pactum search "formatCurrency"`
+   - known symbols: `pactum search --symbol formatCurrency` (exact,
+     case-insensitive; no positional query needed)
    - paths: `pactum search "apps/admin/src/lib/format.ts"`
    - domain terms: `pactum search "currency"`
    - filters: `--kind wiki`, `--kind code_item`, `--kind import`
-   Then read `map/wiki/overview.md`, `structure.md`, `entrypoints.md`,
-   `commands.md`, the relevant `areas/<area>.md`, and the actual source files.
-   `--kind code_item` excludes imports; `--kind import` returns them.
+   Code-item results carry a `path:start-end` range and signature — read that
+   line range directly instead of scanning the whole file (line numbers hold
+   until you edit the file). Then read `map/wiki/overview.md`,
+   `structure.md`, `entrypoints.md`, `commands.md`, the relevant
+   `areas/<area>.md`, and the actual source files. `--kind code_item`
+   excludes imports; `--kind import` returns them.
 
 6. **Clarify if needed.** For anything ambiguous:
    `pactum clarify add "..." --blocking`, then record the answer. A typed

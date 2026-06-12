@@ -454,7 +454,7 @@ func (c *memoryStaleCmd) Run(r *runner) error {
 }
 
 func (c *searchCmd) Run(r *runner) error {
-	return r.App.Search(r.Stdout, c.Query, c.Limit, c.Kind, c.JSONOutput)
+	return r.App.Search(r.Stdout, c.Query, c.Limit, c.Kind, c.Symbol, c.JSONOutput)
 }
 
 func (c *mapRefreshCmd) Run(r *runner) error {

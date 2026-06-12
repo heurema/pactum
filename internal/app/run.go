@@ -442,6 +442,10 @@ func buildRunSearchResults(paths artifacts.Paths, mapStatus projectMapStatus, qu
 			result.Warnings = append(result.Warnings, "Search index is missing. Run: pactum map refresh.")
 			return result
 		}
+		if searchpkg.IsStaleIndex(err) {
+			result.Warnings = append(result.Warnings, "Search index is stale. Run: pactum map refresh.")
+			return result
+		}
 		result.Warnings = append(result.Warnings, "Search failed: "+err.Error())
 		return result
 	}
@@ -450,10 +454,12 @@ func buildRunSearchResults(paths artifacts.Paths, mapStatus projectMapStatus, qu
 }
 
 // runContextSearch runs each targeted query through the local index and merges
-// the hits, deduping by (kind, path, title, code_kind). Earlier queries are
-// more important: results are kept in query order, then result order within a
-// query, capped at limit. This is deterministic first-pass retrieval, not
-// semantic ranking.
+// the hits, deduping by document ID so distinct code_item symbols — same name,
+// kind, and path but different parents or ranges — each keep their address;
+// only the same underlying result resurfaced by multiple queries collapses.
+// Earlier queries are more important: results are kept in query order, then
+// result order within a query, capped at limit. This is deterministic
+// first-pass retrieval, not semantic ranking.
 func runContextSearch(dbPath string, queries []string, limit int) ([]runSearchResultItem, error) {
 	if limit <= 0 {
 		limit = runContextSearchLimit
@@ -488,11 +494,10 @@ func runContextSearch(dbPath string, queries []string, limit int) ([]runSearchRe
 				continue
 			}
 			hit := results[pos]
-			key := hit.Kind + "\x00" + hit.Path + "\x00" + hit.Title + "\x00" + hit.CodeKind
-			if seen[key] {
+			if seen[hit.ID] {
 				continue
 			}
-			seen[key] = true
+			seen[hit.ID] = true
 			ordered = append(ordered, runSearchResultItem{Result: hit, SourceQuery: queries[i]})
 		}
 	}

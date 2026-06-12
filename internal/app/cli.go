@@ -341,8 +341,9 @@ type versionCmd struct {
 }
 
 type searchCmd struct {
-	Query      string `arg:"" name:"query" help:"Search query."`
+	Query      string `arg:"" optional:"" name:"query" help:"Search query. Optional when --symbol is given."`
 	Limit      int    `help:"Maximum number of results." default:"10"`
 	Kind       string `help:"Document kind filter." default:"any" enum:"any,repo_map,llms,wiki,file,code_item,import"`
+	Symbol     string `name:"symbol" help:"Restrict to code_item hits whose symbol name matches exactly (case-insensitive)."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }

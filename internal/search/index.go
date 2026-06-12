@@ -9,6 +9,13 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// indexSchemaVersion marks the stored shape of the search index. Bump it
+// whenever the documents table or FTS layout changes so an index written by an
+// older binary is detected as stale (see ensureSchemaCurrent) rather than read
+// with the wrong columns. v2 added the code_item start_line/end_line/signature
+// columns.
+const indexSchemaVersion = "pactum.search.index.v2"
+
 func Rebuild(dbPath string, input IndexInput) error {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return err
@@ -31,6 +38,10 @@ func Rebuild(dbPath string, input IndexInput) error {
 
 func createSchema(db *sql.DB) error {
 	statements := []string{
+		`CREATE TABLE meta (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		)`,
 		`CREATE TABLE documents (
 			id TEXT PRIMARY KEY,
 			kind TEXT NOT NULL,
@@ -39,7 +50,10 @@ func createSchema(db *sql.DB) error {
 			body TEXT NOT NULL,
 			language TEXT,
 			code_kind TEXT,
-			created_at TEXT NOT NULL
+			created_at TEXT NOT NULL,
+			start_line INTEGER NOT NULL DEFAULT 0,
+			end_line INTEGER NOT NULL DEFAULT 0,
+			signature TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE VIRTUAL TABLE documents_fts USING fts5(
 			title,
@@ -53,6 +67,9 @@ func createSchema(db *sql.DB) error {
 			return fmt.Errorf("create search schema: %w", err)
 		}
 	}
+	if _, err := db.Exec(`INSERT INTO meta (key, value) VALUES ('schema_version', ?)`, indexSchemaVersion); err != nil {
+		return fmt.Errorf("create search schema: %w", err)
+	}
 	return nil
 }
 
@@ -63,7 +80,7 @@ func insertDocuments(db *sql.DB, documents []Document) error {
 	}
 	defer tx.Rollback()
 
-	docStmt, err := tx.Prepare(`INSERT INTO documents (id, kind, path, title, body, language, code_kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+	docStmt, err := tx.Prepare(`INSERT INTO documents (id, kind, path, title, body, language, code_kind, created_at, start_line, end_line, signature) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -85,6 +102,9 @@ func insertDocuments(db *sql.DB, documents []Document) error {
 			document.Language,
 			document.CodeKind,
 			document.CreatedAt,
+			document.StartLine,
+			document.EndLine,
+			document.Signature,
 		)
 		if err != nil {
 			return err

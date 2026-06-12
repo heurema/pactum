@@ -1,5 +1,7 @@
 schema: pactum.config.v1
 agents:
+  - name: opus
+    model: claude-opus-4-8
   - name: fable
     model: claude-fable-5
   - name: codex

@@ -70,6 +70,16 @@ entrypoints/commands/config wiki pages get a modest boost, and an exact
 title/path-basename match gets a small boost. It is a light reordering of
 near-equal matches, not a relevance model.
 
+Code-item hits are symbol-addressable: results carry the symbol's line range
+and signature, rendered as `path:start-end`, so the consumer (usually an
+agent) can read exactly that range instead of scanning the file (`--json`
+adds `start_line`/`end_line`/`signature` on `code_item` results only).
+`pactum search --symbol <name>` resolves a known identifier directly: the
+positional query becomes optional, matching is exact and case-insensitive on
+the symbol name, duplicates across packages return in deterministic
+path/range order, and `--symbol` combines only with `--kind code_item` (or
+the default `any`).
+
 ### Task
 
 `pactum task new "<task>"` creates a run directory and a **draft contract**. The

@@ -208,20 +208,39 @@ func writeWorkspaceStatus(stdout io.Writer, report statusResponse) {
 	fmt.Fprintf(stdout, "  estimated cost: $%.2f\n", report.Usage.EstimatedCostUSD)
 }
 
-func (a App) Search(stdout io.Writer, query string, limit int, kind string, jsonOutput bool) error {
+func (a App) Search(stdout io.Writer, query string, limit int, kind string, symbol string, jsonOutput bool) error {
+	symbol = strings.TrimSpace(symbol)
+	if symbol != "" {
+		normalizedKind, err := searchpkg.NormalizeKind(kind)
+		if err != nil {
+			return err
+		}
+		if normalizedKind != searchpkg.KindAny && normalizedKind != searchpkg.KindCodeItem {
+			return fmt.Errorf("--symbol only applies to code_item results; drop --kind %s", normalizedKind)
+		}
+	}
+	if strings.TrimSpace(query) == "" && symbol == "" {
+		return errors.New("usage: pactum search <query>, or pactum search --symbol <name>")
+	}
+
 	_, paths, ok, err := a.requireWorkspace(stdout, false)
 	if err != nil || !ok {
 		return err
 	}
 
 	response, err := searchpkg.Query(paths.SearchSQLite, searchpkg.QueryOptions{
-		Query: query,
-		Limit: limit,
-		Kind:  kind,
+		Query:  query,
+		Limit:  limit,
+		Kind:   kind,
+		Symbol: symbol,
 	})
 	if err != nil {
 		if searchpkg.IsMissingIndex(err) {
 			fmt.Fprintln(stdout, "Search index is missing. Run: pactum map refresh")
+			return nil
+		}
+		if searchpkg.IsStaleIndex(err) {
+			fmt.Fprintln(stdout, "Search index is stale. Run: pactum map refresh")
 			return nil
 		}
 		return err
@@ -267,13 +286,16 @@ func writeSearchResults(stdout io.Writer, response searchpkg.Response) {
 		return
 	}
 	for _, result := range response.Results {
-		fmt.Fprintf(stdout, "%d. %s %s\n", result.Rank, result.Kind, result.Path)
+		fmt.Fprintf(stdout, "%d. %s %s\n", result.Rank, result.Kind, result.Address())
 		switch result.Kind {
 		case searchpkg.KindCodeItem, searchpkg.KindImport:
 			fmt.Fprintf(stdout, "   kind: %s\n", result.CodeKind)
 			fmt.Fprintf(stdout, "   name: %s\n", result.Title)
 			if result.Language != "" {
 				fmt.Fprintf(stdout, "   language: %s\n", result.Language)
+			}
+			if result.Signature != "" {
+				fmt.Fprintf(stdout, "   signature: %s\n", result.Signature)
 			}
 		case searchpkg.KindFile:
 			if result.Language != "" {
