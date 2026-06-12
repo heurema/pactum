@@ -1,0 +1,43 @@
+{
+  "schema": "pactum.review_fix_dry_run.v1",
+  "run_id": "run_20260612_161619",
+  "created_at": "2026-06-12T17:08:13Z",
+  "fixer": {
+    "name": "claude",
+    "command": "claude",
+    "args": [
+      "-p",
+      "--output-format",
+      "json",
+      "--dangerously-skip-permissions",
+      "--model",
+      "claude-opus-4-8"
+    ],
+    "input": "prompt_file"
+  },
+  "checks": {
+    "review_prepared": true,
+    "findings_ready": true,
+    "contract_approved": true
+  },
+  "artifacts": {
+    "fixer_prompt": "review/fix/fixer-prompt.md",
+    "fixer_context": "review/fix/fixer-context.md",
+    "review": "review/review.json",
+    "findings": "review/findings.jsonl",
+    "resolutions": "review/resolutions.jsonl",
+    "contract": "contract/contract.json"
+  },
+  "would_run": {
+    "command": "claude",
+    "args": [
+      "-p",
+      "--output-format",
+      "json",
+      "--dangerously-skip-permissions",
+      "--model",
+      "claude-opus-4-8"
+    ],
+    "stdin": ".heurema/pactum/runs/run_20260612_161619/review/fix/fixer-prompt.md"
+  }
+}

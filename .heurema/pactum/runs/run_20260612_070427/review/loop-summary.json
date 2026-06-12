@@ -1,0 +1,100 @@
+{
+  "schema": "pactum.review_loop.v1",
+  "run_id": "run_20260612_070427",
+  "started_at": "2026-06-12T07:37:23Z",
+  "finished_at": "2026-06-12T07:47:41Z",
+  "reviewer": "fable,codex",
+  "reviewers": [
+    "fable",
+    "codex"
+  ],
+  "agent": "claude",
+  "max_rounds": 10,
+  "stalemate_patience": 2,
+  "clean_rounds_required": 1,
+  "terminal_reason": "resolved",
+  "rounds": [
+    {
+      "round": 1,
+      "reviewer_attempt_id": "reviewer_attempt_007",
+      "reviewer_attempt_ids": [
+        "reviewer_attempt_007",
+        "reviewer_attempt_009",
+        "reviewer_attempt_005",
+        "reviewer_attempt_010",
+        "reviewer_attempt_003",
+        "reviewer_attempt_004",
+        "reviewer_attempt_002",
+        "reviewer_attempt_008",
+        "reviewer_attempt_006",
+        "reviewer_attempt_001"
+      ],
+      "reviewer_attempts": [
+        {
+          "attempt_id": "reviewer_attempt_007",
+          "reviewer": "fable",
+          "lens": "correctness"
+        },
+        {
+          "attempt_id": "reviewer_attempt_009",
+          "reviewer": "fable",
+          "lens": "implementation"
+        },
+        {
+          "attempt_id": "reviewer_attempt_005",
+          "reviewer": "fable",
+          "lens": "tests"
+        },
+        {
+          "attempt_id": "reviewer_attempt_010",
+          "reviewer": "fable",
+          "lens": "over_engineering"
+        },
+        {
+          "attempt_id": "reviewer_attempt_003",
+          "reviewer": "fable",
+          "lens": "docs"
+        },
+        {
+          "attempt_id": "reviewer_attempt_004",
+          "reviewer": "codex",
+          "lens": "correctness"
+        },
+        {
+          "attempt_id": "reviewer_attempt_002",
+          "reviewer": "codex",
+          "lens": "implementation"
+        },
+        {
+          "attempt_id": "reviewer_attempt_008",
+          "reviewer": "codex",
+          "lens": "tests"
+        },
+        {
+          "attempt_id": "reviewer_attempt_006",
+          "reviewer": "codex",
+          "lens": "over_engineering"
+        },
+        {
+          "attempt_id": "reviewer_attempt_001",
+          "reviewer": "codex",
+          "lens": "docs"
+        }
+      ],
+      "proposals_created": 13,
+      "proposals_accepted": 13,
+      "open_findings": 10,
+      "open_blocking_findings": 0,
+      "clean_streak": 0,
+      "unchanged_fingerprint_streak": 0,
+      "working_tree_fingerprint": "cff86f0cbc0ccc68d94044350b9a5d451198413183aeafc8e09436f94829a71f",
+      "fixer_attempt_id": "attempt_001",
+      "fix_outcomes_resolved": 3,
+      "gate_status": "needs_review",
+      "gate_report_artifact": "gate/gate-report.json"
+    }
+  ],
+  "artifacts": {
+    "summary": "review/loop-summary.json"
+  }
+}

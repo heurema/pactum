@@ -1,0 +1,553 @@
+{
+  "schema": "pactum.memory_candidate.v1",
+  "run_id": "run_20260612_161619",
+  "created_at": "2026-06-12T17:26:56Z",
+  "source": "deterministic",
+  "status": "proposed",
+  "freshness_pin": {
+    "schema": "pactum.memory_freshness_pin.v1",
+    "review_state_sha256": "de8bd21ccc0d9d1bfc8193a5e03b2b35a744491e6b45650555f6fd3751c3f08f"
+  },
+  "contract": {
+    "goal": "Combined config and usage polish slice. (1) Hide the unfinished budget surface: review.budget (mode/max_tokens) gates nothing real — remove it from the config surface entirely: writeDefaultConfigIfMissing stops emitting it, readConfig rejects a leftover review.budget key with a loud configuration error naming the key (the same pattern as the removed agent: key), and the warn-mode budget plumbing in the review loop is deleted. Token accounting in the usage ledger and the usage command are untouched by the removal; budget enforcement returns later as a designed feature whose home is docs/cost-budget-design.md. (2) Usage display polish: pactum usage --all leads with the workspace summary, sorts the per-run rows by total tokens descending, and gains a --top N flag to cap the run list; uncaptured calls stop rendering as zero-valued rows — by-agent and by-run breakdowns annotate them honestly (for example: codex — N calls, usage not reported by the agent) and zero-token captured rows remain distinguishable from uncaptured ones. (3) Effective cost units: usage output (per-run and --all, human and JSON) adds an effective-units metric computed per provider with documented multipliers — for anthropic: fresh input x1.0, cache write x1.25, cache read x0.1, output x5.0; for codex/openai: fresh input x1.0 (cache writes are free and count as fresh), cached read x0.1, output x5.0 — the multipliers live as named constants with a comment citing the standard price ratios, and a per-stage/per-attempt cache hit-rate (cache_read / (fresh + cache_write + cache_read)) is shown where cache fields exist. (4) Map staleness pin narrowed: the map manifest currently pins the SHA-256 of the whole config.yaml, so editing agents or review.panel falsely invalidates the map; pin a deterministic hash of only the canonicalized map: config section instead — map-parameter changes still invalidate, other config edits do not; a legacy manifest holding the old whole-file hash is treated as stale once (one final refresh migrates it). (5) docs/cost-budget-design.md gains a verified cache-economics section recording the researched facts the future budget feature must account in: per-provider write/read multipliers, cache scoping (anthropic org+workspace, machine+directory effective scope for Claude Code; openai machine-local routing with prompt_cache_key), the concurrent cold-start write race and the staggered-launch savings model for panel fan-out (planned as its own slice), and the rule that budgets must be denominated in effective units rather than raw tokens. Usage docs (flow.md or wherever usage is documented) and CHANGELOG updated; tests pin the budget-key rejection, the sorted/top output, the uncaptured annotation, the effective-units math per provider, the hit-rate, and the map-pin behavior (agents-edit keeps map fresh, map-edit invalidates, legacy manifest migrates).",
+    "in_scope": [
+      "Remove `review.budget` from the default config, typed config surface, config normalization, and review-loop budget checks while preserving usage ledger recording and `pactum usage` aggregation.",
+      "Make `readConfig` reject any leftover `review.budget` key with a loud configuration error that names `review.budget`.",
+      "Update `pactum usage --all` human and JSON output so workspace totals are shown before run breakdowns, `by_run` rows sort by total captured tokens descending, and `--top N` caps only the sorted `by_run` list.",
+      "Add `effective_units` as a computed float64 JSON number to usage totals and token-count breakdowns, render it in human output with two decimal places, and keep it out of persisted `UsageRecord` records.",
+      "Compute effective units with named provider multiplier constants for Anthropic, Codex, and OpenAI, with source-ratio comments near the constants.",
+      "Treat `captured=false` usage records as unknown usage regardless of token fields: count them as uncaptured calls, exclude them from token totals and effective units, and annotate them in human output as usage not reported.",
+      "Keep captured zero-token records visible as real zero-token records distinct from uncaptured calls.",
+      "Retain `cache_read_ratio` in JSON for compatibility, label it as cache hit rate in human output, and add per-run `by_attempt` rows keyed by `attempt_id` with stage, agent, provider, token counts, `effective_units`, and `cache_read_ratio`.",
+      "For unsupported or unknown providers, preserve raw token totals but report `effective_units` as 0, add `effective_units_unavailable_calls` at relevant aggregate levels, and annotate affected human rows as effective units unavailable.",
+      "Change map staleness detection to hash a deterministic serialization of the normalized `config.Map` struct only, add `config_hash_scope: \"map\"` to refreshed manifests, and treat manifests missing that scope marker as legacy stale once.",
+      "Update `docs/cost-budget-design.md`, usage documentation, and `CHANGELOG.md` for the removed budget config surface, usage output changes, effective-unit semantics, cache-hit wording, and map hash scope behavior."
+    ],
+    "out_of_scope": [
+      "Do not implement a new budget enforcement feature, dollar-cost budgeting, cost estimation, or panel fan-out staggering.",
+      "Do not change the persisted `UsageRecord` schema to store `effective_units`.",
+      "Do not add `effective_units`, `by_attempt`, or cache-hit wording changes to `pactum status` except for unavoidable compile-time sharing fallout.",
+      "Do not make tests depend on live network access or live provider documentation.",
+      "Do not run real Pactum agent execution or review commands as part of this slice."
+    ],
+    "acceptance_criteria": [
+      "A newly written default config contains no `review.budget` block or budget mode/max_tokens keys.",
+      "A config file containing `review.budget` fails strict config loading with an error message that names `review.budget`.",
+      "Review execution no longer stops, warns, records budget summaries, or emits `budget_exceeded` because of `review.budget`; usage records are still appended normally.",
+      "`pactum usage --all` human output starts with the workspace summary before per-run rows.",
+      "`pactum usage --all --json` returns `by_run` sorted by total captured tokens descending, and `--top N` returns only the first N sorted run rows while totals and other breakdowns still aggregate all runs.",
+      "`pactum usage --top N` without `--all` fails with a usage error, and `--top 0` or a negative top value fails with a usage error naming `--top`.",
+      "Per-run and workspace usage JSON include `effective_units` on totals and token-count breakdowns; human output renders effective units with exactly two decimal places.",
+      "Anthropic effective units use fresh input x1.0, cache write x1.25, cache read x0.1, and output x5.0; Codex/OpenAI effective units use fresh input x1.0, cached read x0.1, and output x5.0 with cache writes counted as fresh/free according to the clarified rule.",
+      "Uncaptured calls contribute to call counts and `uncaptured_calls`, do not contribute to token totals or effective units, and render as usage not reported rather than as zero-token rows.",
+      "Captured zero-token calls remain distinguishable from uncaptured calls in JSON counts and human output.",
+      "Per-run usage JSON includes `by_attempt` rows keyed by `attempt_id` with stage, agent, provider, token counts, `effective_units`, and `cache_read_ratio`; workspace usage JSON does not add `by_attempt`.",
+      "Human usage output labels the existing cache ratio as cache hit rate, while JSON keeps the `cache_read_ratio` field name.",
+      "Unsupported-provider captured rows keep raw token totals, report `effective_units: 0`, increment `effective_units_unavailable_calls`, and human output marks effective units unavailable.",
+      "Editing non-map config sections such as agents or review panel settings does not make the project map stale, while editing `map.max_file_bytes` or `map.code_index` does.",
+      "A legacy map manifest without `config_hash_scope` is reported stale once, and the next map refresh writes `config_hash_scope: \"map\"` with the map-section hash.",
+      "`docs/cost-budget-design.md` cites current official provider documentation where available and explicitly labels any unsupported cache-scope or routing facts as implementation assumptions."
+    ],
+    "validation_commands": [
+      "go test ./internal/app ./internal/agents ./internal/docs",
+      "make check"
+    ]
+  },
+  "outcome": {
+    "gate_status": "needs_review",
+    "review_status": "approved",
+    "execution_exit_code": 0,
+    "validation_passed": true,
+    "changes_need_review": true
+  },
+  "changes": {
+    "changed_files": [
+      "docs/backlog.md",
+      "docs/loop-architecture-design.md",
+      "internal/app/map.go",
+      "internal/app/usage.go",
+      "internal/app/usage_test.go"
+    ],
+    "new_files": [],
+    "missing_files": []
+  },
+  "clarifications": [
+    {
+      "question_id": "q_001",
+      "question": "What concrete JSON and human-output shape is intended for the new \"effective-units\" metric: a floating-point `effective_units` field on totals and each usage breakdown, or a different name/type?",
+      "answer": "Add `effective_units` as a JSON number (float64) to the total usage counts and to each usage breakdown that reports token counts; render it in human output with two decimal places. Do not persist it in `UsageRecord`; compute it on demand from ledger records."
+    },
+    {
+      "question_id": "q_002",
+      "question": "For the requested \"per-stage/per-attempt cache hit-rate\", does \"per-attempt\" mean adding a new per-run `by_attempt` breakdown keyed by `attempt_id`, or only showing the existing aggregate cache ratio on stage rows?",
+      "answer": "Keep the ledger unchanged, retain the existing `cache_read_ratio` JSON field for compatibility, label it as cache hit rate in human output, and add per-run `by_attempt` rows keyed by `attempt_id` with stage, agent, provider, token counts, effective_units, and cache_read_ratio. Workspace output does not need `by_attempt`."
+    },
+    {
+      "question_id": "q_003",
+      "question": "Should `status` output also gain `effective_units` and the updated cache-hit-rate wording, or is this slice limited to `pactum usage` output?",
+      "answer": "Limit this slice to `pactum usage` per-run and `pactum usage --all`, in both human and JSON output. Leave `status` usage fields unchanged except for any compile-time fallout from shared helper refactors."
+    },
+    {
+      "question_id": "q_004",
+      "question": "For `pactum usage --all --top N`, should `N` cap only the sorted `by_run` list while workspace totals and other breakdowns still include all runs, and should non-positive values be rejected?",
+      "answer": "`--top N` is valid only with `--all`; reject `N \u003c= 0` with a usage error naming `--top`. Sort all run rows by total tokens descending, then cap only `by_run` in human and JSON output. Workspace totals, run count, calls, and by-stage/by-agent/by-model breakdowns continue to aggregate every run."
+    },
+    {
+      "question_id": "q_005",
+      "question": "If an uncaptured ledger record has non-zero token fields, should those token fields contribute to token totals and effective_units, or should `captured=false` always mean usage is unknown?",
+      "answer": "Treat `captured=false` as unknown usage regardless of token fields: count the call under `uncaptured_calls`, exclude it from token totals and effective_units, and annotate it as usage not reported. A `captured=true` record with zero tokens remains a real zero and appears in totals as zero."
+    },
+    {
+      "question_id": "q_006",
+      "question": "How should effective_units handle records whose provider is empty, `unknown`, or a future custom provider rather than `anthropic`, `codex`, or `openai`?",
+      "answer": "For unknown or unsupported providers, do not add to effective_units; keep raw token totals and captured/uncaptured counts. In human output, annotate unsupported-provider rows as `effective units unavailable`; in JSON, expose `effective_units` as 0 for those rows and include an `effective_units_unavailable_calls` count at the relevant aggregate levels."
+    },
+    {
+      "question_id": "q_007",
+      "question": "What exactly should \"canonicalized map: config section\" mean for the map staleness hash: raw YAML subtree bytes, or the normalized `mapConfig` struct after `readConfig`?",
+      "answer": "Hash a deterministic serialization of the normalized `config.Map` struct after `readConfig`, including `max_file_bytes` and normalized `code_index`, not raw YAML bytes. Comments, key order, and unrelated config sections must not affect the hash."
+    },
+    {
+      "question_id": "q_008",
+      "question": "Should the map manifest add an explicit hash-scope marker when changing `config_hash` from whole-file to map-section semantics?",
+      "answer": "Keep `config_hash` for the hash value and add a manifest field such as `config_hash_scope: \"map\"` on refresh. Treat manifests missing `config_hash_scope` as legacy whole-file pins: report stale once, and after refresh write the map-section hash plus the scope marker."
+    },
+    {
+      "question_id": "q_009",
+      "question": "For the \"verified cache-economics\" docs section, what source standard should count as verified: current official provider docs with citations, or the facts already listed in the contract draft without external citations?",
+      "answer": "Verify against current official OpenAI/Codex and Anthropic/Claude documentation where available, cite the provider URLs in `docs/cost-budget-design.md`, and record any unsupported or inferred facts explicitly as implementation assumptions. Do not make tests depend on live network access."
+    }
+  ],
+  "review": {
+    "findings": [
+      {
+        "id": "f_001",
+        "message": "by_attempt rows are keyed only by attempt_id, but attempt IDs collide across stages: execute (execute.go:85-87) and review-fix (review_fix.go:110-112) both use the \"attempt\" prefix with numbering restarting at 1 in separate attempts directories, so a run with an execute attempt and a fixer round has two usage records with attempt_id=\"attempt_001\" (stages execute/fix). accumulateUsageByAttempt merges them into one row — tokens, effective_units, and cache_read_ratio summed across two distinct attempts — labeled with the stage/agent/provider of whichever record is first in the ledger. usageRecordID already hashes runID+attemptID+stage because of this exact collision. Key the by_attempt map by stage+attempt_id instead.",
+        "severity": "medium",
+        "category": "correctness",
+        "file": "internal/app/usage.go",
+        "line": 407,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "accumulateUsageByAttempt (internal/app/usage.go) now keys the by_attempt map by stage+\\x00+attempt_id instead of attempt_id alone, so execute attempt_001 and fix attempt_001 no longer merge into one row; the row's attempt_id field still carries the bare ID, with stage distinguishing colliding IDs. Added TestUsagePerRunByAttemptStageScopedKeys."
+      },
+      {
+        "id": "f_002",
+        "message": "mapConfigHash hashes the raw decoded code_index string, but the contract (scope item and q_007) requires hashing the normalized config.Map; the effective mode is normalized downstream by codeindex.NormalizeMode, which folds \"\" and unknown values into \"auto\". Deleting the code_index: auto line (raw value becomes \"\") therefore changes the hash and falsely reports the map stale even though the effective scan behavior is unchanged. False staleness only — one extra refresh; no false-freshness path.",
+        "severity": "low",
+        "category": "correctness",
+        "file": "internal/app/map.go",
+        "line": 34,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_003",
+        "message": "mapConfigHash hashes the raw, un-normalized code_index string. readConfig does not normalize config.Map (codeindex.NormalizeMode runs only inside projectmap.Scan, where \"\" and unrecognized values fold to \"auto\"), but contract clarification q_007 requires hashing the normalized config.Map struct including normalized code_index. Deleting the default `code_index: auto` line, or writing any alias NormalizeMode folds to auto, leaves scan behavior identical yet changes the hash, so status falsely reports the map stale — the false-invalidation class this slice targeted, now confined to the map section. Self-heals after one refresh; no literal acceptance criterion breaks.",
+        "severity": "low",
+        "category": "correctness",
+        "file": "internal/app/map.go",
+        "line": 34,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_004",
+        "message": "No test exercises the \"openai\" provider in effective-units math. recordEffectiveUnits has `case \"codex\", \"openai\"` but all fixtures use only codex and anthropic, so acceptance criterion 8's OpenAI multipliers (fresh x1.0, cached read x0.1, output x5.0, cache writes as fresh) are unverified; a regression splitting the shared case arm would pass the suite.",
+        "severity": "low",
+        "category": "quality",
+        "file": "internal/app/usage_test.go",
+        "line": 515,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_005",
+        "message": "Workspace (usage --all) effective_units is never asserted, in JSON or human output. Acceptance criterion 7 requires workspace JSON to include effective_units on totals and breakdowns; all EffectiveUnits assertions are in per-run tests. TestUsageAllAggregatesAcrossRuns and TestUsageAllSortsByRunDescendingWithTop check token totals and by_run ordering but not effective units, and the workspace human-output substring checks omit \"effective units:\".",
+        "severity": "low",
+        "category": "quality",
+        "file": "internal/app/usage_test.go",
+        "line": 282,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_006",
+        "message": "inspectProjectMap takes a configHash parameter that is now a pure derivation of the config parameter passed in the same call: workspaceStatus computes mapConfigHash(config.Map) and threads it through, but inspectProjectMap already receives config and is the hash's only consumer. The caller-side computation was justified when the hash required file I/O (storeFileSHA256); after this change it is leftover plumbing — compute the hash inside inspectProjectMap and drop the parameter.",
+        "severity": "low",
+        "category": "quality",
+        "file": "internal/app/status.go",
+        "line": 235,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_007",
+        "message": "docs/loop-architecture-design.md still presents review.budget.mode / review.budget.max_tokens as declared config surface (lines 14, 193, 263, 289) after this change removed the keys and made readConfig reject them with a loud error. The doc's claim 'the values are declared but unenforced — not new config surface' is now wrong: adding those keys fails config loading. The doc is maintained when config changes (its table annotates clarify.max_rounds with M16.0/M17.0 history) and now contradicts docs/cost-budget-design.md, the declared home of the future budget feature.",
+        "severity": "low",
+        "category": "quality",
+        "file": "docs/loop-architecture-design.md",
+        "line": 263,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_008",
+        "message": "Mixed captured/uncaptured usage breakdown rows are not annotated as having unreported usage.",
+        "severity": "medium",
+        "category": "correctness",
+        "file": "internal/app/usage.go",
+        "line": 613,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "usageBreakdownDetail (internal/app/usage.go) now appends '(N calls: usage not reported)' when a captured row also has uncaptured calls, so a mixed row keeps its captured token counts but flags the unreported remainder instead of silently dropping it. Added TestUsageMixedCapturedRowAnnotatesUnreported."
+      },
+      {
+        "id": "f_009",
+        "message": "Map config hashing uses raw map.code_index instead of the normalized map config.",
+        "severity": "medium",
+        "category": "correctness",
+        "file": "internal/app/map.go",
+        "line": 34,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "mapConfigHash (internal/app/map.go) now hashes codeindex.NormalizeMode(m.CodeIndex) — the same normalization projectmap.Scan applies — so the hash reflects the normalized map config: aliases and the empty default that all fold to 'auto' produce the same hash and no longer falsely invalidate the map."
+      },
+      {
+        "id": "f_010",
+        "message": "Per-run by_attempt aggregation keys only by attempt_id, so execute attempt_001 and fix attempt_001 collapse into one row with misleading stage/agent/provider metadata.",
+        "severity": "medium",
+        "category": "correctness",
+        "file": "internal/app/usage.go",
+        "line": 407,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "Same fix as f_001: accumulateUsageByAttempt now keys by stage+attempt_id, so per-run by_attempt aggregation keeps execute attempt_001 and fix attempt_001 as separate rows with correct per-stage stage/agent/provider metadata and unsummed tokens."
+      },
+      {
+        "id": "f_011",
+        "message": "Human breakdown rows with a mix of captured and uncaptured calls do not annotate that some calls had usage not reported.",
+        "severity": "medium",
+        "category": "correctness",
+        "file": "internal/app/usage.go",
+        "line": 614,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "Same fix as f_008: usageBreakdownDetail annotates the uncaptured remainder of a mixed captured/uncaptured human breakdown row with '(N calls: usage not reported)'."
+      },
+      {
+        "id": "f_012",
+        "message": "`usage --all` human ordering and `--top` behavior are not tested; only JSON sorting/capping is pinned.",
+        "severity": "medium",
+        "category": "quality",
+        "file": "internal/app/usage_test.go",
+        "line": 397,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_013",
+        "message": "Workspace effective-units aggregation is not asserted in tests.",
+        "severity": "medium",
+        "category": "quality",
+        "file": "internal/app/usage_test.go",
+        "line": 355,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_014",
+        "message": "Legacy map manifest migration test does not assert the refreshed map status is fresh.",
+        "severity": "low",
+        "category": "quality",
+        "file": "internal/app/app_test.go",
+        "line": 728,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": ""
+      },
+      {
+        "id": "f_015",
+        "message": "The backlog still documents the removed token budget stop as shipped/current, including `budget_exceeded`, and later still lists this exact config/usage polish slice as next work.",
+        "severity": "medium",
+        "category": "quality",
+        "file": "docs/backlog.md",
+        "line": 122,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "docs/backlog.md: the 'Loop stop conditions' and 'Cost/budget remaining slices' bullets no longer document the token budget stop / budget_exceeded as shipped — both now record it as removed in M25.1, returning later denominated in effective units. The 'Config + usage polish slice' entry is marked '(M25.1, shipped)' instead of 'next after the symbol-search slice'."
+      },
+      {
+        "id": "f_016",
+        "message": "The loop architecture design still tells readers that `review.budget.mode` / `review.budget.max_tokens` are the Phase 3 budget stop config, even though this change removes and rejects `review.budget`.",
+        "severity": "medium",
+        "category": "quality",
+        "file": "docs/loop-architecture-design.md",
+        "line": 193,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "docs/loop-architecture-design.md: the budget-stop bullet (line 193), the alignment-table row, the motivation declared-config list, and the 'budget block are declared' line no longer present review.budget.mode / review.budget.max_tokens as live config. Each now states the review.budget placeholder was removed in M25.1 and is rejected if present, with the designed budget stop's home in cost-budget-design.md."
+      }
+    ],
+    "proposal_summary": {
+      "pending": 0,
+      "accepted": 16,
+      "rejected": 0
+    }
+  },
+  "decisions": [
+    {
+      "kind": "scope",
+      "text": "in scope: Remove `review.budget` from the default config, typed config surface, config normalization, and review-loop budget checks while preserving usage ledger recording and `pactum usage` aggregation."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Make `readConfig` reject any leftover `review.budget` key with a loud configuration error that names `review.budget`."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Update `pactum usage --all` human and JSON output so workspace totals are shown before run breakdowns, `by_run` rows sort by total captured tokens descending, and `--top N` caps only the sorted `by_run` list."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Add `effective_units` as a computed float64 JSON number to usage totals and token-count breakdowns, render it in human output with two decimal places, and keep it out of persisted `UsageRecord` records."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Compute effective units with named provider multiplier constants for Anthropic, Codex, and OpenAI, with source-ratio comments near the constants."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Treat `captured=false` usage records as unknown usage regardless of token fields: count them as uncaptured calls, exclude them from token totals and effective units, and annotate them in human output as usage not reported."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Keep captured zero-token records visible as real zero-token records distinct from uncaptured calls."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Retain `cache_read_ratio` in JSON for compatibility, label it as cache hit rate in human output, and add per-run `by_attempt` rows keyed by `attempt_id` with stage, agent, provider, token counts, `effective_units`, and `cache_read_ratio`."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: For unsupported or unknown providers, preserve raw token totals but report `effective_units` as 0, add `effective_units_unavailable_calls` at relevant aggregate levels, and annotate affected human rows as effective units unavailable."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Change map staleness detection to hash a deterministic serialization of the normalized `config.Map` struct only, add `config_hash_scope: \"map\"` to refreshed manifests, and treat manifests missing that scope marker as legacy stale once."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Update `docs/cost-budget-design.md`, usage documentation, and `CHANGELOG.md` for the removed budget config surface, usage output changes, effective-unit semantics, cache-hit wording, and map hash scope behavior."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not implement a new budget enforcement feature, dollar-cost budgeting, cost estimation, or panel fan-out staggering."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not change the persisted `UsageRecord` schema to store `effective_units`."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not add `effective_units`, `by_attempt`, or cache-hit wording changes to `pactum status` except for unavoidable compile-time sharing fallout."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not make tests depend on live network access or live provider documentation."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not run real Pactum agent execution or review commands as part of this slice."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_001: What concrete JSON and human-output shape is intended for the new \"effective-units\" metric: a floating-point `effective_units` field on totals and each usage breakdown, or a different name/type? Answer: Add `effective_units` as a JSON number (float64) to the total usage counts and to each usage breakdown that reports token counts; render it in human output with two decimal places. Do not persist it in `UsageRecord`; compute it on demand from ledger records."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_002: For the requested \"per-stage/per-attempt cache hit-rate\", does \"per-attempt\" mean adding a new per-run `by_attempt` breakdown keyed by `attempt_id`, or only showing the existing aggregate cache ratio on stage rows? Answer: Keep the ledger unchanged, retain the existing `cache_read_ratio` JSON field for compatibility, label it as cache hit rate in human output, and add per-run `by_attempt` rows keyed by `attempt_id` with stage, agent, provider, token counts, effective_units, and cache_read_ratio. Workspace output does not need `by_attempt`."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_003: Should `status` output also gain `effective_units` and the updated cache-hit-rate wording, or is this slice limited to `pactum usage` output? Answer: Limit this slice to `pactum usage` per-run and `pactum usage --all`, in both human and JSON output. Leave `status` usage fields unchanged except for any compile-time fallout from shared helper refactors."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_004: For `pactum usage --all --top N`, should `N` cap only the sorted `by_run` list while workspace totals and other breakdowns still include all runs, and should non-positive values be rejected? Answer: `--top N` is valid only with `--all`; reject `N \u003c= 0` with a usage error naming `--top`. Sort all run rows by total tokens descending, then cap only `by_run` in human and JSON output. Workspace totals, run count, calls, and by-stage/by-agent/by-model breakdowns continue to aggregate every run."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_005: If an uncaptured ledger record has non-zero token fields, should those token fields contribute to token totals and effective_units, or should `captured=false` always mean usage is unknown? Answer: Treat `captured=false` as unknown usage regardless of token fields: count the call under `uncaptured_calls`, exclude it from token totals and effective_units, and annotate it as usage not reported. A `captured=true` record with zero tokens remains a real zero and appears in totals as zero."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_006: How should effective_units handle records whose provider is empty, `unknown`, or a future custom provider rather than `anthropic`, `codex`, or `openai`? Answer: For unknown or unsupported providers, do not add to effective_units; keep raw token totals and captured/uncaptured counts. In human output, annotate unsupported-provider rows as `effective units unavailable`; in JSON, expose `effective_units` as 0 for those rows and include an `effective_units_unavailable_calls` count at the relevant aggregate levels."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_007: What exactly should \"canonicalized map: config section\" mean for the map staleness hash: raw YAML subtree bytes, or the normalized `mapConfig` struct after `readConfig`? Answer: Hash a deterministic serialization of the normalized `config.Map` struct after `readConfig`, including `max_file_bytes` and normalized `code_index`, not raw YAML bytes. Comments, key order, and unrelated config sections must not affect the hash."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_008: Should the map manifest add an explicit hash-scope marker when changing `config_hash` from whole-file to map-section semantics? Answer: Keep `config_hash` for the hash value and add a manifest field such as `config_hash_scope: \"map\"` on refresh. Treat manifests missing `config_hash_scope` as legacy whole-file pins: report stale once, and after refresh write the map-section hash plus the scope marker."
+    },
+    {
+      "kind": "clarification",
+      "text": "q_009: For the \"verified cache-economics\" docs section, what source standard should count as verified: current official provider docs with citations, or the facts already listed in the contract draft without external citations? Answer: Verify against current official OpenAI/Codex and Anthropic/Claude documentation where available, cite the provider URLs in `docs/cost-budget-design.md`, and record any unsupported or inferred facts explicitly as implementation assumptions. Do not make tests depend on live network access."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_001 resolved: by_attempt rows are keyed only by attempt_id, but attempt IDs collide across stages: execute (execute.go:85-87) and review-fix (review_fix.go:110-112) both use the \"attempt\" prefix with numbering restarting at 1 in separate attempts directories, so a run with an execute attempt and a fixer round has two usage records with attempt_id=\"attempt_001\" (stages execute/fix). accumulateUsageByAttempt merges them into one row — tokens, effective_units, and cache_read_ratio summed across two distinct attempts — labeled with the stage/agent/provider of whichever record is first in the ledger. usageRecordID already hashes runID+attemptID+stage because of this exact collision. Key the by_attempt map by stage+attempt_id instead.; resolution: accumulateUsageByAttempt (internal/app/usage.go) now keys the by_attempt map by stage+\\x00+attempt_id instead of attempt_id alone, so execute attempt_001 and fix attempt_001 no longer merge into one row; the row's attempt_id field still carries the bare ID, with stage distinguishing colliding IDs. Added TestUsagePerRunByAttemptStageScopedKeys."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_002 resolved: mapConfigHash hashes the raw decoded code_index string, but the contract (scope item and q_007) requires hashing the normalized config.Map; the effective mode is normalized downstream by codeindex.NormalizeMode, which folds \"\" and unknown values into \"auto\". Deleting the code_index: auto line (raw value becomes \"\") therefore changes the hash and falsely reports the map stale even though the effective scan behavior is unchanged. False staleness only — one extra refresh; no false-freshness path."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_003 resolved: mapConfigHash hashes the raw, un-normalized code_index string. readConfig does not normalize config.Map (codeindex.NormalizeMode runs only inside projectmap.Scan, where \"\" and unrecognized values fold to \"auto\"), but contract clarification q_007 requires hashing the normalized config.Map struct including normalized code_index. Deleting the default `code_index: auto` line, or writing any alias NormalizeMode folds to auto, leaves scan behavior identical yet changes the hash, so status falsely reports the map stale — the false-invalidation class this slice targeted, now confined to the map section. Self-heals after one refresh; no literal acceptance criterion breaks."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_004 resolved: No test exercises the \"openai\" provider in effective-units math. recordEffectiveUnits has `case \"codex\", \"openai\"` but all fixtures use only codex and anthropic, so acceptance criterion 8's OpenAI multipliers (fresh x1.0, cached read x0.1, output x5.0, cache writes as fresh) are unverified; a regression splitting the shared case arm would pass the suite."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_005 resolved: Workspace (usage --all) effective_units is never asserted, in JSON or human output. Acceptance criterion 7 requires workspace JSON to include effective_units on totals and breakdowns; all EffectiveUnits assertions are in per-run tests. TestUsageAllAggregatesAcrossRuns and TestUsageAllSortsByRunDescendingWithTop check token totals and by_run ordering but not effective units, and the workspace human-output substring checks omit \"effective units:\"."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_006 resolved: inspectProjectMap takes a configHash parameter that is now a pure derivation of the config parameter passed in the same call: workspaceStatus computes mapConfigHash(config.Map) and threads it through, but inspectProjectMap already receives config and is the hash's only consumer. The caller-side computation was justified when the hash required file I/O (storeFileSHA256); after this change it is leftover plumbing — compute the hash inside inspectProjectMap and drop the parameter."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_007 resolved: docs/loop-architecture-design.md still presents review.budget.mode / review.budget.max_tokens as declared config surface (lines 14, 193, 263, 289) after this change removed the keys and made readConfig reject them with a loud error. The doc's claim 'the values are declared but unenforced — not new config surface' is now wrong: adding those keys fails config loading. The doc is maintained when config changes (its table annotates clarify.max_rounds with M16.0/M17.0 history) and now contradicts docs/cost-budget-design.md, the declared home of the future budget feature."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_008 resolved: Mixed captured/uncaptured usage breakdown rows are not annotated as having unreported usage.; resolution: usageBreakdownDetail (internal/app/usage.go) now appends '(N calls: usage not reported)' when a captured row also has uncaptured calls, so a mixed row keeps its captured token counts but flags the unreported remainder instead of silently dropping it. Added TestUsageMixedCapturedRowAnnotatesUnreported."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_009 resolved: Map config hashing uses raw map.code_index instead of the normalized map config.; resolution: mapConfigHash (internal/app/map.go) now hashes codeindex.NormalizeMode(m.CodeIndex) — the same normalization projectmap.Scan applies — so the hash reflects the normalized map config: aliases and the empty default that all fold to 'auto' produce the same hash and no longer falsely invalidate the map."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_010 resolved: Per-run by_attempt aggregation keys only by attempt_id, so execute attempt_001 and fix attempt_001 collapse into one row with misleading stage/agent/provider metadata.; resolution: Same fix as f_001: accumulateUsageByAttempt now keys by stage+attempt_id, so per-run by_attempt aggregation keeps execute attempt_001 and fix attempt_001 as separate rows with correct per-stage stage/agent/provider metadata and unsummed tokens."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_011 resolved: Human breakdown rows with a mix of captured and uncaptured calls do not annotate that some calls had usage not reported.; resolution: Same fix as f_008: usageBreakdownDetail annotates the uncaptured remainder of a mixed captured/uncaptured human breakdown row with '(N calls: usage not reported)'."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_012 resolved: `usage --all` human ordering and `--top` behavior are not tested; only JSON sorting/capping is pinned."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_013 resolved: Workspace effective-units aggregation is not asserted in tests."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_014 resolved: Legacy map manifest migration test does not assert the refreshed map status is fresh."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_015 resolved: The backlog still documents the removed token budget stop as shipped/current, including `budget_exceeded`, and later still lists this exact config/usage polish slice as next work.; resolution: docs/backlog.md: the 'Loop stop conditions' and 'Cost/budget remaining slices' bullets no longer document the token budget stop / budget_exceeded as shipped — both now record it as removed in M25.1, returning later denominated in effective units. The 'Config + usage polish slice' entry is marked '(M25.1, shipped)' instead of 'next after the symbol-search slice'."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_016 resolved: The loop architecture design still tells readers that `review.budget.mode` / `review.budget.max_tokens` are the Phase 3 budget stop config, even though this change removes and rejects `review.budget`.; resolution: docs/loop-architecture-design.md: the budget-stop bullet (line 193), the alignment-table row, the motivation declared-config list, and the 'budget block are declared' line no longer present review.budget.mode / review.budget.max_tokens as live config. Each now states the review.budget placeholder was removed in M25.1 and is rejected if present, with the designed budget stop's home in cost-budget-design.md."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_001 accepted as f_001"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_002 accepted as f_002"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_003 accepted as f_003"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_004 accepted as f_004"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_005 accepted as f_005"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_006 accepted as f_006"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_007 accepted as f_007"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_008 accepted as f_008"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_009 accepted as f_009"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_010 accepted as f_010"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_011 accepted as f_011"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_012 accepted as f_012"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_013 accepted as f_013"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_014 accepted as f_014"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_015 accepted as f_015"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_016 accepted as f_016"
+    },
+    {
+      "kind": "validation",
+      "text": "go test ./internal/app ./internal/agents ./internal/docs passed"
+    },
+    {
+      "kind": "validation",
+      "text": "make check passed"
+    }
+  ],
+  "artifacts": {
+    "contract": "contract/contract.json",
+    "gate_report": "gate/gate-report.json",
+    "review": "review/review.json",
+    "findings": "review/findings.jsonl",
+    "resolutions": "review/resolutions.jsonl",
+    "proposals": "review/proposals.jsonl",
+    "proposal_decisions": "review/proposal-decisions.jsonl"
+  }
+}

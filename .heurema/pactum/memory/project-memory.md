@@ -57,3 +57,17 @@
 - Files: .github/workflows/ci.yml, CHANGELOG.md, Makefile, README.md, cmd/heurema-hygiene/main.go, cmd/heurema-hygiene/main_test.go, docs/backlog.md, docs/install.md, go.mod, go.sum
 - Summary: Reviewed run run_20260611_191330 with gate status needs_review and review status approved. Goal: Two small CI hardening items from the project audit. (1) Vulnerability scanning: add govulncheck to the repository toolchain the same way de...
 - Candidate: runs/run_20260611_191330/memory/memory-candidate.json
+
+### mem_009 - Slice 1 of the agent file-navigation arc (design reference: docs/agent-file-n...
+- Run: run_20260612_070427
+- Freshness: fresh
+- Files: CHANGELOG.md, assets/agent-skills/pactum/SKILL.md, docs/flow.md, internal/app/run.go, internal/search/query.go, internal/search/symbol_test.go
+- Summary: Reviewed run run_20260612_070427 with gate status needs_review and review status approved. Goal: Slice 1 of the agent file-navigation arc (design reference: docs/agent-file-navigation-design.md). Make search results symbol-addressable so...
+- Candidate: runs/run_20260612_070427/memory/memory-candidate.json
+
+### mem_010 - Combined config and usage polish slice. (1) Hide the unfinished budget surfac...
+- Run: run_20260612_161619
+- Freshness: fresh
+- Files: docs/backlog.md, docs/loop-architecture-design.md, internal/app/app_test.go, internal/app/map.go, internal/app/status.go, internal/app/usage.go, internal/app/usage_test.go
+- Summary: Reviewed run run_20260612_161619 with gate status needs_review and review status approved. Goal: Combined config and usage polish slice. (1) Hide the unfinished budget surface: review.budget (mode/max_tokens) gates nothing real — remove ...
+- Candidate: runs/run_20260612_161619/memory/memory-candidate.json
