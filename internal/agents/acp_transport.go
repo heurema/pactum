@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -124,6 +125,9 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 		exitCode, completedDespiteTimeout = finalizeTimedOutAttempt(request.Agent, "", client.turnCompleted(), stderrFile, request.LiveOutput)
 	}
 
+	usage := client.tokenUsage()
+	writeUsageWarning(usage, stderrFile, request.LiveOutput)
+
 	return RunResult{
 		ExitCode:                exitCode,
 		StartedAt:               started.Format(time.RFC3339Nano),
@@ -133,7 +137,7 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 		CompletedDespiteTimeout: completedDespiteTimeout,
 		StdoutPath:              layout.stdoutArtifact,
 		StderrPath:              layout.stderrArtifact,
-		Usage:                   client.tokenUsage(),
+		Usage:                   usage,
 	}, runErr
 }
 
@@ -181,6 +185,7 @@ func driveACPSession(ctx context.Context, conn *acp.ClientSideConnection, cwd st
 func acpAdapterCommand(agentName string, spec ModelSpec, readOnly bool) (string, []string, []string, error) {
 	switch agentName {
 	case BuiltinClaude:
+		cmd, args := acpAdapterCommandPrefix("PACTUM_CLAUDE_ACP_COMMAND", "@agentclientprotocol/claude-agent-acp@latest")
 		var env []string
 		if spec.Model != "" {
 			env = append(env, "ANTHROPIC_MODEL="+spec.Model)
@@ -188,9 +193,9 @@ func acpAdapterCommand(agentName string, spec ModelSpec, readOnly bool) (string,
 		if spec.Effort != "" {
 			env = append(env, "CLAUDE_CODE_EFFORT_LEVEL="+spec.Effort)
 		}
-		return "npx", []string{"-y", "@agentclientprotocol/claude-agent-acp@latest"}, env, nil
+		return cmd, args, env, nil
 	case BuiltinCodex:
-		args := []string{"-y", "@zed-industries/codex-acp@latest"}
+		cmd, args := acpAdapterCommandPrefix("PACTUM_CODEX_ACP_COMMAND", "@zed-industries/codex-acp@latest")
 		if readOnly {
 			args = append(args, "-c", `sandbox_mode="read-only"`)
 		}
@@ -200,10 +205,17 @@ func acpAdapterCommand(agentName string, spec ModelSpec, readOnly bool) (string,
 		if spec.Effort != "" {
 			args = append(args, "-c", "model_reasoning_effort="+spec.Effort)
 		}
-		return "npx", args, nil, nil
+		return cmd, args, nil, nil
 	default:
 		return "", nil, nil, fmt.Errorf("no ACP adapter configured for agent %q", agentName)
 	}
+}
+
+func acpAdapterCommandPrefix(envName string, defaultPackage string) (string, []string) {
+	if override := strings.TrimSpace(os.Getenv(envName)); override != "" {
+		return override, nil
+	}
+	return "npx", []string{"-y", defaultPackage}
 }
 
 // acpClient implements acp.Client: it auto-approves permission requests on
@@ -247,6 +259,7 @@ type acpClient struct {
 	promptResponded bool
 	stopReason      acp.StopReason
 	usage           *acp.Usage
+	codexUsage      *TokenUsage
 
 	// Message-separator state for SessionUpdate (guarded by mu): whether any
 	// chunk text has been written, the messageId of the last written chunk, and
@@ -303,21 +316,25 @@ func (c *acpClient) tokenUsage() TokenUsage {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.usage == nil {
+		if c.codexUsage != nil {
+			return *c.codexUsage
+		}
 		return TokenUsage{Captured: false, CaptureWarning: "acp prompt returned no usage"}
 	}
 	u := c.usage
-	// Normalize to the OTel-inclusive convention used by the CLI parsers
-	// (parseClaudeUsage/parseCodexUsage, see docs/cost-budget-design.md):
-	// InputTokens includes cache (read+write); OutputTokens includes reasoning.
-	// The cache/reasoning sub-counts are kept separately for the cost layer, and
-	// TotalTokens is the provider-reported sum across all token classes.
+	// ACP PromptResponse.Usage reports cache/reasoning as sub-counts of the
+	// input/output totals. Preserve them for the cost layer without adding them
+	// into the parent counts again.
 	cacheRead := derefIntToInt64(u.CachedReadTokens)
 	cacheWrite := derefIntToInt64(u.CachedWriteTokens)
 	reasoning := derefIntToInt64(u.ThoughtTokens)
+	inputTokens := int64(u.InputTokens)
+	outputTokens := int64(u.OutputTokens)
+	totalTokens := maxInt64(int64(u.TotalTokens), inputTokens+outputTokens)
 	return TokenUsage{
-		InputTokens:         int64(u.InputTokens) + cacheRead + cacheWrite,
-		OutputTokens:        int64(u.OutputTokens) + reasoning,
-		TotalTokens:         int64(u.TotalTokens),
+		InputTokens:         inputTokens,
+		OutputTokens:        outputTokens,
+		TotalTokens:         totalTokens,
 		CacheReadTokens:     cacheRead,
 		CacheCreationTokens: cacheWrite,
 		ReasoningTokens:     reasoning,
@@ -330,6 +347,65 @@ func derefIntToInt64(p *int) int64 {
 		return 0
 	}
 	return int64(*p)
+}
+
+func maxInt64(a int64, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+type codexACPUsageMeta struct {
+	TotalTokenUsage json.RawMessage `json:"total_token_usage"`
+}
+
+type codexACPTokenUsage struct {
+	InputTokens           int64 `json:"input_tokens"`
+	CachedInputTokens     int64 `json:"cached_input_tokens"`
+	OutputTokens          int64 `json:"output_tokens"`
+	ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
+	TotalTokens           int64 `json:"total_tokens"`
+}
+
+func parseCodexACPUsageMeta(meta map[string]any) (TokenUsage, bool) {
+	if meta == nil {
+		return TokenUsage{}, false
+	}
+	value, ok := meta["codex/token_usage"]
+	if !ok {
+		return TokenUsage{}, false
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return TokenUsage{}, false
+	}
+	var payload codexACPUsageMeta
+	if err := json.Unmarshal(raw, &payload); err != nil || isEmptyRaw(payload.TotalTokenUsage) {
+		return TokenUsage{}, false
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload.TotalTokenUsage, &fields); err != nil || len(fields) == 0 {
+		return TokenUsage{}, false
+	}
+	for _, key := range []string{"input_tokens", "cached_input_tokens", "output_tokens", "total_tokens"} {
+		if _, ok := fields[key]; !ok {
+			return TokenUsage{}, false
+		}
+	}
+	var u codexACPTokenUsage
+	if err := json.Unmarshal(payload.TotalTokenUsage, &u); err != nil {
+		return TokenUsage{}, false
+	}
+	return TokenUsage{
+		InputTokens:     u.InputTokens,
+		OutputTokens:    u.OutputTokens + u.ReasoningOutputTokens,
+		TotalTokens:     u.TotalTokens,
+		CacheReadTokens: u.CachedInputTokens,
+		ReasoningTokens: u.ReasoningOutputTokens,
+		Captured:        true,
+		Raw:             raw,
+	}, true
 }
 
 func (c *acpClient) RequestPermission(ctx context.Context, p acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
@@ -363,6 +439,13 @@ func (c *acpClient) SessionUpdate(ctx context.Context, p acp.SessionNotification
 	// to the output — tool calls, thoughts, and plans leave the log untouched.
 	c.tick()
 	u := p.Update
+	if u.UsageUpdate != nil {
+		if usage, ok := parseCodexACPUsageMeta(u.UsageUpdate.Meta); ok {
+			c.mu.Lock()
+			c.codexUsage = &usage
+			c.mu.Unlock()
+		}
+	}
 	if u.AgentMessageChunk != nil && u.AgentMessageChunk.Content.Text != nil {
 		text := u.AgentMessageChunk.Content.Text.Text
 		if text == "" {

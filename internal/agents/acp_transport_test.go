@@ -2,15 +2,25 @@ package agents
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	acp "github.com/coder/acp-go-sdk"
 )
 
+func clearACPAdapterOverrides(t *testing.T) {
+	t.Helper()
+	t.Setenv("PACTUM_CLAUDE_ACP_COMMAND", "")
+	t.Setenv("PACTUM_CODEX_ACP_COMMAND", "")
+}
+
 func TestACPAdapterCommand(t *testing.T) {
+	clearACPAdapterOverrides(t)
+
 	// An unpinned spec adds no override args and no env entries for either agent.
 	for _, agent := range []string{BuiltinClaude, BuiltinCodex} {
 		cmd, args, env, err := acpAdapterCommand(agent, ModelSpec{}, false)
@@ -30,6 +40,8 @@ func TestACPAdapterCommand(t *testing.T) {
 }
 
 func TestACPAdapterCommandThreadsModelPin(t *testing.T) {
+	clearACPAdapterOverrides(t)
+
 	// codex: the pin becomes the same `-c` config overrides ApplyModelSpec passes
 	// to the codex CLI, with the model TOML-quoted.
 	_, args, env, err := acpAdapterCommand(BuiltinCodex, ModelSpec{Model: "gpt-5", Effort: "high"}, false)
@@ -83,6 +95,8 @@ func TestACPAdapterCommandThreadsModelPin(t *testing.T) {
 }
 
 func TestACPAdapterCommandReadOnly(t *testing.T) {
+	clearACPAdapterOverrides(t)
+
 	// codex: read-only pins the sandbox at the adapter — codex applies patches
 	// natively and consults its own approval policy, so client-side denials
 	// cannot stop it. Mirrors the CLI reviewer's --sandbox read-only.
@@ -139,6 +153,78 @@ func TestACPAdapterCommandReadOnly(t *testing.T) {
 	}
 }
 
+func TestACPAdapterCommandOverrideReplacesOnlyDefaultPrefix(t *testing.T) {
+	t.Setenv("PACTUM_CLAUDE_ACP_COMMAND", "vendor/bin/claude-agent-acp")
+	t.Setenv("PACTUM_CODEX_ACP_COMMAND", "vendor/bin/codex-acp")
+
+	cmd, args, env, err := acpAdapterCommand(BuiltinClaude, ModelSpec{Model: "claude-sonnet-4", Effort: "high"}, false)
+	if err != nil {
+		t.Fatalf("claude override: %v", err)
+	}
+	if cmd != "vendor/bin/claude-agent-acp" {
+		t.Fatalf("claude override cmd = %q", cmd)
+	}
+	if len(args) != 0 {
+		t.Fatalf("claude override must drop only npx/package args, got %v", args)
+	}
+	wantEnv := []string{"ANTHROPIC_MODEL=claude-sonnet-4", "CLAUDE_CODE_EFFORT_LEVEL=high"}
+	if !reflect.DeepEqual(env, wantEnv) {
+		t.Fatalf("claude override env = %v, want %v", env, wantEnv)
+	}
+
+	cmd, args, env, err = acpAdapterCommand(BuiltinCodex, ModelSpec{Model: "gpt-5", Effort: "high"}, true)
+	if err != nil {
+		t.Fatalf("codex override: %v", err)
+	}
+	if cmd != "vendor/bin/codex-acp" {
+		t.Fatalf("codex override cmd = %q", cmd)
+	}
+	wantArgs := []string{"-c", `sandbox_mode="read-only"`, "-c", `model="gpt-5"`, "-c", "model_reasoning_effort=high"}
+	if !reflect.DeepEqual(args, wantArgs) {
+		t.Fatalf("codex override args = %v, want %v", args, wantArgs)
+	}
+	if len(env) != 0 {
+		t.Fatalf("codex override must preserve empty env, got %v", env)
+	}
+}
+
+func TestACPAdapterCommandOverrideIgnoresEmptyAndWhitespace(t *testing.T) {
+	t.Setenv("PACTUM_CLAUDE_ACP_COMMAND", " \t\n ")
+	t.Setenv("PACTUM_CODEX_ACP_COMMAND", "")
+
+	cmd, args, _, err := acpAdapterCommand(BuiltinClaude, ModelSpec{}, false)
+	if err != nil {
+		t.Fatalf("claude whitespace override: %v", err)
+	}
+	if cmd != "npx" || !reflect.DeepEqual(args, []string{"-y", "@agentclientprotocol/claude-agent-acp@latest"}) {
+		t.Fatalf("claude whitespace override should use default: cmd=%q args=%v", cmd, args)
+	}
+
+	cmd, args, _, err = acpAdapterCommand(BuiltinCodex, ModelSpec{}, false)
+	if err != nil {
+		t.Fatalf("codex empty override: %v", err)
+	}
+	if cmd != "npx" || !reflect.DeepEqual(args, []string{"-y", "@zed-industries/codex-acp@latest"}) {
+		t.Fatalf("codex empty override should use default: cmd=%q args=%v", cmd, args)
+	}
+}
+
+func TestACPAdapterCommandOverrideIsSingleExecutable(t *testing.T) {
+	t.Setenv("PACTUM_CODEX_ACP_COMMAND", "npx -y @zed-industries/codex-acp@1.2.3")
+	t.Setenv("PACTUM_CLAUDE_ACP_COMMAND", "")
+
+	cmd, args, _, err := acpAdapterCommand(BuiltinCodex, ModelSpec{Model: "gpt-5"}, false)
+	if err != nil {
+		t.Fatalf("codex command-line-looking override: %v", err)
+	}
+	if cmd != "npx -y @zed-industries/codex-acp@1.2.3" {
+		t.Fatalf("override must be treated as one executable path, got %q", cmd)
+	}
+	if !reflect.DeepEqual(args, []string{"-c", `model="gpt-5"`}) {
+		t.Fatalf("override args = %v", args)
+	}
+}
+
 func TestACPClientTokenUsage(t *testing.T) {
 	c := &acpClient{}
 	if u := c.tokenUsage(); u.Captured {
@@ -157,17 +243,233 @@ func TestACPClientTokenUsage(t *testing.T) {
 			ThoughtTokens:     &thought,
 		},
 	})
-	// OTel-inclusive parity with the CLI parsers (docs/cost-budget-design.md):
-	// InputTokens folds in cache read+write (100+30+10=140), OutputTokens folds
-	// in reasoning (50+5=55), TotalTokens is the provider-reported sum (150), and
-	// the cache/reasoning sub-counts are preserved.
+	// PromptResponse.Usage input/output are the parent counts; cache/reasoning
+	// are preserved as sub-counts without double-counting them.
 	u := c.tokenUsage()
-	if !u.Captured || u.InputTokens != 140 || u.OutputTokens != 55 || u.TotalTokens != 150 ||
+	if !u.Captured || u.InputTokens != 100 || u.OutputTokens != 50 || u.TotalTokens != 150 ||
 		u.CacheReadTokens != 30 || u.CacheCreationTokens != 10 || u.ReasoningTokens != 5 {
 		t.Fatalf("usage mapping wrong: %+v", u)
 	}
 	if c.stopReasonValue() != acp.StopReasonEndTurn {
 		t.Fatalf("stop reason not recorded: %v", c.stopReasonValue())
+	}
+}
+
+func TestACPClientTokenUsageFallsBackToCodexACPMetadata(t *testing.T) {
+	c := &acpClient{}
+	if err := c.SessionUpdate(context.Background(), acp.SessionNotification{Update: acp.SessionUpdate{
+		UsageUpdate: &acp.SessionUsageUpdate{Meta: map[string]any{"codex/token_usage": map[string]any{
+			"total_token_usage": map[string]any{
+				"input_tokens":            100,
+				"cached_input_tokens":     25,
+				"output_tokens":           30,
+				"reasoning_output_tokens": 7,
+				"total_tokens":            137,
+			},
+		}}},
+	}}); err != nil {
+		t.Fatalf("usage update: %v", err)
+	}
+
+	u := c.tokenUsage()
+	if !u.Captured || u.InputTokens != 100 || u.OutputTokens != 37 || u.TotalTokens != 137 ||
+		u.CacheReadTokens != 25 || u.CacheCreationTokens != 0 || u.ReasoningTokens != 7 {
+		t.Fatalf("codex acp metadata usage mapping wrong: %+v", u)
+	}
+	if len(u.Raw) == 0 {
+		t.Fatal("codex acp metadata fallback should retain raw usage metadata")
+	}
+}
+
+func TestACPClientTokenUsageFallsBackToCodexACPMetadataWithoutReasoning(t *testing.T) {
+	c := &acpClient{}
+	if err := c.SessionUpdate(context.Background(), acp.SessionNotification{Update: acp.SessionUpdate{
+		UsageUpdate: &acp.SessionUsageUpdate{Meta: map[string]any{"codex/token_usage": map[string]any{
+			"total_token_usage": map[string]any{
+				"input_tokens":        100,
+				"cached_input_tokens": 25,
+				"output_tokens":       30,
+				"total_tokens":        130,
+			},
+		}}},
+	}}); err != nil {
+		t.Fatalf("usage update: %v", err)
+	}
+
+	u := c.tokenUsage()
+	if !u.Captured || u.InputTokens != 100 || u.OutputTokens != 30 || u.TotalTokens != 130 ||
+		u.CacheReadTokens != 25 || u.ReasoningTokens != 0 {
+		t.Fatalf("codex acp metadata without reasoning should be captured: %+v", u)
+	}
+}
+
+func TestACPClientCodexACPMetadataKeepsLatestValidTotals(t *testing.T) {
+	c := &acpClient{}
+	send := func(meta map[string]any) {
+		if err := c.SessionUpdate(context.Background(), acp.SessionNotification{Update: acp.SessionUpdate{
+			UsageUpdate: &acp.SessionUsageUpdate{Meta: meta},
+		}}); err != nil {
+			t.Fatalf("usage update: %v", err)
+		}
+	}
+
+	send(map[string]any{"codex/token_usage": map[string]any{"total_token_usage": map[string]any{
+		"input_tokens": 10, "cached_input_tokens": 2, "output_tokens": 3, "reasoning_output_tokens": 1, "total_tokens": 14,
+	}}})
+	send(map[string]any{"codex/token_usage": map[string]any{"total_token_usage": map[string]any{
+		"input_tokens": 100, "cached_input_tokens": 20, "output_tokens": 30, "reasoning_output_tokens": 4, "total_tokens": 134,
+	}}})
+	send(map[string]any{"codex/token_usage": map[string]any{"total_token_usage": "not an object"}})
+	send(map[string]any{})
+
+	u := c.tokenUsage()
+	if !u.Captured || u.InputTokens != 100 || u.CacheReadTokens != 20 || u.OutputTokens != 34 || u.TotalTokens != 134 || u.ReasoningTokens != 4 {
+		t.Fatalf("latest valid codex acp metadata not retained: %+v", u)
+	}
+}
+
+func TestACPClientPromptResponseUsageWinsOverCodexACPMetadata(t *testing.T) {
+	cacheRead, cacheWrite, thought := 1, 2, 3
+	c := &acpClient{}
+	if err := c.SessionUpdate(context.Background(), acp.SessionNotification{Update: acp.SessionUpdate{
+		UsageUpdate: &acp.SessionUsageUpdate{Meta: map[string]any{"codex/token_usage": map[string]any{"total_token_usage": map[string]any{
+			"input_tokens": 100, "cached_input_tokens": 20, "output_tokens": 30, "reasoning_output_tokens": 4, "total_tokens": 134,
+		}}}},
+	}}); err != nil {
+		t.Fatalf("usage update: %v", err)
+	}
+	c.recordResult(acp.PromptResponse{Usage: &acp.Usage{
+		InputTokens:       5,
+		OutputTokens:      6,
+		TotalTokens:       7,
+		CachedReadTokens:  &cacheRead,
+		CachedWriteTokens: &cacheWrite,
+		ThoughtTokens:     &thought,
+	}})
+
+	u := c.tokenUsage()
+	if !u.Captured || u.InputTokens != 5 || u.OutputTokens != 6 || u.TotalTokens != 11 ||
+		u.CacheReadTokens != 1 || u.CacheCreationTokens != 2 || u.ReasoningTokens != 3 {
+		t.Fatalf("prompt response usage should win over metadata fallback: %+v", u)
+	}
+}
+
+func TestDriveACPSessionCapturesPromptResponseUsage(t *testing.T) {
+	clientToAgentR, clientToAgentW := io.Pipe()
+	agentToClientR, agentToClientW := io.Pipe()
+	t.Cleanup(func() {
+		_ = clientToAgentR.Close()
+		_ = clientToAgentW.Close()
+		_ = agentToClientR.Close()
+		_ = agentToClientW.Close()
+	})
+
+	cacheRead, cacheWrite, thought := 1, 2, 3
+	agent := &promptUsageAgent{usage: &acp.Usage{
+		InputTokens:       5,
+		OutputTokens:      6,
+		TotalTokens:       7,
+		CachedReadTokens:  &cacheRead,
+		CachedWriteTokens: &cacheWrite,
+		ThoughtTokens:     &thought,
+	}}
+	agentConn := acp.NewAgentSideConnection(agent, agentToClientW, clientToAgentR)
+	agent.conn = agentConn
+
+	client := &acpClient{out: io.Discard, repoRoot: t.TempDir()}
+	conn := acp.NewClientSideConnection(client, clientToAgentW, agentToClientR)
+	if err := driveACPSession(context.Background(), conn, client.repoRoot, "prompt", client); err != nil {
+		t.Fatalf("drive ACP session: %v", err)
+	}
+
+	u := client.tokenUsage()
+	if !u.Captured || u.CaptureWarning != "" || u.InputTokens != 5 || u.OutputTokens != 6 || u.TotalTokens != 11 ||
+		u.CacheReadTokens != 1 || u.CacheCreationTokens != 2 || u.ReasoningTokens != 3 {
+		t.Fatalf("prompt response usage should be captured without warning: %+v", u)
+	}
+}
+
+func TestACPClientCodexACPMetadataMissesPreserveNoUsageWarning(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		meta map[string]any
+	}{
+		{name: "absent", meta: nil},
+		{name: "wrong key", meta: map[string]any{"other": map[string]any{}}},
+		{name: "missing total", meta: map[string]any{"codex/token_usage": map[string]any{"last_token_usage": map[string]any{"input_tokens": 1}}}},
+		{name: "empty total", meta: map[string]any{"codex/token_usage": map[string]any{"total_token_usage": map[string]any{}}}},
+		{name: "unknown-only total", meta: map[string]any{"codex/token_usage": map[string]any{"total_token_usage": map[string]any{"foo": 1}}}},
+		{name: "missing token field", meta: map[string]any{"codex/token_usage": map[string]any{"total_token_usage": map[string]any{
+			"input_tokens": 1, "cached_input_tokens": 2, "output_tokens": 3, "reasoning_output_tokens": 0,
+		}}}},
+		{name: "wrong token field type", meta: map[string]any{"codex/token_usage": map[string]any{"total_token_usage": map[string]any{
+			"input_tokens": "1", "cached_input_tokens": 2, "output_tokens": 3, "reasoning_output_tokens": 0, "total_tokens": 6,
+		}}}},
+		{name: "malformed total", meta: map[string]any{"codex/token_usage": map[string]any{"total_token_usage": "nope"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &acpClient{}
+			if err := c.SessionUpdate(context.Background(), acp.SessionNotification{Update: acp.SessionUpdate{
+				UsageUpdate: &acp.SessionUsageUpdate{Meta: tc.meta},
+			}}); err != nil {
+				t.Fatalf("usage update: %v", err)
+			}
+			u := c.tokenUsage()
+			if u.Captured || u.CaptureWarning != "acp prompt returned no usage" {
+				t.Fatalf("metadata miss should preserve no-usage warning: %+v", u)
+			}
+		})
+	}
+}
+
+func TestACPTransportWritesNoUsageWarning(t *testing.T) {
+	repoRoot := t.TempDir()
+	promptPath := filepath.Join(repoRoot, "prompt.md")
+	if err := os.WriteFile(promptPath, []byte("prompt"), 0o644); err != nil {
+		t.Fatalf("write prompt: %v", err)
+	}
+	adapterPath := filepath.Join(repoRoot, "exit-adapter.sh")
+	if err := os.WriteFile(adapterPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write adapter: %v", err)
+	}
+	t.Setenv("PACTUM_CODEX_ACP_COMMAND", adapterPath)
+	t.Setenv("PACTUM_CLAUDE_ACP_COMMAND", "")
+
+	result, err := (ACPTransport{}).Run(RunRequest{
+		RepoRoot:       repoRoot,
+		RunID:          "run_1",
+		AttemptID:      "attempt_1",
+		Agent:          AgentDescriptor{Name: BuiltinCodex},
+		PromptRepoPath: "prompt.md",
+	})
+	if err == nil {
+		t.Fatal("exiting adapter should fail ACP session")
+	}
+	if result.Usage.Captured || result.Usage.CaptureWarning != "acp prompt returned no usage" {
+		t.Fatalf("expected uncaptured usage warning in result: %+v", result.Usage)
+	}
+	stderrPath := filepath.Join(repoRoot, ".heurema", "pactum", "runs", "run_1", filepath.FromSlash(result.StderrPath))
+	stderr, readErr := os.ReadFile(stderrPath)
+	if readErr != nil {
+		t.Fatalf("read stderr: %v", readErr)
+	}
+	if !strings.Contains(string(stderr), "usage capture warning: acp prompt returned no usage") {
+		t.Fatalf("stderr missing usage warning:\n%s", stderr)
+	}
+}
+
+func TestACPClientCodexACPMetadataCapturesExplicitZeroTotal(t *testing.T) {
+	c := &acpClient{}
+	if err := c.SessionUpdate(context.Background(), acp.SessionNotification{Update: acp.SessionUpdate{
+		UsageUpdate: &acp.SessionUsageUpdate{Meta: map[string]any{"codex/token_usage": map[string]any{"total_token_usage": map[string]any{
+			"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0, "reasoning_output_tokens": 0, "total_tokens": 0,
+		}}}},
+	}}); err != nil {
+		t.Fatalf("usage update: %v", err)
+	}
+	u := c.tokenUsage()
+	if !u.Captured || u.InputTokens != 0 || u.OutputTokens != 0 || u.TotalTokens != 0 || u.CaptureWarning != "" {
+		t.Fatalf("explicit zero total should be captured as real usage: %+v", u)
 	}
 }
 
@@ -190,6 +492,68 @@ func TestACPClientTurnCompleted(t *testing.T) {
 	if refused.turnCompleted() {
 		t.Fatal("a refusal response must not count as completed work")
 	}
+}
+
+type promptUsageAgent struct {
+	conn  *acp.AgentSideConnection
+	usage *acp.Usage
+}
+
+var _ acp.Agent = (*promptUsageAgent)(nil)
+
+func (a *promptUsageAgent) Authenticate(context.Context, acp.AuthenticateRequest) (acp.AuthenticateResponse, error) {
+	return acp.AuthenticateResponse{}, nil
+}
+
+func (a *promptUsageAgent) Initialize(context.Context, acp.InitializeRequest) (acp.InitializeResponse, error) {
+	return acp.InitializeResponse{
+		ProtocolVersion:   acp.ProtocolVersionNumber,
+		AgentCapabilities: acp.AgentCapabilities{},
+	}, nil
+}
+
+func (a *promptUsageAgent) Logout(context.Context, acp.LogoutRequest) (acp.LogoutResponse, error) {
+	return acp.LogoutResponse{}, nil
+}
+
+func (a *promptUsageAgent) Cancel(context.Context, acp.CancelNotification) error {
+	return nil
+}
+
+func (a *promptUsageAgent) CloseSession(context.Context, acp.CloseSessionRequest) (acp.CloseSessionResponse, error) {
+	return acp.CloseSessionResponse{}, nil
+}
+
+func (a *promptUsageAgent) ListSessions(context.Context, acp.ListSessionsRequest) (acp.ListSessionsResponse, error) {
+	return acp.ListSessionsResponse{}, nil
+}
+
+func (a *promptUsageAgent) NewSession(context.Context, acp.NewSessionRequest) (acp.NewSessionResponse, error) {
+	return acp.NewSessionResponse{SessionId: acp.SessionId("sess_usage")}, nil
+}
+
+func (a *promptUsageAgent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.PromptResponse, error) {
+	_ = a.conn.SessionUpdate(ctx, acp.SessionNotification{
+		SessionId: p.SessionId,
+		Update: acp.SessionUpdate{UsageUpdate: &acp.SessionUsageUpdate{Meta: map[string]any{
+			"codex/token_usage": map[string]any{"total_token_usage": map[string]any{
+				"input_tokens": 100, "cached_input_tokens": 20, "output_tokens": 30, "reasoning_output_tokens": 4, "total_tokens": 134,
+			}},
+		}}},
+	})
+	return acp.PromptResponse{StopReason: acp.StopReasonEndTurn, Usage: a.usage}, nil
+}
+
+func (a *promptUsageAgent) ResumeSession(context.Context, acp.ResumeSessionRequest) (acp.ResumeSessionResponse, error) {
+	return acp.ResumeSessionResponse{}, nil
+}
+
+func (a *promptUsageAgent) SetSessionConfigOption(context.Context, acp.SetSessionConfigOptionRequest) (acp.SetSessionConfigOptionResponse, error) {
+	return acp.SetSessionConfigOptionResponse{}, nil
+}
+
+func (a *promptUsageAgent) SetSessionMode(context.Context, acp.SetSessionModeRequest) (acp.SetSessionModeResponse, error) {
+	return acp.SetSessionModeResponse{}, nil
 }
 
 func TestACPClientWriteTextFileScopeGuard(t *testing.T) {

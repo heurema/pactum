@@ -268,6 +268,18 @@ Getting the rich, structured split requires `--json` (codex) / `--output-format 
   `turn.completed.usage` (cumulative = session total). Fallback: scrape stderr
   `tokens used\s+([\d,]+)` (total only, version-unstable) → record total, `Captured`
   still true but no split. On total failure: `Captured=false`.
+- codex over ACP: read the official prompt response `Usage` object first and
+  record its input/output values as the parent token counts. Cache and reasoning
+  values are preserved as sub-count details and are not added into those parent
+  counts again; `TotalTokens` is materialized to at least `InputTokens +
+  OutputTokens` so the ledger is internally coherent. For legacy/fork adapter
+  compatibility, pactum falls back to the
+  `usage_update._meta["codex/token_usage"].total_token_usage` metadata path only
+  when the prompt response carries no `Usage`. It keeps the latest successfully
+  parsed cumulative `total_token_usage`; later missing or malformed metadata
+  does not clear it. The fallback payload uses the Codex snake_case shape:
+  `input_tokens`, `cached_input_tokens`, `output_tokens`,
+  `reasoning_output_tokens`, `total_tokens`.
 - claude: decode the single `result` object (pointer/omitempty fields → missing =
   zero, not error); ignore unknown fields; on JSON failure fall back to text mode and
   `Captured=false`.
