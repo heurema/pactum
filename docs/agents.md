@@ -173,11 +173,14 @@ gate, and attempt lifecycle are unaware of it:
   The agent edits the working tree through client-serviced file writes, its text
   streams to the attempt log as it works, and the turn's token usage comes from
   the protocol. The protocol's `Usage` is recorded in the same OTel-inclusive
-  convention the CLI parsers use: `InputTokens` and `OutputTokens` are the
-  parent counts, while cache and reasoning are preserved as sub-count detail
-  rather than added into the parent counts again (see
-  [`cost-budget-design.md`](cost-budget-design.md)), so ACP and CLI usage records
-  are directly comparable. Codex-over-ACP usage is read from the official
+  convention the CLI parsers use: `InputTokens` includes cache (read+write) and
+  `OutputTokens` includes reasoning, with the cache/reasoning sub-counts kept
+  separately for the cost layer. The claude adapter reports `input_tokens`
+  *exclusive* of cache (its own source: "input_tokens excludes cache tokens"),
+  so pactum folds the cache classes back into `InputTokens`; codex `input`
+  already includes cache, so it is not double-added (see
+  [`cost-budget-design.md`](cost-budget-design.md)). ACP and CLI usage records
+  are therefore directly comparable. Codex-over-ACP usage is read from the official
   prompt response `Usage` field first. For legacy/fork adapter compatibility,
   pactum also understands the
   `usage_update._meta["codex/token_usage"].total_token_usage` payload and uses

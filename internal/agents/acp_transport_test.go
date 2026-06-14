@@ -237,16 +237,18 @@ func TestACPClientTokenUsage(t *testing.T) {
 		Usage: &acp.Usage{
 			InputTokens:       100,
 			OutputTokens:      50,
-			TotalTokens:       150,
+			TotalTokens:       195,
 			CachedReadTokens:  &cacheRead,
 			CachedWriteTokens: &cacheWrite,
 			ThoughtTokens:     &thought,
 		},
 	})
-	// PromptResponse.Usage input/output are the parent counts; cache/reasoning
-	// are preserved as sub-counts without double-counting them.
+	// The claude ACP adapter reports input_tokens EXCLUSIVE of cache, so the
+	// cache classes fold into InputTokens (100+30+10=140) and reasoning folds
+	// into OutputTokens (50+5=55) for the cost-layer's cache-inclusive
+	// convention; the sub-counts are still preserved.
 	u := c.tokenUsage()
-	if !u.Captured || u.InputTokens != 100 || u.OutputTokens != 50 || u.TotalTokens != 150 ||
+	if !u.Captured || u.InputTokens != 140 || u.OutputTokens != 55 || u.TotalTokens != 195 ||
 		u.CacheReadTokens != 30 || u.CacheCreationTokens != 10 || u.ReasoningTokens != 5 {
 		t.Fatalf("usage mapping wrong: %+v", u)
 	}
@@ -348,7 +350,9 @@ func TestACPClientPromptResponseUsageWinsOverCodexACPMetadata(t *testing.T) {
 	}})
 
 	u := c.tokenUsage()
-	if !u.Captured || u.InputTokens != 5 || u.OutputTokens != 6 || u.TotalTokens != 11 ||
+	// Claude prompt-response usage wins; cache-exclusive input folds:
+	// 5+1+2=8 input, 6+3=9 output, max(7,17)=17 total.
+	if !u.Captured || u.InputTokens != 8 || u.OutputTokens != 9 || u.TotalTokens != 17 ||
 		u.CacheReadTokens != 1 || u.CacheCreationTokens != 2 || u.ReasoningTokens != 3 {
 		t.Fatalf("prompt response usage should win over metadata fallback: %+v", u)
 	}
@@ -383,7 +387,9 @@ func TestDriveACPSessionCapturesPromptResponseUsage(t *testing.T) {
 	}
 
 	u := client.tokenUsage()
-	if !u.Captured || u.CaptureWarning != "" || u.InputTokens != 5 || u.OutputTokens != 6 || u.TotalTokens != 11 ||
+	// Claude ACP input is cache-exclusive: input 5+cacheRead 1+cacheWrite 2=8,
+	// output 6+reasoning 3=9, total max(7, 8+9)=17.
+	if !u.Captured || u.CaptureWarning != "" || u.InputTokens != 8 || u.OutputTokens != 9 || u.TotalTokens != 17 ||
 		u.CacheReadTokens != 1 || u.CacheCreationTokens != 2 || u.ReasoningTokens != 3 {
 		t.Fatalf("prompt response usage should be captured without warning: %+v", u)
 	}

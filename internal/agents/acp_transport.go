@@ -322,14 +322,18 @@ func (c *acpClient) tokenUsage() TokenUsage {
 		return TokenUsage{Captured: false, CaptureWarning: "acp prompt returned no usage"}
 	}
 	u := c.usage
-	// ACP PromptResponse.Usage reports cache/reasoning as sub-counts of the
-	// input/output totals. Preserve them for the cost layer without adding them
-	// into the parent counts again.
+	// Normalize to the OTel-inclusive convention the CLI parsers and the cost
+	// layer require (parseClaudeUsage, recordEffectiveUnits; see
+	// docs/cost-budget-design.md): InputTokens INCLUDES cache (read+write) and
+	// OutputTokens INCLUDES reasoning. The claude ACP adapter reports
+	// input_tokens EXCLUSIVE of cache (its own source: "input_tokens excludes
+	// cache tokens"), so the cache classes are folded back in; the sub-counts
+	// are kept separately for the cost layer to subtract.
 	cacheRead := derefIntToInt64(u.CachedReadTokens)
 	cacheWrite := derefIntToInt64(u.CachedWriteTokens)
 	reasoning := derefIntToInt64(u.ThoughtTokens)
-	inputTokens := int64(u.InputTokens)
-	outputTokens := int64(u.OutputTokens)
+	inputTokens := int64(u.InputTokens) + cacheRead + cacheWrite
+	outputTokens := int64(u.OutputTokens) + reasoning
 	totalTokens := maxInt64(int64(u.TotalTokens), inputTokens+outputTokens)
 	return TokenUsage{
 		InputTokens:         inputTokens,
