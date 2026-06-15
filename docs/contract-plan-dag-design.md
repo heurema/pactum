@@ -347,23 +347,29 @@ auto-replans, retries, and per-node escalations — so usage capture is **core
 infrastructure, not plumbing**, and must be designed before the loop or the
 economics are unmeasurable.
 
-- **One row per invocation, append-only.** Every drafter / reviewer / fixer /
-  executor-task-attempt / replan / retry / escalation writes one accounting row,
-  including failed calls (with `usage_missing` when the provider returns none).
-  The row carries: `run_id`, `contract_hash`, `contract_revision`, `phase`,
-  `role`, `agent`, `model`, `tier` (`weak`|`strong`), `task_id` (when
+- **One row per invocation, append-only — facts only.** Every drafter /
+  reviewer / fixer / executor-task-attempt / replan / retry / escalation writes
+  one accounting row, including failed calls (with `usage_missing` when the
+  provider returns none). The row carries: `run_id`, `contract_hash`,
+  `contract_revision`, `phase`, `role`, `agent`, `model`, `task_id` (when
   applicable), `attempt_no`, `trigger`, `status`, and the token fields
   (input / output / cache-read / cache-write / reasoning). Rows are tied to the
   contract revision and the task transition that produced them, never inferred
-  later from mutable state.
+  later from mutable state. No `tier` (weak|strong) column: that is a derived
+  classification, not a fact — it is redundant with `role`+`model` (an arbitrary,
+  drift-prone bucket that adds no precision), so it is computed at rollup, never
+  stored per row.
 - **Rollups are derived, never hand-maintained.** Summaries group by `phase`,
-  `task_id`, `role`, `agent`, `model`, `tier`, and `contract_revision`. Direct
-  per-task cost is reported separately from contract-level planning overhead,
-  with an optional amortized "fully loaded" view.
-- **Weak-vs-strong is first-class.** `weak_execute_total`, `strong_plan_total`,
-  `strong_review_total`, `strong_fix_total`, `strong_escalation_total` — this is
-  the direct answer to the economic question (does a strong-authored plan + a
-  cheap loop actually cost less than running the strong model throughout).
+  `task_id`, `role`, `agent`, `model`, and `contract_revision`. Direct per-task
+  cost is reported separately from contract-level planning overhead, with an
+  optional amortized "fully loaded" view.
+- **The weak-vs-strong economic split is BY ROLE, derived.** The question "does
+  a strong-authored plan + a cheap loop cost less than running the strong model
+  throughout" is answered by grouping on `role`: the executor-role total (the
+  cheap loop) vs. the planning-role totals (drafter + reviewer + fixer + replan +
+  escalation). Exact cost comes from `model` × a pricing table. If a literal
+  weak/strong label is ever wanted in a summary it is applied at rollup from a
+  `model → cost` map — not stamped on each row.
 
 ## The operator-facing state machine is the product
 

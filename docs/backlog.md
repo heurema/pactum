@@ -374,9 +374,12 @@ is deliberate — measure, account, freeze, *then* build:
 - **Phase 0.5 — usage schema + rollups** (small-med): design before the loop or
   the economics are unmeasurable. One append-only `usage.jsonl` row per
   invocation (drafter / reviewer / fixer / executor-per-task / replan / retry /
-  escalation, failures too) carrying `run_id, contract_hash, contract_revision,
-  phase, role, agent, model, tier(weak|strong), task_id, attempt_no, trigger,
-  status` + token fields; derived rollups with first-class weak-vs-strong totals.
+  escalation, failures too) carrying facts only — `run_id, contract_hash,
+  contract_revision, phase, role, agent, model, task_id, attempt_no, trigger,
+  status` + token fields. No stored `tier` (a derived classification, redundant
+  with `role`+`model`); the weak-vs-strong split is derived at rollup by grouping
+  on `role` (executor-loop total vs planning-role totals), exact cost from
+  `model` × pricing.
 - **Phase 1a — drafter emits the plan DAG** (med): extend `draftContract`
   (`internal/app/run.go`) with `plan.tasks[]` — each `{id, title, depends_on[],
   context[], expected_files[] (advisory), acceptance[], validation[]}`.
