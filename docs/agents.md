@@ -172,12 +172,21 @@ gate, and attempt lifecycle are unaware of it:
   (`claude-agent-acp` / `codex-acp`, launched with `npx`) using a JSON-RPC client.
   The agent edits the working tree through client-serviced file writes, its text
   streams to the attempt log as it works, and the turn's token usage comes from
-  the protocol. The protocol's `Usage` is normalized to the same OTel-inclusive
-  convention the CLI parsers use (`InputTokens` includes cache read+write,
-  `OutputTokens` includes reasoning; see
-  [`cost-budget-design.md`](cost-budget-design.md)), so ACP and CLI usage records
-  are directly comparable. The same `RunResult` and attempt artifacts are
-  produced either way.
+  the protocol. The protocol's `Usage` is recorded in the same OTel-inclusive
+  convention the CLI parsers use: `InputTokens` includes cache (read+write) and
+  `OutputTokens` includes reasoning, with the cache/reasoning sub-counts kept
+  separately for the cost layer. The claude adapter reports `input_tokens`
+  *exclusive* of cache (its own source: "input_tokens excludes cache tokens"),
+  so pactum folds the cache classes back into `InputTokens`; codex `input`
+  already includes cache, so it is not double-added (see
+  [`cost-budget-design.md`](cost-budget-design.md)). ACP and CLI usage records
+  are therefore directly comparable. Codex-over-ACP usage is read from the official
+  prompt response `Usage` field first. For legacy/fork adapter compatibility,
+  pactum also understands the
+  `usage_update._meta["codex/token_usage"].total_token_usage` payload and uses
+  the latest valid cumulative total only as a fallback when the prompt response
+  carries no `Usage`. The same `RunResult` and attempt artifacts are produced
+  either way.
 - **`cli`** — the one-shot agent CLI described above (`codex exec`,
   `claude -p`), with the prompt piped to stdin.
 
@@ -191,7 +200,21 @@ read-only stages — are closed (see below); what remains is the documented
 shell-command gating limitation for write stages.
 
 The ACP adapters are external npm packages and inherit the agent's auth from the
-environment.
+environment. By default pactum launches them as:
+
+- **claude** — `npx -y @agentclientprotocol/claude-agent-acp@latest`
+- **codex** — `npx -y @zed-industries/codex-acp@latest`
+
+For supply-chain pinning, `PACTUM_CLAUDE_ACP_COMMAND` and
+`PACTUM_CODEX_ACP_COMMAND` can replace only that default `npx` executable/package
+prefix. The env var value is trimmed and, when non-empty, treated as one literal
+executable path: pactum does no shell parsing and does not split embedded
+whitespace into arguments. Computed adapter arguments and environment are still
+added exactly as usual, so Codex read-only/model/effort `-c` overrides and Claude
+model/effort env vars are preserved. Empty, unset, or whitespace-only values are
+ignored and keep the default `npx` launch. To pin a specific adapter version,
+point the override at a locally installed or vendored adapter binary, or at a
+wrapper script that performs the pinned launch.
 
 Over ACP the idle `--timeout` is reset by **any agent protocol activity** —
 streamed text, tool calls and tool-call updates, thoughts, plans, permission

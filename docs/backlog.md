@@ -344,6 +344,13 @@ distillation lives in
 
 ## Hardening / cleanup
 
+- **`gofmt` is not in the gate** (small). `make check` runs test/vet/deadcode +
+  `git diff --check`, but not `gofmt -l`, so formatting drift accumulates
+  uncaught (e.g. const-block alignment in `internal/app/clarify_round.go` and
+  `review.go` drifted after the M25.1 budget-const removal — vet-clean, builds
+  fine, but unformatted). Add `gofmt -l` (fail on non-empty) to `make check`
+  and `gofmt -w` the existing drift in the same slice.
+
 - **Config + usage polish slice** (M25.1, shipped; one combined contract):
   (1) **Hid the unfinished budget surface.** `review.budget`
   (`mode`/`max_tokens`) gated nothing real (warn-mode plumbing only): removed
