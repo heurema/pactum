@@ -1,0 +1,7 @@
+{
+  "schema": "pactum.approval.v1",
+  "status": "approved",
+  "approved_at": "2026-06-13T08:31:23Z",
+  "approved_by": "manual",
+  "contract_sha256": "8c4bee1985d1f5c6eb63cb6aaf933e8813a7b74bc45c4ffe3f8742985a7ae488"
+}

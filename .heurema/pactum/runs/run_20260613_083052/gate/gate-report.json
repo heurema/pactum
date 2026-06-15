@@ -1,0 +1,45 @@
+{
+  "schema": "pactum.gate_report.v1",
+  "run_id": "run_20260613_083052",
+  "created_at": "2026-06-13T09:07:29Z",
+  "status": "passed",
+  "execution": {
+    "attempt_id": "attempt_001",
+    "exit_code": 0,
+    "timed_out": false,
+    "result": "execute/last-result.json"
+  },
+  "changes": {
+    "status": "clean",
+    "changed_files": [],
+    "new_files": [],
+    "missing_files": [],
+    "reasons": []
+  },
+  "scope": {
+    "status": "clean",
+    "undeclared": [],
+    "out_of_scope": [],
+    "warnings": []
+  },
+  "validation": {
+    "commands_allowed": true,
+    "commands": [
+      {
+        "id": "command_001",
+        "command": "make check",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_001/stdout.log",
+        "stderr": "gate/validation/command_001/stderr.log",
+        "result": "gate/validation/command_001/result.json"
+      }
+    ]
+  },
+  "summary": {
+    "execution_passed": true,
+    "validation_passed": true,
+    "changes_need_review": false,
+    "scope_blocked": false
+  }
+}

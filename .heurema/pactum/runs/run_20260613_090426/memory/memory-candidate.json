@@ -1,0 +1,71 @@
+{
+  "schema": "pactum.memory_candidate.v1",
+  "run_id": "run_20260613_090426",
+  "created_at": "2026-06-13T09:09:08Z",
+  "source": "deterministic",
+  "status": "proposed",
+  "freshness_pin": {
+    "schema": "pactum.memory_freshness_pin.v1",
+    "review_state_sha256": "0906011b33e9b475283ace9a95fa23658b0c117c01a5eae58cf0941efe39a137"
+  },
+  "contract": {
+    "goal": "Run a no-edit Pactum execution through the rebuilt Pactum binary and local codex-acp adapter to verify captured and coherent ACP PromptResponse.Usage accounting.",
+    "in_scope": [
+      "No source changes; the executor should only return a brief confirmation."
+    ],
+    "out_of_scope": [
+      "Editing source, documentation, tests, or manually editing run ledgers."
+    ],
+    "acceptance_criteria": [
+      "pactum usage for this smoke run reports one captured Codex execute call and zero uncaptured calls.",
+      "The captured usage reports total_tokens at least input_tokens + output_tokens after ACP normalization."
+    ],
+    "validation_commands": [
+      "git diff --check"
+    ]
+  },
+  "outcome": {
+    "gate_status": "passed",
+    "review_status": "approved",
+    "execution_exit_code": 0,
+    "validation_passed": true,
+    "changes_need_review": false
+  },
+  "changes": {
+    "changed_files": [],
+    "new_files": [],
+    "missing_files": []
+  },
+  "clarifications": [],
+  "review": {
+    "findings": [],
+    "proposal_summary": {
+      "pending": 0,
+      "accepted": 0,
+      "rejected": 0
+    }
+  },
+  "decisions": [
+    {
+      "kind": "scope",
+      "text": "in scope: No source changes; the executor should only return a brief confirmation."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Editing source, documentation, tests, or manually editing run ledgers."
+    },
+    {
+      "kind": "validation",
+      "text": "git diff --check passed"
+    }
+  ],
+  "artifacts": {
+    "contract": "contract/contract.json",
+    "gate_report": "gate/gate-report.json",
+    "review": "review/review.json",
+    "findings": "review/findings.jsonl",
+    "resolutions": "review/resolutions.jsonl",
+    "proposals": "review/proposals.jsonl",
+    "proposal_decisions": "review/proposal-decisions.jsonl"
+  }
+}

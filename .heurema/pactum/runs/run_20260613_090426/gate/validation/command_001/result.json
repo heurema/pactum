@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1",
+  "id": "command_001",
+  "command": "git diff --check",
+  "started_at": "2026-06-13T09:08:58.083692Z",
+  "finished_at": "2026-06-13T09:08:58.100227Z",
+  "duration_ms": 16,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "gate/validation/command_001/stdout.log",
+  "stderr": "gate/validation/command_001/stderr.log"
+}
