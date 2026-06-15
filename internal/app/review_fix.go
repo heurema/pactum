@@ -253,9 +253,13 @@ func writeReviewFixDryRunArtifacts(prep reviewFixPreparation, plan reviewFixDryR
 }
 
 func buildReviewFixDryRunDocument(runID string, createdAt string, fixer agents.AgentDescriptor) (reviewFixDryRunDocument, error) {
-	wouldRun, err := agents.BuildCommand(fixer, reviewFixPromptRepoPath(runID))
-	if err != nil {
-		return reviewFixDryRunDocument{}, err
+	var wouldRun agents.DryRunCommand
+	if fixer.Command != "" {
+		var err error
+		wouldRun, err = agents.BuildCommand(fixer, reviewFixPromptRepoPath(runID))
+		if err != nil {
+			return reviewFixDryRunDocument{}, err
+		}
 	}
 	return reviewFixDryRunDocument{
 		Schema:    reviewFixDryRunSchema,

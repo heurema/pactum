@@ -146,6 +146,9 @@ func (a App) runClarifierRound(stdout io.Writer, liveOutput io.Writer, runID str
 			if err := writeClarifierPromptArtifacts(prep); err != nil {
 				return agents.DryRunCommand{}, err
 			}
+			if prep.Clarifier.Command == "" {
+				return agents.DryRunCommand{}, nil
+			}
 			return agents.BuildCommand(prep.Clarifier, clarifierPromptRepoPath(runID))
 		},
 		BuildRequest: func(attempt agentAttemptContext[agents.DryRunCommand]) (clarifierRequestDocument, error) {

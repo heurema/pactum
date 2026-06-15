@@ -515,12 +515,11 @@ func TestReviewPlanSucceeds(t *testing.T) {
 	got := stdout.String()
 	// No execution attempt exists, so cross-model selection treats the first
 	// registry entry (codex) as the would-be executor and picks claude.
+	// Claude runs over ACP; the "Would run" section shows empty commands.
 	for _, want := range []string{
 		"Reviewer plan prepared",
 		"Resolved:",
 		"Would run (one attempt per lens):",
-		"claude -p --output-format json --model claude-opus-4-8 < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt-claude-correctness.md",
-		"claude -p --output-format json --model claude-opus-4-8 < .heurema/pactum/runs/" + runID + "/review/reviewer-prompt-claude-docs.md",
 		".heurema/pactum/runs/" + runID + "/review/reviewer-context.md",
 	} {
 		if !strings.Contains(got, want) {
@@ -538,14 +537,13 @@ func TestReviewPlanSucceeds(t *testing.T) {
 	for index, lens := range reviewLenses {
 		attempt := plan.Attempts[index]
 		wantArtifact := reviewerLensPromptArtifact("claude", lens)
-		wantPrompt := runArtifactRepoRel(runID, wantArtifact)
 		if attempt.Lens != lens.Key || attempt.Artifacts.ReviewerPrompt != wantArtifact {
 			t.Fatalf("unexpected lens attempt plan: %#v", attempt)
 		}
-		if attempt.WouldRun.Command != "claude" || strings.Join(attempt.WouldRun.Args, " ") != "-p --output-format json --model claude-opus-4-8" || attempt.WouldRun.Stdin != wantPrompt {
-			t.Fatalf("unexpected would_run command: %#v", attempt.WouldRun)
+		// Claude runs over ACP; the dry-run WouldRun is empty.
+		if attempt.WouldRun.Command != "" || len(attempt.WouldRun.Args) != 0 {
+			t.Fatalf("claude reviewer would_run must be empty for ACP: %#v", attempt.WouldRun)
 		}
-		assertCommandArgsDoNotContain(t, attempt.WouldRun.Args, wantArtifact, wantPrompt)
 	}
 	prompt := mustReadFile(t, reviewerLensPromptPath(runPaths, "claude", reviewLenses[0]))
 	for _, want := range []string{
@@ -580,11 +578,12 @@ func TestReviewPlanJSONOutput(t *testing.T) {
 	first := plan.Attempts[0]
 	if first.Lens != "correctness" ||
 		first.Artifacts.ReviewerPrompt != reviewerLensPromptArtifact("claude", reviewLenses[0]) ||
-		first.Artifacts.ReviewerContext != reviewerContextArtifact ||
-		first.WouldRun.Command != "claude" ||
-		strings.Join(first.WouldRun.Args, " ") != "-p --output-format json --model claude-opus-4-8" ||
-		first.WouldRun.Stdin != runArtifactRepoRel(runID, reviewerLensPromptArtifact("claude", reviewLenses[0])) {
-		t.Fatalf("reviewer dry-run json missing artifacts/would_run: %#v", first)
+		first.Artifacts.ReviewerContext != reviewerContextArtifact {
+		t.Fatalf("reviewer dry-run json missing artifacts: %#v", first)
+	}
+	// Claude runs over ACP; the dry-run WouldRun is empty.
+	if first.WouldRun.Command != "" || len(first.WouldRun.Args) != 0 {
+		t.Fatalf("claude reviewer would_run must be empty for ACP: %#v", first.WouldRun)
 	}
 	if strings.Contains(stdout.String(), "Reviewer plan prepared") {
 		t.Fatalf("json output should not include human output:\n%s", stdout.String())
@@ -603,12 +602,14 @@ func TestReviewPlanUsesDefaultReviewer(t *testing.T) {
 
 	runReviewCommand(t, app, "review", "plan", runID)
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
-	if plan.Reviewer.Name != "claude" || plan.Reviewer.Command != "claude" {
+	// Claude runs over ACP; Command is empty (no CLI path).
+	if plan.Reviewer.Name != "claude" || plan.Reviewer.Command != "" {
 		t.Fatalf("default reviewer mismatch: %#v", plan.Reviewer)
 	}
 	wouldRun := plan.Attempts[0].WouldRun
-	if strings.Join(wouldRun.Args, " ") != "-p --output-format json --model claude-opus-4-8" || wouldRun.Stdin != runArtifactRepoRel(runID, reviewerLensPromptArtifact("claude", reviewLenses[0])) {
-		t.Fatalf("default reviewer would_run mismatch: %#v", wouldRun)
+	// Claude ACP: WouldRun is empty — no CLI invocation.
+	if wouldRun.Command != "" || len(wouldRun.Args) != 0 {
+		t.Fatalf("default reviewer would_run must be empty for ACP: %#v", wouldRun)
 	}
 }
 
@@ -723,15 +724,15 @@ func TestReviewPlanExplicitReviewers(t *testing.T) {
 
 	runReviewCommand(t, app, "review", "plan", runID, "--reviewer", "claude")
 	plan = readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
-	if plan.Reviewer.Name != "claude" || plan.Reviewer.Command != "claude" {
+	// Claude runs over ACP; Command is empty (no CLI path).
+	if plan.Reviewer.Name != "claude" || plan.Reviewer.Command != "" {
 		t.Fatalf("claude reviewer mismatch: %#v", plan.Reviewer)
 	}
-	claudePromptArtifact := reviewerLensPromptArtifact("claude", reviewLenses[0])
 	wouldRun = plan.Attempts[0].WouldRun
-	if strings.Join(wouldRun.Args, " ") != "-p --output-format json --model claude-opus-4-8" || wouldRun.Stdin != runArtifactRepoRel(runID, claudePromptArtifact) {
-		t.Fatalf("claude would_run mismatch: %#v", wouldRun)
+	// Claude ACP: WouldRun is empty — no CLI invocation.
+	if wouldRun.Command != "" || len(wouldRun.Args) != 0 {
+		t.Fatalf("claude would_run must be empty for ACP: %#v", wouldRun)
 	}
-	assertCommandArgsDoNotContain(t, wouldRun.Args, claudePromptArtifact, runArtifactRepoRel(runID, claudePromptArtifact))
 }
 
 func TestReviewPlanAppliesPanelEntryPinToCodex(t *testing.T) {
@@ -766,9 +767,9 @@ func TestReviewPlanAppliesPanelEntryPinToCodex(t *testing.T) {
 		t.Fatalf("review plan claude exited %d, stderr: %s", code, stderr.String())
 	}
 	plan = readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
-	wantArgs = []string{"-p", "--output-format", "json", "--model", "claude-opus-4-8"}
-	if !sameStringSlice(plan.Attempts[0].WouldRun.Args, wantArgs) {
-		t.Fatalf("claude reviewer would_run args = %#v, want %#v", plan.Attempts[0].WouldRun.Args, wantArgs)
+	// Claude runs over ACP; WouldRun is empty — model pin goes via env vars.
+	if plan.Attempts[0].WouldRun.Command != "" || len(plan.Attempts[0].WouldRun.Args) != 0 {
+		t.Fatalf("claude reviewer would_run must be empty for ACP: %#v", plan.Attempts[0].WouldRun)
 	}
 	assertResolvedBlock(t, stdout.String(), "claude", "claude-opus-4-8", "inherit", "partial")
 }
@@ -784,11 +785,10 @@ func TestReviewPlanAppliesPanelEntryPinToClaude(t *testing.T) {
 		t.Fatalf("review plan claude exited %d, stderr: %s", code, stderr.String())
 	}
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
-	wantArgs := []string{"-p", "--output-format", "json", "--model", "claude-sonnet-4", "--effort", "high"}
-	if !sameStringSlice(plan.Attempts[0].WouldRun.Args, wantArgs) {
-		t.Fatalf("claude reviewer would_run args = %#v, want %#v", plan.Attempts[0].WouldRun.Args, wantArgs)
+	// Claude runs over ACP; model/effort pin goes via env vars, WouldRun is empty.
+	if plan.Attempts[0].WouldRun.Command != "" || len(plan.Attempts[0].WouldRun.Args) != 0 {
+		t.Fatalf("claude reviewer would_run must be empty for ACP: %#v", plan.Attempts[0].WouldRun)
 	}
-	assertCommandArgsDoNotContain(t, plan.Attempts[0].WouldRun.Args, "--dangerously-skip-permissions")
 	assertResolvedBlock(t, stdout.String(), "claude", "claude-sonnet-4", "high", "pinned")
 }
 
@@ -1364,18 +1364,20 @@ func TestReviewRunPreconditionFailuresDoNotWriteAttemptEvents(t *testing.T) {
 
 func TestReviewFixDryRunArtifactsUseWriteEnabledExecutorAndPrompt(t *testing.T) {
 	for _, tc := range []struct {
-		agent    string
-		wantArgs string
-		forbid   string
+		agent     string
+		wantArgs  string
+		wantStdin string // empty means ACP agent with no CLI invocation
+		forbid    string
 	}{
 		{
-			agent:    "codex",
-			wantArgs: `exec --json --dangerously-bypass-approvals-and-sandbox -c model="gpt-5" -c model_reasoning_effort=high`,
-			forbid:   "--sandbox read-only",
+			agent:     "codex",
+			wantArgs:  `exec --json --dangerously-bypass-approvals-and-sandbox -c model="gpt-5" -c model_reasoning_effort=high`,
+			wantStdin: "stdin", // sentinel: filled in below from runID
+			forbid:    "--sandbox read-only",
 		},
 		{
 			agent:    "claude",
-			wantArgs: "-p --output-format json --dangerously-skip-permissions --model claude-sonnet-4 --effort high",
+			wantArgs: "", // ACP — no CLI invocation
 			forbid:   "--sandbox read-only",
 		},
 	} {
@@ -1414,8 +1416,11 @@ func TestReviewFixDryRunArtifactsUseWriteEnabledExecutorAndPrompt(t *testing.T) 
 			if strings.Contains(strings.Join(plan.WouldRun.Args, " "), tc.forbid) {
 				t.Fatalf("fixer args should not contain reviewer-only flag %q: %#v", tc.forbid, plan.WouldRun.Args)
 			}
-			if plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewFixPromptArtifact) {
-				t.Fatalf("review fix stdin = %q", plan.WouldRun.Stdin)
+			// Only CLI agents carry stdin in the dry-run plan; ACP agents have empty WouldRun.
+			if tc.wantStdin != "" {
+				if plan.WouldRun.Stdin != runArtifactRepoRel(runID, reviewFixPromptArtifact) {
+					t.Fatalf("review fix stdin = %q", plan.WouldRun.Stdin)
+				}
 			}
 
 			prompt := mustReadFile(t, runPaths.ReviewFixPromptMD)
@@ -2465,8 +2470,12 @@ func writeExecutionAttemptForTest(t *testing.T, runPaths contractRunPathSet, run
 	mustWriteFile(t, attemptPaths.StdoutLog, "")
 	mustWriteFile(t, attemptPaths.StderrLog, "")
 	promptPath := executionPromptRepoPath(runID)
-	wouldRun, err := agents.BuildCommand(agent, promptPath)
-	assertNoError(t, err)
+	var wouldRun agents.DryRunCommand
+	if agent.Command != "" {
+		var err error
+		wouldRun, err = agents.BuildCommand(agent, promptPath)
+		assertNoError(t, err)
+	}
 	request := executionRequestDocument{
 		Schema:         executionRequestSchema,
 		RunID:          runID,

@@ -59,6 +59,34 @@ func singleTransportRequest(t *testing.T, transport *recordingAgentTransport) ag
 	return transport.requests[0]
 }
 
+func TestExecuteRunClaudeACPPathIsWriteStageWithModelSpec(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"})
+	transport := &recordingAgentTransport{}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "run", runID, "--agent", "claude"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute run (claude) exited %d, stderr: %s", code, stderr.String())
+	}
+
+	request := singleTransportRequest(t, transport)
+	if request.ReadOnly {
+		t.Fatal("claude execute run is a write stage and must not set ReadOnly")
+	}
+	if request.WritePathAllowed == nil {
+		t.Fatal("claude execute run must pass the contract write-scope predicate")
+	}
+	if want := (agents.ModelSpec{Model: "claude-sonnet-4", Effort: "high"}); request.Model != want {
+		t.Fatalf("claude execute run model spec = %+v, want %+v", request.Model, want)
+	}
+	// Claude runs over ACP; the descriptor must carry no CLI flags.
+	if request.Agent.Command != "" || len(request.Agent.Args) != 0 {
+		t.Fatalf("claude executor descriptor must have no CLI command/args: command=%q args=%v", request.Agent.Command, request.Agent.Args)
+	}
+}
+
 func TestExecuteRunPassesModelSpecAndStaysWriteStage(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "codex", Model: "gpt-5", Effort: "high"})
@@ -109,6 +137,36 @@ func TestReviewFixPassesModelSpecAndStaysWriteStage(t *testing.T) {
 	}
 }
 
+func TestReviewFixClaudeACPPathIsWriteStageWithModelSpec(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"})
+	runReviewCommand(t, app, "review", "finding", "add", runID, "transport request fields")
+	transport := &recordingAgentTransport{}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "claude"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review fix (claude) exited %d, stderr: %s", code, stderr.String())
+	}
+
+	request := singleTransportRequest(t, transport)
+	if request.ReadOnly {
+		t.Fatal("claude review fix is a write stage and must not set ReadOnly")
+	}
+	if request.WritePathAllowed == nil {
+		t.Fatal("claude review fix must pass the contract write-scope predicate")
+	}
+	if want := (agents.ModelSpec{Model: "claude-sonnet-4", Effort: "high"}); request.Model != want {
+		t.Fatalf("claude review fix model spec = %+v, want %+v", request.Model, want)
+	}
+	// Claude runs over ACP; the descriptor must carry no CLI flags.
+	if request.Agent.Command != "" || len(request.Agent.Args) != 0 {
+		t.Fatalf("claude fixer descriptor must have no CLI command/args: command=%q args=%v", request.Agent.Command, request.Agent.Args)
+	}
+}
+
 func TestReviewRunMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
@@ -132,6 +190,36 @@ func TestReviewRunMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 		}
 		if want := (agents.ModelSpec{Model: "gpt-5", Effort: "high"}); request.Model != want {
 			t.Fatalf("review run model spec = %+v, want %+v", request.Model, want)
+		}
+	}
+}
+
+func TestReviewRunClaudeACPPathIsReadOnlyWithModelSpec(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"})
+	transport := &recordingAgentTransport{}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "claude"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review run (claude) exited %d, stderr: %s", code, stderr.String())
+	}
+
+	if len(transport.requests) != len(reviewLenses) {
+		t.Fatalf("transport request count = %d, want %d", len(transport.requests), len(reviewLenses))
+	}
+	for _, request := range transport.requests {
+		if !request.ReadOnly {
+			t.Fatal("claude review run is a read-only stage and must set ReadOnly")
+		}
+		if want := (agents.ModelSpec{Model: "claude-sonnet-4", Effort: "high"}); request.Model != want {
+			t.Fatalf("claude review run model spec = %+v, want %+v", request.Model, want)
+		}
+		// Reviewer descriptor must carry no CLI flags — read-only is via RunRequest.ReadOnly.
+		if request.Agent.Command != "" || len(request.Agent.Args) != 0 {
+			t.Fatalf("claude reviewer descriptor must have no CLI command/args: command=%q args=%v", request.Agent.Command, request.Agent.Args)
 		}
 	}
 }

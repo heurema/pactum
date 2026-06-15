@@ -8,14 +8,14 @@ it does not wrap the agent in any isolation.
 
 Two agents are built in. There are **no custom agents in the MVP**.
 
-| Name | Executor command (CLI transport) | Role |
-| --- | --- | --- |
-| `codex` | `codex exec --json --dangerously-bypass-approvals-and-sandbox` | executor / reviewer |
-| `claude` | `claude -p --output-format json --dangerously-skip-permissions` | executor / reviewer |
+| Name | Transport | Executor command | Role |
+| --- | --- | --- | --- |
+| `codex` | CLI | `codex exec --json --dangerously-bypass-approvals-and-sandbox` | executor / reviewer |
+| `claude` | ACP | _(no CLI command)_ | executor / reviewer |
 
 In the reviewer role the write bypass is dropped: `codex` runs
-`codex exec --json --sandbox read-only` and `claude` runs
-`claude -p --output-format json`.
+`codex exec --json --sandbox read-only`; `claude`'s read-only enforcement is
+applied by the ACP client when `ReadOnly` is true — no adapter flag is needed.
 
 Both agents receive their prompt from a prompt file that Pactum prepares (the
 built executor prompt for execution, the clarifier prompt for clarifier
@@ -111,8 +111,10 @@ entry (still as five lens attempts). When the panel is empty or absent, review
 falls back to the cross-model single-reviewer selection above.
 
 For `codex`, pins emit `-c model=...` and `-c model_reasoning_effort=...`; for
-`claude`, `--model ...` and `--effort ...`. Reviewer pins are appended to the
-read-only reviewer command and do not add executor write-bypass flags. The
+`claude`, the ACP adapter receives `ANTHROPIC_MODEL=...` and
+`CLAUDE_CODE_EFFORT_LEVEL=...` in its environment — no CLI flags. Reviewer pins
+are appended to the read-only codex reviewer command; for `claude`, they reach
+the ACP adapter as environment variables regardless of role. The
 usage ledger records both the registry name (`agent_name`) and the inferred
 engine (`agent`); execution and attempt artifacts keep recording the engine,
 so cross-model comparison semantics are unchanged.
@@ -356,10 +358,9 @@ There is also **no Docker support yet**.
 
 The idle timeout is **completion-aware**: when the watchdog fires but the
 captured output already carries the agent's successful terminal marker —
-claude's final result envelope with `is_error: false`, codex's terminal
-`turn.completed` event, or (over ACP) a prompt response recorded before the
-kill — the attempt is finalized as **completed with a warning** instead of
-failed. The exit code becomes 0, the attempt proceeds through the normal
+codex's terminal `turn.completed` event (CLI transport), or (over ACP) a
+prompt response recorded before the kill — the attempt is finalized as
+**completed with a warning** instead of failed. The exit code becomes 0, the attempt proceeds through the normal
 success path, and the result document records the honest pair
 `timed_out: true` + `completed_despite_timeout: true`, with a visible warning
 in the attempt stderr, the live output, and the human summary. Partial or
@@ -589,8 +590,9 @@ the current review findings, and instructs the agent to trace each finding to
 code, fix valid findings in place, and explain a rebuttal for false positives.
 
 This is write-enabled agent execution, not reviewer execution: `codex` uses
-`codex exec --json --dangerously-bypass-approvals-and-sandbox`, and `claude`
-uses the executor command with `--dangerously-skip-permissions`. The command
+`codex exec --json --dangerously-bypass-approvals-and-sandbox`; `claude` runs
+over ACP with write capability granted by `ReadOnly=false` on the ACP client.
+The command
 honors the fixer's registry-entry pins (an omitted `--agent` defaults to the
 first registry entry), prints the same `Resolved` block
 as execution, captures request/result/stdout/stderr artifacts under

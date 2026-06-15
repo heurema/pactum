@@ -993,9 +993,13 @@ func buildReviewerDryRunDocument(runID string, createdAt string, member string, 
 
 func buildReviewerLensPlan(runID string, member string, lens reviewLens, reviewer agents.AgentDescriptor) (reviewerLensAttemptPlan, error) {
 	promptArtifact := reviewerLensPromptArtifact(member, lens)
-	wouldRun, err := agents.BuildCommand(reviewer, runArtifactRepoRel(runID, promptArtifact))
-	if err != nil {
-		return reviewerLensAttemptPlan{}, err
+	var wouldRun agents.DryRunCommand
+	if reviewer.Command != "" {
+		var err error
+		wouldRun, err = agents.BuildCommand(reviewer, runArtifactRepoRel(runID, promptArtifact))
+		if err != nil {
+			return reviewerLensAttemptPlan{}, err
+		}
 	}
 	return reviewerLensAttemptPlan{
 		Lens: lens.Key,
