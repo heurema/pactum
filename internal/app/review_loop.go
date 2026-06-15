@@ -65,24 +65,25 @@ type reviewLoopArtifacts struct {
 }
 
 type reviewLoopRoundSummary struct {
-	Round                      int                    `json:"round"`
-	ReviewerAttemptID          string                 `json:"reviewer_attempt_id"`
-	ReviewerAttemptIDs         []string               `json:"reviewer_attempt_ids,omitempty"`
-	ReviewerAttempts           []reviewLoopAttemptRef `json:"reviewer_attempts,omitempty"`
-	ProposalsCreated           int                    `json:"proposals_created"`
-	ProposalsAccepted          int                    `json:"proposals_accepted"`
-	OpenFindings               int                    `json:"open_findings"`
-	OpenBlockingFindings       int                    `json:"open_blocking_findings"`
-	Warnings                   []string               `json:"warnings,omitempty"`
-	CleanStreak                int                    `json:"clean_streak"`
-	UnchangedFingerprintStreak int                    `json:"unchanged_fingerprint_streak"`
-	WorkingTreeFingerprint     string                 `json:"working_tree_fingerprint,omitempty"`
-	FixerAttemptID             string                 `json:"fixer_attempt_id,omitempty"`
-	FixOutcomesResolved        int                    `json:"fix_outcomes_resolved,omitempty"`
-	FixOutcomesRebutted        int                    `json:"fix_outcomes_rebutted,omitempty"`
-	FixOutcomesBlocked         int                    `json:"fix_outcomes_blocked,omitempty"`
-	GateStatus                 string                 `json:"gate_status,omitempty"`
-	GateReportArtifact         string                 `json:"gate_report_artifact,omitempty"`
+	Round                      int                     `json:"round"`
+	ReviewerAttemptID          string                  `json:"reviewer_attempt_id"`
+	ReviewerAttemptIDs         []string                `json:"reviewer_attempt_ids,omitempty"`
+	ReviewerAttempts           []reviewLoopAttemptRef  `json:"reviewer_attempts,omitempty"`
+	ProposalsCreated           int                     `json:"proposals_created"`
+	ProposalsAccepted          int                     `json:"proposals_accepted"`
+	OpenFindings               int                     `json:"open_findings"`
+	OpenBlockingFindings       int                     `json:"open_blocking_findings"`
+	Warnings                   []string                `json:"warnings,omitempty"`
+	SkippedLenses              []reviewLoopSkippedLens `json:"skipped_lenses,omitempty"`
+	CleanStreak                int                     `json:"clean_streak"`
+	UnchangedFingerprintStreak int                     `json:"unchanged_fingerprint_streak"`
+	WorkingTreeFingerprint     string                  `json:"working_tree_fingerprint,omitempty"`
+	FixerAttemptID             string                  `json:"fixer_attempt_id,omitempty"`
+	FixOutcomesResolved        int                     `json:"fix_outcomes_resolved,omitempty"`
+	FixOutcomesRebutted        int                     `json:"fix_outcomes_rebutted,omitempty"`
+	FixOutcomesBlocked         int                     `json:"fix_outcomes_blocked,omitempty"`
+	GateStatus                 string                  `json:"gate_status,omitempty"`
+	GateReportArtifact         string                  `json:"gate_report_artifact,omitempty"`
 }
 
 // reviewLoopReviewer is one resolved panel member: the registry name it was
@@ -96,10 +97,11 @@ type reviewLoopReviewer struct {
 }
 
 type reviewLoopReviewRoundResult struct {
-	Reviewers  []string
-	AttemptIDs []string
-	Attempts   []reviewLoopAttemptRef
-	Proposals  reviewLoopProposalBatch
+	Reviewers     []string
+	AttemptIDs    []string
+	Attempts      []reviewLoopAttemptRef
+	Proposals     reviewLoopProposalBatch
+	SkippedLenses []reviewLoopSkippedLens
 }
 
 // reviewLoopAttemptRef ties one lens attempt to the panel member (registry
@@ -108,6 +110,14 @@ type reviewLoopAttemptRef struct {
 	AttemptID string `json:"attempt_id"`
 	Reviewer  string `json:"reviewer"`
 	Lens      string `json:"lens"`
+}
+
+// reviewLoopSkippedLens records a reviewer/lens attempt that failed and was
+// skipped so the round could continue with the remaining successful attempts.
+type reviewLoopSkippedLens struct {
+	Reviewer string `json:"reviewer"`
+	Lens     string `json:"lens"`
+	Reason   string `json:"reason"`
 }
 
 type reviewLoopProposalBatch struct {
@@ -244,6 +254,7 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 			OpenFindings:         reviewSummaryAfterAccept.Open,
 			OpenBlockingFindings: reviewSummaryAfterAccept.BlockingOpen,
 			Warnings:             append([]string{}, proposals.Warnings...),
+			SkippedLenses:        append([]reviewLoopSkippedLens{}, reviewerResult.SkippedLenses...),
 		}
 		if len(reviewerResult.AttemptIDs) > 1 {
 			roundSummary.ReviewerAttemptIDs = append([]string{}, reviewerResult.AttemptIDs...)
@@ -555,15 +566,32 @@ func (a App) runReviewLoopReviewRound(context reviewContext, liveOutput io.Write
 
 	a.runReviewerLensFanOut(sharedLive, runID, prep, reviewers, timeout, memberResults, errs)
 
-	// First error in (reviewer, lens) order wins, wrapped exactly as the
-	// unstaggered per-reviewer path did, so callers see the same failure surface
-	// regardless of which group held which attempt.
+	// Collect failed lens attempts. If all fail, surface the first error. If some
+	// fail, record them as skipped so the round continues with what succeeded.
+	var skipped []reviewLoopSkippedLens
+	var firstErr error
+	var firstErrReviewer, firstErrLens string
+	successCount := 0
 	for reviewerIndex, reviewer := range reviewers {
 		for lensIndex, err := range errs[reviewerIndex] {
 			if err != nil {
-				return reviewLoopReviewRoundResult{}, fmt.Errorf("reviewer %s lens %s: %w", reviewer.Name, reviewLenses[lensIndex].Key, err)
+				if firstErr == nil {
+					firstErr = err
+					firstErrReviewer = reviewer.Name
+					firstErrLens = reviewLenses[lensIndex].Key
+				}
+				skipped = append(skipped, reviewLoopSkippedLens{
+					Reviewer: reviewer.Name,
+					Lens:     reviewLenses[lensIndex].Key,
+					Reason:   err.Error(),
+				})
+			} else {
+				successCount++
 			}
 		}
+	}
+	if successCount == 0 && firstErr != nil {
+		return reviewLoopReviewRoundResult{}, fmt.Errorf("reviewer %s lens %s: %w", firstErrReviewer, firstErrLens, firstErr)
 	}
 
 	batch := reviewLoopProposalBatch{
@@ -573,7 +601,10 @@ func (a App) runReviewLoopReviewRound(context reviewContext, liveOutput io.Write
 	attemptIDs := make([]string, 0, len(reviewers)*len(reviewLenses))
 	attempts := make([]reviewLoopAttemptRef, 0, len(reviewers)*len(reviewLenses))
 	for index, reviewer := range reviewers {
-		for _, result := range memberResults[index] {
+		for lensIndex, result := range memberResults[index] {
+			if errs[index][lensIndex] != nil {
+				continue
+			}
 			attemptIDs = append(attemptIDs, result.AttemptID)
 			attempts = append(attempts, reviewLoopAttemptRef{
 				AttemptID: result.AttemptID,
@@ -589,10 +620,11 @@ func (a App) runReviewLoopReviewRound(context reviewContext, liveOutput io.Write
 		}
 	}
 	return reviewLoopReviewRoundResult{
-		Reviewers:  reviewLoopReviewerNames(reviewers),
-		AttemptIDs: attemptIDs,
-		Attempts:   attempts,
-		Proposals:  batch,
+		Reviewers:     reviewLoopReviewerNames(reviewers),
+		AttemptIDs:    attemptIDs,
+		Attempts:      attempts,
+		Proposals:     batch,
+		SkippedLenses: skipped,
 	}, nil
 }
 
@@ -1125,6 +1157,9 @@ func writeReviewLoopSummary(stdout io.Writer, summary reviewLoopSummaryDocument)
 			fmt.Fprintf(stdout, ", unchanged streak %d", round.UnchangedFingerprintStreak)
 		}
 		fmt.Fprintln(stdout)
+		for _, s := range round.SkippedLenses {
+			fmt.Fprintf(stdout, "    skipped: reviewer %s lens %s: %s\n", s.Reviewer, s.Lens, s.Reason)
+		}
 	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Artifacts:")

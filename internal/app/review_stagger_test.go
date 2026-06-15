@@ -408,13 +408,12 @@ func TestGroupReviewerLensTasks(t *testing.T) {
 	}
 }
 
-// TestReviewRunSurfacesFailedLensAttemptInStaggeredGroup pins the error grid:
-// a lens attempt that fails inside a staggered group surfaces as the same
-// "reviewer <name> lens <key>" wrapped error the unstaggered path produced,
-// and the first error in (reviewer, lens) order wins.
+// TestReviewRunSurfacesFailedLensAttemptInStaggeredGroup pins the partial-failure
+// path: a single lens attempt failing inside a staggered group is recorded as a
+// skipped lens and the round continues with the remaining successful attempts.
 func TestReviewRunSurfacesFailedLensAttemptInStaggeredGroup(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
 	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4", Effort: "high"})
 
 	// The lead succeeds and streams output; one held lens fails after release.
@@ -428,12 +427,23 @@ func TestReviewRunSurfacesFailedLensAttemptInStaggeredGroup(t *testing.T) {
 	app.AgentTransport = tr
 
 	var stdout, stderr bytes.Buffer
-	err := app.ReviewRun(&stdout, &stderr, runID, reviewRunOptions{Reviewer: "claude"})
-	if err == nil {
-		t.Fatalf("a failed lens attempt must fail the round")
+	if err := app.ReviewRun(&stdout, &stderr, runID, reviewRunOptions{Reviewer: "claude"}); err != nil {
+		t.Fatalf("partial lens failure must not abort the round, got: %v", err)
 	}
-	want := "reviewer claude lens " + reviewLenses[2].Key
-	if !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "lens transport failure") {
-		t.Fatalf("error = %q, want it wrapped as %q with the transport cause", err.Error(), want)
+	summary := readReviewLoopSummary(t, runPaths.ReviewLoopSummaryJSON)
+	if len(summary.Rounds) != 1 {
+		t.Fatalf("partial failure should still complete one round: %#v", summary)
+	}
+	round := summary.Rounds[0]
+	if len(round.SkippedLenses) != 1 {
+		t.Fatalf("skipped lenses = %d, want 1: %#v", len(round.SkippedLenses), round)
+	}
+	s := round.SkippedLenses[0]
+	if s.Reviewer != "claude" || s.Lens != reviewLenses[2].Key || !strings.Contains(s.Reason, "lens transport failure") {
+		t.Fatalf("skipped lens mismatch: %#v", s)
+	}
+	// The 4 succeeding lens attempts should still be recorded in the round.
+	if got := len(round.ReviewerAttemptIDs); got != len(reviewLenses)-1 {
+		t.Fatalf("attempt IDs = %d, want %d: %#v", got, len(reviewLenses)-1, round)
 	}
 }

@@ -945,6 +945,83 @@ func TestReviewLoopStreamsSubRunOutputToStderrWithCleanStdout(t *testing.T) {
 	}
 }
 
+// TestReviewLoopPartialLensFailureProceedsWithWarning verifies that a single
+// failing reviewer/lens attempt does not abort the round: the round completes
+// using the remaining successful lens results, and the skipped attempt is
+// recorded with reviewer, lens, and reason in the round summary artifact.
+func TestReviewLoopPartialLensFailureProceedsWithWarning(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4-6"})
+
+	// Fail one lens; the remaining four succeed and produce a clean round.
+	failingPrompt := runArtifactRepoRel(runID, reviewerLensPromptArtifact("claude", reviewLenses[1]))
+	tr := &staggerTransport{}
+	tr.failFor = failingPrompt
+	app.AgentTransport = tr
+
+	var stdout, stderr bytes.Buffer
+	if err := app.ReviewRun(&stdout, &stderr, runID, reviewRunOptions{Reviewer: "claude"}); err != nil {
+		t.Fatalf("partial lens failure must not abort the round: %v", err)
+	}
+	summary := readReviewLoopSummary(t, runPaths.ReviewLoopSummaryJSON)
+	if summary.TerminalReason != "clean_round" || len(summary.Rounds) != 1 {
+		t.Fatalf("partial failure should reach clean_round: %#v", summary)
+	}
+	round := summary.Rounds[0]
+	if len(round.SkippedLenses) != 1 {
+		t.Fatalf("skipped lenses = %d, want 1: %#v", len(round.SkippedLenses), round)
+	}
+	s := round.SkippedLenses[0]
+	if s.Reviewer != "claude" || s.Lens != reviewLenses[1].Key || s.Reason == "" {
+		t.Fatalf("skipped lens mismatch: %#v", s)
+	}
+	// The 4 succeeding lens attempts are collected; the skipped one is excluded.
+	if got := len(round.ReviewerAttemptIDs); got != len(reviewLenses)-1 {
+		t.Fatalf("attempt IDs = %d, want %d", got, len(reviewLenses)-1)
+	}
+	// The human-readable output surfaces the skipped lens.
+	humanOut := stdout.String()
+	if !strings.Contains(humanOut, "skipped:") || !strings.Contains(humanOut, s.Lens) {
+		t.Fatalf("human output should mention skipped lens:\n%s", humanOut)
+	}
+}
+
+// TestReviewLoopAllLensesFailingReturnsError verifies that when every
+// reviewer/lens attempt fails the round returns an error (the fully-unavailable
+// panel case) instead of silently treating it as a clean pass.
+func TestReviewLoopAllLensesFailingReturnsError(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-fable-5"})
+
+	app.AgentTransport = alwaysErrTransport{err: errors.New("Claude Fable 5 is currently unavailable")}
+
+	var stdout, stderr bytes.Buffer
+	err := app.ReviewRun(&stdout, &stderr, runID, reviewRunOptions{Reviewer: "claude"})
+	if err == nil {
+		t.Fatalf("all lenses failing must return an error")
+	}
+	if !strings.Contains(err.Error(), "reviewer claude lens") {
+		t.Fatalf("error should identify the reviewer and lens: %v", err)
+	}
+	if !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("error should include the failure cause: %v", err)
+	}
+	// The summary artifact records the terminal reason as an error.
+	summary := readReviewLoopSummary(t, runPaths.ReviewLoopSummaryJSON)
+	if summary.TerminalReason != "error" {
+		t.Fatalf("all-fail summary terminal reason = %q, want error: %#v", summary.TerminalReason, summary)
+	}
+}
+
+// alwaysErrTransport is a test-only transport that rejects every attempt.
+type alwaysErrTransport struct{ err error }
+
+func (tr alwaysErrTransport) Run(req agents.RunRequest) (agents.RunResult, error) {
+	return agents.RunResult{}, tr.err
+}
+
 // registerReviewLoopAgents adds the loop helper agents to the config registry
 // so registry-name resolution finds them. The loop reviewer and fixer both
 // infer the claude engine; the injected registries keep them apart by role.
