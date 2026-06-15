@@ -344,7 +344,33 @@ distillation lives in
 
 ## Hardening / cleanup
 
-- **`gofmt` is not in the gate** (small). `make check` runs test/vet/deadcode +
+- **ACP-only transport — remove the `claude -p` CLI path** (med). All agent
+  invocation must go through ACP (`internal/agents/acp_transport.go`). The
+  built-in claude descriptor (`internal/agents/config.go`) runs a CLI process
+  `claude -p --output-format json …`, while reviewers run over ACP — and that
+  split is the root cause of inconsistent token-usage capture (in the
+  2026-06-15 Sonnet dogfood the executor captured usage via the CLI
+  `parseClaudeUsage`, reviewers via ACP `PromptResponse.Usage`). Drop the CLI
+  claude descriptor and the CLI usage parsers (`parseClaudeUsage`, the `--json`
+  `parseCodexUsage` path in `internal/agents/usage.go`); usage then comes
+  uniformly from ACP `PromptResponse.Usage` (claude) and `codex/token_usage`
+  `_meta` (codex, via the forked adapter). Directive — keep one transport.
+- **Graceful reviewer degradation** (small-med). A reviewer model that is
+  unavailable / rate-limited (or whose process dies) currently aborts the whole
+  review loop with a non-zero exit — observed when `claude-fable-5` returned
+  `rate_limit` ("Claude Fable 5 is currently unavailable") and the loop had to
+  be re-run with fable removed from the panel. Skip/retry the failed lens with a
+  recorded warning and converge on the available reviewers instead of failing
+  the run.
+- **Codex usage not recorded on the non-fork CLI path** (small). `parseCodexUsage`
+  exists, but codex drafter/reviewer attempts (`codex exec --json`) recorded
+  `captured=false`. Folds into the ACP-only item above once that lands; until
+  then the CLI parse path yields no usage row for the draft/review stages.
+- **`contract revise` cannot remove fields** (small). Only `--add-*` flags
+  exist, so a bad/over-specified validation command (or scope/acceptance entry)
+  can't be dropped via CLI — forcing a hand-edit of `contract.json` that orphans
+  the execution attempt by SHA. Add `--remove-*` parity.
+- **`gofmt` is not in the gate** (shipped, #150). `make check` runs test/vet/deadcode +
   `git diff --check`, but not `gofmt -l`, so formatting drift accumulates
   uncaught (e.g. const-block alignment in `internal/app/clarify_round.go` and
   `review.go` drifted after the M25.1 budget-const removal — vet-clean, builds

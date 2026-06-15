@@ -375,11 +375,15 @@ func TestResolveAgentForRoleUsesInferredEngine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveAgentForRole executor: %v", err)
 	}
-	if executor.Name != "writer" || executor.Agent.Name != agents.BuiltinClaude || executor.Agent.Command != "claude" {
+	// Claude runs over ACP: no CLI command or args; model/effort are in ModelSpec.
+	if executor.Name != "writer" || executor.Agent.Name != agents.BuiltinClaude || executor.Agent.Command != "" {
 		t.Fatalf("claude-model entry should resolve the claude executor descriptor: %#v", executor)
 	}
-	if !containsString(executor.Agent.Args, "--model") || !containsString(executor.Agent.Args, "claude-fable-5") {
-		t.Fatalf("entry model pin should be applied to the descriptor: %#v", executor.Agent.Args)
+	if len(executor.Agent.Args) != 0 {
+		t.Fatalf("claude executor must carry no CLI args: %#v", executor.Agent.Args)
+	}
+	if executor.ModelSpec.Model != "claude-fable-5" {
+		t.Fatalf("claude model pin should be preserved in ModelSpec: %#v", executor.ModelSpec)
 	}
 }
 

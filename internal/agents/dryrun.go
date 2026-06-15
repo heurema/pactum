@@ -9,9 +9,15 @@ const (
 )
 
 func BuildDryRunPlan(runID string, createdAt string, agent AgentDescriptor, promptRepoPath string) (DryRunPlan, error) {
-	wouldRun, err := BuildCommand(agent, promptRepoPath)
-	if err != nil {
-		return DryRunPlan{}, err
+	// ACP agents (e.g. claude) carry no CLI command; skip BuildCommand for them
+	// — the adapter is launched at runtime by the ACP transport.
+	var wouldRun DryRunCommand
+	if agent.Command != "" {
+		var err error
+		wouldRun, err = BuildCommand(agent, promptRepoPath)
+		if err != nil {
+			return DryRunPlan{}, err
+		}
 	}
 
 	agentArgs := append([]string{}, agent.Args...)

@@ -50,10 +50,10 @@ func (BuiltinRegistry) ListBuiltins() []AgentDescriptor {
 			Input:   InputPromptFile,
 		},
 		{
-			Name:    BuiltinClaude,
-			Command: "claude",
-			Args:    []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"},
-			Input:   InputPromptFile,
+			// Claude runs exclusively over ACP; no CLI command or args.
+			// Write capability is granted via RunRequest.ReadOnly=false on the ACP client.
+			Name:  BuiltinClaude,
+			Input: InputPromptFile,
 		},
 	}
 	for i := range builtins {
@@ -64,9 +64,9 @@ func (BuiltinRegistry) ListBuiltins() []AgentDescriptor {
 
 // reviewerBuiltins returns read-only descriptors for the reviewer role. A reviewer
 // only reads the diff and emits findings, so it must NOT carry the executor's
-// write/edit bypass: codex runs in a read-only sandbox and claude omits
-// --dangerously-skip-permissions. Both keep structured output enabled so the
-// shared runner can capture token usage for read-stage calls.
+// write/edit bypass. Codex pins its adapter to a read-only sandbox; claude's
+// read-only enforcement is applied by the ACP client when RunRequest.ReadOnly is
+// true — no adapter flag is needed, so the descriptor carries no CLI args.
 func reviewerBuiltins() []AgentDescriptor {
 	builtins := []AgentDescriptor{
 		{
@@ -76,10 +76,9 @@ func reviewerBuiltins() []AgentDescriptor {
 			Input:   InputPromptFile,
 		},
 		{
-			Name:    BuiltinClaude,
-			Command: "claude",
-			Args:    []string{"-p", "--output-format", "json"},
-			Input:   InputPromptFile,
+			// Claude reviewer read-only is enforced at the ACP client layer.
+			Name:  BuiltinClaude,
+			Input: InputPromptFile,
 		},
 	}
 	for i := range builtins {

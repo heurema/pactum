@@ -27,33 +27,6 @@ not-json
 	}
 }
 
-func TestParseClaudeUsageNormalizesCacheAdditiveInput(t *testing.T) {
-	output := []byte(`{
-  "type": "result",
-  "subtype": "success",
-  "usage": {
-    "input_tokens": 50,
-    "output_tokens": 20,
-    "cache_creation_input_tokens": 7,
-    "cache_read_input_tokens": 13
-  }
-}`)
-	usage := parseAgentUsage(AgentDescriptor{
-		Name: BuiltinClaude,
-		Args: []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"},
-	}, output, nil)
-
-	if !usage.Captured {
-		t.Fatalf("usage should be captured: %#v", usage)
-	}
-	if usage.InputTokens != 70 || usage.OutputTokens != 20 || usage.TotalTokens != 90 {
-		t.Fatalf("normalized claude usage mismatch: %#v", usage)
-	}
-	if usage.CacheReadTokens != 13 || usage.CacheCreationTokens != 7 || len(usage.Raw) == 0 {
-		t.Fatalf("claude token classes/raw mismatch: %#v", usage)
-	}
-}
-
 func TestParseUsageMalformedOrEmptyOutputIsUncaptured(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -64,11 +37,6 @@ func TestParseUsageMalformedOrEmptyOutputIsUncaptured(t *testing.T) {
 			name:   "codex empty",
 			agent:  AgentDescriptor{Name: BuiltinCodex, Args: []string{"exec", "--json"}},
 			output: nil,
-		},
-		{
-			name:   "claude malformed",
-			agent:  AgentDescriptor{Name: BuiltinClaude, Args: []string{"-p", "--output-format", "json"}},
-			output: []byte(`not json`),
 		},
 	}
 
@@ -96,7 +64,6 @@ func TestParseUsageSkippedWhenStructuredOutputIsNotEnabled(t *testing.T) {
 }
 
 func TestAgentRunCompleted(t *testing.T) {
-	claude := AgentDescriptor{Name: BuiltinClaude}
 	codex := AgentDescriptor{Name: BuiltinCodex}
 	tests := []struct {
 		name   string
@@ -104,17 +71,14 @@ func TestAgentRunCompleted(t *testing.T) {
 		stdout string
 		want   bool
 	}{
-		{"claude success envelope", claude, `{"type":"result","subtype":"success","is_error":false,"usage":{"input_tokens":1}}`, true},
-		{"claude error envelope", claude, `{"type":"result","subtype":"error_during_execution","is_error":true}`, false},
-		{"claude partial envelope", claude, `{"type":"result","is_er`, false},
-		{"claude non-result envelope", claude, `{"type":"message","is_error":false}`, false},
-		{"claude missing subtype is not success", claude, `{"type":"result","is_error":false}`, false},
-		{"claude empty output", claude, "", false},
 		{"codex terminal turn.completed", codex, "{\"type\":\"turn.started\"}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1}}\n", true},
 		{"codex turn.completed without usage", codex, `{"type":"turn.completed"}`, true},
 		{"codex no terminal event", codex, "{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\"}\n", false},
 		{"codex completed turn followed by killed work", codex, "{\"type\":\"turn.completed\"}\n{\"type\":\"turn.started\"}\n", false},
 		{"codex empty output", codex, "", false},
+		// Claude runs over ACP; its completion signal is the recorded prompt
+		// response, not a CLI stdout marker. The CLI path always returns false.
+		{"claude ACP stdout is not a completion signal", AgentDescriptor{Name: BuiltinClaude}, `{"type":"result","subtype":"success","is_error":false}`, false},
 		{"unknown agent", AgentDescriptor{Name: "custom"}, `{"type":"result","is_error":false}`, false},
 	}
 

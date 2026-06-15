@@ -186,13 +186,13 @@ func TestExecutePlanExplicitClaude(t *testing.T) {
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
-	if plan.Agent.Name != "claude" || plan.Agent.Command != "claude" {
+	// Claude runs over ACP; no CLI command or args in the dry-run plan.
+	if plan.Agent.Name != "claude" || plan.Agent.Command != "" {
 		t.Fatalf("claude agent mismatch: %#v", plan.Agent)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json --dangerously-skip-permissions --model claude-opus-4-8" || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
-		t.Fatalf("claude would_run mismatch: %#v", plan.WouldRun)
+	if len(plan.Agent.Args) != 0 || plan.WouldRun.Command != "" || len(plan.WouldRun.Args) != 0 {
+		t.Fatalf("claude dry-run plan must carry no CLI args: %#v", plan)
 	}
-	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", executionPromptRepoPath(runID))
 }
 
 func TestExecutePlanAppliesExecutorModelConfigToCodex(t *testing.T) {
@@ -224,9 +224,10 @@ func TestExecutePlanAppliesExecutorModelConfigToClaude(t *testing.T) {
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
-	wantArgs := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions", "--model", "claude-sonnet-4", "--effort", "high"}
-	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
-		t.Fatalf("claude would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
+	// Claude model/effort are pinned via ACP adapter env vars, not CLI args.
+	// The dry-run plan WouldRun must be empty (no CLI subprocess).
+	if plan.WouldRun.Command != "" || len(plan.WouldRun.Args) != 0 {
+		t.Fatalf("claude ACP dry-run plan must have empty WouldRun: %#v", plan.WouldRun)
 	}
 	assertResolvedBlock(t, stdout.String(), "claude", "claude-sonnet-4", "high", "pinned")
 }
@@ -280,7 +281,8 @@ func TestExecutePlanDefaultsToFirstRegistryEntry(t *testing.T) {
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
-	if plan.Agent.Name != "claude" || plan.Agent.Command != "claude" {
+	// Claude runs over ACP; the plan carries no CLI command or args.
+	if plan.Agent.Name != "claude" || plan.Agent.Command != "" {
 		t.Fatalf("default executor should be the first registry entry: %#v", plan.Agent)
 	}
 	assertResolvedBlock(t, stdout.String(), "claude", "claude-opus-4-8", "inherit", "partial")
@@ -300,8 +302,9 @@ func TestExecutePlanTwoEntriesOnSameBuiltInCarryDistinctPins(t *testing.T) {
 		t.Fatalf("execute plan fable exited %d, stderr: %s", code, stderr.String())
 	}
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
-	if plan.Agent.Name != "claude" || strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json --dangerously-skip-permissions --model claude-fable-5" {
-		t.Fatalf("fable entry should pin claude-fable-5 on claude: %#v", plan)
+	// Claude runs over ACP; no CLI args. The model pin lives in the ACP adapter env.
+	if plan.Agent.Name != "claude" || plan.WouldRun.Command != "" || len(plan.WouldRun.Args) != 0 {
+		t.Fatalf("fable entry should pin claude-fable-5 on claude (ACP, no CLI args): %#v", plan)
 	}
 	assertResolvedBlock(t, stdout.String(), "fable", "claude-fable-5", "inherit", "partial")
 
@@ -312,8 +315,8 @@ func TestExecutePlanTwoEntriesOnSameBuiltInCarryDistinctPins(t *testing.T) {
 		t.Fatalf("execute plan opus exited %d, stderr: %s", code, stderr.String())
 	}
 	plan = readDryRunPlan(t, runPaths.DryRunJSON)
-	if plan.Agent.Name != "claude" || strings.Join(plan.WouldRun.Args, " ") != "-p --output-format json --dangerously-skip-permissions --model claude-opus-4-8" {
-		t.Fatalf("opus entry should pin claude-opus-4-8 on claude: %#v", plan)
+	if plan.Agent.Name != "claude" || plan.WouldRun.Command != "" || len(plan.WouldRun.Args) != 0 {
+		t.Fatalf("opus entry should pin claude-opus-4-8 on claude (ACP, no CLI args): %#v", plan)
 	}
 	assertResolvedBlock(t, stdout.String(), "opus", "claude-opus-4-8", "inherit", "partial")
 }

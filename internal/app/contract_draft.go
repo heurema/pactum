@@ -164,6 +164,9 @@ func (a App) ContractDraft(stdout io.Writer, liveOutput io.Writer, runID string,
 			if err := writeContractDrafterPromptArtifacts(prep); err != nil {
 				return agents.DryRunCommand{}, err
 			}
+			if prep.Drafter.Command == "" {
+				return agents.DryRunCommand{}, nil
+			}
 			return agents.BuildCommand(prep.Drafter, contractDrafterPromptRepoPath(runID))
 		},
 		BuildRequest: func(attempt agentAttemptContext[agents.DryRunCommand]) (contractDrafterRequestDocument, error) {

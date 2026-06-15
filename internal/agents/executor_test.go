@@ -43,22 +43,10 @@ func TestApplyModelSpecEmitsBuiltInAgentArgs(t *testing.T) {
 			args:  []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"},
 		},
 		{
-			name:  "claude model and effort",
-			agent: AgentDescriptor{Name: BuiltinClaude, Command: "claude", Args: []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"}, Input: InputPromptFile},
-			spec:  ModelSpec{Model: "claude-sonnet-4", Effort: "high"},
-			args:  []string{"-p", "--output-format", "json", "--dangerously-skip-permissions", "--model", "claude-sonnet-4", "--effort", "high"},
-		},
-		{
 			name:  "codex reviewer keeps read-only sandbox",
 			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--json", "--sandbox", "read-only"}, Input: InputPromptFile},
 			spec:  ModelSpec{Model: "gpt-5", Effort: "high"},
 			args:  []string{"exec", "--json", "--sandbox", "read-only", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"},
-		},
-		{
-			name:  "claude reviewer keeps reviewer mode",
-			agent: AgentDescriptor{Name: BuiltinClaude, Command: "claude", Args: []string{"-p", "--output-format", "json"}, Input: InputPromptFile},
-			spec:  ModelSpec{Model: "claude-sonnet-4", Effort: "high"},
-			args:  []string{"-p", "--output-format", "json", "--model", "claude-sonnet-4", "--effort", "high"},
 		},
 	}
 
@@ -72,6 +60,26 @@ func TestApplyModelSpecEmitsBuiltInAgentArgs(t *testing.T) {
 				t.Fatalf("args = %#v, want %#v", agent.Args, tt.args)
 			}
 		})
+	}
+}
+
+func TestApplyModelSpecClaudeIsNoOp(t *testing.T) {
+	// Claude model/effort go via env vars in acpAdapterCommand; ApplyModelSpec
+	// must not append --model/--effort CLI flags to the descriptor.
+	claudeExec := AgentDescriptor{Name: BuiltinClaude, Input: InputPromptFile}
+	for _, spec := range []ModelSpec{
+		{Model: "claude-sonnet-4", Effort: "high"},
+		{Model: "claude-sonnet-4"},
+		{Effort: "high"},
+		{},
+	} {
+		got, err := ApplyModelSpec(claudeExec, spec)
+		if err != nil {
+			t.Fatalf("ApplyModelSpec(claude, %+v) returned error: %v", spec, err)
+		}
+		if len(got.Args) != 0 {
+			t.Fatalf("ApplyModelSpec(claude, %+v) must not add CLI args, got %v", spec, got.Args)
+		}
 	}
 }
 
@@ -95,17 +103,6 @@ func TestBuildCommandUsesStdinForBuiltInAgents(t *testing.T) {
 			command: "codex",
 			args:    []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"},
 		},
-		{
-			name: "claude",
-			agent: AgentDescriptor{
-				Name:    BuiltinClaude,
-				Command: "claude",
-				Args:    []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"},
-				Input:   InputPromptFile,
-			},
-			command: "claude",
-			args:    []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"},
-		},
 	}
 
 	for _, tt := range tests {
@@ -119,6 +116,15 @@ func TestBuildCommandUsesStdinForBuiltInAgents(t *testing.T) {
 			}
 			assertArgsDoNotContain(t, command.Args, "contract/prompt.md", promptPath)
 		})
+	}
+}
+
+func TestBuildCommandFailsForACPOnlyAgent(t *testing.T) {
+	// Claude has no CLI command; BuildCommand must reject it so the CLI
+	// transport cannot launch a claude subprocess.
+	_, err := BuildCommand(AgentDescriptor{Name: BuiltinClaude, Input: InputPromptFile}, "prompt.md")
+	if err == nil {
+		t.Fatal("BuildCommand for an ACP-only agent (no Command) should return an error")
 	}
 }
 
@@ -167,38 +173,6 @@ func TestRunSubprocessCodexUsesTypedRunnerStdinAndEnv(t *testing.T) {
 	}
 	if got := readFile(t, stderr); !strings.Contains(got, "stderr-line") {
 		t.Fatalf("stderr log mismatch: %q", got)
-	}
-}
-
-func TestRunSubprocessClaudeFiltersNestedAgentMarker(t *testing.T) {
-	root := t.TempDir()
-	promptRepoPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
-	writePrompt(t, root, promptRepoPath, "claude prompt")
-	t.Setenv("CLAUDECODE", "nested")
-	t.Setenv("ANTHROPIC_API_KEY", "kept-for-claude")
-
-	runner := &recordingRunner{}
-	_, err := runSubprocessWithRunner(RunRequest{
-		RepoRoot:       root,
-		RunID:          "run_123",
-		AttemptID:      "attempt_001",
-		Agent:          AgentDescriptor{Name: BuiltinClaude, Command: "claude", Args: []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"}, Input: InputPromptFile},
-		PromptRepoPath: promptRepoPath,
-	}, runner)
-	if err != nil {
-		t.Fatalf("RunSubprocess returned error: %v", err)
-	}
-	if runner.spec.Command != "claude" || !sameStringSlice(runner.spec.Args, []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"}) {
-		t.Fatalf("unexpected process spec: %#v", runner.spec)
-	}
-	if runner.stdin != "claude prompt" {
-		t.Fatalf("stdin mismatch: %q", runner.stdin)
-	}
-	if envContainsName(runner.spec.Env, "CLAUDECODE") {
-		t.Fatalf("claude env should strip nested agent marker: %#v", runner.spec.Env)
-	}
-	if !envContainsName(runner.spec.Env, "ANTHROPIC_API_KEY") {
-		t.Fatalf("claude env should preserve ANTHROPIC_API_KEY")
 	}
 }
 
@@ -307,7 +281,6 @@ func TestRunSubprocessTimesOutAfterIdleOutputGap(t *testing.T) {
 }
 
 func TestRunSubprocessIdleTimeoutAfterTerminalMarkerCompletesWithWarning(t *testing.T) {
-	claudeAgent := AgentDescriptor{Name: BuiltinClaude, Command: "claude", Args: []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"}, Input: InputPromptFile}
 	codexAgent := AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile}
 
 	tests := []struct {
@@ -316,9 +289,6 @@ func TestRunSubprocessIdleTimeoutAfterTerminalMarkerCompletesWithWarning(t *test
 		stdout        string
 		wantCompleted bool
 	}{
-		{"claude success envelope", claudeAgent, `{"type":"result","subtype":"success","is_error":false,"usage":{"input_tokens":10,"output_tokens":5}}`, true},
-		{"claude error envelope", claudeAgent, `{"type":"result","subtype":"error_during_execution","is_error":true}`, false},
-		{"claude partial output", claudeAgent, `{"type":"result","is_er`, false},
 		{"codex terminal turn.completed", codexAgent, "{\"type\":\"turn.started\"}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}\n", true},
 		{"codex no terminal event", codexAgent, "{\"type\":\"turn.started\"}\n", false},
 	}
@@ -416,19 +386,38 @@ func TestReviewerBuiltinsAreReadOnly(t *testing.T) {
 	if got := strings.Join(codexReviewer.Args, " "); got != "exec --json --sandbox read-only" {
 		t.Fatalf("codex reviewer should run a read-only sandbox, got %q", got)
 	}
-	claudeReviewer, _ := BuiltinRegistry{}.ResolveReviewer(BuiltinClaude)
-	if got := strings.Join(claudeReviewer.Args, " "); got != "-p --output-format json" {
-		t.Fatalf("claude reviewer should drop write-bypass, got %q", got)
-	}
 
-	// Executors must still carry the write bypass: both agents must be able to mutate.
+	// Codex executor must still carry the write bypass.
 	codexExec, _ := BuiltinRegistry{}.ResolveExecutor(BuiltinCodex)
 	if !strings.Contains(strings.Join(codexExec.Args, " "), "--dangerously-bypass-approvals-and-sandbox") {
 		t.Fatalf("codex executor should keep full bypass: %v", codexExec.Args)
 	}
-	claudeExec, _ := BuiltinRegistry{}.ResolveExecutor(BuiltinClaude)
-	if !strings.Contains(strings.Join(claudeExec.Args, " "), "--dangerously-skip-permissions") {
-		t.Fatalf("claude executor should keep skip-permissions: %v", claudeExec.Args)
+}
+
+func TestClaudeDescriptorHasNoCLIArgs(t *testing.T) {
+	// Claude runs over ACP; its built-in descriptors must carry no CLI command
+	// or args. Write-stage capability is granted by RunRequest.ReadOnly=false on
+	// the ACP client; read-only is enforced by RunRequest.ReadOnly=true.
+	claudeExec, err := BuiltinRegistry{}.ResolveExecutor(BuiltinClaude)
+	if err != nil {
+		t.Fatalf("ResolveExecutor(claude) error: %v", err)
+	}
+	if claudeExec.Command != "" {
+		t.Fatalf("claude executor must have no CLI command, got %q", claudeExec.Command)
+	}
+	if len(claudeExec.Args) != 0 {
+		t.Fatalf("claude executor must have no CLI args, got %v", claudeExec.Args)
+	}
+
+	claudeReviewer, err := BuiltinRegistry{}.ResolveReviewer(BuiltinClaude)
+	if err != nil {
+		t.Fatalf("ResolveReviewer(claude) error: %v", err)
+	}
+	if claudeReviewer.Command != "" {
+		t.Fatalf("claude reviewer must have no CLI command, got %q", claudeReviewer.Command)
+	}
+	if len(claudeReviewer.Args) != 0 {
+		t.Fatalf("claude reviewer must have no CLI args, got %v", claudeReviewer.Args)
 	}
 }
 

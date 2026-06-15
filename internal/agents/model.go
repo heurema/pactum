@@ -28,12 +28,8 @@ func ApplyModelSpec(agent AgentDescriptor, spec ModelSpec) (AgentDescriptor, err
 			agent.Args = append(agent.Args, "-c", "model_reasoning_effort="+spec.Effort)
 		}
 	case BuiltinClaude:
-		if spec.Model != "" {
-			agent.Args = append(agent.Args, "--model", spec.Model)
-		}
-		if spec.Effort != "" {
-			agent.Args = append(agent.Args, "--effort", spec.Effort)
-		}
+		// Claude runs over ACP; the adapter reads ANTHROPIC_MODEL and
+		// CLAUDE_CODE_EFFORT_LEVEL from acpAdapterCommand — no CLI args to append.
 	default:
 		return AgentDescriptor{}, fmt.Errorf("model override is unsupported for agent: %s", agent.Name)
 	}
