@@ -1,65 +1,27 @@
 package agents
 
 import (
-	"bytes"
-	"context"
-	"fmt"
-	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
-func TestApplyModelSpecEmitsBuiltInAgentArgs(t *testing.T) {
-	tests := []struct {
-		name  string
-		agent AgentDescriptor
-		spec  ModelSpec
-		args  []string
-	}{
-		{
-			name:  "codex empty",
-			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
-			args:  []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"},
-		},
-		{
-			name:  "codex model only",
-			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
-			spec:  ModelSpec{Model: "gpt-5"},
-			args:  []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=\"gpt-5\""},
-		},
-		{
-			name:  "codex effort only",
-			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
-			spec:  ModelSpec{Effort: "high"},
-			args:  []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=high"},
-		},
-		{
-			name:  "codex model and effort",
-			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
-			spec:  ModelSpec{Model: "gpt-5", Effort: "high"},
-			args:  []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"},
-		},
-		{
-			name:  "codex reviewer keeps read-only sandbox",
-			agent: AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--json", "--sandbox", "read-only"}, Input: InputPromptFile},
-			spec:  ModelSpec{Model: "gpt-5", Effort: "high"},
-			args:  []string{"exec", "--json", "--sandbox", "read-only", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			agent, err := ApplyModelSpec(tt.agent, tt.spec)
-			if err != nil {
-				t.Fatalf("ApplyModelSpec returned error: %v", err)
-			}
-			if !sameStringSlice(agent.Args, tt.args) {
-				t.Fatalf("args = %#v, want %#v", agent.Args, tt.args)
-			}
-		})
+func TestApplyModelSpecCodexIsNoOp(t *testing.T) {
+	// Codex model/effort go via -c overrides in acpAdapterCommand; ApplyModelSpec
+	// must not append CLI flags to the descriptor.
+	codexExec := AgentDescriptor{Name: BuiltinCodex, Input: InputPromptFile}
+	for _, spec := range []ModelSpec{
+		{Model: "gpt-5", Effort: "high"},
+		{Model: "gpt-5"},
+		{Effort: "high"},
+		{},
+	} {
+		got, err := ApplyModelSpec(codexExec, spec)
+		if err != nil {
+			t.Fatalf("ApplyModelSpec(codex, %+v) returned error: %v", spec, err)
+		}
+		if len(got.Args) != 0 {
+			t.Fatalf("ApplyModelSpec(codex, %+v) must not add CLI args, got %v", spec, got.Args)
+		}
 	}
 }
 
@@ -83,314 +45,19 @@ func TestApplyModelSpecClaudeIsNoOp(t *testing.T) {
 	}
 }
 
-func TestBuildCommandUsesStdinForBuiltInAgents(t *testing.T) {
-	promptPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
-
-	tests := []struct {
-		name    string
-		agent   AgentDescriptor
-		command string
-		args    []string
-	}{
-		{
-			name: "codex",
-			agent: AgentDescriptor{
-				Name:    BuiltinCodex,
-				Command: "codex",
-				Args:    []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"},
-				Input:   InputPromptFile,
-			},
-			command: "codex",
-			args:    []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			command, err := BuildCommand(tt.agent, promptPath)
-			if err != nil {
-				t.Fatalf("BuildCommand returned error: %v", err)
-			}
-			if command.Command != tt.command || !sameStringSlice(command.Args, tt.args) || command.Stdin != promptPath {
-				t.Fatalf("unexpected command: %#v", command)
-			}
-			assertArgsDoNotContain(t, command.Args, "contract/prompt.md", promptPath)
-		})
-	}
-}
-
-func TestBuildCommandFailsForACPOnlyAgent(t *testing.T) {
-	// Claude has no CLI command; BuildCommand must reject it so the CLI
-	// transport cannot launch a claude subprocess.
-	_, err := BuildCommand(AgentDescriptor{Name: BuiltinClaude, Input: InputPromptFile}, "prompt.md")
-	if err == nil {
-		t.Fatal("BuildCommand for an ACP-only agent (no Command) should return an error")
-	}
-}
-
-func TestRunSubprocessCodexUsesTypedRunnerStdinAndEnv(t *testing.T) {
-	root := t.TempDir()
-	promptRepoPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
-	writePrompt(t, root, promptRepoPath, "executor prompt body")
-	t.Setenv("CLAUDECODE", "nested")
-	t.Setenv("ANTHROPIC_API_KEY", "kept-for-codex")
-
-	runner := &recordingRunner{}
-	result, err := runSubprocessWithRunner(RunRequest{
-		RepoRoot:       root,
-		RunID:          "run_123",
-		AttemptID:      "attempt_001",
-		Agent:          AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile},
-		PromptRepoPath: promptRepoPath,
-	}, runner)
-	if err != nil {
-		t.Fatalf("RunSubprocess returned error: %v", err)
-	}
-	if result.ExitCode != 0 {
-		t.Fatalf("unexpected result: %#v", result)
-	}
-	if runner.spec.Command != "codex" || !sameStringSlice(runner.spec.Args, []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}) {
-		t.Fatalf("unexpected process spec: %#v", runner.spec)
-	}
-	if runner.spec.Dir != root {
-		t.Fatalf("process dir = %q, want %q", runner.spec.Dir, root)
-	}
-	if runner.stdin != "executor prompt body" {
-		t.Fatalf("stdin mismatch: %q", runner.stdin)
-	}
-	assertArgsDoNotContain(t, runner.spec.Args, "contract/prompt.md", promptRepoPath)
-	if envContainsName(runner.spec.Env, "CLAUDECODE") {
-		t.Fatalf("codex env should strip CLAUDECODE: %#v", runner.spec.Env)
-	}
-	if !envContainsName(runner.spec.Env, "ANTHROPIC_API_KEY") {
-		t.Fatalf("codex env should preserve ANTHROPIC_API_KEY")
-	}
-
-	stdout := filepath.Join(root, ".heurema", "pactum", "runs", "run_123", "execute", "attempts", "attempt_001", "stdout.log")
-	stderr := filepath.Join(root, ".heurema", "pactum", "runs", "run_123", "execute", "attempts", "attempt_001", "stderr.log")
-	if got := readFile(t, stdout); !strings.Contains(got, "stdout-line") {
-		t.Fatalf("stdout log mismatch: %q", got)
-	}
-	if got := readFile(t, stderr); !strings.Contains(got, "stderr-line") {
-		t.Fatalf("stderr log mismatch: %q", got)
-	}
-}
-
-func TestRunSubprocessFiresOnFirstOutput(t *testing.T) {
-	root := t.TempDir()
-	promptRepoPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
-	writePrompt(t, root, promptRepoPath, "prompt body")
-
-	// recordingRunner writes one stdout line and one stderr line; the shared
-	// once-guard must fire OnFirstOutput exactly once across both streams.
-	fires := 0
-	_, err := runSubprocessWithRunner(RunRequest{
-		RepoRoot:       root,
-		RunID:          "run_123",
-		AttemptID:      "attempt_001",
-		Agent:          AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec"}, Input: InputPromptFile},
-		PromptRepoPath: promptRepoPath,
-		OnFirstOutput:  func() { fires++ },
-	}, &recordingRunner{})
-	if err != nil {
-		t.Fatalf("RunSubprocess returned error: %v", err)
-	}
-	if fires != 1 {
-		t.Fatalf("OnFirstOutput fired %d times, want exactly 1", fires)
-	}
-}
-
-func TestRunSubprocessTeesLiveOutput(t *testing.T) {
-	root := t.TempDir()
-	promptRepoPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
-	writePrompt(t, root, promptRepoPath, "executor prompt body")
-
-	var live bytes.Buffer
-	_, err := runSubprocessWithRunner(RunRequest{
-		RepoRoot:       root,
-		RunID:          "run_123",
-		AttemptID:      "attempt_001",
-		Agent:          AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec"}, Input: InputPromptFile},
-		PromptRepoPath: promptRepoPath,
-		LiveOutput:     &live,
-	}, &recordingRunner{})
-	if err != nil {
-		t.Fatalf("RunSubprocess returned error: %v", err)
-	}
-
-	// The live writer receives a copy of both the agent's stdout and stderr.
-	if got := live.String(); !strings.Contains(got, "stdout-line") || !strings.Contains(got, "stderr-line") {
-		t.Fatalf("live output should tee both streams: %q", got)
-	}
-
-	// The per-attempt log files are still captured in full.
-	attemptDir := filepath.Join(root, ".heurema", "pactum", "runs", "run_123", "execute", "attempts", "attempt_001")
-	if got := readFile(t, filepath.Join(attemptDir, "stdout.log")); !strings.Contains(got, "stdout-line") {
-		t.Fatalf("stdout log should still be written: %q", got)
-	}
-	if got := readFile(t, filepath.Join(attemptDir, "stderr.log")); !strings.Contains(got, "stderr-line") {
-		t.Fatalf("stderr log should still be written: %q", got)
-	}
-}
-
-func TestRunSubprocessWithoutLiveOutputIsCaptureOnly(t *testing.T) {
-	root := t.TempDir()
-	promptRepoPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
-	writePrompt(t, root, promptRepoPath, "executor prompt body")
-
-	// No LiveOutput set: the run must still capture to the log files unchanged.
-	_, err := runSubprocessWithRunner(RunRequest{
-		RepoRoot:       root,
-		RunID:          "run_123",
-		AttemptID:      "attempt_001",
-		Agent:          AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec"}, Input: InputPromptFile},
-		PromptRepoPath: promptRepoPath,
-	}, &recordingRunner{})
-	if err != nil {
-		t.Fatalf("RunSubprocess returned error: %v", err)
-	}
-
-	attemptDir := filepath.Join(root, ".heurema", "pactum", "runs", "run_123", "execute", "attempts", "attempt_001")
-	if got := readFile(t, filepath.Join(attemptDir, "stdout.log")); !strings.Contains(got, "stdout-line") {
-		t.Fatalf("stdout log should still be written: %q", got)
-	}
-	if got := readFile(t, filepath.Join(attemptDir, "stderr.log")); !strings.Contains(got, "stderr-line") {
-		t.Fatalf("stderr log should still be written: %q", got)
-	}
-}
-
-func TestRunSubprocessTimesOutAfterIdleOutputGap(t *testing.T) {
-	root := t.TempDir()
-	promptRepoPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
-	writePrompt(t, root, promptRepoPath, "executor prompt body")
-
-	result, err := runSubprocessWithRunner(RunRequest{
-		RepoRoot:       root,
-		RunID:          "run_123",
-		AttemptID:      "attempt_001",
-		Agent:          AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec"}, Input: InputPromptFile},
-		PromptRepoPath: promptRepoPath,
-		Timeout:        30 * time.Millisecond,
-	}, idleRunner{})
-	if err == nil {
-		t.Fatalf("RunSubprocess should return an error after idle timeout")
-	}
-	if !result.TimedOut || result.ExitCode != -1 {
-		t.Fatalf("timeout result mismatch: %#v", result)
-	}
-}
-
-func TestRunSubprocessIdleTimeoutAfterTerminalMarkerCompletesWithWarning(t *testing.T) {
-	codexAgent := AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}, Input: InputPromptFile}
-
-	tests := []struct {
-		name          string
-		agent         AgentDescriptor
-		stdout        string
-		wantCompleted bool
-	}{
-		{"codex terminal turn.completed", codexAgent, "{\"type\":\"turn.started\"}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}\n", true},
-		{"codex no terminal event", codexAgent, "{\"type\":\"turn.started\"}\n", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			root := t.TempDir()
-			promptRepoPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
-			writePrompt(t, root, promptRepoPath, "executor prompt body")
-
-			var live bytes.Buffer
-			result, err := runSubprocessWithRunner(RunRequest{
-				RepoRoot:       root,
-				RunID:          "run_123",
-				AttemptID:      "attempt_001",
-				Agent:          tt.agent,
-				PromptRepoPath: promptRepoPath,
-				Timeout:        30 * time.Millisecond,
-				LiveOutput:     &live,
-			}, outputThenIdleRunner{stdout: tt.stdout})
-			if err == nil {
-				t.Fatal("the idle kill error is still reported to the caller")
-			}
-			if !result.TimedOut {
-				t.Fatalf("TimedOut must stay true for the record: %#v", result)
-			}
-
-			stderrLog := readFile(t, filepath.Join(root, ".heurema", "pactum", "runs", "run_123", "execute", "attempts", "attempt_001", "stderr.log"))
-			if tt.wantCompleted {
-				if result.ExitCode != 0 || !result.CompletedDespiteTimeout {
-					t.Fatalf("terminal marker should finalize as completed-with-warning: %#v", result)
-				}
-				if !strings.Contains(stderrLog, completedDespiteTimeoutNotice) || !strings.Contains(live.String(), completedDespiteTimeoutNotice) {
-					t.Fatalf("warning missing:\nstderr: %q\nlive: %q", stderrLog, live.String())
-				}
-			} else {
-				if result.ExitCode != -1 || result.CompletedDespiteTimeout {
-					t.Fatalf("partial/error output should keep the timed-out failure: %#v", result)
-				}
-				if strings.Contains(stderrLog, completedDespiteTimeoutNotice) {
-					t.Fatalf("failed timeout must not carry the completion warning: %q", stderrLog)
-				}
-			}
-		})
-	}
-}
-
-func TestRunSubprocessIdleTimeoutResetsOnOutput(t *testing.T) {
-	root := t.TempDir()
-	promptRepoPath := ".heurema/pactum/runs/run_123/contract/prompt.md"
-	writePrompt(t, root, promptRepoPath, "executor prompt body")
-
-	timeout := 120 * time.Millisecond
-	result, err := runSubprocessWithRunner(RunRequest{
-		RepoRoot:       root,
-		RunID:          "run_123",
-		AttemptID:      "attempt_001",
-		Agent:          AgentDescriptor{Name: BuiltinCodex, Command: "codex", Args: []string{"exec"}, Input: InputPromptFile},
-		PromptRepoPath: promptRepoPath,
-		Timeout:        timeout,
-	}, periodicOutputRunner{Writes: 6, Interval: 30 * time.Millisecond})
-	if err != nil {
-		t.Fatalf("RunSubprocess returned error despite periodic output: %v", err)
-	}
-	if result.TimedOut || result.ExitCode != 0 {
-		t.Fatalf("periodic output should prevent timeout: %#v", result)
-	}
-	if result.DurationMillis < timeout.Milliseconds() {
-		t.Fatalf("run should exceed the old wall-clock timeout, got duration %dms", result.DurationMillis)
-	}
-
-	stdout := filepath.Join(root, ".heurema", "pactum", "runs", "run_123", "execute", "attempts", "attempt_001", "stdout.log")
-	if got := readFile(t, stdout); !strings.Contains(got, "tick-6") {
-		t.Fatalf("stdout log should capture periodic output: %q", got)
-	}
-}
-
-func TestReviewerBuiltinsAreReadOnly(t *testing.T) {
-	// Reviewers only read the diff and emit findings — they must never carry the
-	// executor's write/edit bypass.
+func TestReviewerBuiltinsHaveNoWriteBypassArgs(t *testing.T) {
+	// Both built-in reviewers run over ACP and carry no CLI args at all.
+	// Write-stage bypass is never in scope for reviewers; read-only enforcement
+	// is applied at the ACP layer via RunRequest.ReadOnly=true (codex: sandbox_mode
+	// adapter flag; claude: ACP client write denial).
 	for _, name := range []string{BuiltinCodex, BuiltinClaude} {
 		reviewer, err := BuiltinRegistry{}.ResolveReviewer(name)
 		if err != nil {
 			t.Fatalf("ResolveReviewer(%q) error: %v", name, err)
 		}
-		joined := strings.Join(reviewer.Args, " ")
-		for _, forbidden := range []string{"--dangerously-skip-permissions", "--dangerously-bypass-approvals-and-sandbox"} {
-			if strings.Contains(joined, forbidden) {
-				t.Fatalf("reviewer %q must not carry write-bypass flag %q: %v", name, forbidden, reviewer.Args)
-			}
+		if len(reviewer.Args) != 0 {
+			t.Fatalf("reviewer %q must have no CLI args, got %v", name, reviewer.Args)
 		}
-	}
-
-	codexReviewer, _ := BuiltinRegistry{}.ResolveReviewer(BuiltinCodex)
-	if got := strings.Join(codexReviewer.Args, " "); got != "exec --json --sandbox read-only" {
-		t.Fatalf("codex reviewer should run a read-only sandbox, got %q", got)
-	}
-
-	// Codex executor must still carry the write bypass.
-	codexExec, _ := BuiltinRegistry{}.ResolveExecutor(BuiltinCodex)
-	if !strings.Contains(strings.Join(codexExec.Args, " "), "--dangerously-bypass-approvals-and-sandbox") {
-		t.Fatalf("codex executor should keep full bypass: %v", codexExec.Args)
 	}
 }
 
@@ -421,91 +88,6 @@ func TestClaudeDescriptorHasNoCLIArgs(t *testing.T) {
 	}
 }
 
-type recordingRunner struct {
-	spec  processSpec
-	stdin string
-	err   error
-}
-
-func (r *recordingRunner) Run(_ context.Context, spec processSpec) error {
-	r.spec = processSpec{
-		Command: spec.Command,
-		Args:    append([]string{}, spec.Args...),
-		Dir:     spec.Dir,
-		Env:     append([]string{}, spec.Env...),
-		Stdout:  spec.Stdout,
-		Stderr:  spec.Stderr,
-	}
-	stdin, err := io.ReadAll(spec.Stdin)
-	if err != nil {
-		return err
-	}
-	r.stdin = string(stdin)
-	fmt.Fprintln(spec.Stdout, "stdout-line")
-	fmt.Fprintln(spec.Stderr, "stderr-line")
-	if r.err != nil {
-		return r.err
-	}
-	return nil
-}
-
-type idleRunner struct{}
-
-func (idleRunner) Run(ctx context.Context, _ processSpec) error {
-	<-ctx.Done()
-	return ctx.Err()
-}
-
-// outputThenIdleRunner writes its configured stdout immediately, then idles
-// until the watchdog kills it — an agent that finished its work but whose
-// process lingered past the idle window.
-type outputThenIdleRunner struct {
-	stdout string
-}
-
-func (r outputThenIdleRunner) Run(ctx context.Context, spec processSpec) error {
-	fmt.Fprint(spec.Stdout, r.stdout)
-	<-ctx.Done()
-	return ctx.Err()
-}
-
-type periodicOutputRunner struct {
-	Writes   int
-	Interval time.Duration
-}
-
-func (r periodicOutputRunner) Run(ctx context.Context, spec processSpec) error {
-	for i := 0; i < r.Writes; i++ {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(r.Interval):
-		}
-		fmt.Fprintf(spec.Stdout, "tick-%d\n", i+1)
-	}
-	return nil
-}
-
-func writePrompt(t *testing.T, root string, promptRepoPath string, prompt string) {
-	t.Helper()
-	path := filepath.Join(root, filepath.FromSlash(promptRepoPath))
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir prompt dir: %v", err)
-	}
-	if err := os.WriteFile(path, []byte(prompt), 0o644); err != nil {
-		t.Fatalf("write prompt: %v", err)
-	}
-}
-
-func readFile(t *testing.T, path string) string {
-	t.Helper()
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	return string(content)
-}
-
 func assertArgsDoNotContain(t *testing.T, args []string, forbidden ...string) {
 	t.Helper()
 	joined := strings.Join(args, " ")
@@ -514,16 +96,6 @@ func assertArgsDoNotContain(t *testing.T, args []string, forbidden ...string) {
 			t.Fatalf("args should not contain %q: %#v", value, args)
 		}
 	}
-}
-
-func envContainsName(environ []string, name string) bool {
-	prefix := name + "="
-	for _, entry := range environ {
-		if entry == name || strings.HasPrefix(entry, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 func sameStringSlice(left []string, right []string) bool {

@@ -42,38 +42,6 @@ func TestRunAgentAttemptLifecycleAppendsUsageRecord(t *testing.T) {
 	}
 }
 
-func TestExecuteRunRecordsCapturedCodexUsage(t *testing.T) {
-	root := t.TempDir()
-	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
-	app.AgentRegistry = testAgentRegistry(codexHelperAgentDescriptor())
-	t.Setenv("PACTUM_HELPER_PROCESS", "1")
-	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
-	t.Setenv("PACTUM_HELPER_CODEX_USAGE", "1")
-
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "codex"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
-	}
-
-	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-	records, err := readUsageRecords(runPaths.UsageJSONL)
-	assertNoError(t, err)
-	if len(records) != 1 {
-		t.Fatalf("usage record count = %d, want 1: %#v", len(records), records)
-	}
-	record := records[0]
-	if !record.Captured || record.Provider != "codex" || record.Agent != "codex" || record.AgentName != "codex" {
-		t.Fatalf("codex usage should be captured with provider identity: %#v", record)
-	}
-	if record.InputTokens != 120 || record.OutputTokens != 50 || record.TotalTokens != 170 {
-		t.Fatalf("codex usage counts mismatch: %#v", record)
-	}
-	if record.CacheReadTokens != 30 || record.ReasoningTokens != 10 || len(record.Raw) == 0 {
-		t.Fatalf("codex usage classes/raw mismatch: %#v", record)
-	}
-}
-
 func TestExecuteRunUsageRecordsRegistryAgentName(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedPromptContract(t, root)
@@ -102,64 +70,6 @@ func TestExecuteRunUsageRecordsRegistryAgentName(t *testing.T) {
 	record := records[0]
 	if record.AgentName != "pinned-codex" || record.Agent != "codex" || record.Provider != "codex" {
 		t.Fatalf("usage record should carry the registry name alongside the underlying agent: %#v", record)
-	}
-}
-
-func TestReviewRunRecordsCapturedCodexUsage(t *testing.T) {
-	root := t.TempDir()
-	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
-	app.AgentRegistry = testAgentRegistry(codexReviewerHelperAgentDescriptor())
-	t.Setenv("PACTUM_REVIEWER_HELPER_PROCESS", "1")
-	t.Setenv("PACTUM_REVIEWER_EXPECTED_CWD", root)
-	t.Setenv("PACTUM_REVIEWER_CODEX_USAGE", "1")
-
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "run", runID, "--reviewer", "codex"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
-	}
-
-	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-	records, err := readUsageRecords(runPaths.UsageJSONL)
-	assertNoError(t, err)
-	// One usage record per lens attempt, each under the registry name.
-	if len(records) != len(reviewLenses) {
-		t.Fatalf("usage record count = %d, want %d: %#v", len(records), len(reviewLenses), records)
-	}
-	for _, record := range records {
-		if !record.Captured || record.Stage != "review" || record.Provider != "codex" || record.Agent != "codex" || record.AgentName != "codex" {
-			t.Fatalf("reviewer usage should be captured with review identity: %#v", record)
-		}
-		if record.InputTokens != 210 || record.OutputTokens != 65 || record.TotalTokens != 275 {
-			t.Fatalf("reviewer usage counts mismatch: %#v", record)
-		}
-		if record.CacheReadTokens != 40 || record.ReasoningTokens != 15 || len(record.Raw) == 0 {
-			t.Fatalf("reviewer usage classes/raw mismatch: %#v", record)
-		}
-	}
-}
-
-func TestExecuteRunUsageParseMissWarnsButSucceeds(t *testing.T) {
-	root := t.TempDir()
-	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
-	app.AgentRegistry = testAgentRegistry(codexHelperAgentDescriptor())
-	t.Setenv("PACTUM_HELPER_PROCESS", "1")
-	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
-
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"execute", "run", runID, "--agent", "codex"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("execute run with parse miss exited %d, stderr: %s", code, stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "usage capture warning") {
-		t.Fatalf("parse miss should warn on live stderr:\n%s", stderr.String())
-	}
-
-	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-	records, err := readUsageRecords(runPaths.UsageJSONL)
-	assertNoError(t, err)
-	if len(records) != 1 || records[0].Captured {
-		t.Fatalf("parse miss should record one uncaptured usage record: %#v", records)
 	}
 }
 
@@ -830,16 +740,7 @@ func codexHelperAgentDescriptor() agents.AgentDescriptor {
 	return agents.AgentDescriptor{
 		Name:    agents.BuiltinCodex,
 		Command: os.Args[0],
-		Args:    []string{"-test.run=TestExecutionHelperProcess", "--", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox"},
-		Input:   agents.InputPromptFile,
-	}
-}
-
-func codexReviewerHelperAgentDescriptor() agents.AgentDescriptor {
-	return agents.AgentDescriptor{
-		Name:    agents.BuiltinCodex,
-		Command: os.Args[0],
-		Args:    []string{"-test.run=TestReviewerHelperProcess", "--", "exec", "--json", "--sandbox", "read-only"},
+		Args:    []string{"-test.run=TestExecutionHelperProcess", "--"},
 		Input:   agents.InputPromptFile,
 	}
 }

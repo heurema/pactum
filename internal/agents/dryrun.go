@@ -8,29 +8,35 @@ const (
 	DryRunArtifactDryRun         = "execute/dry-run.json"
 )
 
-func BuildDryRunPlan(runID string, createdAt string, agent AgentDescriptor, promptRepoPath string) (DryRunPlan, error) {
-	// ACP agents (e.g. claude) carry no CLI command; skip BuildCommand for them
-	// — the adapter is launched at runtime by the ACP transport.
-	var wouldRun DryRunCommand
-	if agent.Command != "" {
-		var err error
-		wouldRun, err = BuildCommand(agent, promptRepoPath)
-		if err != nil {
-			return DryRunPlan{}, err
-		}
+// BuildACPWouldRun returns the DryRunCommand describing the ACP adapter that
+// would be launched for the given agent, model spec, and read-only flag. Callers
+// that build partial dry-run documents (reviewer lenses, review-fix plans) use
+// this to populate their WouldRun field without duplicating adapter resolution.
+func BuildACPWouldRun(agentName string, spec ModelSpec, readOnly bool) (DryRunCommand, error) {
+	cmd, args, env, err := acpAdapterCommand(agentName, spec, readOnly)
+	if err != nil {
+		return DryRunCommand{}, err
 	}
+	return DryRunCommand{
+		Command: cmd,
+		Args:    append([]string{}, args...),
+		Env:     append([]string{}, env...),
+	}, nil
+}
 
-	agentArgs := append([]string{}, agent.Args...)
+func BuildDryRunPlan(runID string, createdAt string, agent AgentDescriptor, spec ModelSpec, readOnly bool, promptRepoPath string) (DryRunPlan, error) {
+	adapterCmd, adapterArgs, adapterEnv, err := acpAdapterCommand(agent.Name, spec, readOnly)
+	if err != nil {
+		return DryRunPlan{}, err
+	}
 
 	return DryRunPlan{
 		Schema:    DryRunSchema,
 		RunID:     runID,
 		CreatedAt: createdAt,
 		Agent: DryRunAgent{
-			Name:    agent.Name,
-			Command: agent.Command,
-			Args:    agentArgs,
-			Input:   agent.Input,
+			Name:  agent.Name,
+			Input: agent.Input,
 		},
 		Checks: DryRunChecks{
 			PromptManifestReady:         true,
@@ -43,9 +49,9 @@ func BuildDryRunPlan(runID string, createdAt string, agent AgentDescriptor, prom
 			PromptManifest:  DryRunArtifactPromptManifest,
 		},
 		WouldRun: DryRunCommand{
-			Command: wouldRun.Command,
-			Args:    append([]string{}, wouldRun.Args...),
-			Stdin:   wouldRun.Stdin,
+			Command: adapterCmd,
+			Args:    append([]string{}, adapterArgs...),
+			Env:     append([]string{}, adapterEnv...),
 		},
 	}, nil
 }

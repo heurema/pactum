@@ -186,12 +186,11 @@ func TestSecurityPolicyMentionsRequiredConcepts(t *testing.T) {
 }
 
 // requiredReadmeSecurityMentions pin the README security truth: the exact
-// commands real execution runs, the unsandboxed warning, and the pointer to
-// the security policy. The README is where a user first learns how agents
-// run, so these claims must not silently soften or drift from the code.
+// ACP adapter packages real execution launches, the unsandboxed warning, and
+// the pointer to the security policy. The README is where a user first learns
+// how agents run, so these claims must not silently soften or drift from the
+// code.
 var requiredReadmeSecurityMentions = []string{
-	"codex exec --json --dangerously-bypass-approvals-and-sandbox",
-	"claude -p --output-format json --dangerously-skip-permissions",
 	"@zed-industries/codex-acp",
 	"@agentclientprotocol/claude-agent-acp",
 	"unsandboxed",

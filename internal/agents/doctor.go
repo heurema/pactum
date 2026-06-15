@@ -58,15 +58,22 @@ func DiagnoseAgents(registry Registry, selectedAgent string) (DoctorReport, erro
 }
 
 func diagnoseAgent(agent AgentDescriptor) AgentDoctor {
+	// For ACP-only built-ins (no CLI command), resolve the adapter launcher
+	// (typically npx) and check its availability on PATH instead.
+	cmd := agent.Command
+	if cmd == "" {
+		cmd, _, _, _ = acpAdapterCommand(agent.Name, ModelSpec{}, false)
+	}
+
 	doctor := AgentDoctor{
 		Name:    agent.Name,
-		Command: agent.Command,
+		Command: cmd,
 		Input:   agent.Input,
 		Status:  DoctorStatusOnPath,
 		Issues:  []string{},
 	}
 
-	path, err := exec.LookPath(agent.Command)
+	path, err := exec.LookPath(cmd)
 	if err != nil {
 		doctor.Status = DoctorStatusMissingCommand
 		doctor.Issues = append(doctor.Issues, "command not found on PATH")

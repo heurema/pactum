@@ -267,18 +267,7 @@ func (a App) agentTransport() agents.Transport {
 	if a.AgentTransport != nil {
 		return a.AgentTransport
 	}
-	if a.acpTransportEnabled() {
-		return agents.ACPTransport{}
-	}
-	return agents.CLITransport{}
-}
-
-// acpTransportEnabled reports whether the ACP transport is selected. ACP is
-// the default; the PACTUM_AGENT_TRANSPORT env var is a debug escape hatch, not
-// config: only "cli" (case-insensitive, trimmed) selects the one-shot CLI
-// transport, while empty, "acp", or any other value keeps the ACP default.
-func (a App) acpTransportEnabled() bool {
-	return !strings.EqualFold(strings.TrimSpace(os.Getenv("PACTUM_AGENT_TRANSPORT")), "cli")
+	return agents.ACPTransport{}
 }
 
 func writeSearchResults(stdout io.Writer, response searchpkg.Response) {

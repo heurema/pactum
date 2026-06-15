@@ -3,8 +3,11 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -2572,14 +2575,94 @@ func TestSearchNoResults(t *testing.T) {
 	}
 }
 
+// subprocessTransport drives helper-process agent descriptors (Command:
+// os.Args[0]) as one-shot subprocesses, giving app tests a real execution
+// path without a live ACP adapter. Transport selection is covered separately
+// in transport_selection_test.go.
+type subprocessTransport struct{}
+
+func (subprocessTransport) Run(request agents.RunRequest) (agents.RunResult, error) {
+	promptPath := filepath.Join(request.RepoRoot, filepath.FromSlash(request.PromptRepoPath))
+	prompt, err := os.ReadFile(promptPath)
+	if err != nil {
+		return agents.RunResult{}, err
+	}
+
+	artifactDir := strings.Trim(strings.TrimSpace(request.ArtifactDir), "/")
+	if artifactDir == "" {
+		artifactDir = "execute/attempts"
+	}
+	attemptDir := filepath.Join(request.RepoRoot, artifacts.WorkspaceRel, "runs", request.RunID,
+		filepath.FromSlash(artifactDir), request.AttemptID)
+	if err := os.MkdirAll(attemptDir, 0o755); err != nil {
+		return agents.RunResult{}, err
+	}
+	stdoutFile, err := os.Create(filepath.Join(attemptDir, "stdout.log"))
+	if err != nil {
+		return agents.RunResult{}, err
+	}
+	defer stdoutFile.Close()
+	stderrFile, err := os.Create(filepath.Join(attemptDir, "stderr.log"))
+	if err != nil {
+		return agents.RunResult{}, err
+	}
+	defer stderrFile.Close()
+
+	var stdoutWriter io.Writer = stdoutFile
+	var stderrWriter io.Writer = stderrFile
+	if request.LiveOutput != nil {
+		live := &subprocessLiveWriter{w: request.LiveOutput}
+		stdoutWriter = io.MultiWriter(stdoutFile, live)
+		stderrWriter = io.MultiWriter(stderrFile, live)
+	}
+
+	cmd := exec.Command(request.Agent.Command, request.Agent.Args...)
+	cmd.Dir = request.RepoRoot
+	cmd.Stdin = bytes.NewReader(prompt)
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
+
+	started := time.Now().UTC()
+	runErr := cmd.Run()
+	finished := time.Now().UTC()
+
+	exitCode := 0
+	if runErr != nil {
+		var exitError *exec.ExitError
+		if errors.As(runErr, &exitError) {
+			exitCode = exitError.ExitCode()
+		} else {
+			exitCode = -1
+		}
+	}
+
+	return agents.RunResult{
+		ExitCode:       exitCode,
+		StartedAt:      started.Format(time.RFC3339Nano),
+		FinishedAt:     finished.Format(time.RFC3339Nano),
+		DurationMillis: finished.Sub(started).Milliseconds(),
+		StdoutPath:     filepath.ToSlash(filepath.Join(artifactDir, request.AttemptID, "stdout.log")),
+		StderrPath:     filepath.ToSlash(filepath.Join(artifactDir, request.AttemptID, "stderr.log")),
+	}, runErr
+}
+
+// subprocessLiveWriter serializes concurrent writes from stdout and stderr
+// goroutines to the shared live output writer.
+type subprocessLiveWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *subprocessLiveWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
+
 func testApp(root string) App {
 	return App{
-		WorkingDir: root,
-		// The helper-process agent descriptors are one-shot CLI commands, so
-		// app tests pin the CLI transport instead of inheriting the ACP
-		// default; transport selection itself is covered at the seam in
-		// transport_selection_test.go.
-		AgentTransport: agents.CLITransport{},
+		WorkingDir:     root,
+		AgentTransport: subprocessTransport{},
 		Now: func() time.Time {
 			return time.Date(2026, 5, 31, 18, 40, 12, 0, time.UTC)
 		},
@@ -2700,10 +2783,8 @@ func cloneTestAgentDescriptor(descriptor agents.AgentDescriptor) agents.AgentDes
 func testAppSequence(root string) App {
 	now := time.Date(2026, 5, 31, 18, 40, 11, 0, time.UTC)
 	return App{
-		WorkingDir: root,
-		// Same CLI-transport pin as testApp: helper-process agents are
-		// one-shot CLI commands.
-		AgentTransport: agents.CLITransport{},
+		WorkingDir:     root,
+		AgentTransport: subprocessTransport{},
 		Now: func() time.Time {
 			now = now.Add(time.Second)
 			return now

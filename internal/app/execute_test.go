@@ -80,7 +80,7 @@ func TestExecutePlanSucceedsAfterPromptBuild(t *testing.T) {
 		"Execution plan prepared",
 		"Resolved:",
 		"Would run:",
-		"codex exec --json --dangerously-bypass-approvals-and-sandbox -c model=\"gpt-5\" < .heurema/pactum/runs/" + runID + "/contract/prompt.md",
+		`npx -y @zed-industries/codex-acp@latest -c model="gpt-5"`,
 		".heurema/pactum/runs/" + runID + "/execute/dry-run.json",
 	} {
 		if !strings.Contains(got, want) {
@@ -94,7 +94,7 @@ func TestExecutePlanSucceedsAfterPromptBuild(t *testing.T) {
 		t.Fatalf("unexpected dry-run plan: %#v", plan)
 	}
 	wantPrompt := executionPromptRepoPath(runID)
-	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != `exec --json --dangerously-bypass-approvals-and-sandbox -c model="gpt-5"` || plan.WouldRun.Stdin != wantPrompt {
+	if plan.WouldRun.Command != "npx" || strings.Join(plan.WouldRun.Args, " ") != `-y @zed-industries/codex-acp@latest -c model="gpt-5"` || plan.WouldRun.Stdin != "" {
 		t.Fatalf("unexpected would_run command: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", wantPrompt)
@@ -114,7 +114,7 @@ func TestExecutePlanJSONOutput(t *testing.T) {
 	if plan.Agent.Name != "codex" || !plan.Checks.PromptManifestReady || plan.Artifacts.Prompt != "contract/prompt.md" {
 		t.Fatalf("unexpected dry-run json: %#v", plan)
 	}
-	if plan.WouldRun.Command != "codex" || strings.Join(plan.WouldRun.Args, " ") != `exec --json --dangerously-bypass-approvals-and-sandbox -c model="gpt-5"` || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
+	if plan.WouldRun.Command != "npx" || strings.Join(plan.WouldRun.Args, " ") != `-y @zed-industries/codex-acp@latest -c model="gpt-5"` {
 		t.Fatalf("missing would_run json: %#v", plan.WouldRun)
 	}
 	if strings.Contains(stdout.String(), "Execution plan prepared") {
@@ -150,7 +150,7 @@ func TestExecutePlanUsesDefaultExecutor(t *testing.T) {
 		t.Fatalf("execute plan exited %d, stderr: %s", code, stderr.String())
 	}
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
-	if plan.Agent.Name != "codex" || plan.Agent.Command != "codex" {
+	if plan.Agent.Name != "codex" || plan.Agent.Command != "" {
 		t.Fatalf("default executor mismatch: %#v", plan.Agent)
 	}
 }
@@ -166,10 +166,10 @@ func TestExecutePlanExplicitCodex(t *testing.T) {
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
-	if plan.Agent.Name != "codex" || plan.Agent.Command != "codex" {
+	if plan.Agent.Name != "codex" || plan.Agent.Command != "" {
 		t.Fatalf("codex agent mismatch: %#v", plan.Agent)
 	}
-	if strings.Join(plan.WouldRun.Args, " ") != `exec --json --dangerously-bypass-approvals-and-sandbox -c model="gpt-5"` || plan.WouldRun.Stdin != executionPromptRepoPath(runID) {
+	if plan.WouldRun.Command != "npx" || strings.Join(plan.WouldRun.Args, " ") != `-y @zed-industries/codex-acp@latest -c model="gpt-5"` {
 		t.Fatalf("codex would_run mismatch: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", executionPromptRepoPath(runID))
@@ -186,12 +186,13 @@ func TestExecutePlanExplicitClaude(t *testing.T) {
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
-	// Claude runs over ACP; no CLI command or args in the dry-run plan.
-	if plan.Agent.Name != "claude" || plan.Agent.Command != "" {
+	// Claude runs over ACP; the descriptor carries no CLI command or args.
+	if plan.Agent.Name != "claude" || plan.Agent.Command != "" || len(plan.Agent.Args) != 0 {
 		t.Fatalf("claude agent mismatch: %#v", plan.Agent)
 	}
-	if len(plan.Agent.Args) != 0 || plan.WouldRun.Command != "" || len(plan.WouldRun.Args) != 0 {
-		t.Fatalf("claude dry-run plan must carry no CLI args: %#v", plan)
+	// WouldRun carries the ACP adapter command; the prompt path is NOT in Args.
+	if plan.WouldRun.Command != "npx" || strings.Join(plan.WouldRun.Args, " ") != "-y @agentclientprotocol/claude-agent-acp@latest" {
+		t.Fatalf("claude dry-run plan must carry ACP adapter command: %#v", plan)
 	}
 }
 
@@ -206,7 +207,7 @@ func TestExecutePlanAppliesExecutorModelConfigToCodex(t *testing.T) {
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
-	wantArgs := []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"}
+	wantArgs := []string{"-y", "@zed-industries/codex-acp@latest", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"}
 	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
 		t.Fatalf("codex would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
 	}
@@ -224,10 +225,10 @@ func TestExecutePlanAppliesExecutorModelConfigToClaude(t *testing.T) {
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
-	// Claude model/effort are pinned via ACP adapter env vars, not CLI args.
-	// The dry-run plan WouldRun must be empty (no CLI subprocess).
-	if plan.WouldRun.Command != "" || len(plan.WouldRun.Args) != 0 {
-		t.Fatalf("claude ACP dry-run plan must have empty WouldRun: %#v", plan.WouldRun)
+	// Claude model/effort are pinned via ACP adapter env vars; the WouldRun
+	// carries the ACP adapter command and the model/effort env.
+	if plan.WouldRun.Command != "npx" || strings.Join(plan.WouldRun.Args, " ") != "-y @agentclientprotocol/claude-agent-acp@latest" {
+		t.Fatalf("claude ACP dry-run plan must carry ACP adapter command: %#v", plan.WouldRun)
 	}
 	assertResolvedBlock(t, stdout.String(), "claude", "claude-sonnet-4", "high", "pinned")
 }
@@ -258,7 +259,7 @@ func TestExecutePlanPinAppliesOnlyToMatchingAgent(t *testing.T) {
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
-	wantArgs := []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=\"gpt-5\""}
+	wantArgs := []string{"-y", "@zed-industries/codex-acp@latest", "-c", "model=\"gpt-5\""}
 	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
 		t.Fatalf("codex would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
 	}
@@ -302,9 +303,10 @@ func TestExecutePlanTwoEntriesOnSameBuiltInCarryDistinctPins(t *testing.T) {
 		t.Fatalf("execute plan fable exited %d, stderr: %s", code, stderr.String())
 	}
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
-	// Claude runs over ACP; no CLI args. The model pin lives in the ACP adapter env.
-	if plan.Agent.Name != "claude" || plan.WouldRun.Command != "" || len(plan.WouldRun.Args) != 0 {
-		t.Fatalf("fable entry should pin claude-fable-5 on claude (ACP, no CLI args): %#v", plan)
+	// Claude runs over ACP; the descriptor has no CLI command or args.
+	// WouldRun carries the ACP adapter command; model pin is in the adapter env.
+	if plan.Agent.Name != "claude" || plan.Agent.Command != "" || plan.WouldRun.Command != "npx" {
+		t.Fatalf("fable entry should resolve to claude ACP: %#v", plan)
 	}
 	assertResolvedBlock(t, stdout.String(), "fable", "claude-fable-5", "inherit", "partial")
 
@@ -315,8 +317,8 @@ func TestExecutePlanTwoEntriesOnSameBuiltInCarryDistinctPins(t *testing.T) {
 		t.Fatalf("execute plan opus exited %d, stderr: %s", code, stderr.String())
 	}
 	plan = readDryRunPlan(t, runPaths.DryRunJSON)
-	if plan.Agent.Name != "claude" || plan.WouldRun.Command != "" || len(plan.WouldRun.Args) != 0 {
-		t.Fatalf("opus entry should pin claude-opus-4-8 on claude (ACP, no CLI args): %#v", plan)
+	if plan.Agent.Name != "claude" || plan.Agent.Command != "" || plan.WouldRun.Command != "npx" {
+		t.Fatalf("opus entry should resolve to claude ACP: %#v", plan)
 	}
 	assertResolvedBlock(t, stdout.String(), "opus", "claude-opus-4-8", "inherit", "partial")
 }
@@ -535,12 +537,12 @@ func TestExecuteRunWritesAttemptArtifacts(t *testing.T) {
 		t.Fatalf("unexpected request agent: %#v", request.Agent)
 	}
 	wantPrompt := executionPromptRepoPath(runID)
-	if request.WouldRun.Stdin != wantPrompt {
-		t.Fatalf("unexpected would_run stdin = %q, want %q", request.WouldRun.Stdin, wantPrompt)
+	// ACP agents do not pass the prompt path via stdin; it is carried in Artifacts.
+	if request.WouldRun.Stdin != "" {
+		t.Fatalf("ACP would_run must not use stdin, got %q", request.WouldRun.Stdin)
 	}
 	if dryRunPlan.WouldRun.Command != request.WouldRun.Command ||
-		!sameStringSlice(dryRunPlan.WouldRun.Args, request.WouldRun.Args) ||
-		dryRunPlan.WouldRun.Stdin != request.WouldRun.Stdin {
+		!sameStringSlice(dryRunPlan.WouldRun.Args, request.WouldRun.Args) {
 		t.Fatalf("dry-run would_run should match request would_run\ndry-run: %#v\nrequest: %#v", dryRunPlan.WouldRun, request.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, request.WouldRun.Args, "contract/prompt.md", wantPrompt)
@@ -881,10 +883,6 @@ func TestExecutionHelperProcess(t *testing.T) {
 		os.Exit(2)
 	}
 	fmt.Printf("stdin_has_executor_prompt=%t\n", strings.Contains(string(stdin), "# Executor Prompt"))
-	if os.Getenv("PACTUM_HELPER_CODEX_USAGE") == "1" {
-		fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":12,"cached_input_tokens":3,"output_tokens":4,"reasoning_output_tokens":1}}`)
-		fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":120,"cached_input_tokens":30,"output_tokens":40,"reasoning_output_tokens":10}}`)
-	}
 	fmt.Fprintln(os.Stderr, "stderr-line")
 	if raw := os.Getenv("PACTUM_HELPER_EXIT"); raw != "" {
 		code, err := strconv.Atoi(raw)

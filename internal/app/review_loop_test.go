@@ -464,7 +464,7 @@ func TestReviewLoopPanelRunsReviewersAndUpgradesDuplicateSeverity(t *testing.T) 
 		var request reviewerRequestDocument
 		assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.RequestJSON)), &request))
 		wantPrompt := "review/reviewer-prompt-" + ref.Reviewer + "-" + ref.Lens + ".md"
-		if request.Lens != ref.Lens || request.Artifacts.ReviewerPrompt != wantPrompt || request.WouldRun.Stdin != runArtifactRepoRel(runID, wantPrompt) {
+		if request.Lens != ref.Lens || request.Artifacts.ReviewerPrompt != wantPrompt {
 			t.Fatalf("attempt %s request prompt mismatch (want %s): %#v", ref.AttemptID, wantPrompt, request)
 		}
 	}

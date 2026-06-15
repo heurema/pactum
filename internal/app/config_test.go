@@ -364,11 +364,13 @@ func TestResolveAgentForRoleUsesInferredEngine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveAgentForRole reviewer: %v", err)
 	}
-	if reviewer.Name != "deep" || reviewer.Agent.Name != agents.BuiltinCodex || reviewer.Agent.Command != "codex" {
+	// Codex runs over ACP; the built-in reviewer descriptor has no CLI command or args.
+	// Read-only enforcement is applied at the ACP layer via RunRequest.ReadOnly=true.
+	if reviewer.Name != "deep" || reviewer.Agent.Name != agents.BuiltinCodex || reviewer.Agent.Command != "" {
 		t.Fatalf("o3 entry should resolve the codex reviewer descriptor: %#v", reviewer)
 	}
-	if !containsString(reviewer.Agent.Args, "read-only") {
-		t.Fatalf("reviewer role should resolve the read-only codex descriptor: %#v", reviewer.Agent.Args)
+	if len(reviewer.Agent.Args) != 0 {
+		t.Fatalf("reviewer role codex descriptor must have no CLI args: %#v", reviewer.Agent.Args)
 	}
 
 	executor, err := App{}.resolveAgentForRole(agentRegistryEntry{Name: "writer", Model: "claude-fable-5"}, agentRoleExecutor)

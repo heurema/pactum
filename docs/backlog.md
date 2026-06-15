@@ -463,18 +463,17 @@ distillation lives in
   ACP client (write denial + permission rejection — claude routes writes through
   the client), codex via `-c sandbox_mode="read-only"` pinned on the adapter
   (codex applies patches natively, so client-side denials cannot stop it).
-  M16.2 then flipped the default: ACP is now the hardwired default transport and
-  `PACTUM_AGENT_TRANSPORT=cli` is the debug escape hatch, completing the ACP arc
-  (M13.x→M16.2). This item is what remains of it. Closing it is deeper — it
-  means intercepting/gating the adapter's command and tool-call requests on
-  write stages, not just file writes — so it stays a documented limitation for
-  now.
+  The ACP arc is now complete (M13.x→M26): ACP is the only transport, the CLI
+  path is removed. This item is what remains of the shell-command gating gap.
+  Closing it is deeper — it means intercepting/gating the adapter's command and
+  tool-call requests on write stages, not just file writes — so it stays a
+  documented limitation for now.
 - **Consolidated ACP design note** (low, optional). The ACP transport, its
-  real-time write scope guard, usage normalization, and cross-platform
-  process-group reaping are currently described across `agents.md` and the M13.x
-  milestone history; a single `docs/acp-transport-design.md` could collect the
-  rationale and the known limitations (shell-command writes, no isolation) in one
-  place. Nice-to-have, not blocking.
+  real-time write scope guard, and usage normalization are currently described
+  across `agents.md` and the M13.x milestone history; a single
+  `docs/acp-transport-design.md` could collect the rationale and the known
+  limitations (shell-command writes, no isolation) in one place.
+  Nice-to-have, not blocking.
 - **Clarify `answer` resets approval** (low). The silent-regression bug is fixed
   (M15.7): `clarify ask` / `answer` / `suggest` on an already-approved run now
   **warn** that they reset approval to pending (surfaced via `approval_reset` and

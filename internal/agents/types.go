@@ -51,6 +51,7 @@ type DryRunCommand struct {
 	Command string   `json:"command"`
 	Args    []string `json:"args"`
 	Stdin   string   `json:"stdin,omitempty"`
+	Env     []string `json:"env,omitempty"`
 }
 
 type RunRequest struct {
@@ -89,9 +90,9 @@ type RunRequest struct {
 	Model ModelSpec
 	// ReadOnly marks the attempt as a read-only stage (review, clarifier round,
 	// contract draft). The ACP transport denies WriteTextFile and refuses
-	// permission requests instead of auto-approving; the CLI transport ignores
-	// it — read-only-ness is already baked into the reviewer descriptors (e.g.
-	// codex --sandbox read-only).
+	// permission requests instead of auto-approving; for codex the adapter is
+	// also launched with sandbox_mode="read-only" so native patch writes are
+	// blocked at the adapter level.
 	ReadOnly bool
 }
 

@@ -582,7 +582,7 @@ func (a App) ReviewPlan(stdout io.Writer, runID string, reviewerName string, jso
 
 	now := a.nowUTC()
 	createdAt := now.Format(time.RFC3339)
-	plan, err := buildReviewerDryRunDocument(runID, createdAt, prep.ReviewerName, prep.Reviewer)
+	plan, err := buildReviewerDryRunDocument(runID, createdAt, prep.ReviewerName, prep.Reviewer, prep.ModelSpec)
 	if err != nil {
 		return err
 	}
@@ -968,10 +968,10 @@ func nextReviewID(prefix string, index int) string {
 	return fmt.Sprintf("%s_%03d", prefix, index)
 }
 
-func buildReviewerDryRunDocument(runID string, createdAt string, member string, reviewer agents.AgentDescriptor) (reviewerDryRunDocument, error) {
+func buildReviewerDryRunDocument(runID string, createdAt string, member string, reviewer agents.AgentDescriptor, spec agents.ModelSpec) (reviewerDryRunDocument, error) {
 	attempts := make([]reviewerLensAttemptPlan, 0, len(reviewLenses))
 	for _, lens := range reviewLenses {
-		plan, err := buildReviewerLensPlan(runID, member, lens, reviewer)
+		plan, err := buildReviewerLensPlan(runID, member, lens, reviewer, spec)
 		if err != nil {
 			return reviewerDryRunDocument{}, err
 		}
@@ -991,15 +991,11 @@ func buildReviewerDryRunDocument(runID string, createdAt string, member string, 
 	}, nil
 }
 
-func buildReviewerLensPlan(runID string, member string, lens reviewLens, reviewer agents.AgentDescriptor) (reviewerLensAttemptPlan, error) {
+func buildReviewerLensPlan(runID string, member string, lens reviewLens, reviewer agents.AgentDescriptor, spec agents.ModelSpec) (reviewerLensAttemptPlan, error) {
 	promptArtifact := reviewerLensPromptArtifact(member, lens)
-	var wouldRun agents.DryRunCommand
-	if reviewer.Command != "" {
-		var err error
-		wouldRun, err = agents.BuildCommand(reviewer, runArtifactRepoRel(runID, promptArtifact))
-		if err != nil {
-			return reviewerLensAttemptPlan{}, err
-		}
+	wouldRun, err := agents.BuildACPWouldRun(reviewer.Name, spec, true)
+	if err != nil {
+		return reviewerLensAttemptPlan{}, err
 	}
 	return reviewerLensAttemptPlan{
 		Lens: lens.Key,
@@ -1013,11 +1009,7 @@ func buildReviewerLensPlan(runID string, member string, lens reviewLens, reviewe
 			ProposalDecisions: reviewProposalDecisionsArtifact,
 			GateReport:        gateReportArtifact,
 		},
-		WouldRun: agents.DryRunCommand{
-			Command: wouldRun.Command,
-			Args:    append([]string{}, wouldRun.Args...),
-			Stdin:   wouldRun.Stdin,
-		},
+		WouldRun: wouldRun,
 	}, nil
 }
 

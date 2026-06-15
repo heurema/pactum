@@ -105,8 +105,11 @@ func TestContractDraftRecordsProposalWithoutApplying(t *testing.T) {
 
 	var request contractDrafterRequestDocument
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.RequestJSON)), &request))
-	if request.Schema != contractDrafterRequestSchema || request.Drafter.Name != agents.BuiltinClaude || request.WouldRun.Stdin != contractDrafterPromptRepoPath(runID) {
+	if request.Schema != contractDrafterRequestSchema || request.Drafter.Name != agents.BuiltinClaude {
 		t.Fatalf("unexpected drafter request: %#v", request)
+	}
+	if request.WouldRun.Command != "npx" || request.WouldRun.Stdin != "" {
+		t.Fatalf("unexpected drafter request would_run (want ACP adapter): %#v", request.WouldRun)
 	}
 	var result contractDrafterResultDocument
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, attemptPaths.ResultJSON)), &result))

@@ -79,7 +79,7 @@ func TestAgentsDoctorSelectedBuiltIn(t *testing.T) {
 	got := stdout.String()
 	for _, want := range []string{
 		"codex:",
-		"command: codex",
+		"command: npx",
 		"input: prompt_file",
 		"status:",
 	} {
