@@ -17,15 +17,15 @@ const (
 	reviewFindingSchema    = "pactum.review_finding.v1"
 	reviewResolutionSchema = "pactum.review_resolution.v1"
 
-	reviewArtifact             = "review/review.json"
-	reviewFindingsArtifact     = "review/findings.jsonl"
-	reviewResolutionsArtifact  = "review/resolutions.jsonl"
-	reviewerContextArtifact    = "review/reviewer-context.md"
-	reviewerDryRunArtifact     = "review/reviewer-dry-run.json"
-	reviewerDryRunSchema       = "pactum.review_dry_run.v2"
-	reviewerAttemptsArtifact   = "review/reviewer-attempts"
-	reviewerRequestSchema      = "pactum.reviewer_request.v1"
-	reviewerResultSchema       = "pactum.reviewer_result.v1"
+	reviewArtifact            = "review/review.json"
+	reviewFindingsArtifact    = "review/findings.jsonl"
+	reviewResolutionsArtifact = "review/resolutions.jsonl"
+	reviewerContextArtifact   = "review/reviewer-context.md"
+	reviewerDryRunArtifact    = "review/reviewer-dry-run.json"
+	reviewerDryRunSchema      = "pactum.review_dry_run.v2"
+	reviewerAttemptsArtifact  = "review/reviewer-attempts"
+	reviewerRequestSchema     = "pactum.reviewer_request.v1"
+	reviewerResultSchema      = "pactum.reviewer_result.v1"
 )
 
 // reviewLens is one specialist review lens. The set below is fixed in code and

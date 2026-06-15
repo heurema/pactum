@@ -61,8 +61,14 @@ vuln:
 heurema-hygiene:
 	go run ./cmd/heurema-hygiene
 
-# check is the local gate: tests, vet, dead-code, and a whitespace/conflict-marker check.
+# check is the local gate: tests, vet, dead-code, gofmt formatting, and a whitespace/conflict-marker check.
 check: test vet deadcode
+	@out="$$(gofmt -l $$(git ls-files '*.go'))"; \
+	if [ -n "$$out" ]; then \
+		echo "$$out"; \
+		echo "gofmt: unformatted files above; run gofmt -w on them"; \
+		exit 1; \
+	fi
 	git diff --check
 
 # install builds and installs pactum into the Go bin directory (go env GOBIN).
