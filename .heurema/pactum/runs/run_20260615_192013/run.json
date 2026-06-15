@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260615_192013",
+  "status": "contract_approved",
+  "task": "Add gofmt enforcement to the build gate. Update the Makefile so that 'make check' fails when any tracked Go file is not gofmt-formatted (add a gofmt -l step that errors on non-empty output), and apply gofmt -w to fix any existing formatting drift. Do not change unrelated gate steps.",
+  "created_at": "2026-06-15T19:20:13.314605Z",
+  "updated_at": "2026-06-15T19:22:14.45506Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260613_090236",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "schema": "pactum.review_loop.v1",
+  "run_id": "run_20260615_192013",
+  "started_at": "2026-06-15T19:32:23Z",
+  "finished_at": "2026-06-15T19:33:55Z",
+  "reviewer": "fable,codex",
+  "reviewers": [
+    "fable",
+    "codex"
+  ],
+  "max_rounds": 10,
+  "stalemate_patience": 2,
+  "clean_rounds_required": 1,
+  "terminal_reason": "error",
+  "rounds": [],
+  "artifacts": {
+    "summary": "review/loop-summary.json"
+  }
+}

@@ -1,5 +1,8 @@
 schema: pactum.config.v1
 agents:
+  - name: sonnet
+    model: claude-sonnet-4-6
+    effort: max
   - name: codex-xhigh
     model: gpt-5.5
     effort: xhigh
@@ -20,5 +23,4 @@ review:
   patience: 2
   clean_rounds: 1
   panel:
-    - fable
     - codex
