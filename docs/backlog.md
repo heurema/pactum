@@ -342,6 +342,60 @@ distillation lives in
   reads the whole enclosing function once instead of windowing around the
   hunk — targets the multi-million-token review leg directly.
 
+## Contract plan DAG arc (research-backed)
+
+The flat contract (`goal` + prose `scope`/`acceptance_criteria` + post-hoc
+`validation.commands`) forces the executor to self-decompose and hold the whole
+plan in its head — the two costliest operations for a weak/cheap executor
+(Sonnet rather than a frontier model). A deep-research pass over agent-planning
+literature distilled a load-bearing, honestly-bounded conclusion: structure
+helps a weak executor with **coordination and not-forgetting, not with
+solving** (a plan substitutes for planning, not for solving), and every
+confirmed empirical result is non-software, so this is a bet to validate, not a
+settled fact. The fix is two layers in the one contract — a declarative
+*constitution* (the recovery anchor + final gate, as today) plus a *plan* DAG of
+self-contained tasks the loop (not the model) steps through. Schema stays
+`pactum.contract.v1` (no users → evolve in place, no version bump). Distillation
+in [contract-plan-dag-design.md](contract-plan-dag-design.md).
+
+- **Phase 0 — weak-executor failure baseline** (small): run a Sonnet executor on
+  a handful of real pactum contracts and classify failures as plan-caused
+  (decomposition / ordering / missing context → the DAG + ledger pay off) vs
+  solving-caused (the unit is just hard → finer `task new` or a stronger model,
+  which the DAG does not fix). Cheapest, highest-information step; settles
+  coordination-vs-solving on our own tasks before any schema change. Config swap
+  + a written failure classification, no production code.
+- **Phase 1a — drafter emits the plan DAG** (med): extend `draftContract`
+  (`internal/app/run.go`) with `plan.tasks[]` — each `{id, title, depends_on[],
+  context[] (paths/`sym:`), expected_files[] (advisory), acceptance[],
+  validation[]}`; drafter proposal block + `renderApprovedPromptMD` render it.
+  Precision into verifiable fields (`acceptance`/`validation`), file targets
+  advisory. Granularity rule: a task with no single `validation` command is too
+  big — split.
+- **Phase 1b — execute as a topological loop + ledger** (large; the real work):
+  `execute run` goes from single-shot to a loop over ready nodes (all
+  `depends_on` done), fresh context per task (constitution + node + repo state
+  via git), per-task validation, retry-then-block (N attempts → `status=blocked`
+  + ⚠️, branch stops, descendants wait), commit-per-task. Execution state lives
+  in an unhashed `execute/tasks-state.json` (structure frozen by the contract
+  hash, state external) — two gates untouched. Final `validation.commands` +
+  gate/review unchanged.
+- **Phase 1c — optional plan review** (small-med): a `plan.reviewers[]` array of
+  registry names (reuse `resolveReviewerEntry` + entry pins; cross-model rule
+  picks a model ≠ drafter) reads the constitution + DAG before the human gate
+  and returns structured findings; optional fixer folds accepted findings into
+  the draft pre-hash. Empty/absent array ⇒ step skipped, human gate is the only
+  plan check. One name = minimal form, several = panel — same code path, list
+  length is the only difference. Includes the `review.panel` → `review.reviewers`
+  rename so plan and code review share one vocabulary (no users → rename in
+  place; `reviewers: []` disables a stage).
+- **Phase 2 — convergence, amendments, scheduling** (deferred): add the
+  multi-round rounds/patience loop to plan review (the lens set: completeness /
+  dependency-correctness / testability / granularity / scope-fidelity); formal
+  plan-amendment artifact with its own hash + bounded re-plan; parallel
+  independent branches; per-slice review of each landed diff. (A second plan
+  reviewer is *not* here — that is just a longer `plan.reviewers` array.)
+
 ## Hardening / cleanup
 
 - **`gofmt` is not in the gate** (small). `make check` runs test/vet/deadcode +
