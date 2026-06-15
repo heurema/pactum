@@ -1,5 +1,8 @@
 schema: pactum.config.v1
 agents:
+  - name: codex-xhigh
+    model: gpt-5.5
+    effort: xhigh
   - name: opus
     model: claude-opus-4-8
   - name: fable

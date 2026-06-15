@@ -1,0 +1,31 @@
+{
+  "schema": "pactum.contract.v1",
+  "run_id": "run_20260613_090426",
+  "status": "approved",
+  "goal": "Run a no-edit Pactum execution through the rebuilt Pactum binary and local codex-acp adapter to verify captured and coherent ACP PromptResponse.Usage accounting.",
+  "scope": {
+    "in": [
+      "No source changes; the executor should only return a brief confirmation."
+    ],
+    "out": [
+      "Editing source, documentation, tests, or manually editing run ledgers."
+    ]
+  },
+  "acceptance_criteria": [
+    "pactum usage for this smoke run reports one captured Codex execute call and zero uncaptured calls.",
+    "The captured usage reports total_tokens at least input_tokens + output_tokens after ACP normalization."
+  ],
+  "validation": {
+    "commands": [
+      "git diff --check"
+    ]
+  },
+  "assumptions": [],
+  "open_questions": [],
+  "clarifications": {
+    "questions": []
+  },
+  "memory_context": {
+    "used_items": []
+  }
+}

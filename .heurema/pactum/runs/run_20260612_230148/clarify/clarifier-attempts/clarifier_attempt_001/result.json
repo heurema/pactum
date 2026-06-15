@@ -1,0 +1,13 @@
+{
+  "schema": "pactum.clarifier_result.v1",
+  "run_id": "run_20260612_230148",
+  "attempt_id": "clarifier_attempt_001",
+  "clarifier": "claude",
+  "started_at": "2026-06-12T23:01:48.992156Z",
+  "finished_at": "2026-06-12T23:05:48.633985Z",
+  "duration_ms": 239641,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "clarify/clarifier-attempts/clarifier_attempt_001/stdout.log",
+  "stderr": "clarify/clarifier-attempts/clarifier_attempt_001/stderr.log"
+}

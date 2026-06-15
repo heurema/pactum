@@ -78,3 +78,24 @@
 - Files: docs/agents.md, docs/cost-budget-design.md, internal/agents/acp_transport.go, internal/agents/acp_transport_test.go, internal/agents/executor_test.go, internal/agents/runner.go, internal/agents/types.go, internal/app/agent_attempt.go, internal/app/app.go, internal/app/review_loop.go, internal/app/review_stagger_test.go
 - Summary: Reviewed run run_20260612_175035 with gate status needs_review and review status approved. Goal: Stagger the cold start of same-model reviewer groups in the review panel fan-out to stop paying duplicate prompt-cache write premiums. Backg...
 - Candidate: runs/run_20260612_175035/memory/memory-candidate.json
+
+### mem_012 - Capture Codex token usage from ACP usage_update metadata and add per-engine A...
+- Run: run_20260612_230148
+- Freshness: fresh
+- Files: docs/agents.md, docs/cost-budget-design.md, internal/agents/acp_transport.go, internal/agents/acp_transport_test.go
+- Summary: Reviewed run run_20260612_230148 with gate status needs_review and review status approved. Goal: Capture Codex token usage from ACP usage_update metadata and add per-engine ACP adapter command overrides.
+- Candidate: runs/run_20260612_230148/memory/memory-candidate.json
+
+### mem_013 - Dogfood Pactum with a local codex-acp adapter that returns official ACP Promp...
+- Run: run_20260613_083052
+- Freshness: fresh
+- Files: .heurema/pactum/runs/run_20260613_083052/ledger/usage.jsonl, internal/agents/acp_transport.go
+- Summary: Reviewed run run_20260613_083052 with gate status passed and review status approved. Goal: Dogfood Pactum with a local codex-acp adapter that returns official ACP PromptResponse.Usage, and align Pactum's ACP usage code/docs with response...
+- Candidate: runs/run_20260613_083052/memory/memory-candidate.json
+
+### mem_014 - Run a no-edit Pactum execution through the rebuilt Pactum binary and local co...
+- Run: run_20260613_090426
+- Freshness: unknown
+- Files: none
+- Summary: Reviewed run run_20260613_090426 with gate status passed and review status approved. Goal: Run a no-edit Pactum execution through the rebuilt Pactum binary and local codex-acp adapter to verify captured and coherent ACP PromptResponse.Us...
+- Candidate: runs/run_20260613_090426/memory/memory-candidate.json
