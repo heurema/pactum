@@ -93,6 +93,7 @@ Each task therefore carries:
 - `depends_on[]` — the DAG edges,
 - `acceptance[]` — its own observable done-criteria,
 - `validation[]` — its own pass/fail command(s); the spine of self-checking,
+  **frozen inside the hashed contract** (see below),
 - `context[]` — a retrieval scope (paths / `sym:` symbols) so the loop *packs
   context for the executor* instead of the executor hunting for it,
 - `expected_files[]` — **advisory** expected touch points, not frozen truth.
@@ -100,6 +101,26 @@ Each task therefore carries:
 The advisory/verifiable split is deliberate: precision goes into *verifiable*
 fields (`acceptance`, `validation`), not *prescriptive* ones. Freezing exact
 edits invites the executor to satisfy stale instructions instead of the goal.
+
+**`validation` is the contract's immune system — and the most exploitable seam.**
+A weak executor under retry pressure has a cheap path to green: weaken the check
+(make a test assert nothing, skip the new case) rather than do the work. The
+node then marks done on a lie, its subtree unblocks on a poisoned tree, and the
+failure surfaces only at the final gate — several nodes deep. Three rules close
+this, all consensus from the design panel:
+
+- **Frozen, un-weakenable.** Per-task `validation` lives inside the hashed
+  contract, authored by the drafter at plan time. The executor may *run* a
+  validation but never author or weaken one. A node whose `validation` was
+  edited in the same commit as its implementation is auto-`blocked` for review.
+  No downstream actor (executor, human, auto-replan) changes a validation
+  without a new contract revision and re-approval.
+- **Non-vacuous.** A validation that can't fail proves nothing. Plan review
+  rejects a command that doesn't reference the task's `expected_files` or that a
+  global no-op (`go build ./...`) would satisfy regardless of the work.
+- **Baseline-red.** Where feasible the validation must *fail on the pre-change
+  tree* (or an empty diff): a check already green before the task starts is not
+  a check.
 
 ## Schema (still v1 — evolve in place)
 
@@ -137,12 +158,16 @@ never part of the contract:
 
 ```jsonc
 {
-  "t1": { "status": "done",    "attempts": 1, "commit": "abc1234",
-          "files_touched": ["internal/app/run.go"] },
-  "t2": { "status": "blocked", "attempts": 3, "blocker": "...",
-          "proposed": "split t2 into t2a/t2b" }
+  "t1": { "status": "done",    "attempts": 1, "by": "sonnet",
+          "commit": "abc1234", "files_touched": ["internal/app/run.go"] },
+  "t2": { "status": "blocked", "attempts": 3, "by": "sonnet",
+          "blocker": "...", "proposed": "split t2 into t2a/t2b" }
 }
 ```
+
+`by` records which registry agent (or human) ran each node. `proposed` is a
+*suggestion to the human only* — it is never auto-applied to the frozen DAG; a
+real structure change goes through a contract revision (below).
 
 ## Execution as a topological loop
 
@@ -176,23 +201,40 @@ branches are isolated: a blocked task only blocks its descendants.
 - **Two gates preserved.** Human approves the contract (constitution + DAG)
   once; the loop runs unattended; human accepts the final result. No human in
   the middle.
-- **Freeze-vs-replan, minimal form.** When a task wedges, the executor does
-  **not** edit the frozen DAG. It writes `status=blocked`, a `blocker`, and a
-  *proposed* amendment into the ledger, and that branch stops. The human
-  decides. The DAG localizes the blast radius, so a wrong task does not
-  invalidate the run — only its subtree waits.
+- **Single-writer ledger.** The ledger is written by exactly one actor at a
+  time, held by an explicit lease. The auto-loop and a manual `--task` run are
+  **mutually exclusive** — never two writers committing per-task concurrently
+  (that races on `tasks-state.json` and silently drops a node's status).
+- **Replan is a contract revision, not a ledger edit.** A blocked task does
+  **not** mutate the frozen DAG, and a structure change does **not** live in the
+  unhashed ledger — a structure-shaped object in the state file would let the
+  running DAG drift from its hash and silently break the two gates. Instead,
+  changing the plan produces a **new contract revision** (hash N → N+1) with a
+  cheap delta re-approval. Bounded auto-replan = the drafter re-expands one
+  blocked node, in-scope, *once*, emitting that new revision; beyond that it
+  stops for the human.
+- **Independent branches keep running under a block.** A blocked node stalls
+  only its own subtree; every node not downstream of it continues. One mid-tree
+  block must not idle the whole plan ("stranded subtree"), and parallel progress
+  is what preserves the automated-middle promise while a human deliberates.
 
 ## Failure policy and granularity
 
 - **Bounded retries, then escalate** (do not subdivide forever): a task failing
-  validation N times becomes `blocked` and is surfaced; escalation options are
-  a stronger model *for that task only* or a human/amendment. This is the
-  practical answer to "solving doesn't compress" — when a unit is intrinsically
-  hard, fail it cleanly and early instead of looping.
-- **Granularity is checkable.** If the drafter cannot write a single
-  `validation` command for a task, the task is too large — split it. That is the
-  concrete proxy for "sized to the executor's solving reach," with no
-  auto-expansion machinery in the first cut.
+  validation N times becomes `blocked` and is surfaced. Escalation options: a
+  stronger agent *for that node only* (`--by`, below), a human-directed re-run,
+  or one bounded drafter re-expansion (a new revision). This is the practical
+  answer to "solving doesn't compress" — when a unit is intrinsically hard, fail
+  it cleanly and early instead of looping.
+- **Granularity is checkable, but "one command" is not the rule.** A single
+  `validation` command is *gameable* — a vacuous `go build ./...` certifies an
+  under-sized node. The real rule: each task carries **one falsifiable
+  validation that references its `expected_files`** (it must be able to fail on
+  the wrong output). And the DAG itself earns its place only when there is real
+  intra-contract fan-in — a node with in-degree > 1. Linear work with no joins
+  is better served by a smaller `task new` contract (same coordination benefit,
+  zero new machinery); the DAG is for genuine dependency joins. No
+  auto-expansion-by-complexity in the first cut.
 
 ## Optional plan review (agent-referenced)
 
@@ -214,6 +256,16 @@ and resolved through the existing agent registry rather than a bespoke role.
   plan check — i.e. Phase 0/1 behaviour is unchanged. **One reviewer is the
   minimal form, several is the panel — the same code path, list length is the
   only difference**, so there is no separate "add a panel" milestone.
+- **The plan fixer.** Reviewers emit *findings only*, never authoritative edits
+  — a reviewer that writes the fix is no longer an independent check on it. The
+  fixer is the **drafter role**, re-invoked as a *distinct cold pass* that sees
+  the accepted findings + the current plan + repo context but **not its own
+  prior reasoning trace** (a drafter that continues its own thinking rationalizes
+  the flaw it introduced instead of restructuring). Symmetric to code review
+  (fixer = executor role), with one asymmetry that matters: a plan fix re-freezes
+  into a new hash and every node inherits it, so it is costlier than a code fix —
+  hence a bounded fix loop, then a human. No new config knob; the fixer reuses
+  the drafter resolution.
 - **Lenses (multi-reviewer form).** A plan needs different lenses than code:
   completeness (does the DAG cover the goal and every acceptance criterion),
   dependency-correctness (no cycles, no missing edges), testability (is each
@@ -260,6 +312,70 @@ gate remain. For plan review an empty list is harmless (the human still sees the
 plan); for code review it removes a quality barrier, so it is a choice, not a
 default to reach for.
 
+## Human-directed task delegation
+
+The operator must be able to point a chosen agent at a chosen node — *"have
+opus do t2"* — not only let the auto-loop run everything on the weak executor.
+This is **delegation, not hand-coding**: a human picks the task and the agent; a
+*model* still does the work, so validation applies exactly as in the auto-loop.
+
+- `pactum execute run --task <id>` runs **one** node instead of the whole loop.
+- `--by <agent>` routes that node to a named registry agent (opus on a hard
+  node, sonnet on a routine one) — the same flag is the escalation path for a
+  blocked node.
+- Invariants that do **not** bend for manual runs: readiness is hard (a node
+  whose `depends_on` aren't `done` is not runnable — forcing it breaks the
+  cold-start-through-git contract and corrupts downstream state); the ledger
+  lease makes manual and auto **mutually exclusive**; and `validation` is
+  **mandatory regardless of who ran it**. The only bypass is an explicit
+  `--force-done` that writes a loud `unvalidated` flag the final gate must
+  surface — a rare edge, never the normal path.
+- The ledger's `by` field records the agent per node, which is exactly what the
+  token rollup (below) needs to answer "what did the weak loop cost vs. the
+  strong escalations."
+
+In v1 `--by` is scoped to explicit `--task` runs and blocked-node escalation —
+not a casual per-node routing policy. Broad per-task agent routing is deferred.
+
+## Token usage accounting
+
+Capturing token statistics is a hard requirement (pactum already records
+per-attempt usage to `ledger/usage.jsonl`; we just shipped and fixed a
+regression there). The DAG multiplies the invocation sites — the drafter, plan
+reviewers (1..N), the plan fixer, and the executor **once per task**, plus
+auto-replans, retries, and per-node escalations — so usage capture is **core
+infrastructure, not plumbing**, and must be designed before the loop or the
+economics are unmeasurable.
+
+- **One row per invocation, append-only.** Every drafter / reviewer / fixer /
+  executor-task-attempt / replan / retry / escalation writes one accounting row,
+  including failed calls (with `usage_missing` when the provider returns none).
+  The row carries: `run_id`, `contract_hash`, `contract_revision`, `phase`,
+  `role`, `agent`, `model`, `tier` (`weak`|`strong`), `task_id` (when
+  applicable), `attempt_no`, `trigger`, `status`, and the token fields
+  (input / output / cache-read / cache-write / reasoning). Rows are tied to the
+  contract revision and the task transition that produced them, never inferred
+  later from mutable state.
+- **Rollups are derived, never hand-maintained.** Summaries group by `phase`,
+  `task_id`, `role`, `agent`, `model`, `tier`, and `contract_revision`. Direct
+  per-task cost is reported separately from contract-level planning overhead,
+  with an optional amortized "fully loaded" view.
+- **Weak-vs-strong is first-class.** `weak_execute_total`, `strong_plan_total`,
+  `strong_review_total`, `strong_fix_total`, `strong_escalation_total` — this is
+  the direct answer to the economic question (does a strong-authored plan + a
+  cheap loop actually cost less than running the strong model throughout).
+
+## The operator-facing state machine is the product
+
+A half-finished DAG run is a lot of moving state: per-task status, retries,
+commits, blocked subtrees, contract revisions, the ledger lease, validation
+outcomes, and the usage rows. The likeliest v1 failure is not model economics or
+context loss — it is that **a human cannot reason about that state**. So the
+ledger semantics, the lease/locking, contract revisioning, usage accounting, and
+*inspectable summaries* (`pactum plan show <run>` rendering the DAG with
+per-node status, actor, attempts, and cost) are treated as first-class product
+surface, not as plumbing behind the model workflow.
+
 ## Deliberately deferred (seams left open)
 
 To resist turning a contract runner into a workflow engine, the first cut is the
@@ -272,31 +388,54 @@ Explicitly out of scope, with the seam noted:
   rounds/patience/clean-rounds loop that code review uses is the later
   enrichment for plans. (Adding a second reviewer to the array is *not*
   deferred — it is just a longer list.)
-- **Formal plan amendments** with their own hash and re-approval (beyond the
-  ledger's proposed-amendment note).
+- **Contract revisioning + bounded replan implementation.** The model is
+  decided (replan = a new revision, hash N→N+1, delta re-approval; one scoped
+  re-expansion per blocked node), but building it comes *after* the frozen-DAG
+  loop. Until then a blocked node simply stops for the human.
+- **Unbounded / multi-revision auto-replan** (re-expanding a re-expanded node) —
+  never; one bounded re-expansion, then a human.
 - **Parallel execution** of independent DAG branches (pactum already spawns
-  agent subprocesses; the DAG makes this safe later).
+  agent subprocesses; the DAG makes this safe later — until then independent
+  branches run sequentially in topological order).
 - **Per-slice review** of each landed diff instead of one final diff.
-- **Auto-expansion** of tasks by estimated complexity.
+- **Auto-expansion** of tasks by estimated complexity, and broad per-task agent
+  routing (`--by` stays scoped to explicit runs + escalation in v1).
 
 ## Rollout
 
-- **Phase 0 — measure.** Run a weak executor (Sonnet) on real pactum contracts
-  and classify failures: plan-caused (decomposition/ordering/missing context →
-  the DAG + ledger pay off) vs solving-caused (the unit is just hard → finer
-  `task new` or a stronger model, which the DAG does not fix). This is the
-  cheapest, highest-information step and settles coordination-vs-solving on our
-  own tasks rather than on extrapolated benchmarks.
-- **Phase 1 — build the loop + optional plan-review hook.** Drafter emits
-  `plan.tasks`; `execute run` becomes the topological loop; add the unhashed
-  `tasks-state.json` ledger and retry-then-block. Wire the optional,
-  registry-resolved plan-review step (off by default, single agent + findings +
-  optional fixer) before the human gate. Dogfood it with Sonnet as executor —
-  the build is the measurement vehicle.
-- **Phase 2 — convergence, amendments, scheduling.** Add multi-round
-  rounds/patience convergence to plan review (a second reviewer is just a longer
-  `plan.reviewers` array, not part of this); add the formal plan-amendment
-  artifact + bounded re-plan; later, parallel branches and per-slice review.
+The design panel (three independent reviews) converged on one ordering: **do not
+build the loop first.** Measure, design the accounting, freeze the checks, then
+build.
+
+1. **Phase 0 — pre-registered go/no-go.** Run a weak executor (Sonnet) on real
+   pactum contracts in **two arms** — monolithic (whole contract in one context)
+   *and* decomposed cold-start (one task per fresh context) — and classify every
+   failure into **three buckets**: planning/coordination, solving, and
+   **handoff/context-loss** (a convention or decision lost across a cold node
+   boundary — a failure the DAG's own design can *manufacture*, which a
+   monolithic run never reveals). Measure token cost by role. **Commit the
+   threshold before seeing results** (e.g. build the DAG only if coordination +
+   handoff failures clear some bar on ≥10 contracts with non-trivial fan-in) —
+   otherwise Phase 0 is confirmation theater.
+2. **Define the threshold** — minimum task count, real fan-in (in-degree > 1),
+   coordination/handoff failure rate, acceptable strong-token overhead.
+3. **Design the usage schema + rollups** (the accounting above) — *before* the
+   loop, or the economics are unmeasurable.
+4. **Freeze per-task validation in the hash** with non-vacuity + baseline-red
+   checks and reviewer scrutiny.
+5. **Specify the ledger state machine** — single-writer lease, commit-per-task,
+   validation-required completion, no concurrent manual/auto.
+6. **If Phase 0 passes — build the minimal topological executor** for a frozen
+   DAG (drafter emits `plan.tasks`; `execute run` becomes the loop;
+   `tasks-state.json` ledger; retry-then-block). Dogfood with Sonnet — the build
+   is the measurement vehicle. Wire the optional `plan.reviewers` hook here.
+7. **Contract revisioning + bounded blocked-node replan.**
+8. **Human `--task` + scoped `--by`** once the lease and validation semantics
+   are solid.
+
+Do **not** build yet: unbounded auto-replan, in-place unhashed amendments, a
+multi-reviewer plan panel as the default, auto-expansion-by-complexity, broad
+per-task agent routing, or the DAG loop before Phase 0 justifies it.
 
 ## Honest risks
 
@@ -312,3 +451,12 @@ Explicitly out of scope, with the seam noted:
   the strongest pro-structure claims were refuted. Phase 0 exists so we commit
   to the loop only after seeing that our weak-executor failures are actually the
   coordination kind this design addresses.
+- **The validation seam is the most exploitable one.** A weak executor under
+  retry pressure weakens the check rather than does the work; if validations
+  aren't frozen in the hash and non-vacuous, every other mechanism inherits a
+  corruptible foundation. This is why "freeze the checks, not just the
+  structure" is a v1 requirement, not a later hardening.
+- **Operator legibility may be the real v1 failure.** Not economics or context
+  loss, but a human unable to reason about a half-finished DAG (retries,
+  commits, blocked subtrees, revisions, leases, usage rows). The state machine
+  and its inspectable summaries are product, not plumbing — see above.

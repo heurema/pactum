@@ -355,46 +355,53 @@ confirmed empirical result is non-software, so this is a bet to validate, not a
 settled fact. The fix is two layers in the one contract — a declarative
 *constitution* (the recovery anchor + final gate, as today) plus a *plan* DAG of
 self-contained tasks the loop (not the model) steps through. Schema stays
-`pactum.contract.v1` (no users → evolve in place, no version bump). Distillation
-in [contract-plan-dag-design.md](contract-plan-dag-design.md).
+`pactum.contract.v1` (no users → evolve in place, no version bump). A
+three-agent design panel (codex gpt-5.5 + two opus, distinct lenses) hardened
+the plan: freeze the *checks* (not just the structure), replan via contract
+revisioning (not ledger edits), single-writer ledger, usage accounting as core
+infra, and "do not build the loop before Phase 0." Distillation in
+[contract-plan-dag-design.md](contract-plan-dag-design.md). The panel's ordering
+is deliberate — measure, account, freeze, *then* build:
 
-- **Phase 0 — weak-executor failure baseline** (small): run a Sonnet executor on
-  a handful of real pactum contracts and classify failures as plan-caused
-  (decomposition / ordering / missing context → the DAG + ledger pay off) vs
-  solving-caused (the unit is just hard → finer `task new` or a stronger model,
-  which the DAG does not fix). Cheapest, highest-information step; settles
-  coordination-vs-solving on our own tasks before any schema change. Config swap
-  + a written failure classification, no production code.
+- **Phase 0 — pre-registered go/no-go baseline** (small): run a Sonnet executor
+  on real pactum contracts in **two arms** (monolithic + decomposed cold-start)
+  and classify every failure into **three buckets** — planning/coordination,
+  solving, and **handoff/context-loss** (a convention lost across a cold node
+  boundary — a failure the DAG itself can manufacture, invisible to a monolithic
+  run). Measure token cost by role. **Commit the threshold before seeing
+  results** (build only if coordination+handoff clear a bar on ≥10 contracts
+  with real fan-in) or it is confirmation theater. No production code.
+- **Phase 0.5 — usage schema + rollups** (small-med): design before the loop or
+  the economics are unmeasurable. One append-only `usage.jsonl` row per
+  invocation (drafter / reviewer / fixer / executor-per-task / replan / retry /
+  escalation, failures too) carrying `run_id, contract_hash, contract_revision,
+  phase, role, agent, model, tier(weak|strong), task_id, attempt_no, trigger,
+  status` + token fields; derived rollups with first-class weak-vs-strong totals.
 - **Phase 1a — drafter emits the plan DAG** (med): extend `draftContract`
   (`internal/app/run.go`) with `plan.tasks[]` — each `{id, title, depends_on[],
-  context[] (paths/`sym:`), expected_files[] (advisory), acceptance[],
-  validation[]}`; drafter proposal block + `renderApprovedPromptMD` render it.
-  Precision into verifiable fields (`acceptance`/`validation`), file targets
-  advisory. Granularity rule: a task with no single `validation` command is too
-  big — split.
-- **Phase 1b — execute as a topological loop + ledger** (large; the real work):
-  `execute run` goes from single-shot to a loop over ready nodes (all
-  `depends_on` done), fresh context per task (constitution + node + repo state
-  via git), per-task validation, retry-then-block (N attempts → `status=blocked`
-  + ⚠️, branch stops, descendants wait), commit-per-task. Execution state lives
-  in an unhashed `execute/tasks-state.json` (structure frozen by the contract
-  hash, state external) — two gates untouched. Final `validation.commands` +
-  gate/review unchanged.
-- **Phase 1c — optional plan review** (small-med): a `plan.reviewers[]` array of
-  registry names (reuse `resolveReviewerEntry` + entry pins; cross-model rule
-  picks a model ≠ drafter) reads the constitution + DAG before the human gate
-  and returns structured findings; optional fixer folds accepted findings into
-  the draft pre-hash. Empty/absent array ⇒ step skipped, human gate is the only
-  plan check. One name = minimal form, several = panel — same code path, list
-  length is the only difference. Includes the `review.panel` → `review.reviewers`
-  rename so plan and code review share one vocabulary (no users → rename in
-  place; `reviewers: []` disables a stage).
-- **Phase 2 — convergence, amendments, scheduling** (deferred): add the
-  multi-round rounds/patience loop to plan review (the lens set: completeness /
-  dependency-correctness / testability / granularity / scope-fidelity); formal
-  plan-amendment artifact with its own hash + bounded re-plan; parallel
-  independent branches; per-slice review of each landed diff. (A second plan
-  reviewer is *not* here — that is just a longer `plan.reviewers` array.)
+  context[], expected_files[] (advisory), acceptance[], validation[]}`.
+  Validation lives **inside the hashed contract**, non-vacuous (references
+  `expected_files`, can fail) + baseline-red; the executor runs but never
+  authors/weakens it. Granularity rule: one *falsifiable* validation per task;
+  the DAG earns its place only with real fan-in (in-degree > 1) — linear work
+  stays a smaller `task new` contract.
+- **Phase 1b — ledger state machine** (med): single-writer lease,
+  commit-per-task, validation-required completion (every actor), no concurrent
+  manual/auto. The unhashed `execute/tasks-state.json` holds only state
+  (`status, by, attempts, commit, files_touched, blocker`); structure stays in
+  the hash.
+- **Phase 1c — minimal topological executor** (large; the real work, gated on
+  Phase 0): `execute run` → loop over ready nodes, fresh context per task,
+  per-task validation, retry-then-block (branch stops, independent branches keep
+  running). Dogfood with Sonnet. Optional `plan.reviewers[]` hook here (findings-
+  only reviewers; fixer = drafter role as a distinct cold pass) + the
+  `review.panel` → `review.reviewers` rename (one vocabulary; `[]` = off).
+- **Phase 2 — revisioning, delegation, convergence** (deferred): contract
+  revisioning (hash N→N+1, delta re-approval) + one bounded blocked-node
+  re-expansion; human `--task <id>` + scoped `--by <agent>` (delegate a node to
+  a chosen agent / escalate a blocked one); multi-round plan-review convergence;
+  parallel branches; per-slice review. Not built: unbounded auto-replan, in-place
+  unhashed amendments, auto-expansion-by-complexity, broad per-task routing.
 
 ## Hardening / cleanup
 
