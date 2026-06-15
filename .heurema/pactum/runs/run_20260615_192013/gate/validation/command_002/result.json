@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1",
+  "id": "command_002",
+  "command": "test -z \"$(gofmt -l $(git ls-files '*.go'))\"",
+  "started_at": "2026-06-15T19:27:16.377937Z",
+  "finished_at": "2026-06-15T19:27:16.383233Z",
+  "duration_ms": 5,
+  "exit_code": 2,
+  "timed_out": false,
+  "stdout": "gate/validation/command_002/stdout.log",
+  "stderr": "gate/validation/command_002/stderr.log"
+}

@@ -1,0 +1,14 @@
+{
+  "schema": "pactum.reviewer_result.v1",
+  "run_id": "run_20260615_192013",
+  "attempt_id": "reviewer_attempt_008",
+  "reviewer": "claude",
+  "lens": "over_engineering",
+  "started_at": "2026-06-15T19:32:27.95083Z",
+  "finished_at": "2026-06-15T19:32:34.430929Z",
+  "duration_ms": 6480,
+  "exit_code": -1,
+  "timed_out": false,
+  "stdout": "review/reviewer-attempts/reviewer_attempt_008/stdout.log",
+  "stderr": "review/reviewer-attempts/reviewer_attempt_008/stderr.log"
+}

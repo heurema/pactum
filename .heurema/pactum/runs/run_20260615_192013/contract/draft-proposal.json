@@ -1,0 +1,37 @@
+{
+  "schema": "pactum.contract_draft_proposal.v1",
+  "run_id": "run_20260615_192013",
+  "status": "accepted",
+  "created_at": "2026-06-15T19:20:32Z",
+  "source": "drafter_attempt",
+  "drafter_attempt_id": "drafter_attempt_001",
+  "drafter": "codex",
+  "in_scope": [
+    "Update the Makefile check gate to run a gofmt listing check over tracked Go files.",
+    "Make the gofmt check fail with a nonzero exit when gofmt -l reports any tracked Go file.",
+    "Run gofmt -w on existing tracked Go files to remove current formatting drift."
+  ],
+  "out_of_scope": [
+    "Changing the contract goal.",
+    "Changing unrelated Makefile targets or existing check steps such as test, vet, deadcode, or git diff --check.",
+    "Changing CI workflow behavior except through CI's existing use of make check.",
+    "Making non-formatting source behavior changes."
+  ],
+  "acceptance": [
+    "make check still runs the existing test, vet, deadcode, and git diff --check gates.",
+    "make check includes a gofmt -l based gate over tracked Go files and exits nonzero when that output is non-empty.",
+    "After the change, all tracked Go files are gofmt-formatted and the direct gofmt listing check produces no output.",
+    "The Makefile change is limited to adding gofmt enforcement to the build gate."
+  ],
+  "validation": [
+    "make check",
+    "test -z \"$(gofmt -l $(git ls-files '*.go'))\""
+  ],
+  "assumptions": [
+    "Tracked Go files means the files returned by git ls-files '*.go' at validation time.",
+    "The repository's active Go toolchain gofmt is the formatting authority.",
+    "CI already invokes make check, so updating the Makefile is sufficient to enforce this in CI."
+  ],
+  "accepted_at": "2026-06-15T19:22:14Z",
+  "accepted_by": "manual"
+}
