@@ -532,11 +532,6 @@ func (a App) runGateValidationCommand(root string, runPaths contractRunPathSet, 
 	}
 	defer stderrFile.Close()
 
-	fields := strings.Fields(commandText)
-	if len(fields) == 0 {
-		return gateValidationCommandReport{}, fmt.Errorf("validation command %s is empty", id)
-	}
-
 	started := time.Now().UTC()
 	ctx := context.Background()
 	var cancel context.CancelFunc
@@ -545,13 +540,29 @@ func (a App) runGateValidationCommand(root string, runPaths contractRunPathSet, 
 		defer cancel()
 	}
 
-	command := exec.CommandContext(ctx, fields[0], fields[1:]...)
+	command := exec.Command("sh", "-c", commandText)
+	setValidationCommandProcessGroup(command)
 	command.Dir = root
 	command.Env = os.Environ()
 	command.Stdout = stdoutFile
 	command.Stderr = stderrFile
 
-	runErr := command.Run()
+	if err := command.Start(); err != nil {
+		return gateValidationCommandReport{}, err
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- command.Wait()
+	}()
+
+	var runErr error
+	select {
+	case runErr = <-done:
+	case <-ctx.Done():
+		killValidationCommandProcessGroup(command)
+		runErr = <-done
+	}
 	finished := time.Now().UTC()
 
 	exitCode := 0

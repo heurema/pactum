@@ -502,7 +502,7 @@ func TestGateReportPathsArePortable(t *testing.T) {
 	assertDoesNotContainRoot(t, "validation result.json", mustReadFile(t, filepath.Join(runPaths.GateValidationDir, "command_001", "result.json")), root)
 }
 
-func TestGateValidationCommandParsingUsesWhitespaceFields(t *testing.T) {
+func TestGateValidationCommandParsingPreservesQuotedArguments(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("PACTUM_GATE_HELPER_PROCESS", "1")
 	command := gateValidationCommandForTest() + ` "two words"`
@@ -515,10 +515,29 @@ func TestGateValidationCommandParsingUsesWhitespaceFields(t *testing.T) {
 		t.Fatalf("gate run exited %d, stderr: %s", code, stderr.String())
 	}
 	got := mustReadFile(t, filepath.Join(runPaths.GateValidationDir, "command_001", "stdout.log"))
-	for _, want := range []string{`arg="two`, `arg=words"`} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("whitespace parsing output missing %q:\n%s", want, got)
-		}
+	if !strings.Contains(got, "arg=two words") {
+		t.Fatalf("quoted argument not preserved as single arg:\n%s", got)
+	}
+}
+
+func TestGateValidationCommandRunsThroughShell(t *testing.T) {
+	root := t.TempDir()
+	// Command substitution proves the gate runs commands through sh, not exec directly.
+	app, paths, runID := setupGatePreparedRun(t, root, []string{`echo "shell-feature-$(echo ok)"`}, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("gate run exited %d, stderr: %s", code, stderr.String())
+	}
+	report := readGateReport(t, runPaths.GateReportJSON)
+	if len(report.Validation.Commands) != 1 || report.Validation.Commands[0].ExitCode != 0 {
+		t.Fatalf("unexpected validation result: %#v", report.Validation)
+	}
+	commandStdout := mustReadFile(t, filepath.Join(runPaths.GateValidationDir, "command_001", "stdout.log"))
+	if !strings.Contains(commandStdout, "shell-feature-ok") {
+		t.Fatalf("shell command substitution not demonstrated in stdout:\n%s", commandStdout)
 	}
 }
 
