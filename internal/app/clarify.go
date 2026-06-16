@@ -475,7 +475,7 @@ func (a App) refreshClarificationArtifacts(context clarifyContext, updatedAt tim
 	state := context.State
 	state.Status = status.RunStatus
 	state.UpdatedAt = updatedAt
-	_, approvalReset, err := resetApprovalIfApproved(context.Paths, context.RunPaths, context.Root, context.State.RunID, updatedAt)
+	_, approvalReset, _, err := resetApprovalIfApproved(context.Paths, context.RunPaths, context.Root, context.State.RunID, updatedAt)
 	if err != nil {
 		return clarifyStatusResponse{}, false, err
 	}

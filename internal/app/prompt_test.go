@@ -390,8 +390,11 @@ func TestContractReviseApprovedContractRemovesPromptReadiness(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	assertFile(t, runPaths.PromptManifest)
 
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{
+		"scope": map[string]any{"in": []string{"Update prompt manifest invalidation"}},
+	})
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "revise", runID, "--add-in-scope", "Update prompt manifest invalidation"}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "revise", runID, "--from", fromFile, "--allow-approval-reset"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract revise exited %d, stderr: %s", code, stderr.String())
 	}
@@ -519,30 +522,39 @@ func TestPromptBuildWritesLedgerEvent(t *testing.T) {
 func setupApprovedPromptContract(t *testing.T, root string) (App, artifacts.Paths, string) {
 	t.Helper()
 	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
 	var stdout, stderr bytes.Buffer
-	commands := [][]string{
+	for _, args := range [][]string{
 		{"clarify", "add", runID, "Should prompt build require approval?", "--blocking"},
 		{"clarify", "answer", runID, "q_001", "Yes. Prompt build must be approved first."},
-		{
-			"contract", "revise", runID,
-			"--goal", "add deterministic prompt boundary",
-			"--add-in-scope", "Add prompt build and prompt show commands",
-			"--add-in-scope", "Require approved contract before prompt build",
-			"--add-out-of-scope", "Agent execution",
-			"--add-acceptance", "Prompt build writes deterministic prompt boundary artifacts",
-			"--add-validation", "go test ./...",
-			"--add-assumption", "Existing contract approval flow remains the readiness source",
-		},
-		{"contract", "approve", runID},
-	}
-	for _, args := range commands {
+	} {
 		stdout.Reset()
 		stderr.Reset()
-		code := app.Run(args, &stdout, &stderr)
-		if code != 0 {
+		if code := app.Run(args, &stdout, &stderr); code != 0 {
 			t.Fatalf("%v exited %d, stderr: %s", args, code, stderr.String())
 		}
+	}
+
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{
+		"goal": "add deterministic prompt boundary",
+		"scope": map[string]any{
+			"in":  []string{"Add prompt build and prompt show commands", "Require approved contract before prompt build"},
+			"out": []string{"Agent execution"},
+		},
+		"acceptance_criteria": []string{"Prompt build writes deterministic prompt boundary artifacts"},
+		"validation":          map[string]any{"commands": []string{"go test ./..."}},
+		"assumptions":         []string{"Existing contract approval flow remains the readiness source"},
+	})
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"contract", "revise", runID, "--from", fromFile}, &stdout, &stderr); code != 0 {
+		t.Fatalf("contract revise exited %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr); code != 0 {
+		t.Fatalf("contract approve exited %d, stderr: %s", code, stderr.String())
 	}
 	return app, paths, runID
 }

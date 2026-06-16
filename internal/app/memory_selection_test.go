@@ -399,12 +399,13 @@ func setupPromptBuildMemoryRefresh(t *testing.T, root string) (App, artifacts.Pa
 	})
 	runID := runContractOnlyForTask(t, app, "unrelated task")
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-	runMemorySelectionCommand(t, app, "contract", "revise", runID,
-		"--goal", "add contract memory retrieval",
-		"--add-in-scope", "Refresh memory context from approved contract",
-		"--add-acceptance", "Contract memory retrieval selects accepted memory",
-		"--add-validation", "go test ./...",
-	)
+	reviseDoc := writeReviseDocForTest(t, runPaths, map[string]any{
+		"goal":                "add contract memory retrieval",
+		"scope":               map[string]any{"in": []string{"Refresh memory context from approved contract"}},
+		"acceptance_criteria": []string{"Contract memory retrieval selects accepted memory"},
+		"validation":          map[string]any{"commands": []string{"go test ./..."}},
+	})
+	runMemorySelectionCommand(t, app, "contract", "revise", runID, "--from", reviseDoc)
 	runMemorySelectionCommand(t, app, "contract", "approve", runID)
 	return app, paths, runID, runPaths
 }

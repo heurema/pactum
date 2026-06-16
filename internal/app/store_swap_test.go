@@ -53,8 +53,9 @@ func TestContractReviseUsesSwappedStore(t *testing.T) {
 	assertNoError(t, activeStore.WriteBytes(runPaths.ContractMD, []byte("# Contract\n\nold goal\n"), 0o644))
 	assertNoError(t, activeStore.WriteBytes(runPaths.PromptMD, []byte("# Executor Prompt\n"), 0o644))
 
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{"goal": "updated goal"})
 	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"contract", "revise", runID, "--goal", "updated goal", "--json"}, &stdout, &stderr)
+	code := testApp(root).Run([]string{"contract", "revise", runID, "--from", fromFile, "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract revise exited %d, stderr: %s, stdout: %s", code, stderr.String(), stdout.String())
 	}

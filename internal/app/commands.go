@@ -3,6 +3,8 @@ package app
 import (
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/heurema/pactum/internal/artifacts"
@@ -180,17 +182,16 @@ func (c *contractReviseCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	revision := contractRevision{
-		Goal:              c.Goal,
-		AddInScope:        c.AddInScope,
-		AddOutOfScope:     c.AddOutOfScope,
-		AddPathInScope:    c.AddPathInScope,
-		AddPathOutOfScope: c.AddPathOutOfScope,
-		AddAcceptance:     c.AddAcceptance,
-		AddValidation:     c.AddValidation,
-		AddAssumption:     c.AddAssumption,
+	var input []byte
+	if c.From == "-" {
+		input, err = io.ReadAll(os.Stdin)
+	} else {
+		input, err = os.ReadFile(c.From)
 	}
-	return r.App.ContractRevise(r.Stdout, runID, revision, c.JSONOutput)
+	if err != nil {
+		return fmt.Errorf("contract revise: cannot read --from %q: %w", c.From, err)
+	}
+	return r.App.ContractRevise(r.Stdout, runID, input, c.AllowApprovalReset, c.JSONOutput)
 }
 
 func (c *contractApproveCmd) Run(r *runner) error {

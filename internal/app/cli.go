@@ -144,16 +144,10 @@ type contractAcceptCmd struct {
 }
 
 type contractReviseCmd struct {
-	RunID             string   `arg:"" optional:"" name:"run_id" help:"Run id to revise."`
-	Goal              string   `name:"goal" help:"Replace the contract goal."`
-	AddInScope        []string `name:"add-in-scope" sep:"none" help:"Append an in-scope item."`
-	AddOutOfScope     []string `name:"add-out-of-scope" sep:"none" help:"Append an out-of-scope item."`
-	AddPathInScope    []string `name:"add-path-in-scope" sep:"none" help:"Append a repo-relative path glob that is in scope."`
-	AddPathOutOfScope []string `name:"add-path-out-of-scope" sep:"none" help:"Append a repo-relative path glob that is out of scope."`
-	AddAcceptance     []string `name:"add-acceptance" sep:"none" help:"Append an acceptance criterion."`
-	AddValidation     []string `name:"add-validation" sep:"none" help:"Append a validation command."`
-	AddAssumption     []string `name:"add-assumption" sep:"none" help:"Append an assumption."`
-	JSONOutput        bool     `name:"json" help:"Print machine-readable JSON output."`
+	RunID              string `arg:"" optional:"" name:"run_id" help:"Run id to revise."`
+	From               string `name:"from" required:"" help:"Path to a partial JSON update document, or - to read from stdin."`
+	AllowApprovalReset bool   `name:"allow-approval-reset" help:"Permit resetting an existing approval when content changes."`
+	JSONOutput         bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type contractApproveCmd struct {

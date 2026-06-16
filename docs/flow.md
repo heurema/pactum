@@ -143,14 +143,20 @@ relayed; it is recorded in the decision artifact (`decided_by`/`accepted_by`/
 
 ### Contract
 
-`pactum contract revise <run_id>` appends to the deterministic contract fields
-(`--goal`, `--add-in-scope`, `--add-out-of-scope`, `--add-acceptance`,
-`--add-path-in-scope`, `--add-path-out-of-scope`, `--add-validation`,
-`--add-assumption`). Path scope entries are repo-relative slash globs; `*`
-matches within one path segment, while `**` matches any number of path segments.
-`pactum contract approve <run_id> --by manual` approves the contract and pins the
-approval to the contract's SHA-256 hash. Revising an already-approved contract
-resets the approval, because the recorded hash no longer matches.
+`pactum contract revise <run_id> --from -|<file>` reads a partial JSON document
+of the form `{"base_version": "<version>", "contract": {<partial fields>}}`.
+Fields present in the `contract` object replace the stored value wholesale;
+absent fields are left untouched. `base_version` must equal the current contract's
+`version` token (from `pactum contract show --json`), or the revise is rejected
+atomically — no artifacts are written. Path scope entries (`paths_in_scope`,
+`paths_out_of_scope`) are repo-relative slash globs; `*` matches within one path
+segment, while `**` matches any number of path segments. Submitting identical
+content is a no-op (`changed: false`). `pactum contract approve <run_id> --by
+manual` approves the contract and pins the approval to the contract's SHA-256
+hash. Revising an already-approved contract with content changes requires
+`--allow-approval-reset`; on success the approval is reset to pending and the
+response reports `approval_reset`, `previous_approval_hash`, and
+`attempts_orphaned`.
 
 ### Prompt
 

@@ -177,9 +177,11 @@ func TestRunContextSearchRefreshedFromContract(t *testing.T) {
 	}
 
 	// Clarify the contract to point at the real file/symbol, then build the prompt.
-	wikiRunOK(t, app, "contract", "revise",
-		"--goal", "add formatPercent to apps/admin/src/lib/format.ts",
-		"--add-in-scope", "follow formatCurrency in apps/admin/src/lib/format.ts")
+	reviseDoc := writeReviseDocForTest(t, contractRunPaths(runDir), map[string]any{
+		"goal":  "add formatPercent to apps/admin/src/lib/format.ts",
+		"scope": map[string]any{"in": []string{"follow formatCurrency in apps/admin/src/lib/format.ts"}},
+	})
+	wikiRunOK(t, app, "contract", "revise", "--from", reviseDoc)
 	wikiRunOK(t, app, "contract", "approve", "--by", "manual")
 	wikiRunOK(t, app, "prompt", "build")
 
