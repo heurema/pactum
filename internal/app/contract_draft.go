@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -259,17 +258,20 @@ func (a App) ContractAcceptDraft(stdout io.Writer, runID string, acceptedBy stri
 	if proposal.Status == "accepted" {
 		return fmt.Errorf("contract draft proposal already accepted: %s", runID)
 	}
-	revision := contractDraftRevisionFromDraftProposal(proposal)
-	if !revision.hasChanges() {
+	update := contractPartialUpdateFromDraftProposal(proposal)
+	if !contractPartialUpdateHasChanges(update) {
 		return fmt.Errorf("contract draft proposal has no contract fields to apply")
 	}
 
-	var reviseOut bytes.Buffer
-	if err := a.ContractRevise(&reviseOut, runID, revision, true); err != nil {
+	// The accept path always permits approval reset: the human accepted the proposal
+	// knowing it would revise an approved contract.
+	reviseResult, err := a.contractReviseWithUpdate(context, update, true)
+	if err != nil {
 		return err
 	}
-	var reviseResponse contractReviseResponse
-	if err := json.Unmarshal(reviseOut.Bytes(), &reviseResponse); err != nil {
+
+	approval, err := readApprovalState(context.RunPaths.ApprovalJSON)
+	if err != nil {
 		return err
 	}
 
@@ -288,11 +290,11 @@ func (a App) ContractAcceptDraft(stdout io.Writer, runID string, acceptedBy stri
 
 	response := contractAcceptDraftResponse{
 		RunID:         runID,
-		RunStatus:     reviseResponse.RunStatus,
-		ApprovalReset: reviseResponse.ApprovalReset,
-		Approval:      reviseResponse.Approval,
+		RunStatus:     reviseResult.RunStatus,
+		ApprovalReset: reviseResult.ApprovalReset,
+		Approval:      approval,
 		Proposal:      proposal,
-		Contract:      reviseResponse.Contract,
+		Contract:      reviseResult.Contract,
 		Next:          nextCommandsForRun(context.Paths, runID),
 	}
 	if jsonOutput {
@@ -419,14 +421,44 @@ func cleanContractDraftProposalItems(root string, values []string) []string {
 	return cleaned
 }
 
-func contractDraftRevisionFromDraftProposal(proposal contractDraftProposalDocument) contractRevision {
-	return contractRevision{
-		AddInScope:    append([]string{}, proposal.InScope...),
-		AddOutOfScope: append([]string{}, proposal.OutOfScope...),
-		AddAcceptance: append([]string{}, proposal.Acceptance...),
-		AddValidation: append([]string{}, proposal.Validation...),
-		AddAssumption: append([]string{}, proposal.Assumptions...),
+// contractPartialUpdateFromDraftProposal builds a partial update from a draft
+// proposal. Only non-empty proposal fields are included so that missing fields
+// are left untouched rather than replaced with empty slices. On an empty
+// skeleton contract this is equivalent to the old append behaviour.
+func contractPartialUpdateFromDraftProposal(proposal contractDraftProposalDocument) contractPartialUpdate {
+	var update contractPartialUpdate
+	if len(proposal.InScope) > 0 {
+		scopeIn := append([]string{}, proposal.InScope...)
+		update.ScopeIn = &scopeIn
 	}
+	if len(proposal.OutOfScope) > 0 {
+		scopeOut := append([]string{}, proposal.OutOfScope...)
+		update.ScopeOut = &scopeOut
+	}
+	if len(proposal.Acceptance) > 0 {
+		acceptance := append([]string{}, proposal.Acceptance...)
+		update.AcceptanceCriteria = &acceptance
+	}
+	if len(proposal.Validation) > 0 {
+		validation := append([]string{}, proposal.Validation...)
+		update.ValidationCommands = &validation
+	}
+	if len(proposal.Assumptions) > 0 {
+		assumptions := append([]string{}, proposal.Assumptions...)
+		update.Assumptions = &assumptions
+	}
+	return update
+}
+
+func contractPartialUpdateHasChanges(update contractPartialUpdate) bool {
+	return update.Goal != nil ||
+		update.ScopeIn != nil ||
+		update.ScopeOut != nil ||
+		update.PathsInScope != nil ||
+		update.PathsOutOfScope != nil ||
+		update.AcceptanceCriteria != nil ||
+		update.ValidationCommands != nil ||
+		update.Assumptions != nil
 }
 
 func readContractDraftProposal(path string) (contractDraftProposalDocument, error) {

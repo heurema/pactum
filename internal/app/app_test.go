@@ -1282,7 +1282,7 @@ func TestContractBeforeInitPrintsGuidance(t *testing.T) {
 
 	// Mutating commands exit 1 with a stderr error.
 	for _, args := range [][]string{
-		{"contract", "revise", "run_x", "--goal", "new goal"},
+		{"contract", "revise", "run_x", "--from", "-"},
 		{"contract", "approve", "run_x"},
 	} {
 		var stdout, stderr bytes.Buffer
@@ -1367,8 +1367,9 @@ func TestContractReviseGoal(t *testing.T) {
 	app, paths, runID := setupContractRun(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{"goal": "add sqlite-backed cache"})
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "revise", runID, "--goal", "add sqlite-backed cache"}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "revise", runID, "--from", fromFile}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract revise exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1404,20 +1405,19 @@ func TestContractReviseAppendsFields(t *testing.T) {
 	app, paths, runID := setupContractRun(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{
+		"scope": map[string]any{
+			"in":  []string{"Add show, revise, and approve commands", "Persist cache metadata", "Expose status summary"},
+			"out": []string{"Implement cache eviction"},
+		},
+		"paths_in_scope":      []string{"internal/app/**", "cmd/pactum/*.go"},
+		"paths_out_of_scope":  []string{"docs/**"},
+		"acceptance_criteria": []string{"Cache survives process restart"},
+		"validation":          map[string]any{"commands": []string{"go test ./..."}},
+		"assumptions":         []string{"SQLite is available through the standard driver"},
+	})
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{
-		"contract", "revise", runID,
-		"--add-in-scope", "Add show, revise, and approve commands",
-		"--add-in-scope", "Persist cache metadata",
-		"--add-in-scope", "Expose status summary",
-		"--add-out-of-scope", "Implement cache eviction",
-		"--add-path-in-scope", "internal/app/**",
-		"--add-path-in-scope", "cmd/pactum/*.go",
-		"--add-path-out-of-scope", "docs/**",
-		"--add-acceptance", "Cache survives process restart",
-		"--add-validation", "go test ./...",
-		"--add-assumption", "SQLite is available through the standard driver",
-	}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "revise", runID, "--from", fromFile}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract revise exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1501,8 +1501,270 @@ func TestContractReviseWithoutFlagsErrors(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("contract revise without flags should fail")
 	}
-	if got := stderr.String(); !strings.Contains(got, "no contract revisions provided") {
+	if got := stderr.String(); !strings.Contains(got, "--from") {
 		t.Fatalf("contract revise stderr mismatch:\n%s", got)
+	}
+}
+
+func TestContractReviseInputErrors(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+
+	tests := []struct {
+		name     string
+		input    string
+		wantCode string
+	}{
+		{"invalid JSON", `not-json`, "INVALID_JSON"},
+		{"missing base_version", `{"contract":{}}`, "MISSING_BASE_VERSION"},
+		{"unknown outer field", `{"base_version":"x","badfield":"x","contract":{}}`, "UNKNOWN_FIELD"},
+		{"null goal", `{"base_version":"x","contract":{"goal":null}}`, "NULL_NOT_ALLOWED"},
+		{"unknown contract field", `{"base_version":"x","contract":{"goall":"x"}}`, "UNKNOWN_FIELD"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "bad.json")
+			if err := os.WriteFile(path, []byte(tt.input), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr bytes.Buffer
+			code := app.Run([]string{"contract", "revise", runID, "--from", path, "--json"}, &stdout, &stderr)
+			if code == 0 {
+				t.Fatalf("expected non-zero exit, stdout: %s", stdout.String())
+			}
+			var failure contractReviseFailure
+			if err := json.Unmarshal(stdout.Bytes(), &failure); err != nil {
+				t.Fatalf("expected structured JSON failure, got: %s", stdout.String())
+			}
+			if failure.OK || !failure.ContractUnchanged || len(failure.Issues) == 0 {
+				t.Fatalf("unexpected failure shape: %#v", failure)
+			}
+			found := false
+			for _, issue := range failure.Issues {
+				if issue.Code == tt.wantCode {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("want issue code %q in %#v", tt.wantCode, failure.Issues)
+			}
+		})
+	}
+}
+
+func TestContractReviseStaleVersion(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+
+	path := filepath.Join(t.TempDir(), "revise.json")
+	if err := os.WriteFile(path, []byte(`{"base_version":"not-the-current-hash","contract":{"goal":"x"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "revise", runID, "--from", path, "--json"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("stale version should fail")
+	}
+	var failure contractReviseFailure
+	if err := json.Unmarshal(stdout.Bytes(), &failure); err != nil {
+		t.Fatalf("expected structured JSON failure: %s", stdout.String())
+	}
+	if failure.OK || !failure.ContractUnchanged {
+		t.Fatalf("stale version: ok=%v unchanged=%v", failure.OK, failure.ContractUnchanged)
+	}
+	if len(failure.Issues) != 1 || failure.Issues[0].Code != "STALE_VERSION" {
+		t.Fatalf("want STALE_VERSION, got %#v", failure.Issues)
+	}
+}
+
+func TestContractReviseApprovalResetRejected(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(artifacts.New(root).RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr); code != 0 {
+		t.Fatalf("contract approve exited %d, stderr: %s", code, stderr.String())
+	}
+
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{"goal": "changed goal"})
+	stdout.Reset()
+	stderr.Reset()
+	code := app.Run([]string{"contract", "revise", runID, "--from", fromFile, "--json"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("revise approved contract without flag should fail")
+	}
+	var failure contractReviseFailure
+	if err := json.Unmarshal(stdout.Bytes(), &failure); err != nil {
+		t.Fatalf("expected structured JSON failure: %s", stdout.String())
+	}
+	if failure.OK || !failure.ContractUnchanged {
+		t.Fatalf("unexpected: ok=%v unchanged=%v", failure.OK, failure.ContractUnchanged)
+	}
+	if len(failure.Issues) != 1 || failure.Issues[0].Code != "APPROVAL_RESET_REQUIRED" {
+		t.Fatalf("want APPROVAL_RESET_REQUIRED, got %#v", failure.Issues)
+	}
+}
+
+func TestContractReviseNoOp(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(artifacts.New(root).RunsDir, runID))
+
+	// Submitting the same goal that is already set produces a no-op.
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{"goal": "add sqlite cache"})
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "revise", runID, "--from", fromFile, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("no-op revise exited %d, stderr: %s stdout: %s", code, stderr.String(), stdout.String())
+	}
+	var resp contractReviseResponse
+	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+		t.Fatalf("expected JSON response: %s", stdout.String())
+	}
+	if resp.Changed {
+		t.Fatalf("no-op revise: changed = true, want false")
+	}
+	if resp.NewVersion != resp.BaseVersion {
+		t.Fatalf("no-op: new_version %q != base_version %q", resp.NewVersion, resp.BaseVersion)
+	}
+}
+
+func TestContractReviseApprovedNoOp(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(artifacts.New(root).RunsDir, runID))
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr); code != 0 {
+		t.Fatalf("contract approve exited %d, stderr: %s", code, stderr.String())
+	}
+	approval := readApproval(t, runPaths.ApprovalJSON)
+
+	// No-op revise on an approved contract must not change approval state.
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{"goal": "add sqlite cache"})
+	stdout.Reset()
+	stderr.Reset()
+	code := app.Run([]string{"contract", "revise", runID, "--from", fromFile, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("no-op revise on approved contract exited %d, stderr: %s stdout: %s", code, stderr.String(), stdout.String())
+	}
+	var resp contractReviseResponse
+	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+		t.Fatalf("expected JSON response: %s", stdout.String())
+	}
+	if resp.Changed {
+		t.Fatalf("no-op on approved contract: changed = true")
+	}
+	after := readApproval(t, runPaths.ApprovalJSON)
+	if after.Status != "approved" || after.ContractSHA256 == nil || *after.ContractSHA256 != *approval.ContractSHA256 {
+		t.Fatalf("approval should remain unchanged after no-op: before=%#v after=%#v", approval, after)
+	}
+}
+
+func TestContractReviseDedup(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(artifacts.New(root).RunsDir, runID))
+
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{
+		"scope": map[string]any{"in": []string{"A", "B", "A"}},
+	})
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "revise", runID, "--from", fromFile, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("revise with dups exited %d, stderr: %s stdout: %s", code, stderr.String(), stdout.String())
+	}
+	var resp contractReviseResponse
+	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+		t.Fatalf("expected JSON response: %s", stdout.String())
+	}
+	if len(resp.Deduped) != 1 || !strings.Contains(resp.Deduped[0], "A") {
+		t.Fatalf("deduped = %v, want one entry for A", resp.Deduped)
+	}
+	if len(resp.Contract.Scope.In) != 2 || resp.Contract.Scope.In[0] != "A" || resp.Contract.Scope.In[1] != "B" {
+		t.Fatalf("scope.in = %v, want [A B]", resp.Contract.Scope.In)
+	}
+}
+
+func TestContractReviseNoOpWithDups(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(artifacts.New(root).RunsDir, runID))
+
+	// Establish scope.in = ["A"].
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{
+		"scope": map[string]any{"in": []string{"A"}},
+	})
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"contract", "revise", runID, "--from", fromFile}, &stdout, &stderr); code != 0 {
+		t.Fatalf("first revise exited %d, stderr: %s", code, stderr.String())
+	}
+
+	// Submitting ["A","A"] deduplicates to ["A"], which equals the current state.
+	fromFile2 := writeReviseDocForTest(t, runPaths, map[string]any{
+		"scope": map[string]any{"in": []string{"A", "A"}},
+	})
+	stdout.Reset()
+	stderr.Reset()
+	code := app.Run([]string{"contract", "revise", runID, "--from", fromFile2, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("dedup no-op revise exited %d, stderr: %s stdout: %s", code, stderr.String(), stdout.String())
+	}
+	var resp contractReviseResponse
+	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+		t.Fatalf("expected JSON response: %s", stdout.String())
+	}
+	if resp.Changed {
+		t.Fatalf("dedup normalizes to no-op: changed = true")
+	}
+	if len(resp.Deduped) == 0 {
+		t.Fatalf("dedup no-op: Deduped empty, want dropped duplicate reported")
+	}
+}
+
+func TestContractReviseStdin(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(artifacts.New(root).RunsDir, runID))
+
+	version, err := storeFileSHA256(runPaths.ContractJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := map[string]any{
+		"base_version": version,
+		"contract":     map[string]any{"goal": "stdin goal"},
+	}
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStdin := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = oldStdin
+		r.Close()
+	})
+	if _, err := w.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "revise", runID, "--from", "-"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract revise from stdin exited %d, stderr: %s stdout: %s", code, stderr.String(), stdout.String())
+	}
+	contract := readContractDraft(t, runPaths.ContractJSON)
+	if contract.Goal != "stdin goal" {
+		t.Fatalf("contract goal = %q, want stdin goal", contract.Goal)
 	}
 }
 
@@ -1655,7 +1917,10 @@ func TestContractReviseApprovedContractResetsApproval(t *testing.T) {
 	}
 	stdout.Reset()
 	stderr.Reset()
-	code = app.Run([]string{"contract", "revise", runID, "--add-in-scope", "Use sqlite"}, &stdout, &stderr)
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{
+		"scope": map[string]any{"in": []string{"Use sqlite"}},
+	})
+	code = app.Run([]string{"contract", "revise", runID, "--from", fromFile, "--allow-approval-reset"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract revise exited %d, stderr: %s", code, stderr.String())
 	}
@@ -1714,9 +1979,14 @@ func TestContractArtifactsUseRepoRelativePaths(t *testing.T) {
 	app, paths, runID := setupContractRun(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{
+		"goal":       "portable contract",
+		"scope":      map[string]any{"in": []string{"Use repo-relative paths"}},
+		"validation": map[string]any{"commands": []string{"go test ./..."}},
+	})
 	var stdout, stderr bytes.Buffer
 	for _, args := range [][]string{
-		{"contract", "revise", runID, "--goal", "portable contract", "--add-in-scope", "Use repo-relative paths", "--add-validation", "go test ./..."},
+		{"contract", "revise", runID, "--from", fromFile},
 		{"contract", "approve", runID},
 	} {
 		stdout.Reset()
@@ -2913,6 +3183,30 @@ func mustWriteFile(t *testing.T, path string, content string) {
 	t.Helper()
 	assertNoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	assertNoError(t, os.WriteFile(path, []byte(content), 0o644))
+}
+
+// writeReviseDocForTest creates a temp file containing a contract revise
+// partial-update document for --from. base_version is read from the current
+// contract.json (supports both real and swapped fake stores).
+func writeReviseDocForTest(t *testing.T, runPaths contractRunPathSet, contractUpdate any) string {
+	t.Helper()
+	version, err := storeFileSHA256(runPaths.ContractJSON)
+	if err != nil {
+		t.Fatalf("writeReviseDocForTest: hash contract: %v", err)
+	}
+	doc := map[string]any{
+		"base_version": version,
+		"contract":     contractUpdate,
+	}
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("writeReviseDocForTest: marshal: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "revise.json")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("writeReviseDocForTest: write: %v", err)
+	}
+	return path
 }
 
 func mustReadFile(t *testing.T, path string) string {

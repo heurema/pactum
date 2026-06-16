@@ -475,8 +475,10 @@ func TestDeriveStatusRewindsAfterContractRevise(t *testing.T) {
 	// Revising the contract resets approval and removes prompt readiness, so the
 	// derived status must rewind to contract_draft even though downstream
 	// artifacts could exist.
+	revRunPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	fromFile := writeReviseDocForTest(t, revRunPaths, map[string]any{"goal": "new goal"})
 	var stdout, stderr bytes.Buffer
-	if code := app.Run([]string{"contract", "revise", runID, "--goal", "new goal"}, &stdout, &stderr); code != 0 {
+	if code := app.Run([]string{"contract", "revise", runID, "--from", fromFile, "--allow-approval-reset"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("contract revise exited %d, stderr: %s", code, stderr.String())
 	}
 	if got := deriveRunStatus(paths, runID); got != "contract_draft" {
@@ -503,8 +505,9 @@ func TestDeriveStatusIgnoresStaleMemoryArtifacts(t *testing.T) {
 
 	// Now invalidate the upstream boundary: revise the contract. Even though the
 	// memory acceptance still exists, status must rewind to contract_draft.
+	fromFile2 := writeReviseDocForTest(t, runPaths, map[string]any{"goal": "changed"})
 	var stdout, stderr bytes.Buffer
-	if code := app.Run([]string{"contract", "revise", runID, "--goal", "changed"}, &stdout, &stderr); code != 0 {
+	if code := app.Run([]string{"contract", "revise", runID, "--from", fromFile2, "--allow-approval-reset"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("contract revise exited %d, stderr: %s", code, stderr.String())
 	}
 	if got := deriveRunStatus(paths, runID); got != "contract_draft" {

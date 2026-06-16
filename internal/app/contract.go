@@ -1,6 +1,10 @@
 package app
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -13,16 +17,47 @@ import (
 
 const approvalSchema = "pactum.approval.v1"
 
-type contractRevision struct {
-	Goal              string
-	AddInScope        []string
-	AddOutOfScope     []string
-	AddPathInScope    []string
-	AddPathOutOfScope []string
-	AddAcceptance     []string
-	AddValidation     []string
-	AddAssumption     []string
+// contractReviseIssue is a single validation failure in a revise request.
+type contractReviseIssue struct {
+	Field   string `json:"field"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
+
+// contractReviseFailure is the structured failure body emitted when revise
+// input is invalid or the version/approval check rejects the request.
+type contractReviseFailure struct {
+	OK                bool                  `json:"ok"`
+	ContractUnchanged bool                  `json:"contract_unchanged"`
+	Issues            []contractReviseIssue `json:"issues"`
+}
+
+// contractPartialUpdate holds a validated partial contract update.
+// A nil pointer means the field was absent in the --from document (untouched).
+// A non-nil pointer (even to an empty slice) means present (replace wholesale).
+type contractPartialUpdate struct {
+	Goal               *string
+	ScopeIn            *[]string
+	ScopeOut           *[]string
+	PathsInScope       *[]string
+	PathsOutOfScope    *[]string
+	AcceptanceCriteria *[]string
+	ValidationCommands *[]string
+	Assumptions        *[]string
+}
+
+// contractReviseFailureError is returned after writing a structured failure JSON
+// to stdout, signaling app.Run to exit 1 without additional error output.
+type contractReviseFailureError struct{}
+
+func (contractReviseFailureError) Error() string { return "contract revise failed" }
+
+// approvalResetGateError is returned by contractReviseWithUpdate when a
+// content-changing revise on an approved contract is blocked because
+// --allow-approval-reset was not passed.
+type approvalResetGateError struct{}
+
+func (approvalResetGateError) Error() string { return "approval reset required" }
 
 // runContext is the fully-loaded state of a run directory: its resolved paths,
 // run state, contract draft, and approval. Shared by the contract, prompt, and
@@ -52,16 +87,23 @@ type contractShowResponse struct {
 	RunID     string        `json:"run_id"`
 	RunStatus string        `json:"run_status"`
 	Approval  approvalState `json:"approval"`
+	Version   string        `json:"version,omitempty"`
 	Contract  draftContract `json:"contract"`
 }
 
 type contractReviseResponse struct {
-	RunID         string        `json:"run_id"`
-	RunStatus     string        `json:"run_status"`
-	ApprovalReset bool          `json:"approval_reset"`
-	Approval      approvalState `json:"approval"`
-	Contract      draftContract `json:"contract"`
-	Next          []string      `json:"next"`
+	OK                   bool          `json:"ok"`
+	RunID                string        `json:"run_id"`
+	RunStatus            string        `json:"run_status"`
+	BaseVersion          string        `json:"base_version"`
+	NewVersion           string        `json:"new_version"`
+	Changed              bool          `json:"changed"`
+	Deduped              []string      `json:"deduped,omitempty"`
+	ApprovalReset        bool          `json:"approval_reset,omitempty"`
+	PreviousApprovalHash *string       `json:"previous_approval_hash,omitempty"`
+	AttemptsOrphaned     int           `json:"attempts_orphaned,omitempty"`
+	Contract             draftContract `json:"contract"`
+	Next                 []string      `json:"next"`
 }
 
 type contractApproveResponse struct {
@@ -76,10 +118,15 @@ func (a App) ContractShow(stdout io.Writer, runID string, jsonOutput bool) error
 	if err != nil || !ok {
 		return err
 	}
+	version, err := storeFileSHA256(context.RunPaths.ContractJSON)
+	if err != nil {
+		return err
+	}
 	response := contractShowResponse{
 		RunID:     runID,
 		RunStatus: context.State.Status,
 		Approval:  context.Approval,
+		Version:   version,
 		Contract:  context.Contract,
 	}
 	if jsonOutput {
@@ -93,58 +140,152 @@ func (a App) ContractShow(stdout io.Writer, runID string, jsonOutput bool) error
 	return nil
 }
 
-func (a App) ContractRevise(stdout io.Writer, runID string, revision contractRevision, jsonOutput bool) error {
+func (a App) ContractRevise(stdout io.Writer, runID string, input []byte, allowApprovalReset bool, jsonOutput bool) error {
 	context, ok, err := a.loadContractContext(stdout, runID, jsonOutput)
 	if err != nil || !ok {
 		return err
 	}
-	if !revision.hasChanges() {
-		return fmt.Errorf("no contract revisions provided")
+
+	baseVersion, update, issues := parseContractReviseInput(input)
+	if len(issues) > 0 {
+		failure := contractReviseFailure{OK: false, ContractUnchanged: true, Issues: issues}
+		if err := writeReviseFailure(stdout, failure); err != nil {
+			return err
+		}
+		return contractReviseFailureError{}
+	}
+
+	currentVersion, err := storeFileSHA256(context.RunPaths.ContractJSON)
+	if err != nil {
+		return err
+	}
+	if baseVersion != currentVersion {
+		issue := contractReviseIssue{
+			Field:   "base_version",
+			Code:    "STALE_VERSION",
+			Message: fmt.Sprintf("base_version %q does not match current version; re-read contract show --json and retry", baseVersion),
+		}
+		failure := contractReviseFailure{OK: false, ContractUnchanged: true, Issues: []contractReviseIssue{issue}}
+		if err := writeReviseFailure(stdout, failure); err != nil {
+			return err
+		}
+		return contractReviseFailureError{}
+	}
+
+	result, err := a.contractReviseWithUpdate(context, update, allowApprovalReset)
+	if err != nil {
+		var gateErr approvalResetGateError
+		if errors.As(err, &gateErr) {
+			issue := contractReviseIssue{
+				Field:   "contract",
+				Code:    "APPROVAL_RESET_REQUIRED",
+				Message: "contract is approved; pass --allow-approval-reset to revise and reset approval",
+			}
+			failure := contractReviseFailure{OK: false, ContractUnchanged: true, Issues: []contractReviseIssue{issue}}
+			if err := writeReviseFailure(stdout, failure); err != nil {
+				return err
+			}
+			return contractReviseFailureError{}
+		}
+		return err
+	}
+	result.BaseVersion = baseVersion
+
+	if jsonOutput {
+		return writeJSONResponse(stdout, result)
+	}
+	writeContractRevise(stdout, result)
+	return nil
+}
+
+// contractReviseWithUpdate applies a validated partial update to the contract
+// and writes all affected artifacts. It is used by both the CLI (ContractRevise)
+// and the internal accept path (ContractAcceptDraft), which bypasses the
+// base_version check by passing allowApprovalReset=true.
+func (a App) contractReviseWithUpdate(context runContext, update contractPartialUpdate, allowApprovalReset bool) (contractReviseResponse, error) {
+	currentVersion, err := storeFileSHA256(context.RunPaths.ContractJSON)
+	if err != nil {
+		return contractReviseResponse{}, err
 	}
 
 	now := a.nowUTC()
 	status, err := buildClarificationStatus(context.RunPaths, context.State)
 	if err != nil {
-		return err
+		return contractReviseResponse{}, err
 	}
 
 	contract := context.Contract
-	applyContractRevision(&contract, revision)
+	deduped := applyContractPartialUpdate(&contract, update)
 	applyClarificationStatusToContract(&contract, status)
+
+	newVersion, err := contractVersionHash(contract)
+	if err != nil {
+		return contractReviseResponse{}, err
+	}
+
+	if newVersion == currentVersion {
+		return contractReviseResponse{
+			OK:          true,
+			RunID:       context.State.RunID,
+			RunStatus:   context.State.Status,
+			BaseVersion: currentVersion,
+			NewVersion:  currentVersion,
+			Changed:     false,
+			Deduped:     deduped,
+			Contract:    contract,
+			Next:        nextCommandsForRun(context.Paths, context.State.RunID),
+		}, nil
+	}
+
 	contract.Status = "draft"
+
+	if context.Approval.Status == "approved" && !allowApprovalReset {
+		return contractReviseResponse{}, approvalResetGateError{}
+	}
 
 	state := context.State
 	state.Status = status.RunStatus
 	state.UpdatedAt = now
 
 	if err := writeContractArtifacts(context.RunPaths, contract, state.MapRunID); err != nil {
-		return err
+		return contractReviseResponse{}, err
 	}
 	if err := writeJSON(context.RunPaths.RunJSON, state); err != nil {
-		return err
+		return contractReviseResponse{}, err
 	}
 
-	approval, approvalReset, err := resetApprovalIfApproved(context.Paths, context.RunPaths, context.Root, runID, now)
+	_, approvalReset, prevHash, err := resetApprovalIfApproved(context.Paths, context.RunPaths, context.Root, context.State.RunID, now)
 	if err != nil {
-		return err
+		return contractReviseResponse{}, err
 	}
-	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_revised", Timestamp: now, RunID: runID}); err != nil {
-		return err
+	if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_revised", Timestamp: now, RunID: context.State.RunID}); err != nil {
+		return contractReviseResponse{}, err
 	}
 
-	response := contractReviseResponse{
-		RunID:         runID,
-		RunStatus:     state.Status,
-		ApprovalReset: approvalReset,
-		Approval:      approval,
-		Contract:      contract,
-		Next:          nextCommandsForRun(context.Paths, runID),
+	var attemptsOrphaned int
+	if approvalReset {
+		attemptsOrphaned = countExecutionAttempts(context.RunPaths.AttemptsDir)
 	}
-	if jsonOutput {
-		return writeJSONResponse(stdout, response)
+
+	writtenVersion, err := storeFileSHA256(context.RunPaths.ContractJSON)
+	if err != nil {
+		return contractReviseResponse{}, err
 	}
-	writeContractRevise(stdout, response)
-	return nil
+
+	return contractReviseResponse{
+		OK:                   true,
+		RunID:                context.State.RunID,
+		RunStatus:            state.Status,
+		BaseVersion:          currentVersion,
+		NewVersion:           writtenVersion,
+		Changed:              true,
+		Deduped:              deduped,
+		ApprovalReset:        approvalReset,
+		PreviousApprovalHash: prevHash,
+		AttemptsOrphaned:     attemptsOrphaned,
+		Contract:             contract,
+		Next:                 nextCommandsForRun(context.Paths, context.State.RunID),
+	}, nil
 }
 
 func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, jsonOutput bool) error {
@@ -259,28 +400,420 @@ func (a App) loadContractContext(stdout io.Writer, runID string, jsonOutput bool
 	return a.loadRunContext(stdout, runID, jsonOutput)
 }
 
-func (revision contractRevision) hasChanges() bool {
-	return strings.TrimSpace(revision.Goal) != "" ||
-		len(revision.AddInScope) > 0 ||
-		len(revision.AddOutOfScope) > 0 ||
-		len(revision.AddPathInScope) > 0 ||
-		len(revision.AddPathOutOfScope) > 0 ||
-		len(revision.AddAcceptance) > 0 ||
-		len(revision.AddValidation) > 0 ||
-		len(revision.AddAssumption) > 0
+// parseContractReviseInput parses and validates the --from document, collecting
+// all validation issues at once. On success it returns the base_version string
+// and the validated partial update; on failure it returns empty values and a
+// non-empty issues slice that the caller should render as a structured failure.
+func parseContractReviseInput(input []byte) (baseVersion string, update contractPartialUpdate, issues []contractReviseIssue) {
+	var outer map[string]json.RawMessage
+	if err := json.Unmarshal(input, &outer); err != nil {
+		issues = append(issues, contractReviseIssue{
+			Field:   "",
+			Code:    "INVALID_JSON",
+			Message: "input is not valid JSON: " + err.Error(),
+		})
+		return "", contractPartialUpdate{}, issues
+	}
+
+	// run_id, run_status, and approval appear in contract show --json output.
+	// Accept them silently so that output can be fed directly to --from.
+	showOnlyFields := map[string]bool{"run_id": true, "run_status": true, "approval": true}
+	knownOuter := []string{"base_version", "version", "contract"}
+	for k := range outer {
+		if k != "base_version" && k != "version" && k != "contract" && !showOnlyFields[k] {
+			msg := fmt.Sprintf("unknown field %q", k)
+			if suggestion := didYouMean(k, knownOuter); suggestion != "" {
+				msg += fmt.Sprintf("; did you mean %q?", suggestion)
+			}
+			issues = append(issues, contractReviseIssue{Field: k, Code: "UNKNOWN_FIELD", Message: msg})
+		}
+	}
+
+	// Accept "version" as an alias for "base_version" so that contract show --json
+	// output can be fed directly to --from after editing the contract sub-object.
+	rawBV, hasBV := outer["base_version"]
+	if !hasBV {
+		rawBV, hasBV = outer["version"]
+	}
+	if !hasBV {
+		issues = append(issues, contractReviseIssue{
+			Field:   "base_version",
+			Code:    "MISSING_BASE_VERSION",
+			Message: "base_version is required; read contract show --json to obtain the current version",
+		})
+	} else {
+		var bv any
+		if err := json.Unmarshal(rawBV, &bv); err != nil || bv == nil {
+			issues = append(issues, contractReviseIssue{
+				Field:   "base_version",
+				Code:    "NULL_NOT_ALLOWED",
+				Message: "base_version must be a non-null string",
+			})
+		} else if _, ok := bv.(string); !ok {
+			issues = append(issues, contractReviseIssue{
+				Field:   "base_version",
+				Code:    "INVALID_TYPE",
+				Message: "base_version must be a string",
+			})
+		} else {
+			baseVersion = bv.(string)
+		}
+	}
+
+	rawContract, hasContract := outer["contract"]
+	if !hasContract {
+		issues = append(issues, contractReviseIssue{
+			Field:   "contract",
+			Code:    "MISSING_FIELD",
+			Message: "contract is required",
+		})
+		return baseVersion, contractPartialUpdate{}, issues
+	}
+	var contractNull any
+	if err := json.Unmarshal(rawContract, &contractNull); err != nil || contractNull == nil {
+		issues = append(issues, contractReviseIssue{
+			Field:   "contract",
+			Code:    "NULL_NOT_ALLOWED",
+			Message: "contract must be a non-null object",
+		})
+		return baseVersion, contractPartialUpdate{}, issues
+	}
+
+	var contractFields map[string]json.RawMessage
+	if err := json.Unmarshal(rawContract, &contractFields); err != nil {
+		issues = append(issues, contractReviseIssue{
+			Field:   "contract",
+			Code:    "INVALID_TYPE",
+			Message: "contract must be an object",
+		})
+		return baseVersion, contractPartialUpdate{}, issues
+	}
+
+	knownContract := []string{"goal", "scope", "paths_in_scope", "paths_out_of_scope", "acceptance_criteria", "validation", "assumptions"}
+	for k := range contractFields {
+		known := false
+		for _, kc := range knownContract {
+			if k == kc {
+				known = true
+				break
+			}
+		}
+		if !known {
+			msg := fmt.Sprintf("unknown contract field %q", k)
+			if suggestion := didYouMean(k, knownContract); suggestion != "" {
+				msg += fmt.Sprintf("; did you mean %q?", suggestion)
+			}
+			issues = append(issues, contractReviseIssue{Field: "contract." + k, Code: "UNKNOWN_FIELD", Message: msg})
+		}
+	}
+
+	if raw, ok := contractFields["goal"]; ok {
+		var v any
+		if err := json.Unmarshal(raw, &v); err != nil || v == nil {
+			issues = append(issues, contractReviseIssue{
+				Field:   "contract.goal",
+				Code:    "NULL_NOT_ALLOWED",
+				Message: "goal must be a non-null string",
+			})
+		} else if s, ok := v.(string); !ok {
+			issues = append(issues, contractReviseIssue{
+				Field:   "contract.goal",
+				Code:    "INVALID_TYPE",
+				Message: "goal must be a string",
+			})
+		} else {
+			update.Goal = &s
+		}
+	}
+
+	if raw, ok := contractFields["scope"]; ok {
+		var v any
+		if err := json.Unmarshal(raw, &v); err != nil || v == nil {
+			issues = append(issues, contractReviseIssue{
+				Field:   "contract.scope",
+				Code:    "NULL_NOT_ALLOWED",
+				Message: "scope must be a non-null object",
+			})
+		} else {
+			var scopeFields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &scopeFields); err != nil {
+				issues = append(issues, contractReviseIssue{
+					Field:   "contract.scope",
+					Code:    "INVALID_TYPE",
+					Message: "scope must be an object",
+				})
+			} else {
+				for k := range scopeFields {
+					if k != "in" && k != "out" {
+						msg := fmt.Sprintf("unknown scope field %q", k)
+						if suggestion := didYouMean(k, []string{"in", "out"}); suggestion != "" {
+							msg += fmt.Sprintf("; did you mean %q?", suggestion)
+						}
+						issues = append(issues, contractReviseIssue{Field: "contract.scope." + k, Code: "UNKNOWN_FIELD", Message: msg})
+					}
+				}
+				if rawIn, ok := scopeFields["in"]; ok {
+					if list, fieldIssues := parseStringList(rawIn, "contract.scope.in"); len(fieldIssues) > 0 {
+						issues = append(issues, fieldIssues...)
+					} else {
+						update.ScopeIn = &list
+					}
+				}
+				if rawOut, ok := scopeFields["out"]; ok {
+					if list, fieldIssues := parseStringList(rawOut, "contract.scope.out"); len(fieldIssues) > 0 {
+						issues = append(issues, fieldIssues...)
+					} else {
+						update.ScopeOut = &list
+					}
+				}
+			}
+		}
+	}
+
+	for _, field := range []struct {
+		key  string
+		path string
+		dest **[]string
+	}{
+		{"paths_in_scope", "contract.paths_in_scope", &update.PathsInScope},
+		{"paths_out_of_scope", "contract.paths_out_of_scope", &update.PathsOutOfScope},
+		{"acceptance_criteria", "contract.acceptance_criteria", &update.AcceptanceCriteria},
+		{"assumptions", "contract.assumptions", &update.Assumptions},
+	} {
+		if raw, ok := contractFields[field.key]; ok {
+			if list, fieldIssues := parseStringList(raw, field.path); len(fieldIssues) > 0 {
+				issues = append(issues, fieldIssues...)
+			} else {
+				*field.dest = &list
+			}
+		}
+	}
+
+	if raw, ok := contractFields["validation"]; ok {
+		var v any
+		if err := json.Unmarshal(raw, &v); err != nil || v == nil {
+			issues = append(issues, contractReviseIssue{
+				Field:   "contract.validation",
+				Code:    "NULL_NOT_ALLOWED",
+				Message: "validation must be a non-null object",
+			})
+		} else {
+			var validationFields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &validationFields); err != nil {
+				issues = append(issues, contractReviseIssue{
+					Field:   "contract.validation",
+					Code:    "INVALID_TYPE",
+					Message: "validation must be an object",
+				})
+			} else {
+				for k := range validationFields {
+					if k != "commands" {
+						msg := fmt.Sprintf("unknown validation field %q", k)
+						if suggestion := didYouMean(k, []string{"commands"}); suggestion != "" {
+							msg += fmt.Sprintf("; did you mean %q?", suggestion)
+						}
+						issues = append(issues, contractReviseIssue{Field: "contract.validation." + k, Code: "UNKNOWN_FIELD", Message: msg})
+					}
+				}
+				if rawCmds, ok := validationFields["commands"]; ok {
+					if list, fieldIssues := parseStringList(rawCmds, "contract.validation.commands"); len(fieldIssues) > 0 {
+						issues = append(issues, fieldIssues...)
+					} else {
+						update.ValidationCommands = &list
+					}
+				}
+			}
+		}
+	}
+
+	return baseVersion, update, issues
 }
 
-func applyContractRevision(contract *draftContract, revision contractRevision) {
-	if strings.TrimSpace(revision.Goal) != "" {
-		contract.Goal = revision.Goal
+// parseStringList parses a JSON value as a []string, rejecting null and
+// non-array types and collecting all element-level issues.
+func parseStringList(raw json.RawMessage, field string) ([]string, []contractReviseIssue) {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil || v == nil {
+		return nil, []contractReviseIssue{{
+			Field:   field,
+			Code:    "NULL_NOT_ALLOWED",
+			Message: field + " must be a non-null array (use [] to clear)",
+		}}
 	}
-	contract.Scope.In = append(contract.Scope.In, revision.AddInScope...)
-	contract.Scope.Out = append(contract.Scope.Out, revision.AddOutOfScope...)
-	contract.PathsInScope = append(contract.PathsInScope, revision.AddPathInScope...)
-	contract.PathsOutOfScope = append(contract.PathsOutOfScope, revision.AddPathOutOfScope...)
-	contract.AcceptanceCriteria = append(contract.AcceptanceCriteria, revision.AddAcceptance...)
-	contract.Validation.Commands = append(contract.Validation.Commands, revision.AddValidation...)
-	contract.Assumptions = append(contract.Assumptions, revision.AddAssumption...)
+	var list []json.RawMessage
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, []contractReviseIssue{{
+			Field:   field,
+			Code:    "INVALID_TYPE",
+			Message: field + " must be an array",
+		}}
+	}
+	result := make([]string, 0, len(list))
+	var issues []contractReviseIssue
+	for i, elem := range list {
+		var s string
+		if err := json.Unmarshal(elem, &s); err != nil {
+			issues = append(issues, contractReviseIssue{
+				Field:   fmt.Sprintf("%s[%d]", field, i),
+				Code:    "INVALID_TYPE",
+				Message: fmt.Sprintf("%s[%d] must be a string", field, i),
+			})
+			continue
+		}
+		result = append(result, s)
+	}
+	return result, issues
+}
+
+// applyContractPartialUpdate replaces fields in contract for each non-nil
+// pointer in update, stable-deduping lists and reporting dropped duplicates.
+func applyContractPartialUpdate(contract *draftContract, update contractPartialUpdate) []string {
+	var dropped []string
+	if update.Goal != nil {
+		contract.Goal = *update.Goal
+	}
+	if update.ScopeIn != nil {
+		deduped, dups := stableDedup(*update.ScopeIn)
+		contract.Scope.In = deduped
+		dropped = append(dropped, prefixedDropped("scope.in", dups)...)
+	}
+	if update.ScopeOut != nil {
+		deduped, dups := stableDedup(*update.ScopeOut)
+		contract.Scope.Out = deduped
+		dropped = append(dropped, prefixedDropped("scope.out", dups)...)
+	}
+	if update.PathsInScope != nil {
+		deduped, dups := stableDedup(*update.PathsInScope)
+		contract.PathsInScope = deduped
+		dropped = append(dropped, prefixedDropped("paths_in_scope", dups)...)
+	}
+	if update.PathsOutOfScope != nil {
+		deduped, dups := stableDedup(*update.PathsOutOfScope)
+		contract.PathsOutOfScope = deduped
+		dropped = append(dropped, prefixedDropped("paths_out_of_scope", dups)...)
+	}
+	if update.AcceptanceCriteria != nil {
+		deduped, dups := stableDedup(*update.AcceptanceCriteria)
+		contract.AcceptanceCriteria = deduped
+		dropped = append(dropped, prefixedDropped("acceptance_criteria", dups)...)
+	}
+	if update.ValidationCommands != nil {
+		deduped, dups := stableDedup(*update.ValidationCommands)
+		contract.Validation.Commands = deduped
+		dropped = append(dropped, prefixedDropped("validation.commands", dups)...)
+	}
+	if update.Assumptions != nil {
+		deduped, dups := stableDedup(*update.Assumptions)
+		contract.Assumptions = deduped
+		dropped = append(dropped, prefixedDropped("assumptions", dups)...)
+	}
+	return dropped
+}
+
+func prefixedDropped(field string, dups []string) []string {
+	out := make([]string, len(dups))
+	for i, d := range dups {
+		out[i] = field + ": " + d
+	}
+	return out
+}
+
+// stableDedup returns (deduped, dropped): unique items in first-seen order,
+// and the exact values that were dropped.
+func stableDedup(items []string) ([]string, []string) {
+	seen := make(map[string]bool, len(items))
+	deduped := make([]string, 0, len(items))
+	var dropped []string
+	for _, item := range items {
+		if seen[item] {
+			dropped = append(dropped, item)
+		} else {
+			seen[item] = true
+			deduped = append(deduped, item)
+		}
+	}
+	return deduped, dropped
+}
+
+// contractVersionHash computes the SHA256 that storeFileSHA256 would return
+// after writing contract with writeJSON, enabling a no-op check without disk IO.
+func contractVersionHash(contract draftContract) (string, error) {
+	data, err := json.MarshalIndent(contract, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	data = append(data, '\n')
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// countExecutionAttempts returns the number of attempt subdirectories under
+// attemptsDir. It returns 0 when the directory does not exist.
+func countExecutionAttempts(attemptsDir string) int {
+	entries, err := activeStore.ReadDir(attemptsDir)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			count++
+		}
+	}
+	return count
+}
+
+// didYouMean returns the closest known string within Levenshtein distance 3,
+// or "" if nothing is close enough.
+func didYouMean(unknown string, known []string) string {
+	best, bestDist := "", 4
+	for _, k := range known {
+		if d := levenshtein(unknown, k); d < bestDist {
+			best, bestDist = k, d
+		}
+	}
+	return best
+}
+
+func levenshtein(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	la, lb := len(ra), len(rb)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+	prev := make([]int, lb+1)
+	curr := make([]int, lb+1)
+	for j := 0; j <= lb; j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= la; i++ {
+		curr[0] = i
+		for j := 1; j <= lb; j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			del := prev[j] + 1
+			ins := curr[j-1] + 1
+			sub := prev[j-1] + cost
+			curr[j] = del
+			if ins < curr[j] {
+				curr[j] = ins
+			}
+			if sub < curr[j] {
+				curr[j] = sub
+			}
+		}
+		prev, curr = curr, prev
+	}
+	return prev[lb]
+}
+
+func writeReviseFailure(stdout io.Writer, failure contractReviseFailure) error {
+	return writeJSONResponse(stdout, failure)
 }
 
 func writeContractArtifacts(runPaths contractRunPathSet, contract draftContract, mapRunID string) error {
@@ -348,25 +881,29 @@ func approvedApprovalState(approvedBy string, approvedAt time.Time, contractSHA2
 	}
 }
 
-func resetApprovalIfApproved(paths artifacts.Paths, runPaths contractRunPathSet, root string, runID string, resetAt time.Time) (approvalState, bool, error) {
+// resetApprovalIfApproved resets the approval to pending if it is currently
+// approved, returning the new approval state, whether a reset occurred, and the
+// previous contract_sha256 (nil when no reset).
+func resetApprovalIfApproved(paths artifacts.Paths, runPaths contractRunPathSet, root string, runID string, resetAt time.Time) (approvalState, bool, *string, error) {
 	approval, err := readApprovalState(runPaths.ApprovalJSON)
 	if err != nil {
-		return approvalState{}, false, err
+		return approvalState{}, false, nil, err
 	}
 	if approval.Status != "approved" {
-		return approval, false, nil
+		return approval, false, nil, nil
 	}
+	prevHash := approval.ContractSHA256
 	pending := pendingApprovalState()
 	if err := writeJSON(runPaths.ApprovalJSON, pending); err != nil {
-		return approvalState{}, false, err
+		return approvalState{}, false, nil, err
 	}
 	if err := removePromptReadinessArtifacts(runPaths); err != nil {
-		return approvalState{}, false, err
+		return approvalState{}, false, nil, err
 	}
 	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "contract_approval_reset", Timestamp: resetAt, RunID: runID}); err != nil {
-		return approvalState{}, false, err
+		return approvalState{}, false, nil, err
 	}
-	return pending, true, nil
+	return pending, true, prevHash, nil
 }
 
 func writeContractShow(stdout io.Writer, response contractShowResponse, contractMD string) {
@@ -391,9 +928,19 @@ func writeContractRevise(stdout io.Writer, response contractReviseResponse) {
 	fmt.Fprintf(stdout, "  id: %s\n", response.RunID)
 	fmt.Fprintf(stdout, "  status: %s\n", response.RunStatus)
 	fmt.Fprintln(stdout)
-	writeApprovalSummary(stdout, response.Approval)
+	fmt.Fprintln(stdout, "Version:")
+	fmt.Fprintf(stdout, "  base: %s\n", response.BaseVersion)
+	fmt.Fprintf(stdout, "  new: %s\n", response.NewVersion)
+	fmt.Fprintf(stdout, "  changed: %t\n", response.Changed)
 	if response.ApprovalReset {
-		fmt.Fprintln(stdout, "  reset: true")
+		fmt.Fprintln(stdout, "  approval reset: true")
+	}
+	if len(response.Deduped) > 0 {
+		fmt.Fprintln(stdout)
+		fmt.Fprintln(stdout, "Deduped:")
+		for _, d := range response.Deduped {
+			fmt.Fprintf(stdout, "  - %s\n", d)
+		}
 	}
 }
 

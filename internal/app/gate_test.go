@@ -164,7 +164,7 @@ func TestGateRunDetectsNewFile(t *testing.T) {
 
 func TestGateRunBlocksUndeclaredPathScopeByDefault(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-in-scope", "internal/app/**"}, nil, true)
+	app, paths, runID := setupGatePreparedRunWithRevision(t, root, map[string]any{"goal": "add deterministic gate", "paths_in_scope": []string{"internal/app/**"}}, true)
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
 	mustWriteFile(t, filepath.Join(root, "notes.txt"), "outside declared paths\n")
 
@@ -195,7 +195,7 @@ func TestGateRunBlocksUndeclaredPathScopeByDefault(t *testing.T) {
 
 func TestGateRunBlockedScopeJSONOutputIsGateReport(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-in-scope", "internal/app/**"}, nil, true)
+	app, _, runID := setupGatePreparedRunWithRevision(t, root, map[string]any{"goal": "add deterministic gate", "paths_in_scope": []string{"internal/app/**"}}, true)
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
 
 	var stdout, stderr bytes.Buffer
@@ -215,7 +215,7 @@ func TestGateRunBlockedScopeJSONOutputIsGateReport(t *testing.T) {
 
 func TestGateRunWarnScopeEnforcementKeepsScopeAdvisory(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-in-scope", "internal/app/**", "--add-path-out-of-scope", "README.md"}, nil, true)
+	app, paths, runID := setupGatePreparedRunWithRevision(t, root, map[string]any{"goal": "add deterministic gate", "paths_in_scope": []string{"internal/app/**"}, "paths_out_of_scope": []string{"README.md"}}, true)
 	setGateScopeEnforcementConfig(t, paths, gateScopeEnforcementWarn)
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
 
@@ -238,7 +238,7 @@ func TestGateRunWarnScopeEnforcementKeepsScopeAdvisory(t *testing.T) {
 
 func TestGateRunScopeCleanWhenFilesAreDeclared(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-in-scope", "internal/app/**"}, nil, true)
+	app, paths, runID := setupGatePreparedRunWithRevision(t, root, map[string]any{"goal": "add deterministic gate", "paths_in_scope": []string{"internal/app/**"}}, true)
 	mustWriteFile(t, filepath.Join(root, "internal", "app", "new.go"), "package app\n")
 
 	var stdout, stderr bytes.Buffer
@@ -260,7 +260,7 @@ func TestGateRunScopeCleanWhenFilesAreDeclared(t *testing.T) {
 
 func TestGateRunPassesWithPathGlobsAndNoChanges(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-in-scope", "internal/app/**"}, nil, true)
+	app, paths, runID := setupGatePreparedRunWithRevision(t, root, map[string]any{"goal": "add deterministic gate", "paths_in_scope": []string{"internal/app/**"}}, true)
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
@@ -275,7 +275,7 @@ func TestGateRunPassesWithPathGlobsAndNoChanges(t *testing.T) {
 
 func TestGateRunBlocksOutOfScopePathByDefault(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-out-of-scope", "README.md"}, nil, true)
+	app, paths, runID := setupGatePreparedRunWithRevision(t, root, map[string]any{"goal": "add deterministic gate", "paths_out_of_scope": []string{"README.md"}}, true)
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
 
 	var stdout, stderr bytes.Buffer
@@ -367,8 +367,11 @@ func TestGateRunRejectsAttemptFromPreviousApprovedContract(t *testing.T) {
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{
+		"scope": map[string]any{"in": []string{"Update gate contract"}},
+	})
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "revise", runID, "--add-in-scope", "Update gate contract"}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "revise", runID, "--from", fromFile, "--allow-approval-reset"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract revise exited %d, stderr: %s", code, stderr.String())
 	}
@@ -560,21 +563,25 @@ func TestGateRunUsesLatestCompletedAttempt(t *testing.T) {
 
 func setupGatePreparedRun(t *testing.T, root string, validationCommands []string, execute bool) (App, artifacts.Paths, string) {
 	t.Helper()
-	return setupGatePreparedRunWithRevision(t, root, nil, validationCommands, execute)
+	var contractUpdate map[string]any
+	if len(validationCommands) > 0 {
+		contractUpdate = map[string]any{
+			"goal":       "add deterministic gate",
+			"validation": map[string]any{"commands": validationCommands},
+		}
+	}
+	return setupGatePreparedRunWithRevision(t, root, contractUpdate, execute)
 }
 
-func setupGatePreparedRunWithRevision(t *testing.T, root string, reviseFlags []string, validationCommands []string, execute bool) (App, artifacts.Paths, string) {
+func setupGatePreparedRunWithRevision(t *testing.T, root string, contractUpdate map[string]any, execute bool) (App, artifacts.Paths, string) {
 	t.Helper()
 	app, paths, runID := setupContractRun(t, root)
 	var stdout, stderr bytes.Buffer
 
-	if len(validationCommands) > 0 || len(reviseFlags) > 0 {
-		args := []string{"contract", "revise", runID, "--goal", "add deterministic gate"}
-		for _, command := range validationCommands {
-			args = append(args, "--add-validation", command)
-		}
-		args = append(args, reviseFlags...)
-		code := app.Run(args, &stdout, &stderr)
+	if contractUpdate != nil {
+		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+		fromFile := writeReviseDocForTest(t, runPaths, contractUpdate)
+		code := app.Run([]string{"contract", "revise", runID, "--from", fromFile}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("contract revise exited %d, stderr: %s", code, stderr.String())
 		}

@@ -838,7 +838,7 @@ func TestReviewLoopStopsWithGateFailedWhenFixerBreaksValidation(t *testing.T) {
 func TestReviewLoopStopsWithGateFailedWhenFixerViolatesPathScope(t *testing.T) {
 	root := t.TempDir()
 	stateDir := t.TempDir()
-	app, paths, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-in-scope", "internal/app/**"}, nil, true)
+	app, paths, runID := setupGatePreparedRunWithRevision(t, root, map[string]any{"goal": "add deterministic gate", "paths_in_scope": []string{"internal/app/**"}}, true)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
 	app = configureReviewLoopHelpers(t, app, paths)

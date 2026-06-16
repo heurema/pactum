@@ -111,6 +111,11 @@ func (a App) Run(args []string, stdout, stderr io.Writer) (code int) {
 			if errors.As(err, &gateErr) {
 				return 1
 			}
+			// A contract revise failure already wrote its structured issues JSON.
+			var reviseFailure contractReviseFailureError
+			if errors.As(err, &reviseFailure) {
+				return 1
+			}
 			// A failed agent attempt already wrote its run-only result JSON;
 			// appending an envelope would put two documents on one stdout.
 			// A preconditionError wrapping the attempt failure wins: there the
@@ -124,6 +129,11 @@ func (a App) Run(args []string, stdout, stderr io.Writer) (code int) {
 			if encErr := writeErrorEnvelope(stdout, err); encErr == nil {
 				return 1
 			}
+		}
+		// A contract revise failure already wrote structured issues JSON to stdout.
+		var reviseFailureHuman contractReviseFailureError
+		if errors.As(err, &reviseFailureHuman) {
+			return 1
 		}
 		fmt.Fprintf(stderr, "pactum %s: %v\n", ctx.Command(), err)
 		return 1

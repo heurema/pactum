@@ -55,7 +55,7 @@ pactum agents doctor
 pactum task new "<task>"
 pactum clarify ask "Should this real execution dogfood keep the change tiny and reversible?" --blocking
 pactum clarify answer q_001 "Yes. ..."
-pactum contract revise --goal ... --add-in-scope ... --add-out-of-scope ... --add-acceptance ... --add-validation "make check"
+pactum contract show --json > contract.json && pactum contract revise --from contract.json
 pactum contract approve --by manual
 pactum prompt build
 pactum execute dry-run --agent codex

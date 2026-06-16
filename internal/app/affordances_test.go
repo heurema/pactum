@@ -657,7 +657,7 @@ func assertNext(t *testing.T, next *[]string, want ...string) {
 func TestConditionalNextBranches(t *testing.T) {
 	t.Run("failed gate emits no next", func(t *testing.T) {
 		root := t.TempDir()
-		app, _, runID := setupGatePreparedRunWithRevision(t, root, []string{"--add-path-in-scope", "internal/app/**"}, nil, true)
+		app, _, runID := setupGatePreparedRunWithRevision(t, root, map[string]any{"goal": "add deterministic gate", "paths_in_scope": []string{"internal/app/**"}}, true)
 		mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
 
 		var stdout, stderr bytes.Buffer
