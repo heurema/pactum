@@ -1,0 +1,97 @@
+{
+  "schema": "pactum.review_loop.v1",
+  "run_id": "run_20260616_072948",
+  "started_at": "2026-06-16T07:39:37Z",
+  "finished_at": "2026-06-16T07:49:16Z",
+  "reviewer": "fable,codex",
+  "reviewers": [
+    "fable",
+    "codex"
+  ],
+  "agent": "claude",
+  "max_rounds": 10,
+  "stalemate_patience": 2,
+  "clean_rounds_required": 1,
+  "terminal_reason": "resolved",
+  "rounds": [
+    {
+      "round": 1,
+      "reviewer_attempt_id": "reviewer_attempt_003",
+      "reviewer_attempt_ids": [
+        "reviewer_attempt_003",
+        "reviewer_attempt_005",
+        "reviewer_attempt_002",
+        "reviewer_attempt_004",
+        "reviewer_attempt_001"
+      ],
+      "reviewer_attempts": [
+        {
+          "attempt_id": "reviewer_attempt_003",
+          "reviewer": "codex",
+          "lens": "correctness"
+        },
+        {
+          "attempt_id": "reviewer_attempt_005",
+          "reviewer": "codex",
+          "lens": "implementation"
+        },
+        {
+          "attempt_id": "reviewer_attempt_002",
+          "reviewer": "codex",
+          "lens": "tests"
+        },
+        {
+          "attempt_id": "reviewer_attempt_004",
+          "reviewer": "codex",
+          "lens": "over_engineering"
+        },
+        {
+          "attempt_id": "reviewer_attempt_001",
+          "reviewer": "codex",
+          "lens": "docs"
+        }
+      ],
+      "proposals_created": 4,
+      "proposals_accepted": 4,
+      "open_findings": 1,
+      "open_blocking_findings": 0,
+      "skipped_lenses": [
+        {
+          "reviewer": "fable",
+          "lens": "correctness",
+          "reason": "reviewer process exited with code -1"
+        },
+        {
+          "reviewer": "fable",
+          "lens": "implementation",
+          "reason": "reviewer process exited with code -1"
+        },
+        {
+          "reviewer": "fable",
+          "lens": "tests",
+          "reason": "reviewer process exited with code -1"
+        },
+        {
+          "reviewer": "fable",
+          "lens": "over_engineering",
+          "reason": "reviewer process exited with code -1"
+        },
+        {
+          "reviewer": "fable",
+          "lens": "docs",
+          "reason": "reviewer process exited with code -1"
+        }
+      ],
+      "clean_streak": 0,
+      "unchanged_fingerprint_streak": 0,
+      "working_tree_fingerprint": "59b9718a48709e428128a8d6454030ca21e997037bf79006ff19d094ea93daa7",
+      "fixer_attempt_id": "attempt_001",
+      "fix_outcomes_resolved": 3,
+      "gate_status": "needs_review",
+      "gate_report_artifact": "gate/gate-report.json"
+    }
+  ],
+  "artifacts": {
+    "summary": "review/loop-summary.json"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260616_101840",
+  "status": "contract_approved",
+  "task": "Implement the first slice of the declarative contract-revise CLI specified in docs/contract-revise-cli-design.md. Replace the add-only flag soup with a declarative partial-update for an agent operator. Slice 1 scope: (1) 'contract show --json' returns the editable contract plus a 'version' token = the sha256 of the normalized contract content (the same hash used at approve, exposed pre-approval). (2) 'contract revise \u003crun\u003e --from -|\u003cfile\u003e' reads a partial JSON document of shape {base_version, contract:{partial fields}}; every field present replaces that field's value wholesale (lists replace whole, stable-dedupe keep-first, report dropped duplicates, preserve order); fields absent are untouched; unknown fields are a hard error with a did-you-mean; null for a non-nullable scalar (goal) is rejected; [] clears a list. (3) The version check is ON BY DEFAULT: apply only if base_version equals the current version; missing or stale base_version is an atomic reject (nothing written) with contract_unchanged:true and a structured error. (4) No-op idempotence: identical content does not re-hash or reset approval (changed:false, exit 0). (5) On an approved contract a content-changing revise is rejected unless --allow-approval-reset is passed; the success result reports approval_reset / previous_approval_hash / attempts_orphaned. (6) Remove the --add-* and --goal flags from 'contract revise' entirely (pactum has no users, no deprecation); switch the internal 'contract accept' path (which today applies the drafter proposal via the same Add-field mechanism) to the new partial-replace so accept still works (on the empty skeleton, replace == the proposal). Errors: a single structured JSON object with ALL issues at once (field path, machine code, message), non-zero exit; reject unknown fields. Defer and do NOT implement in this slice: --dry-run, field-level diffs, and the --force bypass (until --force exists, a missing base_version is simply rejected). Update all affected tests. Follow the full spec and rationale in docs/contract-revise-cli-design.md.",
+  "created_at": "2026-06-16T10:18:40.730672Z",
+  "updated_at": "2026-06-16T10:22:18.734051Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260616_073251",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}
