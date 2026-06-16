@@ -1,4 +1,4 @@
-schema: pactum.config.v1
+schema: pactum.config.v1alpha1
 agents:
   - name: sonnet
     model: claude-sonnet-4-6
@@ -8,8 +8,6 @@ agents:
     effort: xhigh
   - name: opus
     model: claude-opus-4-8
-  - name: fable
-    model: claude-fable-5
   - name: codex
     model: gpt-5.5
     effort: high
@@ -23,5 +21,8 @@ review:
   patience: 2
   clean_rounds: 1
   panel:
-    - fable
-    - codex
+    - codex-xhigh
+contract:
+  reviewers:
+    - opus
+    - codex-xhigh

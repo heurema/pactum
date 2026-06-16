@@ -1,0 +1,46 @@
+{
+  "schema": "pactum.contract_draft_proposal.v1",
+  "run_id": "run_20260616_115349",
+  "status": "accepted",
+  "created_at": "2026-06-16T11:53:55Z",
+  "source": "drafter_attempt",
+  "drafter_attempt_id": "drafter_attempt_001",
+  "drafter": "codex",
+  "in_scope": [
+    "Add a `contract.reviewers` configuration array of registered agent names, with an absent or empty array disabling contract review.",
+    "Add `pactum contract review \u003crun\u003e` with human-readable output and `--json` output.",
+    "Run the configured contract reviewer panel against the contract document fields: goal, scope.in, scope.out, acceptance_criteria, validation.commands, and assumptions.",
+    "Use contract-specific lenses: completeness, testability, validation-soundness, scope-fidelity, and assumptions-surfaced.",
+    "Reuse the existing review fan-out, registry resolution, reviewer attempt, lens prompt, and partial failed-lens skip behavior from the code review loop where applicable.",
+    "Emit structured contract-review findings that identify reviewer, lens, severity or blocking status, message, and evidence or rationale.",
+    "Surface contract review before contract approval when `contract.reviewers` is configured."
+  ],
+  "out_of_scope": [
+    "Do not implement an auto-fixer that applies contract-review findings through `contract revise --from`.",
+    "Do not implement multi-round contract-review convergence or re-review loops.",
+    "Do not review git diffs, execution attempts, gate reports, or code changes from `pactum contract review`.",
+    "Do not change the existing code-review `pactum review run` behavior except for shared helper extraction required by contract review.",
+    "Do not add plan-DAG-only contract lenses such as dependency-correctness or granularity."
+  ],
+  "acceptance": [
+    "With `contract.reviewers` absent or empty, `pactum contract review \u003crun\u003e` exits successfully, reports that there is nothing to review, emits no reviewer attempts or findings, and existing contract approval behavior remains unchanged.",
+    "`contract.reviewers` accepts only unique, non-blank names registered in `agents`; unknown, duplicate, or blank entries fail config loading with an error naming `contract.reviewers`.",
+    "With one configured reviewer, `pactum contract review \u003crun\u003e --json` runs one read-only reviewer attempt per contract lens and returns a parseable JSON document containing schema, run_id, reviewers, lenses, findings, skipped_lenses, and next fields.",
+    "With multiple configured reviewers, the command fans out across every reviewer and every contract lens, and the output records which reviewer and lens produced each finding.",
+    "A contract with a known missing scope, acceptance, or validation gap produces at least one structured finding in both human-readable and JSON output.",
+    "A single failed reviewer/lens attempt is skipped and reported in `skipped_lenses` without aborting the whole contract review when at least one other lens attempt succeeds.",
+    "Contract review does not mutate the contract fields, does not approve the contract, does not invoke `contract revise`, and does not run any fixer.",
+    "When reviewers are configured and the contract is otherwise ready for approval, the next-step affordance surfaces `pactum contract review \u003crun\u003e` before `pactum contract approve \u003crun\u003e`; when reviewers are off, the next affordance remains approval."
+  ],
+  "validation": [
+    "go test ./internal/app -count=1",
+    "make check"
+  ],
+  "assumptions": [
+    "`contract.reviewers` is a new `contract` config section and does not reuse `review.panel`.",
+    "Slice 1 only surfaces findings for human action; unresolved contract-review findings do not create a new persistent approval-blocking resolution workflow.",
+    "Tests can use the existing fake reviewer/helper transport patterns and must not run real agents."
+  ],
+  "accepted_at": "2026-06-16T11:57:00Z",
+  "accepted_by": "manual"
+}
