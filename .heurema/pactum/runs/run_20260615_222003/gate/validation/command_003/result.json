@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1",
+  "id": "command_003",
+  "command": "bash -lc 'if rg -n \"agents\\\\.CLITransport|CLITransport|PACTUM_AGENT_TRANSPORT\" internal; then exit 1; fi'",
+  "started_at": "2026-06-15T23:56:46.755003Z",
+  "finished_at": "2026-06-15T23:56:46.792131Z",
+  "duration_ms": 37,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "gate/validation/command_003/stdout.log",
+  "stderr": "gate/validation/command_003/stderr.log"
+}

@@ -23,4 +23,5 @@ review:
   patience: 2
   clean_rounds: 1
   panel:
+    - fable
     - codex

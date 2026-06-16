@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1",
+  "id": "command_004",
+  "command": "bash -lc 'if rg -n \"parseCodexUsage|codex exec --json|--dangerously-bypass-approvals-and-sandbox|--sandbox read-only\" internal/agents internal/app README.md docs/agents.md; then exit 1; fi'",
+  "started_at": "2026-06-15T23:56:46.792494Z",
+  "finished_at": "2026-06-15T23:56:46.811815Z",
+  "duration_ms": 19,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "gate/validation/command_004/stdout.log",
+  "stderr": "gate/validation/command_004/stderr.log"
+}

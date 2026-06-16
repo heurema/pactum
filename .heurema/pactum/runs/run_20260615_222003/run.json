@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1",
+  "run_id": "run_20260615_222003",
+  "status": "contract_approved",
+  "task": "Complete the ACP-only transport: remove CLITransport entirely so every agent runs over ACP, and delete the now-dead codex CLI machinery. After #152 claude is ACP-only, but agents.CLITransport, the codex CLI descriptor, the PACTUM_AGENT_TRANSPORT=cli escape, and the CLI codex usage parser remain — all dead under the ACP-default transport (codex already runs over ACP via acpAdapterCommand). Changes: (1) remove agents.CLITransport (internal/agents/transport.go) and make App.agentTransport() (internal/app/app.go) always return agents.ACPTransport, dropping acpTransportEnabled() and the PACTUM_AGENT_TRANSPORT=cli branch; (2) remove the codex CLI descriptor Command/Args ('codex exec --json ...') in internal/agents/config.go so the codex descriptor no longer carries CLI flags, mirroring how claude was stripped in #152; (3) remove parseCodexUsage and the codex branch of CLI stdout usage parsing in internal/agents/usage.go — codex usage now comes only from the ACP codex/token_usage _meta (parseCodexACPUsageMeta is already present); (4) fix the dry-run / would_run command representation so it reflects the ACP adapter command (acpAdapterCommand) instead of a stale 'codex exec'/CLI command, for both claude and codex; (5) keep the per-engine ACP adapter resolution (PACTUM_CLAUDE_ACP_COMMAND / PACTUM_CODEX_ACP_COMMAND overrides) and the read-only vs write-stage permission handling unchanged; (6) update or remove any tests that exercise CLITransport or PACTUM_AGENT_TRANSPORT=cli. Do not change ACP protocol handling, usage normalization, or codex usage _meta parsing. Codex usage capture in production still needs the forked adapter at runtime via PACTUM_CODEX_ACP_COMMAND (a runtime dependency, not code).",
+  "created_at": "2026-06-15T22:20:03.339386Z",
+  "updated_at": "2026-06-15T22:23:37.336713Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260615_214008",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}
