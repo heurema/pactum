@@ -99,10 +99,10 @@ func TestRunSettled(t *testing.T) {
 func TestRunSettledResetOnNonClean(t *testing.T) {
 	// Clean streak resets on a non-clean round; requires 2 more clean rounds after.
 	step, count := makeStep([]roundSpec{
-		{clean: true},           // cleanStreak=1
-		{clean: false},          // cleanStreak=0
-		{clean: true},           // cleanStreak=1
-		{clean: true},           // cleanStreak=2 → settled
+		{clean: true},  // cleanStreak=1
+		{clean: false}, // cleanStreak=0
+		{clean: true},  // cleanStreak=1
+		{clean: true},  // cleanStreak=2 → settled
 	})
 	out, err := loop.Run(context.Background(), loop.Limits{Max: 10, Settle: 2}, step)
 	if err != nil {
