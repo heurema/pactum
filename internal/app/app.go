@@ -126,6 +126,11 @@ func (a App) Run(args []string, stdout, stderr io.Writer) (code int) {
 			if errors.As(err, &attemptErr) && !errors.As(err, &precondition) {
 				return 1
 			}
+			// A contract review loop fatal error already wrote its response JSON.
+			var loopFatal contractReviewLoopFatalError
+			if errors.As(err, &loopFatal) {
+				return 1
+			}
 			if encErr := writeErrorEnvelope(stdout, err); encErr == nil {
 				return 1
 			}

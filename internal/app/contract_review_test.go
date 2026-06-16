@@ -78,6 +78,11 @@ func TestContractReviewHelperProcess(t *testing.T) {
 // PACTUM_CONTRACT_FIXER_EMIT_STALE_VERSION=1: emit a revise block with an
 //
 //	intentionally wrong base_version (tests stale-version rejection).
+//
+// PACTUM_CONTRACT_FIXER_CORRUPT_CONTRACT=1: emit a valid revise block AND then
+//
+//	overwrite the file at PACTUM_CONTRACT_FIXER_CORRUPT_PATH with garbage JSON,
+//	triggering a fatal fixer error when the host process calls ContractRevise.
 func TestContractReviewFixerHelperProcess(t *testing.T) {
 	if os.Getenv("PACTUM_CONTRACT_FIXER_HELPER_PROCESS") != "1" {
 		return
@@ -93,6 +98,12 @@ func TestContractReviewFixerHelperProcess(t *testing.T) {
 		fmt.Print(contractReviewFixerReviseOutput(version))
 	case os.Getenv("PACTUM_CONTRACT_FIXER_EMIT_STALE_VERSION") == "1":
 		fmt.Print(contractReviewFixerReviseOutput("stale-version-that-does-not-match"))
+	case os.Getenv("PACTUM_CONTRACT_FIXER_CORRUPT_CONTRACT") == "1":
+		version := extractContractVersionFromPrompt(string(stdin))
+		fmt.Print(contractReviewFixerReviseOutput(version))
+		if p := os.Getenv("PACTUM_CONTRACT_FIXER_CORRUPT_PATH"); p != "" {
+			os.WriteFile(p, []byte("{this is garbage json!!!}"), 0o644) //nolint:errcheck
+		}
 	}
 	os.Exit(0)
 }
@@ -205,11 +216,11 @@ func setContractReviewMaxRoundsConfig(t *testing.T, paths artifacts.Paths, maxRo
 }
 
 // TestContractReviewNoReviewersIsNoOp checks that contract review with no
-// contract.reviewers exits 0, prints a no-op message, and creates no attempt
-// artifacts.
+// contract.reviewers exits 0, prints a no-op message, creates no attempt
+// artifacts, and still emits the loop started/finished ledger events.
 func TestContractReviewNoReviewersIsNoOp(t *testing.T) {
 	root := t.TempDir()
-	app, _, runID := setupContractRun(t, root)
+	app, paths, runID := setupContractRun(t, root)
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"contract", "review", runID}, &stdout, &stderr)
@@ -221,6 +232,15 @@ func TestContractReviewNoReviewersIsNoOp(t *testing.T) {
 	}
 	if got := stderr.String(); strings.Contains(got, "contract-reviewer-stderr-line") {
 		t.Fatalf("no-op review should not invoke any agent, got stderr:\n%s", got)
+	}
+
+	// Loop events are emitted unconditionally, even when no reviewers are configured.
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "contract_review_loop_started") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_started event, got:\n%v", eventTypes)
+	}
+	if countEvents(eventTypes, "contract_review_loop_finished") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_finished event, got:\n%v", eventTypes)
 	}
 }
 
@@ -345,6 +365,22 @@ func TestContractReviewPanelRunsAndEmitsFindings(t *testing.T) {
 
 	// Events emitted.
 	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "contract_review_loop_started") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_started event, got:\n%v", eventTypes)
+	}
+	if countEvents(eventTypes, "contract_review_loop_finished") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_finished event, got:\n%v", eventTypes)
+	}
+	startIdx := indexOfEvent(eventTypes, "contract_review_loop_started")
+	finishIdx := indexOfEvent(eventTypes, "contract_review_loop_finished")
+	if startIdx >= finishIdx {
+		t.Fatalf("contract_review_loop_started (%d) must precede contract_review_loop_finished (%d)", startIdx, finishIdx)
+	}
+	// Loop started must precede per-attempt events.
+	firstAttemptIdx := indexOfEvent(eventTypes, "contract_reviewer_attempt_started")
+	if firstAttemptIdx != -1 && startIdx >= firstAttemptIdx {
+		t.Fatalf("contract_review_loop_started (%d) must precede attempt events (%d)", startIdx, firstAttemptIdx)
+	}
 	if countEvents(eventTypes, "contract_reviewer_attempt_started") != len(contractReviewLenses) {
 		t.Fatalf("expected %d started events, got:\n%v", len(contractReviewLenses), eventTypes)
 	}
@@ -359,15 +395,18 @@ func TestContractReviewPanelRunsAndEmitsFindings(t *testing.T) {
 }
 
 // TestContractReviewFailedLensSkipped checks that when one lens attempt fails,
-// it is recorded in skipped_lenses in the round and the command still exits 0.
+// it is recorded in skipped_lenses in the round, the command still exits 0, and
+// the failed lens's findings do not appear in the aggregated results.
 func TestContractReviewFailedLensSkipped(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
 	app = configureHelperContractReviewers(t, app, paths, "helper")
 	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
-	// Fail only the "Completeness" lens; all others succeed.
+	// Fail only the "Completeness" lens; all others succeed with advisory findings.
 	t.Setenv("PACTUM_CONTRACT_REVIEWER_FAIL_LENS", "Completeness")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS", "1")
+	// blocking=false (default): round stays clean, no fixer invoked.
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
@@ -385,14 +424,42 @@ func TestContractReviewFailedLensSkipped(t *testing.T) {
 	}
 	round := response.Rounds[0]
 
-	// Exactly one skipped lens (the completeness attempt that exited 1).
-	if len(round.SkippedLenses) != 1 {
-		t.Fatalf("expected 1 skipped lens, got %d: %v", len(round.SkippedLenses), round.SkippedLenses)
+	// (a) The skipped_lenses array reflects the reviewer failure.
+	if len(round.SkippedLenses) == 0 {
+		t.Fatalf("expected non-empty skipped_lenses reflecting the completeness lens failure")
 	}
 	if round.SkippedLenses[0].Reviewer != "helper" || round.SkippedLenses[0].Lens != "completeness" {
 		t.Fatalf("unexpected skipped lens: %#v", round.SkippedLenses[0])
 	}
-	// The 4 other lenses ran successfully.
+	if round.SkippedLenses[0].Reason == "" {
+		t.Fatalf("skipped lens must carry a non-empty reason")
+	}
+	// (a) The warnings array also reflects the reviewer failure.
+	if len(round.Warnings) == 0 {
+		t.Fatalf("expected non-empty warnings array reflecting the completeness lens failure")
+	}
+
+	// (b) Findings from the failed lens do not appear; only lenses-1 lenses produced findings.
+	expectedFindings := len(contractReviewLenses) - 1
+	if len(round.Findings) != expectedFindings {
+		t.Fatalf("expected %d findings (skipped lens excluded), got %d: %v", expectedFindings, len(round.Findings), round.Findings)
+	}
+	for _, f := range round.Findings {
+		if f.Lens == "completeness" {
+			t.Fatalf("finding from failed lens must not appear: %#v", f)
+		}
+	}
+
+	// (c) A skipped lens does not affect Clean (blocking_findings count) or
+	// Progress (fixer invocation + hash change): round is clean, fixer not invoked.
+	if round.BlockingFindings != 0 {
+		t.Fatalf("skipped lens must not set blocking_findings; blocking count = %d", round.BlockingFindings)
+	}
+	if round.FixerAttemptID != "" {
+		t.Fatalf("skipped lens must not trigger fixer; fixer_attempt_id = %q", round.FixerAttemptID)
+	}
+
+	// The successful lenses ran.
 	expectedSuccess := len(contractReviewLenses) - 1
 	expectedAttempts := len(contractReviewLenses)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
@@ -410,6 +477,15 @@ func TestContractReviewFailedLensSkipped(t *testing.T) {
 	}
 	if successCount != expectedSuccess {
 		t.Fatalf("expected %d successful lens attempts, counted %d", expectedSuccess, successCount)
+	}
+
+	// Loop events are present.
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "contract_review_loop_started") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_started event, got:\n%v", eventTypes)
+	}
+	if countEvents(eventTypes, "contract_review_loop_finished") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_finished event, got:\n%v", eventTypes)
 	}
 }
 
@@ -461,6 +537,15 @@ func TestContractReviewMultipleReviewers(t *testing.T) {
 	if len(round.SkippedLenses) != 0 {
 		t.Fatalf("expected no skipped lenses, got: %v", round.SkippedLenses)
 	}
+
+	// Loop events are present.
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "contract_review_loop_started") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_started event, got:\n%v", eventTypes)
+	}
+	if countEvents(eventTypes, "contract_review_loop_finished") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_finished event, got:\n%v", eventTypes)
+	}
 }
 
 // TestContractReviewHumanReadableFindings checks that without --json the
@@ -493,6 +578,15 @@ func TestContractReviewHumanReadableFindings(t *testing.T) {
 	}
 	if !strings.Contains(output, "Next:") {
 		t.Fatalf("expected Next section in output:\n%s", output)
+	}
+
+	// Loop events are present.
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "contract_review_loop_started") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_started event, got:\n%v", eventTypes)
+	}
+	if countEvents(eventTypes, "contract_review_loop_finished") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_finished event, got:\n%v", eventTypes)
 	}
 }
 
@@ -556,6 +650,15 @@ func TestContractReviewLoopCleanConvergence(t *testing.T) {
 	if r2.CleanStreak < 1 {
 		t.Fatalf("round 2 clean streak should be >= 1, got %d", r2.CleanStreak)
 	}
+
+	// Loop events are present.
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "contract_review_loop_started") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_started event, got:\n%v", eventTypes)
+	}
+	if countEvents(eventTypes, "contract_review_loop_finished") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_finished event, got:\n%v", eventTypes)
+	}
 }
 
 // TestContractReviewLoopMaxRounds checks that the loop terminates with
@@ -595,6 +698,15 @@ func TestContractReviewLoopMaxRounds(t *testing.T) {
 		if r.BlockingFindings == 0 {
 			t.Fatalf("round %d should have blocking findings", i+1)
 		}
+	}
+
+	// Loop events are present.
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "contract_review_loop_started") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_started event, got:\n%v", eventTypes)
+	}
+	if countEvents(eventTypes, "contract_review_loop_finished") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_finished event, got:\n%v", eventTypes)
 	}
 }
 
@@ -650,6 +762,70 @@ func TestContractReviewLoopVersionGuard(t *testing.T) {
 	}
 	if !hasStaleWarning {
 		t.Fatalf("expected a stale-version warning, got: %v", r1.Warnings)
+	}
+
+	// Loop events are present.
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "contract_review_loop_started") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_started event, got:\n%v", eventTypes)
+	}
+	if countEvents(eventTypes, "contract_review_loop_finished") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_finished event, got:\n%v", eventTypes)
+	}
+}
+
+// TestContractReviewLoopFinishedOnError verifies that when the fixer corrupts
+// contract.json, the loop returns a fatal error, loop events are still emitted,
+// the exit code is non-zero, and the stdout JSON shows terminal_reason="error".
+func TestContractReviewLoopFinishedOnError(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	app = configureHelperContractReviewers(t, app, paths, "helper")
+	app = configureHelperContractFixer(t, app, paths)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING", "1")
+	t.Setenv("PACTUM_CONTRACT_FIXER_HELPER_PROCESS", "1")
+	// Fixer emits a valid revise block AND then corrupts contract.json on disk.
+	t.Setenv("PACTUM_CONTRACT_FIXER_CORRUPT_CONTRACT", "1")
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	t.Setenv("PACTUM_CONTRACT_FIXER_CORRUPT_PATH", runPaths.ContractJSON)
+
+	// Run WITHOUT --json to avoid double-writing (the error path always writes
+	// JSON to stdout; --json would cause a second write on the non-error path).
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "review", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit code, got 0\nstdout: %s\nstderr: %s", stdout.String(), stderr.String())
+	}
+
+	// Error path always emits JSON on stdout.
+	outBytes := stdout.Bytes()
+	if len(outBytes) == 0 {
+		t.Fatalf("expected JSON on stdout even on error, got empty output (stderr: %s)", stderr.String())
+	}
+	var response contractReviewLoopResponse
+	if err := json.Unmarshal(outBytes, &response); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, string(outBytes))
+	}
+	if response.TerminalReason != "error" {
+		t.Fatalf("expected terminal_reason=error, got %q\nfull response: %s", response.TerminalReason, string(outBytes))
+	}
+
+	// Both loop events must be present in the ledger.
+	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
+	if countEvents(eventTypes, "contract_review_loop_started") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_started event, got:\n%v", eventTypes)
+	}
+	if countEvents(eventTypes, "contract_review_loop_finished") != 1 {
+		t.Fatalf("expected 1 contract_review_loop_finished event, got:\n%v", eventTypes)
+	}
+
+	// No loop-summary artifact when the loop did not complete normally.
+	summaryPath := filepath.Join(filepath.Dir(runPaths.ContractJSON), "loop-summary.json")
+	if fileExists(t, summaryPath) {
+		t.Fatalf("loop-summary.json must not be written on error, but found at %s", summaryPath)
 	}
 }
 
