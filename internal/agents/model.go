@@ -17,19 +17,10 @@ func ApplyModelSpec(agent AgentDescriptor, spec ModelSpec) (AgentDescriptor, err
 	}
 
 	switch agent.Name {
-	case BuiltinCodex:
-		if spec.Model != "" {
-			// codex parses `-c key=value` as TOML, so the model string must be
-			// quoted (matches the documented `-c model="o3"` form); a bare value
-			// like gpt-5.5 would otherwise fail to parse.
-			agent.Args = append(agent.Args, "-c", fmt.Sprintf("model=%q", spec.Model))
-		}
-		if spec.Effort != "" {
-			agent.Args = append(agent.Args, "-c", "model_reasoning_effort="+spec.Effort)
-		}
-	case BuiltinClaude:
-		// Claude runs over ACP; the adapter reads ANTHROPIC_MODEL and
-		// CLAUDE_CODE_EFFORT_LEVEL from acpAdapterCommand — no CLI args to append.
+	case BuiltinCodex, BuiltinClaude:
+		// Both agents run over ACP; model/effort reach the adapter via RunRequest.Model
+		// in acpAdapterCommand (codex: -c overrides, claude: ANTHROPIC_MODEL env vars).
+		// No CLI args to append to the descriptor.
 	default:
 		return AgentDescriptor{}, fmt.Errorf("model override is unsupported for agent: %s", agent.Name)
 	}

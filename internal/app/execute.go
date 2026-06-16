@@ -23,7 +23,7 @@ func (a App) ExecutePlan(stdout io.Writer, runID string, agentName string, jsonO
 		return err
 	}
 	now := a.nowUTC()
-	plan, err := agents.BuildDryRunPlan(runID, now.Format(time.RFC3339), prep.Agent, executionPromptRepoPath(runID))
+	plan, err := agents.BuildDryRunPlan(runID, now.Format(time.RFC3339), prep.Agent, prep.ModelSpec, false, executionPromptRepoPath(runID))
 	if err != nil {
 		return err
 	}
@@ -114,6 +114,7 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 					Command: context.Prepared.WouldRun.Command,
 					Args:    append([]string{}, context.Prepared.WouldRun.Args...),
 					Stdin:   context.Prepared.WouldRun.Stdin,
+					Env:     append([]string{}, context.Prepared.WouldRun.Env...),
 				},
 			}, nil
 		},
@@ -304,7 +305,10 @@ func writeExecutePlan(stdout io.Writer, state contractRunState, plan agents.DryR
 }
 
 func formatAgentCommand(command agents.DryRunCommand) string {
-	parts := append([]string{command.Command}, command.Args...)
+	var parts []string
+	parts = append(parts, command.Env...)
+	parts = append(parts, command.Command)
+	parts = append(parts, command.Args...)
 	if command.Stdin != "" {
 		parts = append(parts, "<", command.Stdin)
 	}
@@ -363,7 +367,7 @@ type executionResultDocument struct {
 }
 
 func ensureDryRunPlan(prep executionPreparation, createdAt string) (agents.DryRunPlan, error) {
-	expected, err := agents.BuildDryRunPlan(prep.State.RunID, createdAt, prep.Agent, executionPromptRepoPath(prep.State.RunID))
+	expected, err := agents.BuildDryRunPlan(prep.State.RunID, createdAt, prep.Agent, prep.ModelSpec, false, executionPromptRepoPath(prep.State.RunID))
 	if err != nil {
 		return agents.DryRunPlan{}, err
 	}

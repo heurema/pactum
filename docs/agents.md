@@ -8,14 +8,15 @@ it does not wrap the agent in any isolation.
 
 Two agents are built in. There are **no custom agents in the MVP**.
 
-| Name | Transport | Executor command | Role |
-| --- | --- | --- | --- |
-| `codex` | CLI | `codex exec --json --dangerously-bypass-approvals-and-sandbox` | executor / reviewer |
-| `claude` | ACP | _(no CLI command)_ | executor / reviewer |
+| Name | Adapter command | Role |
+| --- | --- | --- |
+| `codex` | `npx -y @zed-industries/codex-acp@latest` | executor / reviewer |
+| `claude` | `npx -y @agentclientprotocol/claude-agent-acp@latest` | executor / reviewer |
 
-In the reviewer role the write bypass is dropped: `codex` runs
-`codex exec --json --sandbox read-only`; `claude`'s read-only enforcement is
-applied by the ACP client when `ReadOnly` is true — no adapter flag is needed.
+Both agents run over ACP. Read-only enforcement for the reviewer role is applied
+at the ACP layer: codex receives a `-c sandbox_mode=read-only` adapter flag;
+claude is denied write operations by the ACP client when `ReadOnly` is true —
+no adapter flag is needed.
 
 Both agents receive their prompt from a prompt file that Pactum prepares (the
 built executor prompt for execution, the clarifier prompt for clarifier
@@ -112,9 +113,8 @@ falls back to the cross-model single-reviewer selection above.
 
 For `codex`, pins emit `-c model=...` and `-c model_reasoning_effort=...`; for
 `claude`, the ACP adapter receives `ANTHROPIC_MODEL=...` and
-`CLAUDE_CODE_EFFORT_LEVEL=...` in its environment — no CLI flags. Reviewer pins
-are appended to the read-only codex reviewer command; for `claude`, they reach
-the ACP adapter as environment variables regardless of role. The
+`CLAUDE_CODE_EFFORT_LEVEL=...` in its environment. Reviewer pins follow the
+same adapter-specific mechanism per role. The
 usage ledger records both the registry name (`agent_name`) and the inferred
 engine (`agent`); execution and attempt artifacts keep recording the engine,
 so cross-model comparison semantics are unchanged.
@@ -128,25 +128,24 @@ agent CLI's own config. A `pinning` summary reads `pinned` (model and effort
 both set) or `partial` (model only — the model is always pinned now that it is
 required). The engine appears in the Agent/Attempt sections below it.
 
-Pactum does **not** install, bundle, configure, or authenticate these CLIs. You
-must install and configure each agent CLI separately and make its command
-available on your `PATH` before Pactum can run it — Pactum only invokes the
-command it expects (`codex` or `claude`). Use `pactum doctor` to confirm
-the CLI is present.
+Pactum does **not** install, bundle, configure, or authenticate these adapters.
+You must ensure `npx` and the relevant npm package are available and configured
+before Pactum can run them. Use `pactum doctor` to confirm the adapter launcher
+is present.
 
 ## `pactum doctor`
 
-`pactum doctor` diagnoses the built-in agent CLIs **without launching
-them**: for each built-in it reports the command, input mode, resolved path on
-your `PATH`, and a status of `on_path` or `missing_command` (with the issue
-listed when the command is not found). Pass `--agent <name>` to inspect a
-single built-in. Note: doctor predates the agent registry — it inspects the
-underlying built-in CLIs by their built-in names (not registry names), and the
-default executor/reviewer lines it prints reflect the built-in fallbacks, not
-the registry's first entry; a registry-aware doctor view is a recorded
+`pactum doctor` diagnoses the built-in agent adapters **without launching
+them**: for each built-in it reports the adapter launcher command (`npx`),
+input mode, resolved path on your `PATH`, and a status of `on_path` or
+`missing_command` (with the issue listed when the command is not found). Pass
+`--agent <name>` to inspect a single built-in. Note: doctor inspects the
+underlying built-in adapters by their built-in names (not registry names), and
+the default executor/reviewer lines it prints reflect the built-in fallbacks,
+not the registry's first entry; a registry-aware doctor view is a recorded
 follow-up.
 
-Run it before executing to confirm the agent CLIs are installed and visible:
+Run it before executing to confirm the adapter launcher is installed and visible:
 
 ```sh
 pactum doctor
@@ -155,51 +154,34 @@ pactum doctor --agent claude
 
 ## Execution model: direct subprocess, no isolation
 
-When you run an agent, Pactum launches it as a **direct subprocess in your
-repository** (by default that subprocess is the agent's ACP adapter — see the
-transport section below):
+When you run an agent, Pactum launches its ACP adapter as a **direct subprocess
+in your repository** (see the transport section below):
 
 - The working directory is your repository root.
 - The agent inherits your environment.
 - The prepared prompt is piped to the agent's standard input.
 - The agent's stdout and stderr are captured to attempt artifacts.
 
-### Transport: ACP (default) or CLI
+### Transport: ACP
 
-How the agent is *reached* is a swappable transport behind one seam, so the loop,
-gate, and attempt lifecycle are unaware of it:
-
-- **`acp`** (default) — the agent is driven over the [Agent Client
-  Protocol](https://agentclientprotocol.com) via its server adapter
-  (`claude-agent-acp` / `codex-acp`, launched with `npx`) using a JSON-RPC client.
-  The agent edits the working tree through client-serviced file writes, its text
-  streams to the attempt log as it works, and the turn's token usage comes from
-  the protocol. The protocol's `Usage` is recorded in the same OTel-inclusive
-  convention the CLI parsers use: `InputTokens` includes cache (read+write) and
-  `OutputTokens` includes reasoning, with the cache/reasoning sub-counts kept
-  separately for the cost layer. The claude adapter reports `input_tokens`
-  *exclusive* of cache (its own source: "input_tokens excludes cache tokens"),
-  so pactum folds the cache classes back into `InputTokens`; codex `input`
-  already includes cache, so it is not double-added (see
-  [`cost-budget-design.md`](cost-budget-design.md)). ACP and CLI usage records
-  are therefore directly comparable. Codex-over-ACP usage is read from the official
-  prompt response `Usage` field first. For legacy/fork adapter compatibility,
-  pactum also understands the
-  `usage_update._meta["codex/token_usage"].total_token_usage` payload and uses
-  the latest valid cumulative total only as a fallback when the prompt response
-  carries no `Usage`. The same `RunResult` and attempt artifacts are produced
-  either way.
-- **`cli`** — the one-shot agent CLI described above (`codex exec`,
-  `claude -p`), with the prompt piped to stdin.
-
-ACP is the default; `PACTUM_AGENT_TRANSPORT=cli` is the debug escape hatch that
-selects the one-shot CLI transport (the value is trimmed and case-insensitive;
-empty, `acp`, or any other value keeps the ACP default). The transport is
-intentionally not a config key — it is an execution mechanism, not workspace
-state, and the env var exists for debugging, not configuration. The two gaps
-that blocked making ACP the default — model pins over ACP and a write guard for
-read-only stages — are closed (see below); what remains is the documented
-shell-command gating limitation for write stages.
+Every agent runs over the [Agent Client Protocol](https://agentclientprotocol.com)
+via its server adapter (`claude-agent-acp` / `codex-acp`, launched with `npx`)
+using a JSON-RPC client. The agent edits the working tree through client-serviced
+file writes, its text streams to the attempt log as it works, and the turn's
+token usage comes from the protocol. The protocol's `Usage` is recorded in the
+OTel-inclusive convention: `InputTokens` includes cache (read+write) and
+`OutputTokens` includes reasoning, with the cache/reasoning sub-counts kept
+separately for the cost layer. The claude adapter reports `input_tokens`
+*exclusive* of cache (its own source: "input_tokens excludes cache tokens"),
+so pactum folds the cache classes back into `InputTokens`; codex `input`
+already includes cache, so it is not double-added (see
+[`cost-budget-design.md`](cost-budget-design.md)). Codex-over-ACP usage is read
+from the official prompt response `Usage` field first. For legacy/fork adapter
+compatibility, pactum also understands the
+`usage_update._meta["codex/token_usage"].total_token_usage` payload and uses
+the latest valid cumulative total only as a fallback when the prompt response
+carries no `Usage`. The same `RunResult` and attempt artifacts are produced
+either way.
 
 The ACP adapters are external npm packages and inherit the agent's auth from the
 environment. By default pactum launches them as:
@@ -253,11 +235,10 @@ request, and the transport threads it the way each adapter accepts it:
   session, so the adapter subprocess gets them in its environment.
 
 An unpinned run adds neither; the `Resolved` block shown before a run reflects
-the same pin regardless of transport. One claude caveat: `claude-agent-acp`
-resolves `ANTHROPIC_MODEL` against its known-model list and silently keeps the
-default when nothing matches — a mistyped pin runs the default model while the
-usage ledger records the pinned name (the CLI transport's `--model` fails loudly
-instead).
+the effective pin. One claude caveat: `claude-agent-acp` resolves
+`ANTHROPIC_MODEL` against its known-model list and silently keeps the default
+when nothing matches — a mistyped pin runs the default model while the usage
+ledger records the pinned name.
 
 #### Read-only stages over ACP
 
@@ -276,8 +257,8 @@ performs writes:
 - **codex** — codex applies patches natively in-process and consults its own
   approval policy (a trusted repo asks no permission at all), so client-side
   denials cannot stop it. The adapter is instead launched with
-  `-c sandbox_mode="read-only"`, pinning the same sandbox the CLI reviewer uses
-  (`codex --sandbox read-only`) regardless of the operator's codex config.
+  `-c sandbox_mode="read-only"` to enforce read-only mode at the adapter level
+  regardless of the operator's codex config.
 
 Write stages (`execute run`, `review fix run`) keep auto-approval and the
 scope-guarded writes described below.
@@ -299,11 +280,8 @@ The guard has two deliberate limits:
   stages, auto-approves permission requests. An agent that writes through a
   *shell command* it runs bypasses the guard; such changes are still caught
   only by the post-hoc gate.
-- It applies **only to the ACP transport**. The CLI transport is unchanged and
-  continues to rely entirely on the gate (and, for reviewers, on the agent's
-  own sandbox flags). On write stages, when a contract declares no path-scope
-  every in-repo write is allowed; read-only stages deny every write outright,
-  as described above.
+- On write stages, when a contract declares no path-scope every in-repo write
+  is allowed; read-only stages deny every write outright, as described above.
 
 ## Live output
 
@@ -324,22 +302,19 @@ stdout.
 
 There is **no Pactum-managed isolation**: no container, no virtual machine, no
 sandbox, and no filesystem confinement. The agent can read and write your
-repository exactly as if you had launched it yourself — the default `codex`
-invocation even bypasses Codex's own approval/sandbox prompts. Pactum's
-guarantees are about the *contract* and the *deterministic checks* around the
-agent (approved contract hash, fresh project map, recorded memory boundary, gate
-report), not about constraining what the agent process can do.
+repository exactly as if you had launched it yourself. Pactum's guarantees are
+about the *contract* and the *deterministic checks* around the agent (approved
+contract hash, fresh project map, recorded memory boundary, gate report), not
+about constraining what the agent process can do.
 
 There is also **no Docker support yet**.
 
 ## Execute: plan vs run
 
 - `pactum execute plan <run_id> --agent codex` prepares and records the
-  execution plan (`execute/dry-run.json`, including the resolved CLI command
-  and arguments) but does **not** start any process. Use it to confirm the
-  boundaries pass. The recorded command is the CLI-transport invocation; under
-  the default ACP transport, `execute run` launches the agent's `npx` ACP
-  adapter instead (see the transport section above).
+  execution plan (`execute/dry-run.json`, including the resolved ACP adapter
+  command and arguments) but does **not** start any process. Use it to confirm
+  the boundaries pass.
 - `pactum execute run <run_id> --agent codex` launches the agent subprocess and
   captures the attempt — request, result (exit code, timing, timeout flag), and
   stdout/stderr logs — under `execute/attempts/`. This is real agent execution
@@ -356,10 +331,10 @@ There is also **no Docker support yet**.
   agent relaying decisions already made in conversation, so launching the
   executor is itself the recorded decision.
 
-The idle timeout is **completion-aware**: when the watchdog fires but the
-captured output already carries the agent's successful terminal marker —
-codex's terminal `turn.completed` event (CLI transport), or (over ACP) a
-prompt response recorded before the kill — the attempt is finalized as
+The idle timeout is **completion-aware**: when the watchdog fires but codex's
+terminal `turn.completed` event appears in the captured output, or (for both
+agents over ACP) a prompt response was recorded before the kill — the attempt
+is finalized as
 **completed with a warning** instead of failed. The exit code becomes 0, the attempt proceeds through the normal
 success path, and the result document records the honest pair
 `timed_out: true` + `completed_despite_timeout: true`, with a visible warning
@@ -589,8 +564,7 @@ fixer prompt includes the approved contract goal/scope/acceptance criteria and
 the current review findings, and instructs the agent to trace each finding to
 code, fix valid findings in place, and explain a rebuttal for false positives.
 
-This is write-enabled agent execution, not reviewer execution: `codex` uses
-`codex exec --json --dangerously-bypass-approvals-and-sandbox`; `claude` runs
+This is write-enabled agent execution, not reviewer execution. Both agents run
 over ACP with write capability granted by `ReadOnly=false` on the ACP client.
 The command
 honors the fixer's registry-entry pins (an omitted `--agent` defaults to the

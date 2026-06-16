@@ -225,7 +225,7 @@ func (a App) prepareReviewFixer(context reviewContext, agentName string) (review
 }
 
 func ensureReviewFixDryRunArtifacts(prep reviewFixPreparation, createdAt string) (reviewFixDryRunDocument, error) {
-	expected, err := buildReviewFixDryRunDocument(prep.Context.State.RunID, createdAt, prep.Fixer)
+	expected, err := buildReviewFixDryRunDocument(prep.Context.State.RunID, createdAt, prep.Fixer, prep.ModelSpec)
 	if err != nil {
 		return reviewFixDryRunDocument{}, err
 	}
@@ -252,24 +252,18 @@ func writeReviewFixDryRunArtifacts(prep reviewFixPreparation, plan reviewFixDryR
 	return writeJSON(prep.Context.RunPaths.ReviewFixDryRunJSON, plan)
 }
 
-func buildReviewFixDryRunDocument(runID string, createdAt string, fixer agents.AgentDescriptor) (reviewFixDryRunDocument, error) {
-	var wouldRun agents.DryRunCommand
-	if fixer.Command != "" {
-		var err error
-		wouldRun, err = agents.BuildCommand(fixer, reviewFixPromptRepoPath(runID))
-		if err != nil {
-			return reviewFixDryRunDocument{}, err
-		}
+func buildReviewFixDryRunDocument(runID string, createdAt string, fixer agents.AgentDescriptor, spec agents.ModelSpec) (reviewFixDryRunDocument, error) {
+	wouldRun, err := agents.BuildACPWouldRun(fixer.Name, spec, false)
+	if err != nil {
+		return reviewFixDryRunDocument{}, err
 	}
 	return reviewFixDryRunDocument{
 		Schema:    reviewFixDryRunSchema,
 		RunID:     runID,
 		CreatedAt: createdAt,
 		Fixer: agents.AgentDescriptor{
-			Name:    fixer.Name,
-			Command: fixer.Command,
-			Args:    append([]string{}, fixer.Args...),
-			Input:   fixer.Input,
+			Name:  fixer.Name,
+			Input: fixer.Input,
 		},
 		Checks: reviewFixChecks{
 			ReviewPrepared:   true,
@@ -284,11 +278,7 @@ func buildReviewFixDryRunDocument(runID string, createdAt string, fixer agents.A
 			Resolutions:  reviewResolutionsArtifact,
 			Contract:     "contract/contract.json",
 		},
-		WouldRun: agents.DryRunCommand{
-			Command: wouldRun.Command,
-			Args:    append([]string{}, wouldRun.Args...),
-			Stdin:   wouldRun.Stdin,
-		},
+		WouldRun: wouldRun,
 	}, nil
 }
 

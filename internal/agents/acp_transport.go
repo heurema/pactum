@@ -18,8 +18,8 @@ import (
 
 // ACPTransport drives an agent over the Agent Client Protocol via an adapter
 // subprocess (claude-agent-acp / codex-acp) using the coder acp-go-sdk client.
-// It produces the same attempt artifacts (stdout.log/stderr.log) and RunResult
-// shape as CLITransport, so the attempt lifecycle is unaware of the protocol.
+// It produces attempt artifacts (stdout.log/stderr.log) and a RunResult that
+// the attempt lifecycle records and surfaces to the caller.
 type ACPTransport struct{}
 
 func (ACPTransport) Run(request RunRequest) (RunResult, error) {
@@ -180,8 +180,7 @@ func driveACPSession(ctx context.Context, conn *acp.ClientSideConnection, cwd st
 // denies them — no adapter flag is needed. codex applies patches natively
 // in-process and consults its own approval policy (a trusted repo asks no
 // permission at all), so client-side denials cannot stop it; the sandbox is
-// pinned at the adapter instead, mirroring the CLI reviewer's
-// `--sandbox read-only`.
+// pinned at the adapter instead via `-c sandbox_mode="read-only"`.
 func acpAdapterCommand(agentName string, spec ModelSpec, readOnly bool) (string, []string, []string, error) {
 	switch agentName {
 	case BuiltinClaude:
@@ -509,8 +508,8 @@ func (c *acpClient) WriteTextFile(ctx context.Context, p acp.WriteTextFileReques
 // repoRoot; a path that escapes the repo (relative starts with "..") or that
 // writePathAllowed rejects is denied — the agent receives a write failure and
 // disk is not touched. A nil writePathAllowed predicate skips the scope check
-// (allow all), preserving the pre-guard behavior for every existing caller and
-// the CLI transport, which never builds an acpClient at all.
+// (allow all), preserving the pre-guard behavior for callers that grant
+// unrestricted write access.
 func (c *acpClient) checkWriteScope(absPath string) error {
 	if c.writePathAllowed == nil {
 		return nil

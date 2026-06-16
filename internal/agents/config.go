@@ -42,49 +42,30 @@ func (BuiltinRegistry) ResolveReviewer(name string) (AgentDescriptor, error) {
 }
 
 func (BuiltinRegistry) ListBuiltins() []AgentDescriptor {
-	builtins := []AgentDescriptor{
+	return []AgentDescriptor{
 		{
-			Name:    BuiltinCodex,
-			Command: "codex",
-			Args:    []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"},
-			Input:   InputPromptFile,
+			// Codex and Claude both run exclusively over ACP; no CLI command or args.
+			// Write capability is granted via RunRequest.ReadOnly=false on the ACP client.
+			Name:  BuiltinCodex,
+			Input: InputPromptFile,
 		},
 		{
-			// Claude runs exclusively over ACP; no CLI command or args.
-			// Write capability is granted via RunRequest.ReadOnly=false on the ACP client.
 			Name:  BuiltinClaude,
 			Input: InputPromptFile,
 		},
 	}
-	for i := range builtins {
-		builtins[i].Args = append([]string{}, builtins[i].Args...)
-	}
-	return builtins
 }
 
 // reviewerBuiltins returns read-only descriptors for the reviewer role. A reviewer
-// only reads the diff and emits findings, so it must NOT carry the executor's
-// write/edit bypass. Codex pins its adapter to a read-only sandbox; claude's
-// read-only enforcement is applied by the ACP client when RunRequest.ReadOnly is
-// true — no adapter flag is needed, so the descriptor carries no CLI args.
+// only reads the diff and emits findings — the read-only constraint is enforced
+// per agent at the ACP layer: codex via a sandbox_mode="read-only" adapter flag,
+// claude via the ACP client denying writes and refusing permission requests when
+// RunRequest.ReadOnly is true. No CLI args are needed or present.
 func reviewerBuiltins() []AgentDescriptor {
-	builtins := []AgentDescriptor{
-		{
-			Name:    BuiltinCodex,
-			Command: "codex",
-			Args:    []string{"exec", "--json", "--sandbox", "read-only"},
-			Input:   InputPromptFile,
-		},
-		{
-			// Claude reviewer read-only is enforced at the ACP client layer.
-			Name:  BuiltinClaude,
-			Input: InputPromptFile,
-		},
+	return []AgentDescriptor{
+		{Name: BuiltinCodex, Input: InputPromptFile},
+		{Name: BuiltinClaude, Input: InputPromptFile},
 	}
-	for i := range builtins {
-		builtins[i].Args = append([]string{}, builtins[i].Args...)
-	}
-	return builtins
 }
 
 func resolveFrom(descriptors []AgentDescriptor, name string, defaultName string) (AgentDescriptor, error) {

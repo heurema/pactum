@@ -99,7 +99,7 @@ func TestACPAdapterCommandReadOnly(t *testing.T) {
 
 	// codex: read-only pins the sandbox at the adapter — codex applies patches
 	// natively and consults its own approval policy, so client-side denials
-	// cannot stop it. Mirrors the CLI reviewer's --sandbox read-only.
+	// cannot stop it; sandbox_mode="read-only" enforces it at the adapter level.
 	_, args, _, err := acpAdapterCommand(BuiltinCodex, ModelSpec{}, true)
 	if err != nil {
 		t.Fatalf("codex read-only: %v", err)

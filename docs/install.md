@@ -12,18 +12,18 @@ smoke check.
 - **Git** — Pactum operates inside a Git repository and uses Git to detect
   repository changes during gating.
 
-### Optional: agent CLIs
+### Optional: ACP adapter packages
 
 Pactum can drive two built-in agents, but only when you ask it to *execute*
 (`pactum execute run`). The packaging and smoke steps below never launch an
-agent, so the agent CLIs are optional for installation:
+agent, so the adapter packages are optional for installation:
 
-- `codex` — used by the `codex` built-in agent (`codex exec`).
-- `claude` — used by the `claude` built-in agent (`claude -p`).
+- `@zed-industries/codex-acp@latest` — ACP adapter for the `codex` built-in agent.
+- `@agentclientprotocol/claude-agent-acp@latest` — ACP adapter for the `claude` built-in agent.
 
-Pactum does **not** install or authenticate these tools. You install and log in
-to them yourself; Pactum only looks for them on your `PATH`. See
-[docs/agents.md](agents.md) for the execution model.
+Pactum downloads and runs these via `npx` on demand. Set
+`PACTUM_CODEX_ACP_COMMAND` or `PACTUM_CLAUDE_ACP_COMMAND` to override the
+launch command. See [docs/agents.md](agents.md) for the execution model.
 
 ## Build from source
 
@@ -108,9 +108,10 @@ Notes:
   deterministic project map and search index. It does not run any agent.
 - `pactum task new` creates a run and records it as the current run, so the
   staged commands (`contract approve`, `prompt build`, ...) can omit the run id.
-- `pactum doctor` only checks your `PATH` for the agent commands. It
-  does **not** launch the agents and does **not** authenticate them; a
-  `missing_command` status simply means the CLI isn't installed yet.
+- `pactum doctor` checks your `PATH` for the ACP adapter launcher (`npx` for
+  built-in agents). It does **not** launch the agents and does **not**
+  authenticate them; a `missing_command` status means the launcher is not on
+  your `PATH`.
 
 To exercise the whole safe surface in a throwaway repository automatically, run
 the bundled smoke script from a clone:
@@ -128,7 +129,7 @@ cleans up.
 GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on every pull
 request and push to `main`: `make check`, `make heurema-hygiene`, `make build`,
 and `scripts/smoke.sh`, plus separate `make test-race` and `make vuln` jobs.
-CI does not need `codex`/`claude` installed and never runs a real agent.
+CI does not need ACP adapter packages installed and never runs a real agent.
 
 See [CHANGELOG.md](../CHANGELOG.md) for notable changes. Everything is currently
 **Unreleased** — there are no packaged releases yet.

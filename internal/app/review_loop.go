@@ -853,7 +853,7 @@ func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID st
 			return fmt.Sprintf("reviewer process produced no output for %s", timeout)
 		},
 		Prepare: func(createdAt string) (reviewerLensAttemptPlan, error) {
-			return buildReviewerLensPlan(runID, reviewer.Name, lens, reviewer.Agent)
+			return buildReviewerLensPlan(runID, reviewer.Name, lens, reviewer.Agent, reviewer.ModelSpec)
 		},
 		BuildRequest: func(context agentAttemptContext[reviewerLensAttemptPlan]) (reviewerRequestDocument, error) {
 			return reviewerRequestDocument{
