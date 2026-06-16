@@ -15,7 +15,7 @@ import (
 	"github.com/heurema/pactum/internal/ledger"
 )
 
-const approvalSchema = "pactum.approval.v1"
+const approvalSchema = "pactum.approval.v1alpha1"
 
 // contractReviseIssue is a single validation failure in a revise request.
 type contractReviseIssue struct {

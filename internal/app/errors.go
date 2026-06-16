@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const errorSchema = "pactum.error.v1"
+const errorSchema = "pactum.error.v1alpha1"
 
 // preconditionError is a recognized workflow precondition failure carrying the
 // affordances an agent reads instead of memorizing stage order: a stable
@@ -175,7 +175,7 @@ func classifyErrorCode(err error) string {
 	}
 }
 
-// writeErrorEnvelope encodes err as a pactum.error.v1 JSON document on stdout.
+// writeErrorEnvelope encodes err as a pactum.error.v1alpha1 JSON document on stdout.
 func writeErrorEnvelope(stdout io.Writer, err error) error {
 	envelope := errorEnvelope{
 		Schema: errorSchema,

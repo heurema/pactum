@@ -17,10 +17,10 @@ const (
 	reviewFixDryRunArtifact     = "review/fix/fixer-dry-run.json"
 	reviewFixAttemptsArtifact   = "review/fix/attempts"
 	reviewFixLastResultArtifact = "review/fix/last-result.json"
-	reviewFixDryRunSchema       = "pactum.review_fix_dry_run.v1"
-	reviewFixRequestSchema      = "pactum.review_fix_request.v1"
-	reviewFixResultSchema       = "pactum.review_fix_result.v1"
-	reviewFixOutcomesSchema     = "pactum.review_fix_outcomes.v1"
+	reviewFixDryRunSchema       = "pactum.review_fix_dry_run.v1alpha1"
+	reviewFixRequestSchema      = "pactum.review_fix_request.v1alpha1"
+	reviewFixResultSchema       = "pactum.review_fix_result.v1alpha1"
+	reviewFixOutcomesSchema     = "pactum.review_fix_outcomes.v1alpha1"
 )
 
 type reviewFixPreparation struct {

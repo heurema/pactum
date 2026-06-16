@@ -11,7 +11,7 @@ const (
 	DoctorStatusOnPath         = "on_path"
 	DoctorStatusMissingCommand = "missing_command"
 
-	DoctorReportSchema = "pactum.agents_doctor.v1"
+	DoctorReportSchema = "pactum.agents_doctor.v1alpha1"
 )
 
 type DoctorReport struct {

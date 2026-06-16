@@ -14,7 +14,7 @@ import (
 	"github.com/heurema/pactum/internal/projectmap"
 )
 
-const statusSchema = "pactum.status.v1"
+const statusSchema = "pactum.status.v1alpha1"
 
 type statusResponse struct {
 	Schema      string           `json:"schema"`

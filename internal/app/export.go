@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	exportResponseSchema = "pactum.export.v1"
+	exportResponseSchema = "pactum.export.v1alpha1"
 	exportArchiveFormat  = "zip"
 )
 

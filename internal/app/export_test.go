@@ -33,7 +33,7 @@ func TestExportArchivesRunRecord(t *testing.T) {
 
 	var response exportResponse
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
-	if response.Schema != "pactum.export.v1" || response.RunID != runID || response.ArchiveFormat != "zip" {
+	if response.Schema != "pactum.export.v1alpha1" || response.RunID != runID || response.ArchiveFormat != "zip" {
 		t.Fatalf("unexpected export response: %#v", response)
 	}
 	rootEntry := "pactum-run-" + runID + "/"

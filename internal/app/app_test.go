@@ -75,8 +75,8 @@ func helper() {}
 	}
 	config, err := readConfig(paths.Config)
 	assertNoError(t, err)
-	if config.Schema != "pactum.config.v1" {
-		t.Fatalf("config schema = %q, want pactum.config.v1", config.Schema)
+	if config.Schema != "pactum.config.v1alpha1" {
+		t.Fatalf("config schema = %q, want pactum.config.v1alpha1", config.Schema)
 	}
 	if config.Map.MaxFileBytes != 500000 {
 		t.Fatalf("config map.max_file_bytes = %d, want 500000", config.Map.MaxFileBytes)
@@ -299,12 +299,12 @@ func TestReadConfigNormalizesGateScopeEnforcement(t *testing.T) {
 	}{
 		{
 			name:    "missing",
-			content: "schema: pactum.config.v1\nagents:\n  - name: claude\n    model: claude-opus-4-8\n",
+			content: "schema: pactum.config.v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\n",
 			want:    gateScopeEnforcementBlock,
 		},
 		{
 			name: "empty",
-			content: `schema: pactum.config.v1
+			content: `schema: pactum.config.v1alpha1
 agents:
   - name: claude
     model: claude-opus-4-8
@@ -315,7 +315,7 @@ gate:
 		},
 		{
 			name: "block",
-			content: `schema: pactum.config.v1
+			content: `schema: pactum.config.v1alpha1
 agents:
   - name: claude
     model: claude-opus-4-8
@@ -326,7 +326,7 @@ gate:
 		},
 		{
 			name: "warn",
-			content: `schema: pactum.config.v1
+			content: `schema: pactum.config.v1alpha1
 agents:
   - name: claude
     model: claude-opus-4-8
@@ -352,7 +352,7 @@ func TestReadConfigRejectsInvalidGateScopeEnforcement(t *testing.T) {
 	root := t.TempDir()
 	paths := artifacts.New(root)
 	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
-	mustWriteFile(t, paths.Config, `schema: pactum.config.v1
+	mustWriteFile(t, paths.Config, `schema: pactum.config.v1alpha1
 gate:
   scope_enforcement: advisory
 `)
@@ -373,7 +373,7 @@ func TestReadConfigRejectsRemovedReviewBudget(t *testing.T) {
 	root := t.TempDir()
 	paths := artifacts.New(root)
 	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
-	mustWriteFile(t, paths.Config, `schema: pactum.config.v1
+	mustWriteFile(t, paths.Config, `schema: pactum.config.v1alpha1
 agents:
   - name: claude
     model: claude-opus-4-8
@@ -873,7 +873,7 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 
 	var state contractRunState
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, filepath.Join(runDir, "run.json"))), &state))
-	if state.Schema != "pactum.run.v1" || state.RunID != "run_20260531_184012" || state.Status != "contract_draft" {
+	if state.Schema != "pactum.run.v1alpha1" || state.RunID != "run_20260531_184012" || state.Status != "contract_draft" {
 		t.Fatalf("unexpected run state: %#v", state)
 	}
 	if state.Task != task || state.RepoRoot != "." || state.Workspace != artifacts.WorkspaceRel || state.MapRunID != "map_20260531_184012" {
@@ -911,7 +911,7 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 
 	var contract draftContract
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, filepath.Join(runDir, "contract", "contract.json"))), &contract))
-	if contract.Schema != "pactum.contract.v1" || contract.RunID != "run_20260531_184012" || contract.Goal != task {
+	if contract.Schema != "pactum.contract.v1alpha1" || contract.RunID != "run_20260531_184012" || contract.Goal != task {
 		t.Fatalf("unexpected contract.json: %#v", contract)
 	}
 	if len(contract.Scope.In) != 0 || len(contract.Scope.Out) != 0 || len(contract.AcceptanceCriteria) != 0 || len(contract.Validation.Commands) != 0 {

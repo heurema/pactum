@@ -378,7 +378,7 @@ the attempt under `clarify/clarifier-attempts/`, and stores the latest result at
 `clarify/clarifier-last-result.json`.
 
 The clarifier must emit a fenced JSON block with
-`schema: "pactum.clarification_suggestions.v1"` and a `questions` array. Each
+`schema: "pactum.clarification_suggestions.v1alpha1"` and a `questions` array. Each
 question object carries:
 
 - `text` — the question for the human (required).
@@ -437,7 +437,7 @@ instead):
   `clarify.max_rounds` workspace config key (default 3).
 
 The loop writes `clarify/loop-summary.json`
-(`pactum.clarify_loop_summary.v1`) with per-round counts (questions created,
+(`pactum.clarify_loop_summary.v1alpha1`) with per-round counts (questions created,
 auto-resolved, open blocking after), the terminal reason, the converged flag,
 and the final per-dimension coverage; `--json` prints the same document.
 `--reviewer` selects the clarifier explicitly (the cross-model reviewer
@@ -456,7 +456,7 @@ unchanged. The
 command renders the created run, the loop summary, and the open blocking
 questions with their kind, confidence, and recommended answer (the human's
 working set); `--json` embeds the loop summary document alongside the task
-response (`pactum.task_new_clarify.v1`). A loop failure leaves the created run
+response (`pactum.task_new_clarify.v1alpha1`). A loop failure leaves the created run
 intact and current — re-run `pactum clarify run` on it.
 
 **The safety story is the downstream gate:** the loop lets the clarifier's own
@@ -475,7 +475,7 @@ proposal at `contract/draft-proposal.json` with a Markdown preview at
 `contract/draft-proposal.md`.
 
 The drafter must emit a fenced JSON block with
-`schema: "pactum.contract_draft_proposal.v1"` and the proposal fields
+`schema: "pactum.contract_draft_proposal.v1alpha1"` and the proposal fields
 `in_scope`, `out_of_scope`, `acceptance`, `validation`, and `assumptions`.
 Pactum does **not** apply this output automatically: `pactum contract
 show <run_id> --draft` shows the pending proposal, and a human must run `pactum

@@ -5,7 +5,7 @@ import (
 	"io"
 )
 
-const notReadySchema = "pactum.not_ready.v1"
+const notReadySchema = "pactum.not_ready.v1alpha1"
 
 // notReadyResponse is the machine-readable shape for a read-only command whose
 // artifact does not exist yet. It keeps --json output parseable instead of

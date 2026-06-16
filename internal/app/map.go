@@ -18,7 +18,7 @@ import (
 
 const mapManifestSchema = "pactum.map.manifest.v1"
 
-const mapRefreshSchema = "pactum.map_refresh.v1"
+const mapRefreshSchema = "pactum.map_refresh.v1alpha1"
 
 // mapConfigHashScope marks a manifest whose config_hash pins only the
 // canonicalized map: config section (see mapConfigHash). A manifest without this

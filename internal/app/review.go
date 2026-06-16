@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	reviewSchema           = "pactum.review.v1"
-	reviewFindingSchema    = "pactum.review_finding.v1"
-	reviewResolutionSchema = "pactum.review_resolution.v1"
+	reviewSchema           = "pactum.review.v1alpha1"
+	reviewFindingSchema    = "pactum.review_finding.v1alpha1"
+	reviewResolutionSchema = "pactum.review_resolution.v1alpha1"
 
 	reviewArtifact            = "review/review.json"
 	reviewFindingsArtifact    = "review/findings.jsonl"
@@ -24,8 +24,8 @@ const (
 	reviewerDryRunArtifact    = "review/reviewer-dry-run.json"
 	reviewerDryRunSchema      = "pactum.review_dry_run.v2"
 	reviewerAttemptsArtifact  = "review/reviewer-attempts"
-	reviewerRequestSchema     = "pactum.reviewer_request.v1"
-	reviewerResultSchema      = "pactum.reviewer_result.v1"
+	reviewerRequestSchema     = "pactum.reviewer_request.v1alpha1"
+	reviewerResultSchema      = "pactum.reviewer_result.v1alpha1"
 )
 
 // reviewLens is one specialist review lens. The set below is fixed in code and

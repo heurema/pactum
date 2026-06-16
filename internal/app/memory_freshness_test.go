@@ -193,7 +193,7 @@ func TestMemorySearchIncludesFreshnessAndStalePenalty(t *testing.T) {
 		Summary:    "Boundary handling",
 	})
 	appendMemoryRefreshForTest(t, paths, memoryRefreshRecord{
-		Schema: "pactum.memory_refresh.v1",
+		Schema: "pactum.memory_refresh.v1alpha1",
 		ID:     "memory_refresh_001",
 		Items: []memoryRefreshItem{{
 			MemoryItemID: "mem_001",
@@ -227,7 +227,7 @@ func TestMemorySearchExcludesStaleItemAfterPenalty(t *testing.T) {
 		Tags:  []string{"review"},
 	})
 	appendMemoryRefreshForTest(t, paths, memoryRefreshRecord{
-		Schema: "pactum.memory_refresh.v1",
+		Schema: "pactum.memory_refresh.v1alpha1",
 		ID:     "memory_refresh_001",
 		Items: []memoryRefreshItem{{
 			MemoryItemID: "mem_001",
@@ -253,7 +253,7 @@ func TestRunMemoryContextIncludesFreshnessInfo(t *testing.T) {
 	app, paths := setupInitializedMemoryWorkspace(t, root)
 	appendAcceptedMemoryItemForTest(t, paths, memoryItemRecord{ID: "mem_001", Title: "Freshness boundary"})
 	appendMemoryRefreshForTest(t, paths, memoryRefreshRecord{
-		Schema: "pactum.memory_refresh.v1",
+		Schema: "pactum.memory_refresh.v1alpha1",
 		ID:     "memory_refresh_001",
 		Items: []memoryRefreshItem{{
 			MemoryItemID: "mem_001",

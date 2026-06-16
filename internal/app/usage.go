@@ -18,7 +18,7 @@ import (
 
 const (
 	usageRecordSchemaVersion     = 1
-	usageResponseSchema          = "pactum.usage.v1"
+	usageResponseSchema          = "pactum.usage.v1alpha1"
 	usageWorkspaceResponseSchema = "pactum.usage.workspace.v1"
 )
 
