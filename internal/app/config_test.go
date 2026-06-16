@@ -473,6 +473,56 @@ func TestReadConfigRejectsPreRegistryShapes(t *testing.T) {
 	}
 }
 
+func TestValidateContractReviewers(t *testing.T) {
+	registry := []agentRegistryEntry{
+		{Name: "claude", Model: "claude-opus-4-8"},
+		{Name: "fable", Model: "claude-fable-5"},
+	}
+	cases := []struct {
+		name      string
+		reviewers []string
+		wantErr   string
+	}{
+		{
+			name:      "registered names pass",
+			reviewers: []string{"fable", "claude"},
+		},
+		{
+			name:      "empty is allowed",
+			reviewers: []string{},
+		},
+		{
+			name:      "unregistered name is rejected",
+			reviewers: []string{"gpt6"},
+			wantErr:   `config contract.reviewers: unknown agent "gpt6" (not registered in config agents)`,
+		},
+		{
+			name:      "duplicate name is rejected",
+			reviewers: []string{"fable", "fable"},
+			wantErr:   `config contract.reviewers: duplicate name "fable"`,
+		},
+		{
+			name:      "blank name is rejected",
+			reviewers: []string{"  "},
+			wantErr:   "config contract.reviewers: entry is missing the agent name",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateContractReviewers(tc.reviewers, registry)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tc.wantErr {
+				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestValidateAgentRegistryRejectsPathUnsafeNames pins that registry names are
 // path-safe: they flow into per-member review-lens prompt artifact paths.
 func TestValidateAgentRegistryRejectsPathUnsafeNames(t *testing.T) {

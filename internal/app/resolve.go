@@ -260,6 +260,13 @@ func nextCommandsForRun(paths artifacts.Paths, runID string) []string {
 		if open, err := openBlockingQuestionCount(runPaths); err != nil || open > 0 {
 			return []string{"pactum clarify show " + runID}
 		}
+		// A config read failure means reviewers may be configured but broken;
+		// point at contract review so the error surfaces there rather than
+		// silently advertising approve.
+		configured, err := contractReviewersConfigured(paths.Config)
+		if err != nil || configured {
+			return []string{"pactum contract review " + runID}
+		}
 		return []string{"pactum contract approve " + runID}
 	case "contract_approved":
 		return []string{"pactum prompt build " + runID}
@@ -291,6 +298,16 @@ func nextCommandsForRun(paths artifacts.Paths, runID string) []string {
 	default:
 		return []string{}
 	}
+}
+
+// contractReviewersConfigured reports whether the workspace config has at least
+// one contract reviewer registered.
+func contractReviewersConfigured(configPath string) (bool, error) {
+	config, err := readConfig(configPath)
+	if err != nil {
+		return false, err
+	}
+	return len(config.Contract.Reviewers) > 0, nil
 }
 
 // openBlockingQuestionCount counts open blocking clarification questions. An
