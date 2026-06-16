@@ -293,6 +293,9 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 	if err != nil || !ok {
 		return err
 	}
+	if _, err := readConfig(context.Paths.Config); err != nil {
+		return err
+	}
 	status, err := buildClarificationStatus(context.RunPaths, context.State)
 	if err != nil {
 		return err

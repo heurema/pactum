@@ -69,6 +69,7 @@ type contractCmd struct {
 	Draft   contractDraftCmd   `cmd:"" help:"Run a read-only agent to propose contract fields."`
 	Accept  contractAcceptCmd  `cmd:"" help:"Accept the latest contract draft proposal."`
 	Revise  contractReviseCmd  `cmd:"" help:"Revise deterministic contract fields."`
+	Review  contractReviewCmd  `cmd:"" help:"Run the configured contract reviewer panel against the contract."`
 	Approve contractApproveCmd `cmd:"" help:"Approve a run contract."`
 }
 
@@ -154,6 +155,12 @@ type contractApproveCmd struct {
 	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to approve."`
 	By         string `name:"by" default:"manual" help:"Approver name to record."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type contractReviewCmd struct {
+	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id whose contract to review."`
+	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without reviewer output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
+	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type promptBuildCmd struct {

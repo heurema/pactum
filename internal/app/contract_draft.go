@@ -718,7 +718,9 @@ func writeContractAcceptDraft(stdout io.Writer, response contractAcceptDraftResp
 	writeContractDraftProposalSummary(stdout, response.Proposal)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Next:")
-	fmt.Fprintf(stdout, "  pactum contract approve %s\n", response.RunID)
+	for _, cmd := range response.Next {
+		fmt.Fprintf(stdout, "  %s\n", cmd)
+	}
 }
 
 func writeContractDraftProposalSummary(stdout io.Writer, proposal contractDraftProposalDocument) {

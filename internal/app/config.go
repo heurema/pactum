@@ -32,6 +32,7 @@ type configFile struct {
 	Map      mapConfig            `yaml:"map"`
 	Gate     gateConfig           `yaml:"gate"`
 	Clarify  clarifyConfig        `yaml:"clarify"`
+	Contract contractConfig       `yaml:"contract,omitempty"`
 	Review   reviewConfig         `yaml:"review"`
 	Timeouts timeoutsConfig       `yaml:"timeouts,omitempty"`
 }
@@ -57,6 +58,13 @@ type reviewConfig struct {
 	Patience    int      `yaml:"patience"`
 	CleanRounds int      `yaml:"clean_rounds"`
 	Panel       []string `yaml:"panel"`
+}
+
+// contractConfig holds contract-stage settings. Reviewers is the list of
+// registry agent names that form the optional contract review panel; an absent
+// or empty list disables contract review (human gate only).
+type contractConfig struct {
+	Reviewers []string `yaml:"reviewers,omitempty"`
 }
 
 // timeoutsConfig carries the project-wide timeout defaults for the
@@ -180,6 +188,9 @@ func readConfig(path string) (configFile, error) {
 	if err := validateReviewPanel(config.Review.Panel, config.Agents); err != nil {
 		return configFile{}, err
 	}
+	if err := validateContractReviewers(config.Contract.Reviewers, config.Agents); err != nil {
+		return configFile{}, err
+	}
 	return config, nil
 }
 
@@ -257,6 +268,31 @@ func validateReviewPanel(panel []string, registry []agentRegistryEntry) error {
 		}
 		seen[name] = true
 		panel[i] = name
+	}
+	return nil
+}
+
+// validateContractReviewers checks that every contract reviewer references a
+// registered name exactly once. Mirrors validateReviewPanel.
+func validateContractReviewers(reviewers []string, registry []agentRegistryEntry) error {
+	registered := map[string]bool{}
+	for _, entry := range registry {
+		registered[entry.Name] = true
+	}
+	seen := map[string]bool{}
+	for i := range reviewers {
+		name := strings.TrimSpace(reviewers[i])
+		if name == "" {
+			return fmt.Errorf("config contract.reviewers: entry is missing the agent name")
+		}
+		if !registered[name] {
+			return fmt.Errorf("config contract.reviewers: unknown agent %q (not registered in config agents)", name)
+		}
+		if seen[name] {
+			return fmt.Errorf("config contract.reviewers: duplicate name %q", name)
+		}
+		seen[name] = true
+		reviewers[i] = name
 	}
 	return nil
 }

@@ -202,6 +202,14 @@ func (c *contractApproveCmd) Run(r *runner) error {
 	return r.App.ContractApprove(r.Stdout, runID, c.By, c.JSONOutput)
 }
 
+func (c *contractReviewCmd) Run(r *runner) error {
+	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ContractReview(r.Stdout, r.Stderr, runID, c.Timeout, c.JSONOutput)
+}
+
 func (c *promptBuildCmd) Run(r *runner) error {
 	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
 	if err != nil {
