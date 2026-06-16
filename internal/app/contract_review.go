@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	stdctx "context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/heurema/pactum/internal/agents"
+	"github.com/heurema/pactum/internal/ledger"
+	"github.com/heurema/pactum/internal/loop"
 )
 
 const (
@@ -30,6 +33,14 @@ const (
 	contractReviewFixerAttemptsArtifact = "contract/fixer/attempts"
 	contractReviewFixerPromptArtifact   = "contract/fixer/fixer-prompt.md"
 )
+
+// contractReviewLoopFatalError wraps a loop error after the loop response has
+// already been written to stdout. App.Run checks for this type to skip the
+// generic error envelope and avoid writing two JSON documents.
+type contractReviewLoopFatalError struct{ cause error }
+
+func (e contractReviewLoopFatalError) Error() string { return e.cause.Error() }
+func (e contractReviewLoopFatalError) Unwrap() error { return e.cause }
 
 // contractReviewLens is one specialist lens for reviewing the contract document.
 // The set is fixed in code — every review spawns one attempt per lens per reviewer.
@@ -243,6 +254,14 @@ func (a App) ContractReview(stdout io.Writer, liveOutput io.Writer, runID string
 	lensKeys := contractReviewLensKeys()
 
 	if len(config.Contract.Reviewers) == 0 {
+		// Emit loop events unconditionally even for the no-reviewer no-op path.
+		now := a.nowUTC()
+		if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_review_loop_started", Timestamp: now, RunID: runID}); err != nil {
+			return err
+		}
+		if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_review_loop_finished", Timestamp: now, RunID: runID}); err != nil {
+			return err
+		}
 		if jsonOutput {
 			return writeJSONResponse(stdout, contractReviewResponse{
 				Schema:        contractReviewSchema,
@@ -283,35 +302,41 @@ func (a App) ContractReview(stdout io.Writer, liveOutput io.Writer, runID string
 func (a App) runContractReviewLoop(
 	stdout, liveOutput io.Writer,
 	runID string,
-	context runContext,
+	runCtx runContext,
 	reviewers []reviewLoopReviewer,
 	limits reviewLimits,
 	lensKeys []string,
 	timeout time.Duration,
 	jsonOutput bool,
 ) error {
+	startedAt := a.nowUTC()
+	if err := ledger.Append(activeStore, runCtx.Paths.EventsJSONL, ledger.Event{Type: "contract_review_loop_started", Timestamp: startedAt, RunID: runID}); err != nil {
+		return err
+	}
+
+	rounds := make([]contractReviewLoopRoundSummary, 0)
 	cleanStreak := 0
 	unchangedVersionStreak := 0
-	rounds := []contractReviewLoopRoundSummary{}
-	terminalReason := ""
 
-	for round := 1; round <= limits.MaxRounds; round++ {
+	step := func(_ stdctx.Context, rc loop.RoundContext) (loop.RoundResult, error) {
+		round := rc.Round
+
 		// Reload context: contract may have changed due to fixer in a prior round.
 		roundCtx, ok, err := a.loadContractContext(io.Discard, runID, true)
 		if err != nil || !ok {
-			return err
+			return loop.RoundResult{}, err
 		}
 
 		if err := activeStore.MkdirAll(roundCtx.RunPaths.ContractReviewAttemptsDir); err != nil {
-			return err
+			return loop.RoundResult{}, err
 		}
 		if err := writeContractReviewerPrompts(roundCtx.RunPaths, roundCtx.Contract, reviewers); err != nil {
-			return err
+			return loop.RoundResult{}, err
 		}
 
 		roundResult, err := a.runContractReviewRound(liveOutput, runID, roundCtx, reviewers, timeout)
 		if err != nil {
-			return err
+			return loop.RoundResult{}, err
 		}
 
 		blockingCount := countContractReviewBlockingFindings(roundResult.Findings)
@@ -330,15 +355,7 @@ func (a App) runContractReviewLoop(
 			roundSummary.CleanStreak = cleanStreak
 			roundSummary.UnchangedVersionStreak = unchangedVersionStreak
 			rounds = append(rounds, roundSummary)
-			if cleanStreak >= limits.CleanRounds {
-				terminalReason = "resolved"
-				break
-			}
-			if round == limits.MaxRounds {
-				terminalReason = "max_rounds"
-				break
-			}
-			continue
+			return loop.RoundResult{Clean: true}, nil
 		}
 
 		cleanStreak = 0
@@ -346,12 +363,12 @@ func (a App) runContractReviewLoop(
 
 		versionBefore, err := storeFileSHA256(roundCtx.RunPaths.ContractJSON)
 		if err != nil {
-			return err
+			return loop.RoundResult{}, err
 		}
 
 		fixerAttemptID, fixesApplied, fixesSkipped, fixerWarnings, err := a.runContractReviewFixRound(liveOutput, runID, roundCtx, roundResult.Findings, versionBefore, timeout)
 		if err != nil {
-			return err
+			return loop.RoundResult{}, err
 		}
 		roundSummary.FixerAttemptID = fixerAttemptID
 		roundSummary.FixesApplied = fixesApplied
@@ -360,29 +377,49 @@ func (a App) runContractReviewLoop(
 
 		versionAfter, err := storeFileSHA256(roundCtx.RunPaths.ContractJSON)
 		if err != nil {
-			return err
+			return loop.RoundResult{}, err
 		}
 
-		if versionAfter == versionBefore {
-			unchangedVersionStreak++
-		} else {
+		progress := versionAfter != versionBefore
+		if progress {
 			unchangedVersionStreak = 0
+		} else {
+			unchangedVersionStreak++
 		}
 		roundSummary.UnchangedVersionStreak = unchangedVersionStreak
 		rounds = append(rounds, roundSummary)
 
-		if unchangedVersionStreak >= limits.Patience {
-			terminalReason = "stalemate"
-			break
-		}
-		if round == limits.MaxRounds {
-			terminalReason = "max_rounds"
-			break
-		}
+		return loop.RoundResult{Clean: false, Progress: progress}, nil
 	}
 
-	if terminalReason == "" {
-		terminalReason = "max_rounds"
+	loopLimits := loop.Limits{
+		Max:      limits.MaxRounds,
+		Patience: limits.Patience,
+		Settle:   limits.CleanRounds,
+	}
+
+	outcome, loopErr := loop.Run(stdctx.Background(), loopLimits, step)
+
+	terminalReason := ""
+	if loopErr == nil {
+		switch outcome.Reason {
+		case "settled":
+			terminalReason = "resolved"
+		case "stalemate":
+			terminalReason = "stalemate"
+		case "max":
+			terminalReason = "max_rounds"
+		case "human":
+			terminalReason = "human"
+		}
+	} else {
+		terminalReason = "error"
+	}
+
+	// Always emit the finished event so no run leaves a dangling started event.
+	finishedAt := a.nowUTC()
+	if appendErr := ledger.Append(activeStore, runCtx.Paths.EventsJSONL, ledger.Event{Type: "contract_review_loop_finished", Timestamp: finishedAt, RunID: runID}); appendErr != nil && loopErr == nil {
+		loopErr = appendErr
 	}
 
 	response := contractReviewLoopResponse{
@@ -395,7 +432,15 @@ func (a App) runContractReviewLoop(
 		CleanRoundsRequired: limits.CleanRounds,
 		TerminalReason:      terminalReason,
 		Rounds:              rounds,
-		Next:                nextCommandsForRun(context.Paths, runID),
+		Next:                nextCommandsForRun(runCtx.Paths, runID),
+	}
+
+	if loopErr != nil {
+		// Write the structured response to stdout even on error so callers can
+		// parse terminal_reason "error". Wrap the error so App.Run skips its
+		// generic error envelope — one JSON document on stdout is the contract.
+		_ = writeJSONResponse(stdout, response)
+		return contractReviewLoopFatalError{cause: loopErr}
 	}
 
 	if jsonOutput {
@@ -416,6 +461,7 @@ func (a App) runContractReviewRound(
 	memberResults, errs := a.runContractReviewFanOut(liveOutput, runID, context, reviewers, timeout)
 
 	var skipped []reviewLoopSkippedLens
+	var skipWarnings []string
 	var firstErr error
 	var firstErrReviewer, firstErrLens string
 	successCount := 0
@@ -432,6 +478,7 @@ func (a App) runContractReviewRound(
 					Lens:     contractReviewLenses[lensIndex].Key,
 					Reason:   lensErr.Error(),
 				})
+				skipWarnings = append(skipWarnings, fmt.Sprintf("%s/%s: %s", reviewer.Name, contractReviewLenses[lensIndex].Key, lensErr.Error()))
 			} else {
 				successCount++
 			}
@@ -480,7 +527,7 @@ func (a App) runContractReviewRound(
 	return contractReviewRoundResult{
 		Findings:      findings,
 		SkippedLenses: skipped,
-		Warnings:      parseWarnings,
+		Warnings:      append(skipWarnings, parseWarnings...),
 	}, nil
 }
 
