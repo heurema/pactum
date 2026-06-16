@@ -509,6 +509,68 @@ config-ready-but-unbuilt:** `contract_draft` multi-model, `execute`-retry/`backo
 `clarify`/`memory` migration onto `Run`, explicit stage-disabling, and a
 `pactum config resolve` effective-config dump.
 
+## Judge selector — best-of-N where no oracle (panel-designed; DEFERRED, gated on measurement)
+
+A three-voice panel (codex gpt-5.5/xhigh + two opus) evaluated "use select-best-of-N
+*everywhere* — a stage could merge or select, whichever is better." Verdict: the
+instinct points at a real abstraction but "everywhere" is wrong, and the one
+valuable narrow cut should **not** be built now. Recorded so the analysis isn't lost.
+
+**The abstraction (when/if built).** A SELECT stage owns an intrinsic, in-code
+`Selector` (never a config field): `Select(candidates, evidence) → Selection`. Two
+kinds: **OracleSelector** — objective, deterministic, dominates where available
+(`execute` → the gate; winner = first gate-passer in `by:` order; already covered by
+the loop-engine slice above). **JudgeSelector** — a code-resolved LLM role ranks
+candidates for SELECT stages with **no** oracle (`contract_draft`); isolated from the
+`by:` performers (never grades its own work), blind to candidate identity where
+feasible, given the stage rubric + all candidates; returns winner + ranking + rejects
++ confidence + rationale. A **single** judge, not a panel (cost-on-cost; "who judges
+the judges"; a downstream review panel already converges quality). `execute` may
+later add **judge-refine among gate-passers** (gate filters to *correct* diffs first,
+then a judge ranks for quality — gate-filter-first is non-negotiable and is why
+execute's judge is safe while draft's has no floor).
+
+**Why it is mostly NOT worth it.** Best-of-N buys only a better *starting point*, and
+each whole-artifact stage already has a downstream convergence loop whose job is to
+erase starting-point variance (`contract_draft` → `contract_review`; `execute` →
+`code_review`). It pays only when candidate variance is high **and** the loop is
+weak/short/expensive **and** a reliable selector exists. Asymmetry: a wrong contract
+*skeleton* is load-bearing (the review fixer converges within a draft's frame, rarely
+re-decomposes it), so `contract_draft` is high-leverage — but it has no oracle, so a
+judge can confidently pick a **worse** draft, paying N× to possibly demote a good one
+(net-negative). `execute` has the gate (objective, free, deterministic) so its
+best-of-N is the only clearly-worth-it case, and it is already in the engine slice.
+
+**Determinism caveat (must advertise, not hide).** An OracleSelector run is
+*replayable* (declaration-order tiebreak); a JudgeSelector pick is *nondeterministic*
+— stamping all candidates + selector kind + admissibility/gate evidence + judge
+role/rubric-version + decision + ranking + rationale + fallback gives
+**auditability, not replayability**. Tie / judge-refusal / all-bad → deterministic
+fallback to `by:` order (judge refusal may retry once with a narrower prompt, then
+fall back); all-invalid → fail the stage.
+
+**Merge stays merge.** For composable outputs (reviews, clarify, memory) MERGE
+strictly dominates — select drops a real finding (A finds bug X, B finds bug Y → union
+{X,Y}; select keeps one). The right enrichment for MERGE stages is **dedup +
+severity/confidence ranking + contradiction handling *within* the merged set**, never
+select. (This dedup/rank-within-merge is itself a small, independent, buildable
+improvement to the review combine.)
+
+**Config impact: none.** `by: [a, b]` stays the only opt-in; selector kind, judge
+identity, and refine-on/off are all intrinsic in code. No `strategy`/`selector`/
+`judge`/`refine` field ("the first knob is the leak"). Unlocking multi-`by` on
+`contract_draft` is *removing* its load-error, not adding a knob. Run records expand,
+not config.
+
+**Recommendation.** **Do not build judge-selection in Phase-0** — it optimizes a
+baseline that does not yet exist (still validating a weak executor works at all), and
+the downstream loops should carry quality meanwhile. Keep `execute` oracle best-of-N
+(already in the engine slice). Smallest *future* cut, gated on measured evidence that
+single-draft + review wastes real rounds or yields worse contracts: `contract_draft`
+multi-`by` with one code-resolved judge + admissibility filtering + deterministic tie
+fallback + full run-record stamping. **Never:** universal select-best, configurable
+selectors, judge panels by default, select on any MERGE stage.
+
 ## Hardening / cleanup
 
 - **Executor resilience: auto-retry on transient failure + resume (not reset)**
