@@ -21,3 +21,7 @@ func contractReviewerAttemptPaths(runPaths contractRunPathSet, attemptID string)
 func reviewFixAttemptPaths(runPaths contractRunPathSet, attemptID string) attemptPathSet {
 	return agentAttemptPaths(runPaths.ReviewFixAttemptsDir, attemptID)
 }
+
+func contractReviewFixerAttemptPaths(runPaths contractRunPathSet, attemptID string) attemptPathSet {
+	return agentAttemptPaths(runPaths.ContractFixerAttemptsDir, attemptID)
+}

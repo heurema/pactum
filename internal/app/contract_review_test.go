@@ -10,14 +10,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/heurema/pactum/internal/agents"
 	"github.com/heurema/pactum/internal/artifacts"
 )
 
-// TestContractReviewHelperProcess is the subprocess used by contract review
-// tests. It checks that it is running in the repo root, reports whether stdin
-// contains a contract review heading, optionally fails for a specific lens
-// heading (PACTUM_CONTRACT_REVIEWER_FAIL_LENS), and optionally emits structured
-// findings (PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS=1).
+// TestContractReviewHelperProcess is the subprocess used by contract reviewer
+// tests. It checks CWD, confirms the prompt contains the review heading, and
+// conditionally emits structured findings controlled by env vars.
+//
+// PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS=1: emit structured findings block.
+// PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING=1: make those findings blocking=true.
+// PACTUM_CONTRACT_REVIEWER_CLEAN_ON_MARKER=1: emit no findings when stdin
+//
+//	contains "FIXED_MARKER", regardless of other emit vars.
+//
+// PACTUM_CONTRACT_REVIEWER_FAIL_LENS=<Heading>: exit 1 for that lens.
 func TestContractReviewHelperProcess(t *testing.T) {
 	if os.Getenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS") != "1" {
 		return
@@ -48,13 +55,63 @@ func TestContractReviewHelperProcess(t *testing.T) {
 		}
 	}
 	if os.Getenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS") == "1" {
-		fmt.Print(contractReviewerStructuredFindingOutput())
+		cleanOnMarker := os.Getenv("PACTUM_CONTRACT_REVIEWER_CLEAN_ON_MARKER") == "1"
+		if cleanOnMarker && strings.Contains(string(stdin), "FIXED_MARKER") {
+			// Contract already fixed; emit no findings this round.
+		} else {
+			blocking := os.Getenv("PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING") == "1"
+			fmt.Print(contractReviewerStructuredFindingOutput(blocking))
+		}
 	}
 	fmt.Fprintln(os.Stderr, "contract-reviewer-stderr-line")
 	os.Exit(0)
 }
 
-func contractReviewerStructuredFindingOutput() string {
+// TestContractReviewFixerHelperProcess is the subprocess used by contract fixer
+// tests. The fixer is always the executor agent (codex / first in registry).
+//
+// PACTUM_CONTRACT_FIXER_HELPER_PROCESS=1: activates this helper mode.
+// PACTUM_CONTRACT_FIXER_EMIT_REVISE=1: emit a valid revise block extracted
+//
+//	from the prompt (uses base_version from "Current contract version: <v>" line).
+//
+// PACTUM_CONTRACT_FIXER_EMIT_STALE_VERSION=1: emit a revise block with an
+//
+//	intentionally wrong base_version (tests stale-version rejection).
+func TestContractReviewFixerHelperProcess(t *testing.T) {
+	if os.Getenv("PACTUM_CONTRACT_FIXER_HELPER_PROCESS") != "1" {
+		return
+	}
+	stdin, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fixer stdin error: %v\n", err)
+		os.Exit(2)
+	}
+	switch {
+	case os.Getenv("PACTUM_CONTRACT_FIXER_EMIT_REVISE") == "1":
+		version := extractContractVersionFromPrompt(string(stdin))
+		fmt.Print(contractReviewFixerReviseOutput(version))
+	case os.Getenv("PACTUM_CONTRACT_FIXER_EMIT_STALE_VERSION") == "1":
+		fmt.Print(contractReviewFixerReviseOutput("stale-version-that-does-not-match"))
+	}
+	os.Exit(0)
+}
+
+// extractContractVersionFromPrompt extracts the SHA256 version string from the
+// fixer prompt line "Current contract version: <v>".
+func extractContractVersionFromPrompt(prompt string) string {
+	prefix := "Current contract version: "
+	for _, line := range strings.Split(prompt, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return "unknown-version"
+}
+
+// contractReviewerStructuredFindingOutput returns a reviewer findings JSON block.
+// When blocking is true the finding has blocking=true; otherwise blocking=false.
+func contractReviewerStructuredFindingOutput(blocking bool) string {
 	block := map[string]any{
 		"schema": reviewerFindingsSchema,
 		"findings": []any{
@@ -62,7 +119,7 @@ func contractReviewerStructuredFindingOutput() string {
 				"message":    "Acceptance criteria do not include machine-checkable validation commands.",
 				"severity":   "high",
 				"category":   "correctness",
-				"blocking":   true,
+				"blocking":   blocking,
 				"confidence": "high",
 				"evidence":   "validation.commands is empty; acceptance_criteria are prose-only.",
 			},
@@ -75,9 +132,26 @@ func contractReviewerStructuredFindingOutput() string {
 	return "reviewer analysis\n```json\n" + string(data) + "\n```\n"
 }
 
-// configureHelperContractReviewers registers names in the agent registry,
-// sets contract.reviewers in config, and wires the test binary as the agent
-// runtime for TestContractReviewHelperProcess.
+// contractReviewFixerReviseOutput returns a fixer revise block that adds
+// "FIXED_MARKER" to the contract assumptions so reviewers can detect that
+// the contract was revised.
+func contractReviewFixerReviseOutput(baseVersion string) string {
+	block := map[string]any{
+		"schema":       contractReviewFixerReviseSchema,
+		"base_version": baseVersion,
+		"contract": map[string]any{
+			"assumptions": []string{"FIXED_MARKER: this contract has been revised by the fixer"},
+		},
+	}
+	data, err := json.MarshalIndent(block, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	return "fixer analysis\n```json\n" + string(data) + "\n```\n"
+}
+
+// configureHelperContractReviewers registers reviewer agents and wires the
+// test binary's TestContractReviewHelperProcess as the reviewer runtime.
 func configureHelperContractReviewers(t *testing.T, app App, paths artifacts.Paths, names ...string) App {
 	t.Helper()
 	registerTestAgents(t, paths, names...)
@@ -86,10 +160,47 @@ func configureHelperContractReviewers(t *testing.T, app App, paths artifacts.Pat
 	return app
 }
 
+// configureHelperContractFixer wires the default reviewer (first entry in
+// registry) to TestContractReviewFixerHelperProcess. Call after
+// configureHelperContractReviewers — it rebuilds AgentRegistry with the fixer
+// and panel reviewers both in the reviewer slot (fixer uses the reviewer role).
+func configureHelperContractFixer(t *testing.T, app App, paths artifacts.Paths) App {
+	t.Helper()
+	config := readConfigForTest(t, paths.Config)
+	if len(config.Agents) == 0 {
+		t.Fatal("no agents registered; call configureHelperContractReviewers first")
+	}
+	fixerEngine := testAgentEngine(config.Agents[0].Name)
+	fixer := agents.AgentDescriptor{
+		Name:    fixerEngine,
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestContractReviewFixerHelperProcess", "--"},
+		Input:   agents.InputPromptFile,
+	}
+	reviewers := testHelperDescriptors(config.Contract.Reviewers, "TestContractReviewHelperProcess")
+	app.AgentRegistry = testAgentRegistryRoles(reviewers, append([]agents.AgentDescriptor{fixer}, reviewers...))
+	return app
+}
+
 func setContractReviewersConfig(t *testing.T, paths artifacts.Paths, names ...string) {
 	t.Helper()
 	config := readConfigForTest(t, paths.Config)
 	config.Contract.Reviewers = names
+	assertNoError(t, writeYAML(paths.Config, config))
+}
+
+func setContractReviewPatienceConfig(t *testing.T, paths artifacts.Paths, patience int) {
+	t.Helper()
+	config := readConfigForTest(t, paths.Config)
+	config.Review.Patience = patience
+	assertNoError(t, writeYAML(paths.Config, config))
+}
+
+func setContractReviewMaxRoundsConfig(t *testing.T, paths artifacts.Paths, maxRounds int) {
+	t.Helper()
+	config := readConfigForTest(t, paths.Config)
+	config.Review.MaxRounds = maxRounds
+	config.Review.Patience = maxRounds + 10 // prevent stalemate from firing before max_rounds
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 
@@ -124,6 +235,7 @@ func TestContractReviewPanelRunsAndEmitsFindings(t *testing.T) {
 	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
 	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS", "1")
+	// blocking=false (default) → no fixer invoked → single round → "resolved"
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
@@ -140,10 +252,13 @@ func TestContractReviewPanelRunsAndEmitsFindings(t *testing.T) {
 		t.Fatalf("agent output leaked into stdout:\n%s", stdout.String())
 	}
 
-	var response contractReviewResponse
+	var response contractReviewLoopResponse
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
-	if response.Schema != contractReviewSchema || response.RunID != runID {
+	if response.Schema != contractReviewLoopSchema || response.RunID != runID {
 		t.Fatalf("unexpected response schema/run: %#v", response)
+	}
+	if response.TerminalReason != "resolved" {
+		t.Fatalf("expected terminal_reason=resolved, got %q", response.TerminalReason)
 	}
 	if len(response.Reviewers) != 1 || response.Reviewers[0] != "helper" {
 		t.Fatalf("unexpected reviewers: %#v", response.Reviewers)
@@ -151,19 +266,26 @@ func TestContractReviewPanelRunsAndEmitsFindings(t *testing.T) {
 	if len(response.Lenses) != len(contractReviewLenses) {
 		t.Fatalf("expected %d lenses, got %d: %v", len(contractReviewLenses), len(response.Lenses), response.Lenses)
 	}
-	if len(response.SkippedLenses) != 0 {
-		t.Fatalf("expected no skipped lenses, got: %v", response.SkippedLenses)
+	if len(response.Rounds) != 1 {
+		t.Fatalf("expected 1 round, got %d", len(response.Rounds))
+	}
+	round := response.Rounds[0]
+	if round.BlockingFindings != 0 {
+		t.Fatalf("expected no blocking findings (helper emits blocking=false), got %d", round.BlockingFindings)
+	}
+	if len(round.SkippedLenses) != 0 {
+		t.Fatalf("expected no skipped lenses, got: %v", round.SkippedLenses)
 	}
 	// Helper emits one finding per lens (EMIT_FINDINGS=1); each is parsed.
-	if len(response.Findings) != len(contractReviewLenses) {
-		t.Fatalf("expected %d findings (one per lens), got %d: %v", len(contractReviewLenses), len(response.Findings), response.Findings)
+	if len(round.Findings) != len(contractReviewLenses) {
+		t.Fatalf("expected %d findings (one per lens), got %d: %v", len(contractReviewLenses), len(round.Findings), round.Findings)
 	}
-	for _, f := range response.Findings {
+	for _, f := range round.Findings {
 		if f.Reviewer != "helper" || f.Lens == "" || f.Message == "" || f.Severity == "" {
 			t.Fatalf("finding missing required fields: %#v", f)
 		}
-		if !f.Blocking {
-			t.Fatalf("finding should be blocking (helper always emits blocking=true): %#v", f)
+		if f.Blocking {
+			t.Fatalf("finding should be non-blocking (no EMIT_BLOCKING): %#v", f)
 		}
 	}
 
@@ -237,7 +359,7 @@ func TestContractReviewPanelRunsAndEmitsFindings(t *testing.T) {
 }
 
 // TestContractReviewFailedLensSkipped checks that when one lens attempt fails,
-// it is recorded in skipped_lenses and the command still exits 0 (not aborted).
+// it is recorded in skipped_lenses in the round and the command still exits 0.
 func TestContractReviewFailedLensSkipped(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
@@ -253,20 +375,24 @@ func TestContractReviewFailedLensSkipped(t *testing.T) {
 		t.Fatalf("contract review with one failed lens should exit 0, got %d, stderr: %s", code, stderr.String())
 	}
 
-	var response contractReviewResponse
+	var response contractReviewLoopResponse
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
-	if response.Schema != contractReviewSchema {
+	if response.Schema != contractReviewLoopSchema {
 		t.Fatalf("unexpected response schema: %q", response.Schema)
 	}
+	if len(response.Rounds) == 0 {
+		t.Fatalf("expected at least one round")
+	}
+	round := response.Rounds[0]
 
 	// Exactly one skipped lens (the completeness attempt that exited 1).
-	if len(response.SkippedLenses) != 1 {
-		t.Fatalf("expected 1 skipped lens, got %d: %v", len(response.SkippedLenses), response.SkippedLenses)
+	if len(round.SkippedLenses) != 1 {
+		t.Fatalf("expected 1 skipped lens, got %d: %v", len(round.SkippedLenses), round.SkippedLenses)
 	}
-	if response.SkippedLenses[0].Reviewer != "helper" || response.SkippedLenses[0].Lens != "completeness" {
-		t.Fatalf("unexpected skipped lens: %#v", response.SkippedLenses[0])
+	if round.SkippedLenses[0].Reviewer != "helper" || round.SkippedLenses[0].Lens != "completeness" {
+		t.Fatalf("unexpected skipped lens: %#v", round.SkippedLenses[0])
 	}
-	// The 4 other lenses ran successfully (helper exits 0 for them).
+	// The 4 other lenses ran successfully.
 	expectedSuccess := len(contractReviewLenses) - 1
 	expectedAttempts := len(contractReviewLenses)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
@@ -297,6 +423,7 @@ func TestContractReviewMultipleReviewers(t *testing.T) {
 	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
 	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS", "1")
+	// blocking=false (default) → no fixer → resolved after round 1
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
@@ -304,21 +431,25 @@ func TestContractReviewMultipleReviewers(t *testing.T) {
 		t.Fatalf("contract review exited %d, stderr: %s", code, stderr.String())
 	}
 
-	var response contractReviewResponse
+	var response contractReviewLoopResponse
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
-	if response.Schema != contractReviewSchema {
+	if response.Schema != contractReviewLoopSchema {
 		t.Fatalf("unexpected response schema: %q", response.Schema)
 	}
 	if len(response.Reviewers) != 2 {
 		t.Fatalf("expected 2 reviewers, got %d: %v", len(response.Reviewers), response.Reviewers)
 	}
+	if len(response.Rounds) == 0 {
+		t.Fatalf("expected at least one round")
+	}
+	round := response.Rounds[0]
 	// Two reviewers × N lenses = 2×N findings (helper emits one finding per lens).
 	expectedFindings := 2 * len(contractReviewLenses)
-	if len(response.Findings) != expectedFindings {
-		t.Fatalf("expected %d findings, got %d", expectedFindings, len(response.Findings))
+	if len(round.Findings) != expectedFindings {
+		t.Fatalf("expected %d findings, got %d", expectedFindings, len(round.Findings))
 	}
 	reviewerCounts := map[string]int{}
-	for _, f := range response.Findings {
+	for _, f := range round.Findings {
 		if f.Reviewer != "helper-a" && f.Reviewer != "helper-b" {
 			t.Fatalf("finding has unexpected reviewer: %q", f.Reviewer)
 		}
@@ -327,8 +458,8 @@ func TestContractReviewMultipleReviewers(t *testing.T) {
 	if reviewerCounts["helper-a"] != len(contractReviewLenses) || reviewerCounts["helper-b"] != len(contractReviewLenses) {
 		t.Fatalf("reviewer finding counts wrong: %v", reviewerCounts)
 	}
-	if len(response.SkippedLenses) != 0 {
-		t.Fatalf("expected no skipped lenses, got: %v", response.SkippedLenses)
+	if len(round.SkippedLenses) != 0 {
+		t.Fatalf("expected no skipped lenses, got: %v", round.SkippedLenses)
 	}
 }
 
@@ -349,7 +480,8 @@ func TestContractReviewHumanReadableFindings(t *testing.T) {
 	}
 
 	output := stdout.String()
-	wantFindingsLine := fmt.Sprintf("Findings: %d", len(contractReviewLenses))
+	// Round summary line includes finding count.
+	wantFindingsLine := fmt.Sprintf("findings %d (blocking 0)", len(contractReviewLenses))
 	if !strings.Contains(output, wantFindingsLine) {
 		t.Fatalf("expected %q in output:\n%s", wantFindingsLine, output)
 	}
@@ -361,6 +493,163 @@ func TestContractReviewHumanReadableFindings(t *testing.T) {
 	}
 	if !strings.Contains(output, "Next:") {
 		t.Fatalf("expected Next section in output:\n%s", output)
+	}
+}
+
+// TestContractReviewLoopCleanConvergence checks the full convergence path:
+// round 1 produces blocking findings, the fixer applies a revise, and round 2
+// returns no findings (contract now has "FIXED_MARKER") → terminal_reason=resolved.
+func TestContractReviewLoopCleanConvergence(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	app = configureHelperContractReviewers(t, app, paths, "helper")
+	app = configureHelperContractFixer(t, app, paths)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_CLEAN_ON_MARKER", "1")
+	t.Setenv("PACTUM_CONTRACT_FIXER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_FIXER_EMIT_REVISE", "1")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var response contractReviewLoopResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.Schema != contractReviewLoopSchema {
+		t.Fatalf("unexpected schema: %q", response.Schema)
+	}
+	if response.TerminalReason != "resolved" {
+		t.Fatalf("expected terminal_reason=resolved, got %q\nfull response: %s", response.TerminalReason, stdout.String())
+	}
+	if len(response.Rounds) != 2 {
+		t.Fatalf("expected 2 rounds, got %d", len(response.Rounds))
+	}
+
+	// Round 1: blocking findings + fixer applies a fix.
+	r1 := response.Rounds[0]
+	if r1.BlockingFindings == 0 {
+		t.Fatalf("round 1 should have blocking findings: %#v", r1)
+	}
+	if r1.FixerAttemptID == "" {
+		t.Fatalf("round 1 should have a fixer attempt ID: %#v", r1)
+	}
+	if r1.FixesApplied != 1 || r1.FixesSkipped != 0 {
+		t.Fatalf("round 1: expected FixesApplied=1, got applied=%d skipped=%d", r1.FixesApplied, r1.FixesSkipped)
+	}
+	if r1.UnchangedVersionStreak != 0 {
+		t.Fatalf("round 1: version should have changed (streak should be 0), got %d", r1.UnchangedVersionStreak)
+	}
+
+	// Round 2: clean (no findings, no fixer).
+	r2 := response.Rounds[1]
+	if len(r2.Findings) != 0 {
+		t.Fatalf("round 2 should be clean, got findings: %#v", r2.Findings)
+	}
+	if r2.FixerAttemptID != "" {
+		t.Fatalf("round 2 should not invoke fixer: %#v", r2)
+	}
+	if r2.CleanStreak < 1 {
+		t.Fatalf("round 2 clean streak should be >= 1, got %d", r2.CleanStreak)
+	}
+}
+
+// TestContractReviewLoopMaxRounds checks that the loop terminates with
+// terminal_reason=max_rounds when blocking findings persist through all rounds.
+func TestContractReviewLoopMaxRounds(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	app = configureHelperContractReviewers(t, app, paths, "helper")
+	app = configureHelperContractFixer(t, app, paths)
+	setContractReviewMaxRoundsConfig(t, paths, 2)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING", "1")
+	// Fixer emits no revise block → fix skipped → version unchanged.
+	// But patience is max_rounds+10 so stalemate does not fire before max_rounds.
+	t.Setenv("PACTUM_CONTRACT_FIXER_HELPER_PROCESS", "1")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var response contractReviewLoopResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.Schema != contractReviewLoopSchema {
+		t.Fatalf("unexpected schema: %q", response.Schema)
+	}
+	if response.TerminalReason != "max_rounds" {
+		t.Fatalf("expected terminal_reason=max_rounds, got %q\nfull response: %s", response.TerminalReason, stdout.String())
+	}
+	if len(response.Rounds) != 2 {
+		t.Fatalf("expected 2 rounds (max_rounds=2), got %d", len(response.Rounds))
+	}
+	for i, r := range response.Rounds {
+		if r.BlockingFindings == 0 {
+			t.Fatalf("round %d should have blocking findings", i+1)
+		}
+	}
+}
+
+// TestContractReviewLoopVersionGuard checks that when the fixer outputs a revise
+// block with a stale base_version, the fix is skipped (warning surfaced) and the
+// loop terminates with stalemate after patience is exhausted.
+func TestContractReviewLoopVersionGuard(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	app = configureHelperContractReviewers(t, app, paths, "helper")
+	app = configureHelperContractFixer(t, app, paths)
+	setContractReviewPatienceConfig(t, paths, 1) // stalemate after 1 unchanged round
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING", "1")
+	t.Setenv("PACTUM_CONTRACT_FIXER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_FIXER_EMIT_STALE_VERSION", "1")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var response contractReviewLoopResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.Schema != contractReviewLoopSchema {
+		t.Fatalf("unexpected schema: %q", response.Schema)
+	}
+	if response.TerminalReason != "stalemate" {
+		t.Fatalf("expected terminal_reason=stalemate, got %q\nfull response: %s", response.TerminalReason, stdout.String())
+	}
+	if len(response.Rounds) == 0 {
+		t.Fatalf("expected at least one round")
+	}
+
+	// The fixer ran but the revise was rejected; fix skipped, contract unchanged.
+	r1 := response.Rounds[0]
+	if r1.FixesApplied != 0 || r1.FixesSkipped == 0 {
+		t.Fatalf("expected FixesSkipped>0, got applied=%d skipped=%d", r1.FixesApplied, r1.FixesSkipped)
+	}
+	if r1.UnchangedVersionStreak == 0 {
+		t.Fatalf("expected UnchangedVersionStreak > 0 after stale-version rejection, got %d", r1.UnchangedVersionStreak)
+	}
+	// At least one warning mentions the stale version.
+	hasStaleWarning := false
+	for _, w := range r1.Warnings {
+		if strings.Contains(w, "STALE_VERSION") || strings.Contains(w, "stale") || strings.Contains(w, "base_version") {
+			hasStaleWarning = true
+			break
+		}
+	}
+	if !hasStaleWarning {
+		t.Fatalf("expected a stale-version warning, got: %v", r1.Warnings)
 	}
 }
 

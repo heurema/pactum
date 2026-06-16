@@ -344,6 +344,56 @@ distillation lives in
 
 ## Hardening / cleanup
 
+- **Executor resilience: auto-retry on transient failure + resume (not reset)**
+  (med). Today a model drop (rate_limit / network / 5xx) or idle-timeout during
+  `execute` (or any agent stage) is recorded as a failed attempt and the operator
+  must re-run by hand; a partial execution leaves a half-edited working tree that
+  the gate/review catch but nobody auto-cleans. Two parts:
+  - **Auto-retry transient failures** with backoff — distinguish *transient*
+    (rate_limit/network/timeout → retry) from *terminal* (the agent ran fine but
+    produced wrong code → not retry; that is review's job). Seen live: codex
+    rate-limit on execute and fable rate-limit on review (the latter now handled
+    by graceful degradation #154; the executor path is not).
+  - **Resume, not auto-reset.** When an attempt fails partway, the next attempt
+    should *continue from the partial working tree* rather than redo from scratch
+    (which throws away real work + burned tokens). The pieces already exist: the
+    partial working tree persists (git never auto-resets it), `git diff` is the
+    "what's already done" signal, the frozen contract is the target, and the
+    prior attempt's `stdout.log` is the trajectory. A resume attempt feeds the
+    agent the contract + the current diff ("partial progress is already on disk;
+    finish the remainder, don't redo done work") and the per-task `validation`
+    tells it when it's complete. Offer an explicit `--fresh` to discard the
+    partial tree when it is garbage (resume by default, reset on request — the
+    safe-default/opt-in polarity).
+  - **The plan DAG makes resume principled** (see
+    [contract-plan-dag-design.md](contract-plan-dag-design.md)): commit-per-task
+    + the unhashed `tasks-state.json` ledger mean re-running the loop picks up at
+    the first not-done task automatically (completed tasks' commits are in git).
+    So fine-grained resume is another argument for the DAG; the single-shot
+    version above is the coarse interim.
+
+- **`operator` field in the trace** (small). Record *who drove* each agent
+  invocation — the principal that ran the pactum command — distinct from `agent`
+  (the model that did the work) and `role` (the stage). In the human → agent →
+  pactum → agent model this captures the middle layer (which human / orchestrating
+  agent / CI driver initiated the step), which the records don't show today. Reuse
+  the existing `--by <principal>` concept (already recorded on approve/accept,
+  default `manual`) rather than a parallel mechanism: thread it through every
+  agent-invoking command (draft / execute / review / contract review) into
+  `usage.jsonl` and the per-attempt records as `operator`. It folds into the
+  usage-accounting schema in [contract-plan-dag-design.md](contract-plan-dag-design.md)
+  (the row already carries `role`/`agent`/`model`) and is orthogonal to the DAG
+  ledger's `by` (which is the task's *executor*, not its *driver*). Honest scope:
+  the operator is **self-reported** (pactum cannot infer its caller) — attribution
+  for audit, not a security boundary; document that so the field is not mistaken
+  for a trust signal. In the same pass, **rename the trace `role` field to
+  `stage`** — `executor`/`drafter`/`reviewer`/`fixer` read more naturally as
+  pipeline stages. Caveat now that contract review exists: `fixer` and `reviewer`
+  occur in *two* loops (code review and contract review), so either give `stage`
+  disambiguated values (`code-review` vs `contract-review`, e.g.
+  `contract-review-fix`) — preferred, one field — or keep the plan-DAG usage
+  schema's separate `phase` (where) + function axes.
+
 - **ACP-only transport — remove the `claude -p` CLI path** (med). All agent
   invocation must go through ACP (`internal/agents/acp_transport.go`). The
   built-in claude descriptor (`internal/agents/config.go`) runs a CLI process
