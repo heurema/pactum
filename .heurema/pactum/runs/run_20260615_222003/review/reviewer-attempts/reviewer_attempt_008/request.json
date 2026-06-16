@@ -1,0 +1,33 @@
+{
+  "schema": "pactum.reviewer_request.v1",
+  "run_id": "run_20260615_222003",
+  "attempt_id": "reviewer_attempt_008",
+  "created_at": "2026-06-15T23:20:48Z",
+  "reviewer": {
+    "name": "claude",
+    "command": "",
+    "args": [],
+    "input": "prompt_file"
+  },
+  "lens": "docs",
+  "artifacts": {
+    "reviewer_prompt": "review/reviewer-prompt-fable-docs.md",
+    "reviewer_context": "review/reviewer-context.md",
+    "review": "review/review.json",
+    "findings": "review/findings.jsonl",
+    "resolutions": "review/resolutions.jsonl",
+    "proposals": "review/proposals.jsonl",
+    "proposal_decisions": "review/proposal-decisions.jsonl",
+    "gate_report": "gate/gate-report.json"
+  },
+  "would_run": {
+    "command": "npx",
+    "args": [
+      "-y",
+      "@agentclientprotocol/claude-agent-acp@latest"
+    ],
+    "env": [
+      "ANTHROPIC_MODEL=claude-fable-5"
+    ]
+  }
+}

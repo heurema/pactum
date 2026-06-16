@@ -1,0 +1,39 @@
+{
+  "schema": "pactum.contract_draft_proposal.v1",
+  "run_id": "run_20260615_213820",
+  "status": "accepted",
+  "created_at": "2026-06-15T21:38:27Z",
+  "source": "drafter_attempt",
+  "drafter_attempt_id": "drafter_attempt_001",
+  "drafter": "codex",
+  "in_scope": [
+    "Update internal/app/review_loop.go so a failed reviewer/lens attempt is treated as a skipped lens when at least one reviewer/lens attempt in the round succeeds.",
+    "Record skipped reviewer/lens attempts with reviewer name, lens key, and failure reason in the round result and persisted review loop summary.",
+    "Surface skipped reviewer/lens warnings in both JSON review output and human-readable review run output.",
+    "Add focused review-loop tests for partial lens failure and all-lens failure behavior."
+  ],
+  "out_of_scope": [
+    "Do not change the review lens set, reviewer panel resolution, stagger scheduling policy, or reviewer prompt content except as needed to report skipped attempts.",
+    "Do not change fixer, gate, proposal acceptance, or convergence semantics beyond treating skipped reviewer/lens attempts as non-fatal when another lens succeeds.",
+    "Do not make failed reviewer/lens attempts appear as accepted findings or successful proposal sources."
+  ],
+  "acceptance": [
+    "When one reviewer/lens attempt fails and at least one other reviewer/lens attempt succeeds, `pactum review run` completes the round instead of returning the failing attempt error.",
+    "For a partial failure round, successful lens results are still collected into proposals exactly as before, and skipped lenses do not call proposal collection.",
+    "For a partial failure round, the round summary artifact contains an observable warning or structured skipped entry identifying the skipped reviewer, lens, and reason.",
+    "For a partial failure round, CLI JSON output and non-JSON summary output surface the skipped reviewer/lens and reason.",
+    "When every reviewer/lens attempt in a review round fails, the round returns an error and does not report a successful review round.",
+    "Existing convergence behavior remains unchanged for clean rounds, open findings, fixer rounds, gate failures, and stalemate handling except for non-fatal skipped lens attempts."
+  ],
+  "validation": [
+    "go test ./internal/app -run TestReviewLoop -count=1",
+    "make check"
+  ],
+  "assumptions": [
+    "The preferred persisted representation can be either structured skipped attempt entries or warning strings, as long as tests can assert reviewer, lens, and reason from the review loop summary artifact and CLI output.",
+    "A reviewer/lens attempt counts as successful only when it produces a usable reviewer result document that can be processed for proposals.",
+    "Failure reasons may be normalized from process errors, timeouts, unavailable-model errors, or agent transport errors, but must preserve enough detail for a human to understand why the lens was skipped."
+  ],
+  "accepted_at": "2026-06-15T21:40:08Z",
+  "accepted_by": "manual"
+}
