@@ -342,6 +342,49 @@ distillation lives in
   reads the whole enclosing function once instead of windowing around the
   hunk — targets the multi-million-token review leg directly.
 
+## Config redesign — settings + stages, and effort (panel-designed)
+
+The config (`pactum.config.v1alpha1`) is a flat mush: the agents registry, map
+indexing, gate policy, and two *different* review loops (`review` = code,
+`contract` = contract) sit flat with no shared shape and are configured
+inconsistently (`review.panel` vs `contract.reviewers`; `review` has
+rounds/patience, `contract` doesn't). A three-voice design panel (codex
+gpt-5.5 + two opus) settled the redesign. No users → breaking the shape is free.
+Two slices:
+
+- **Config restructure** (med). Bump to `pactum.config.v1alpha2`; reject the old
+  flat shape loudly. Top-level: `schema`, `agents` (the registry — the
+  resolution root, stays top-level), `settings` (global: `map`, `gate` policy,
+  `defaults`, `timeouts`), `stages` (the pipeline). Stages are **typed but share
+  a uniform layout** — the stage *key* is the type (no `type:` discriminator):
+  single-agent stages (`clarify`/`contract_draft`/`execute`/`memory`) accept
+  `agent` and **reject** `reviewers`; panel-loop stages
+  (`contract_review`/`code_review`) accept `reviewers`/`fixer`/`lenses`/`rounds`
+  and reject `agent`; loop knobs on a non-loop stage are a load **error**, not a
+  no-op. **Unify the two review loops** to the identical panel-loop shape
+  (`enabled, reviewers, fixer, lenses, rounds`): `review.panel` →
+  `stages.code_review.reviewers`, `contract.reviewers` →
+  `stages.contract_review.reviewers`; the cross-model reviewer-default rule lives
+  in one place and applies to both. Name `contract_draft` (drafting) vs
+  `contract_review` (reviewing) — not `contract` (the artifact). Strict
+  unknown-field rejection; a stage referencing an unregistered agent name is a
+  load error.
+- **Effort resolution + validation + stamping** (small-med). Effort stays
+  optional. Resolve `agent.effort → settings.defaults.effort[engine] → provider
+  inherit`. Defaults are **per-engine** — a single cross-provider scalar cannot
+  exist (claude effort vocabulary is {low,medium,high,xhigh,max}; codex differs,
+  no `max`). Validate any non-empty resolved effort against the resolved engine's
+  vocabulary **at config load** (reject e.g. `max` on a codex agent) — do **not**
+  invent a normalized pactum vocabulary (lossy: `max`→`xhigh` is the same word
+  meaning different real effort per engine), and do **not** pass through blindly
+  (turns a load-time-catchable typo into a late execute-time failure). Stamp
+  `{model, effort, effort_source}` on every agent attempt — and stamp the
+  **source** (`entry`/`default`/`inherit`), NOT a fabricated inherited value:
+  pactum cannot know the provider's actual default unless it set it (the inherit
+  case is invisible — record that it *was* inherited, for reproducibility).
+  Defer: a `pactum config resolve` effective-config dump, and per-*model* (not
+  just per-engine) effort capability tables.
+
 ## Hardening / cleanup
 
 - **Executor resilience: auto-retry on transient failure + resume (not reset)**
