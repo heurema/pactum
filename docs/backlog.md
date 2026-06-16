@@ -498,16 +498,27 @@ Implementation note: the per-stage `by:` agents must reproduce today's resolved
 role-resolution assignments — verify against `run.go` before hardcoding, so the
 restructure changes config *shape* without changing *which agent runs where*.
 
+**Decision (MVP scope): the first slice ships the config rework AND the loop-engine
+extraction together** — not a config-only cut first. A config-only MVP (rework the
+shape, keep the three hand-rolled loops as-is) was considered and rejected: the
+engine *is* the point — it collapses the ~1200-line `review_loop`/`contract_review`
+duplication and fixes `contract_review`'s missing ledger events, which a config-only
+cut would leave on the table. So the config reflects a real abstraction from day one,
+not a reshaped façade over the old loops.
+
 First slice: extract `internal/loop` (`Run`/`Limits`/`RoundResult`/`Outcome` +
 table tests for settled/stalemate/max/human/error); port `review_loop` **and**
 `contract_review` onto it (behaviour unchanged — and **add the ledger events
-`contract_review` currently lacks**); add the `pipeline.<stage>.by`/`.loop` config
-resolver, exercised by the two reviews; stamp resolved performers + limits +
-outcome in the caller. Then `execute` best-of-N-by-gate (worktree isolation,
-declaration-order tiebreak, stamp all attempts + winner). **Deferred,
-config-ready-but-unbuilt:** `contract_draft` multi-model, `execute`-retry/`backoff`,
-`clarify`/`memory` migration onto `Run`, explicit stage-disabling, and a
-`pactum config resolve` effective-config dump.
+`contract_review` currently lacks**); add the new config (`version` / `agents` /
+`map` / `out_of_scope` / `pipeline.<stage>.{by, loop?}`, `schema → version` rename)
+and resolver, exercised by the two reviews; stamp resolved performers + limits +
+outcome in the caller. `loop:` is valid only on the loop stages
+(`clarify`/`contract_review`/`code_review`); `by:` lists only where a panel exists
+today (the two reviews) — no new multi-model capability in this slice. Then
+`execute` best-of-N-by-gate (worktree isolation, declaration-order tiebreak, stamp
+all attempts + winner). **Deferred, config-ready-but-unbuilt:** `contract_draft`
+multi-model, `execute`-retry/`backoff`, `clarify`/`memory` migration onto `Run`,
+explicit stage-disabling, and a `pactum config resolve` effective-config dump.
 
 ## Judge selector — best-of-N where no oracle (panel-designed; DEFERRED, gated on measurement)
 
