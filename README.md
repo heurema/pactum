@@ -8,11 +8,9 @@ auditable stages. Every stage writes durable artifacts under a workspace
 directory, so you can see exactly what an agent was asked to do, what it did, and
 how it was checked — before any change is trusted.
 
-Pactum invokes agents (`codex`, `claude`) directly as subprocesses — by default
-through each agent's Agent Client Protocol (ACP) adapter, which streams output
-live and lets Pactum guard file writes in real time; setting
-`PACTUM_AGENT_TRANSPORT=cli` is the debug escape hatch that invokes the one-shot
-agent CLIs instead. It does **not** sandbox or isolate execution: an agent runs
+Pactum invokes agents (`codex`, `claude`) through each agent's Agent Client
+Protocol (ACP) adapter, which streams output live and lets Pactum guard file
+writes in real time. It does **not** sandbox or isolate execution: an agent runs
 with your shell environment and your repository, just as if you launched it
 yourself. Pactum's value is the contract, the boundaries it records, and the
 deterministic checks around the agent — not a security boundary.
@@ -50,13 +48,9 @@ deterministic checks around the agent — not a security boundary.
 
 Pactum ships two built-in agents:
 
-- `codex` — over the default ACP transport, launches the external adapter
-  `npx -y @zed-industries/codex-acp@latest`; over the CLI transport, the
-  executor runs `codex exec --json --dangerously-bypass-approvals-and-sandbox`.
-- `claude` — over the default ACP transport, launches the external adapter
-  `npx -y @agentclientprotocol/claude-agent-acp@latest`; over the CLI
-  transport, the executor runs
-  `claude -p --output-format json --dangerously-skip-permissions`.
+- `codex` — launches the ACP adapter `npx -y @zed-industries/codex-acp@latest`.
+- `claude` — launches the ACP adapter
+  `npx -y @agentclientprotocol/claude-agent-acp@latest`.
 
 Agents are invoked through the required `agents` registry in
 `.heurema/pactum/config.yaml`: each entry is `{name, model, effort}` — the
@@ -70,13 +64,13 @@ Both built-ins read their prompt from a prompt file that Pactum prepares. Check
 that the agent CLIs are installed and visible on your `PATH` with
 `pactum doctor`.
 
-Pactum runs these agents as **direct subprocesses in your repository**. There is
-no Pactum-managed isolation, container, or virtual machine around them. Both the
-ACP adapters and the agent CLIs are external tooling with direct access to your
-repository, your runtime, and your inherited environment variables — real agent
-execution is **unsandboxed** and appropriate only for a repository and task
-context you trust with that access. See [SECURITY.md](SECURITY.md) for the
-threat model and safe usage.
+Pactum runs these adapters as **direct subprocesses in your repository**. There
+is no Pactum-managed isolation, container, or virtual machine around them. The
+ACP adapters are external tooling with direct access to your repository, your
+runtime, and your inherited environment variables — real agent execution is
+**unsandboxed** and appropriate only for a repository and task context you trust
+with that access. See [SECURITY.md](SECURITY.md) for the threat model and safe
+usage.
 
 ## Not in the MVP
 
@@ -151,11 +145,9 @@ pactum clarify add "Question?" --blocking
 pactum clarify answer q_001 "Answer"
 
 # 4. Shape and approve the contract.
-pactum contract revise \
-  --goal "..." \
-  --add-in-scope "..." \
-  --add-acceptance "..." \
-  --add-validation "go test ./..."
+pactum contract show --json > contract.json
+# edit contract.json, then:
+pactum contract revise --from contract.json
 pactum contract approve
 
 # 5. Build the deterministic executor prompt boundary.

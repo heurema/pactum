@@ -78,8 +78,9 @@ Read `references/workflow.md` for the detailed version. The safe default flow:
    `pactum clarify answer q_001 "..."`, or relay the clarifier's stored
    recommendation with `pactum clarify answer q_001 --recommended`
    (`--all-recommended` answers every open recommended question).
-7. `pactum contract revise` with goal, in-scope, out-of-scope, acceptance
-   criteria, and validation commands.
+7. `pactum contract show --json` to get the editable contract + version token,
+   then `pactum contract revise --from <file>` (or `--from -` for stdin) with a
+   partial JSON document `{"base_version": "<token>", "contract": {<fields>}}`.
 8. `pactum contract approve --by manual` — only after the scope is clear.
 9. `pactum prompt build` then `pactum prompt show`. A stale project map is
    self-healed: `prompt build` refreshes it and reports the refresh.

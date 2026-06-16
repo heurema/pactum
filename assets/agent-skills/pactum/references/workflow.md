@@ -56,12 +56,30 @@ design. Always confirm against the actual files before relying on them.
    (`pactum clarify run` launches a clarifier agent and is not part of the safe
    default flow; `--no-auto --max-rounds 1` is its single manual pass.)
 
-7. **Write the contract.** `pactum contract revise` with:
-   - `--goal` — one clear sentence.
-   - `--add-in-scope` — what will change (be specific: files/areas).
-   - `--add-out-of-scope` — what will not.
-   - `--add-acceptance` — observable criteria.
-   - `--add-validation` — the commands that prove it (e.g. `make check`).
+7. **Write the contract.** `pactum contract revise <run_id> --from -` reads a
+   partial JSON document from stdin (`--from <file>` for a file). Include only
+   the fields you want to set — absent fields are left untouched. Wrap the
+   fields in `{"base_version": "<version>", "contract": {<fields>}}`. Obtain
+   `<version>` from `pactum contract show --json` (the `version` field).
+
+   ```sh
+   VERSION=$(pactum contract show --json | jq -r '.version')
+   pactum contract revise --from - <<EOF
+   {
+     "base_version": "$VERSION",
+     "contract": {
+       "goal": "one clear sentence",
+       "scope": {"in": ["what will change"], "out": ["what will not"]},
+       "acceptance_criteria": ["observable criteria"],
+       "validation": {"commands": ["make check"]}
+     }
+   }
+   EOF
+   ```
+
+   Alternatively: `pactum contract show --json > contract-draft.json`, edit the
+   `contract` sub-object, then
+   `pactum contract revise --from contract-draft.json`.
    Contract quality checklist: goal unambiguous, scope bounded, acceptance
    observable, validation runnable.
 
