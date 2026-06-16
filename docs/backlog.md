@@ -374,17 +374,27 @@ type RoundResult struct {
 type Outcome struct { Reason string; Rounds int; Last RoundResult } // settled|stalemate|max|human
 
 type Step func(ctx, RoundContext) (RoundResult, error)
-func Run(ctx, Limits, Step) (Outcome, error)  // ~40 lines: Clean→settle-streak,
-                                              // !Clean&&!Progress→patience, Human→exit, Max→ceiling
+func Run(ctx, Limits, Step) (Outcome, error)  // Clean→clean-streak (settle);
+                                              // !Clean&&!Progress→stale-streak (patience);
+                                              // a Clean round leaves the stale-streak UNCHANGED
+                                              // (streaks decoupled); Human→exit; Max→ceiling
 ```
 
 Boundary: the engine reads three signals and counts streaks — nothing else. `step`
-owns fan-out to performers, MERGE/SELECT combine, fixer, lenses, domain work.
-"Stalled" is *derived* (`!Clean && !Progress`), not a stage-reported state. A
-single-shot stage (`contract_draft`, `memory`) is just a `step` run once via
-`Run{Max:1}` — uniform stamping path, no ceremony. Porting
+owns fan-out to performers, MERGE/SELECT combine, fixer, lenses, domain work. The
+two streaks are **decoupled**: a `Clean` round grows the clean-streak and leaves the
+stale-streak *unchanged* (the stale-streak resets only on `Progress`, increments only
+on `!Clean && !Progress`) — the semantics the contract-review panel caught and
+corrected before this shipped. A single-shot stage (`contract_draft`, `memory`) is
+just a `step` run once via `Run{Max:1}` — uniform stamping path, no ceremony. Porting
 `review_loop`+`contract_review` onto `Run` deletes the ~1200-line duplication.
-Two slices:
+
+**Shipped (#172):** `internal/loop` (the engine + `TestDepsIsolation` stdlib-only
+guard) and the `contract_review` port (incl. the previously-missing
+`contract_review_loop_started`/`_finished` ledger events). Dogfooded through pactum;
+the executor (Sonnet) ran through a mid-task context compaction and still passed the
+deterministic gate. **Remaining in this first slice:** the `review_loop` port (the
+dup-collapse) and the new `pipeline`/`by`/`loop` config + resolver. Two slices:
 
 - **Config restructure — the `pipeline`** (med). Rename the version field
   `schema:` → `version:` and drop the type prefix (`version: v1alpha1`, not
@@ -611,6 +621,25 @@ selectors, judge panels by default, select on any MERGE stage.
     the first not-done task automatically (completed tasks' commits are in git).
     So fine-grained resume is another argument for the DAG; the single-shot
     version above is the coarse interim.
+  - **Context-compaction policy (research-backed).** A deep-research pass (Liu
+    lost-in-the-middle; NoLiMa — 11/13 models <50% at 32K; Chroma "context rot";
+    Anthropic & Cognition context-engineering) established with *high* confidence
+    that long/summarized context measurably degrades coding agents and a *fresh
+    focused* window beats a long/compacted one holding the same info; compaction is
+    lossy and irreversible. No source A/B-tested compacted-vs-fresh for *coding*
+    specifically, so the policy is well-motivated inference (*medium* confidence),
+    not a measurement. The policy: **(1)** let the executor finish even through a
+    compaction; **(2)** judge by the deterministic gate **and** the code-review
+    panel — the panel encodes the contract beyond what `build/test/lint` check, and
+    `build/test/lint` alone miss *silent spec-drift*; **(3)** on gate/review failure
+    **OR** ≥2 compactions **OR** observed forgetting-signs, don't blind-continue and
+    don't cold-wipe — spawn a **fresh** executor that *resumes from disk + the
+    re-readable contract* (a fresh focused window, the resume above); **(4)** the
+    verifier must encode the acceptance criteria so the gate can catch spec-drift,
+    not just compilation. Validated live in #172: a Sonnet executor ran through a
+    mid-task compaction and shipped a correct, in-scope engine *because* the
+    two-layer verification (gate + the contract-encoding review panel, which caught
+    two spec-drift bugs the tests missed) held — not because compaction was harmless.
 
 - **`operator` field in the trace** (small). Record *who drove* each agent
   invocation — the principal that ran the pactum command — distinct from `agent`
@@ -665,7 +694,12 @@ selectors, judge panels by default, select on any MERGE stage.
   uncaught (e.g. const-block alignment in `internal/app/clarify_round.go` and
   `review.go` drifted after the M25.1 budget-const removal — vet-clean, builds
   fine, but unformatted). Add `gofmt -l` (fail on non-empty) to `make check`
-  and `gofmt -w` the existing drift in the same slice.
+  and `gofmt -w` the existing drift in the same slice. **Reproduced live in #172:**
+  the dogfood executor left `internal/loop/loop_test.go` unformatted; the local
+  gate's `make check` passed (gofmt not in it) yet CI's `check` *failed* on it,
+  forcing a follow-up format commit. So an executor's output can clear the local
+  gate but fail CI — the gate should run `gofmt -l` so unformatted-but-otherwise-
+  correct output is caught before it reaches CI.
 
 - **Config + usage polish slice** (M25.1, shipped; one combined contract):
   (1) **Hid the unfinished budget surface.** `review.budget`
