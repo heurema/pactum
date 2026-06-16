@@ -1,5 +1,10 @@
 package agents
 
+import (
+	"os"
+	"strings"
+)
+
 const (
 	DryRunSchema                 = "pactum.execute_dry_run.v1"
 	DryRunArtifactPrompt         = "contract/prompt.md"
@@ -7,6 +12,58 @@ const (
 	DryRunArtifactPromptManifest = "contract/prompt-manifest.json"
 	DryRunArtifactDryRun         = "execute/dry-run.json"
 )
+
+// sanitizeHomePath replaces an os.UserHomeDir() prefix in s with '~'. If the
+// home directory cannot be determined or s does not start with it, s is
+// returned unchanged. Only the recorded representation is sanitized; the actual
+// command launched by ACPTransport.Run uses the original value.
+//
+// Also handles KEY=VALUE and KEY="VALUE" composite entries (env vars, flag
+// assignments) where VALUE is a home-directory path.
+func sanitizeHomePath(s string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return s
+	}
+	if s == home {
+		return "~"
+	}
+	if strings.HasPrefix(s, home+"/") {
+		return "~" + s[len(home):]
+	}
+	// KEY=VALUE entries (env vars, flag assignments) where VALUE is a home path.
+	if idx := strings.Index(s, "="); idx >= 0 {
+		val := s[idx+1:]
+		if val == home {
+			return s[:idx+1] + "~"
+		}
+		if strings.HasPrefix(val, home+"/") {
+			return s[:idx+1] + "~" + val[len(home):]
+		}
+		// KEY="VALUE" — quoted form produced by fmt.Sprintf("key=%q", path).
+		if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
+			inner := val[1 : len(val)-1]
+			if inner == home {
+				return s[:idx+1] + `"~"`
+			}
+			if strings.HasPrefix(inner, home+"/") {
+				return s[:idx+1] + `"~` + inner[len(home):] + `"`
+			}
+		}
+	}
+	return s
+}
+
+func sanitizeHomePaths(ss []string) []string {
+	if len(ss) == 0 {
+		return append([]string{}, ss...)
+	}
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = sanitizeHomePath(s)
+	}
+	return out
+}
 
 // BuildACPWouldRun returns the DryRunCommand describing the ACP adapter that
 // would be launched for the given agent, model spec, and read-only flag. Callers
@@ -18,9 +75,9 @@ func BuildACPWouldRun(agentName string, spec ModelSpec, readOnly bool) (DryRunCo
 		return DryRunCommand{}, err
 	}
 	return DryRunCommand{
-		Command: cmd,
-		Args:    append([]string{}, args...),
-		Env:     append([]string{}, env...),
+		Command: sanitizeHomePath(cmd),
+		Args:    sanitizeHomePaths(args),
+		Env:     sanitizeHomePaths(env),
 	}, nil
 }
 
@@ -49,9 +106,9 @@ func BuildDryRunPlan(runID string, createdAt string, agent AgentDescriptor, spec
 			PromptManifest:  DryRunArtifactPromptManifest,
 		},
 		WouldRun: DryRunCommand{
-			Command: adapterCmd,
-			Args:    append([]string{}, adapterArgs...),
-			Env:     append([]string{}, adapterEnv...),
+			Command: sanitizeHomePath(adapterCmd),
+			Args:    sanitizeHomePaths(adapterArgs),
+			Env:     sanitizeHomePaths(adapterEnv),
 		},
 	}, nil
 }
