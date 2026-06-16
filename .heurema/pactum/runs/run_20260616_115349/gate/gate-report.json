@@ -1,0 +1,75 @@
+{
+  "schema": "pactum.gate_report.v1",
+  "run_id": "run_20260616_115349",
+  "created_at": "2026-06-16T12:48:51Z",
+  "status": "needs_review",
+  "execution": {
+    "attempt_id": "attempt_001",
+    "exit_code": 0,
+    "timed_out": false,
+    "result": "execute/last-result.json"
+  },
+  "changes": {
+    "status": "changed",
+    "changed_files": [
+      "SECURITY.md",
+      "internal/app/attempt_paths_test.go",
+      "internal/app/cli.go",
+      "internal/app/commands.go",
+      "internal/app/config.go",
+      "internal/app/config_test.go",
+      "internal/app/contract.go",
+      "internal/app/contract_draft.go",
+      "internal/app/resolve.go",
+      "internal/app/run.go"
+    ],
+    "new_files": [
+      "internal/app/contract_review.go",
+      "internal/app/contract_review_test.go"
+    ],
+    "missing_files": [],
+    "reasons": [
+      "changed file: SECURITY.md",
+      "changed file: internal/app/attempt_paths_test.go",
+      "changed file: internal/app/cli.go",
+      "changed file: internal/app/commands.go",
+      "changed file: internal/app/config.go",
+      "changed file: internal/app/config_test.go",
+      "changed file: internal/app/contract.go",
+      "changed file: internal/app/contract_draft.go",
+      "changed file: internal/app/resolve.go",
+      "changed file: internal/app/run.go",
+      "new file: internal/app/contract_review.go",
+      "new file: internal/app/contract_review_test.go"
+    ]
+  },
+  "validation": {
+    "commands_allowed": true,
+    "commands": [
+      {
+        "id": "command_001",
+        "command": "go test ./internal/app -count=1",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_001/stdout.log",
+        "stderr": "gate/validation/command_001/stderr.log",
+        "result": "gate/validation/command_001/result.json"
+      },
+      {
+        "id": "command_002",
+        "command": "make check",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_002/stdout.log",
+        "stderr": "gate/validation/command_002/stderr.log",
+        "result": "gate/validation/command_002/result.json"
+      }
+    ]
+  },
+  "summary": {
+    "execution_passed": true,
+    "validation_passed": true,
+    "changes_need_review": true,
+    "scope_blocked": false
+  }
+}
