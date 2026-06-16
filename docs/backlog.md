@@ -342,47 +342,87 @@ distillation lives in
   reads the whole enclosing function once instead of windowing around the
   hunk — targets the multi-million-token review leg directly.
 
-## Config redesign — minimal stages map + effort (panel-designed)
+## Config redesign — minimal stages map + loop knobs + effort (panel-designed)
 
 The config (`pactum.config.v1alpha1`) is a flat mush: the agents registry, map
 indexing, gate policy, and two *different* review loops (`review` = code,
 `contract` = contract) sit flat with no shared shape and are configured
 inconsistently (`review.panel` vs `contract.reviewers`; `review` has
-rounds/patience, `contract` doesn't). A three-voice design panel (codex
-gpt-5.5/xhigh + two opus) settled the redesign under a hard **minimalism** brief:
-sane defaults live in code, the config carries only the genuinely project-specific
-choices. Stay on `v1alpha1` (no version bump — no users, evolve in place). Two
-slices:
+rounds/patience, `contract` doesn't). Two three-voice design panels (codex
+gpt-5.5/xhigh + two opus, distinct lenses) settled the redesign under a hard
+**minimalism** brief: sane defaults live in code, the config carries only the
+genuinely project-specific choices, but loop knobs stay *tunable when needed*.
+Stay on `v1alpha1` (no version bump — no users, evolve in place). Two slices:
 
-- **Config restructure — flat stages map** (med). Keep `schema` on
-  `pactum.config.v1alpha1`. Top level becomes four siblings: `agents` (the
-  registry — the resolution root), `map`, `gate` (project policy, was under no
-  wrapper — there is **no `settings:` wrapper**; a wrapper around two scalars
-  buys nothing), and `stages`. `stages` is a **flat stage→agent map**, not nested
-  blocks: a single-agent stage is `stage: agent_name` (scalar), a review stage is
-  `stage: [reviewer, …]` (list). The value's YAML *type is the stage kind* — no
-  `agent:`/`reviewers:` keys to misremember, no `enabled:` (every stage always
-  runs — stages are mandatory), no per-stage `fixer`/`lenses`/`rounds` (all → code
-  defaults). `stages` names every agent-invoking stage
+- **Config restructure — flat stages map + loop knobs** (med). **Rename the
+  version field** `schema:` → `version:` and drop the type prefix for the config
+  (`version: v1alpha1`, not `schema: pactum.config.v1alpha1`) — the kind is
+  obvious from the filename, the prefix is noise. Same for the standalone
+  **contract** file. Do **not** flatten it on streamed/aggregated records (ledger
+  rows, run-records, the 60+ `pactum.<kind>.<ver>` artifacts): there the
+  qualified value is a **type discriminator** in a heterogeneous JSONL stream *and*
+  each kind versions independently (`pactum.map.v2` is already v2) — keep `schema:`
+  there (renaming only the field to `kind:` is optional, but never flatten the
+  value). Top level becomes four siblings: `agents` (the registry — the resolution
+  root), `map`, `gate` (project policy, **no `settings:` wrapper** — a wrapper
+  around two scalars buys nothing), and `stages`, plus an optional flat
+  **`timeout`** override (default idle 25m lives in code — omit from the shipped
+  config). `gate` stays top-level policy (it runs validation commands, invokes no
+  agent, so it is not a stage).
+
+  `stages` is a **flat stage→value map** naming every agent-invoking stage
   (`clarify, contract_draft, contract_review, execute, code_review, memory`) —
-  which agent runs each stage is the one project choice worth declaring; `gate`
-  stays top-level policy (it runs validation commands, invokes no agent, so it is
-  not a stage). This replaces today's `review.panel` → `stages.code_review`,
-  `contract.reviewers` → `stages.contract_review`, and the implicit role-resolution
-  of `clarify`/`contract_draft`/`execute`/`memory` agents with explicit names.
-  **Review on/off without a flag**: `contract_review: []` (or the key absent)
-  runs the stage as a logged no-op — list-emptiness *is* the on/off — but
-  `code_review` **requires ≥1 reviewer** (empty/absent `code_review` is a **load
-  error**, not a silent skip: you cannot express "skip the mandatory code
-  review", so that silent-skip hazard vanishes; only the genuinely-optional
-  contract review is off-by-empty). Validation that must survive: reject unknown
-  top-level fields, unknown stage names, **object-valued stage blocks**
-  (`execute: {agent: x}` — kills the reflex to write the old nested form), and any
-  stage value referencing an **unregistered agent name** (load error). Optional
-  flat **`timeout`** top-level override only (default idle 25m already lives in
-  code — omit from the shipped config). Fixers are derived in code by stage, not
-  configured: `code_review` fixes with the `execute` agent, `contract_review`
-  fixes with the `contract_draft` agent (a pure function of the stages map).
+  which agent runs each stage is the one project choice worth declaring. **The
+  object form is canonical; scalar/list are sugar that desugar into it**:
+  `clarify: opus` *is* `{agent: opus}`; `code_review: [codex-xhigh]` *is*
+  `{reviewers: [codex-xhigh]}`. The common config shows only the sugar (no knobs,
+  byte-for-byte today's shape); to **tune a loop**, expand *that one stage* to an
+  object and add the knobs its loop kind allows — the knob sits next to what it
+  tunes, no second `loops:` namespace, nothing added to the untuned 95%. No
+  `enabled:` (stages are mandatory), no per-stage `fixer`/`lenses` (derived/
+  hardcoded in code: `code_review` fixes with the `execute` agent,
+  `contract_review` with the `contract_draft` agent — a pure function of the map).
+
+  **Loop knobs are gated by loop kind** (flat names, all optional → code default):
+  `max_rounds` for the round-based loops (`clarify`, `code_review`,
+  `contract_review`); `patience` + `clean_rounds` for the **panel-convergence
+  loops only** (`code_review`, `contract_review` — `clarify` has no panel, so
+  those on it are a load error); `retries` + `backoff` are a **future** retry
+  family scoped to `execute` (see the *Executor resilience* item below — a
+  one-row whitelist edit, zero structural rework, do not accept silently until
+  built). This **fixes
+  the inconsistency**: `contract_review` gains the same round knobs as
+  `code_review`. **Rename `panel` → `reviewers`** (the field name in both panel
+  loops); `panel:` anywhere is a targeted load error pointing to `reviewers`, no
+  alias.
+
+  Validation (per-stage allowed-fields, keyed on the stage *name* — this replaces
+  the earlier blanket "reject object-valued blocks" rule with a precise one):
+
+  | Stage | scalar | list | object fields |
+  |---|:--:|:--:|---|
+  | `clarify` | ✅ `agent` | — | `agent` (req) + `max_rounds` |
+  | `contract_draft`, `memory` | ✅ `agent` | — | *(no object — no knobs)* |
+  | `execute` | ✅ `agent` | — | *(no object today; future: `agent`+`retries`+`backoff`)* |
+  | `contract_review` | — | ✅ `reviewers` (empty/absent = logged no-op) | `reviewers` + `max_rounds`/`patience`/`clean_rounds` |
+  | `code_review` | — | ✅ `reviewers` (≥1; empty = load error) | `reviewers` + `max_rounds`/`patience`/`clean_rounds` |
+
+  Also reject: unknown top-level fields, unknown stage names, unknown object
+  fields, a stage value referencing an **unregistered agent** (load error), a
+  **no-op object** (an object carrying no knob beyond its identity field — use the
+  sugar; one canonical spelling for the common case), and a **cross-family knob**
+  (`execute: {max_rounds: 5}`, `clarify: {patience: 2}`). Rounds are positive ints;
+  future `retries` non-negative int, `backoff` a duration. `code_review` requires
+  ≥1 reviewer (you cannot express "skip the mandatory review"); only the
+  genuinely-optional `contract_review` is off-by-empty. The run record **stamps
+  the resolved loop knobs that actually ran** (not just the file delta) so old
+  ledgers stay self-describing when code defaults change; defaults are documented,
+  with a deferred `pactum config resolve` printing the fully-resolved effective
+  config from the same code path that stamps. Sub-steps: (1) `panel → reviewers` +
+  dead-`panel` error; (2) object form + desugar + per-stage whitelist, wire
+  `max_rounds`/`patience`/`clean_rounds` for `code_review` **and**
+  `contract_review` + `clarify.max_rounds`, stamp resolved knobs; defer the
+  `execute` retry family and `config resolve`.
 - **Effort resolution + validation + stamping** (small-med). Resolve effort as a
   two-link chain: `agent.effort` (if set) → **code per-engine default**
   (`claude=high`, `codex=high`) → send a concrete value. There is **no
@@ -401,10 +441,10 @@ slices:
   resolve` effective-config dump, and per-*model* (not just per-engine) effort
   capability tables.
 
-Target shape (the live config, migrated):
+Target shape — common case (the live config, migrated; sugar only, no knobs):
 
 ```yaml
-schema: pactum.config.v1alpha1
+version: v1alpha1
 agents:
   - {name: sonnet,      model: claude-sonnet-4-6, effort: max}
   - {name: codex-xhigh, model: gpt-5.5,           effort: xhigh}
@@ -418,6 +458,25 @@ stages:                          # scalar = single agent, list = reviewers
   contract_review: [opus, codex-xhigh]   # [] or absent = logged no-op
   execute:         sonnet
   code_review:     [codex-xhigh]         # ≥1 reviewer required (load error if empty)
+  memory:          opus
+```
+
+Same config with two loops tuned (object form only where tuned; the rest stays
+sugar — proves the escape hatch costs the untuned stages nothing):
+
+```yaml
+stages:
+  clarify:
+    agent: opus
+    max_rounds: 5
+  contract_draft:  codex-xhigh
+  contract_review: [opus, codex-xhigh]
+  execute:         sonnet
+  code_review:
+    reviewers: [codex-xhigh]
+    max_rounds: 12
+    patience: 3
+    clean_rounds: 2
   memory:          opus
 ```
 
