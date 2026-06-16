@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1",
+  "id": "command_003",
+  "command": "make heurema-hygiene",
+  "started_at": "2026-06-16T07:49:15.481729Z",
+  "finished_at": "2026-06-16T07:49:16.424507Z",
+  "duration_ms": 942,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "gate/validation/command_003/stdout.log",
+  "stderr": "gate/validation/command_003/stderr.log"
+}
