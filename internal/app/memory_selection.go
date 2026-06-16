@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	memorySelectionSchema       = "pactum.memory_selection.v1"
+	memorySelectionSchema       = "pactum.memory_selection.v1alpha1"
 	defaultMemorySelectionLimit = 5
 )
 

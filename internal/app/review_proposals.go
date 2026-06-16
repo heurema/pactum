@@ -16,9 +16,9 @@ import (
 )
 
 const (
-	reviewerFindingsSchema          = "pactum.reviewer_findings.v1"
-	reviewProposalSchema            = "pactum.review_proposal.v1"
-	reviewProposalDecisionSchema    = "pactum.review_proposal_decision.v1"
+	reviewerFindingsSchema          = "pactum.reviewer_findings.v1alpha1"
+	reviewProposalSchema            = "pactum.review_proposal.v1alpha1"
+	reviewProposalDecisionSchema    = "pactum.review_proposal_decision.v1alpha1"
 	reviewProposalsArtifact         = "review/proposals.jsonl"
 	reviewProposalDecisionsArtifact = "review/proposal-decisions.jsonl"
 )

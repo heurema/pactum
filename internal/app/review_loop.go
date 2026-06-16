@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	reviewLoopSummarySchema   = "pactum.review_loop.v1"
+	reviewLoopSummarySchema   = "pactum.review_loop.v1alpha1"
 	reviewLoopSummaryArtifact = "review/loop-summary.json"
 
 	reviewLoopTerminalFindingsOpen = "findings_open"

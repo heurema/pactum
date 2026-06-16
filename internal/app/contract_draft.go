@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	contractDraftProposalSchema  = "pactum.contract_draft_proposal.v1"
-	contractDrafterRequestSchema = "pactum.contract_drafter_request.v1"
-	contractDrafterResultSchema  = "pactum.contract_drafter_result.v1"
+	contractDraftProposalSchema  = "pactum.contract_draft_proposal.v1alpha1"
+	contractDrafterRequestSchema = "pactum.contract_drafter_request.v1alpha1"
+	contractDrafterResultSchema  = "pactum.contract_drafter_result.v1alpha1"
 
 	contractDrafterContextArtifact    = "contract/drafter-context.md"
 	contractDrafterPromptArtifact     = "contract/drafter-prompt.md"

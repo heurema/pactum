@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	clarificationQuestionSchema = "pactum.clarification_question.v1"
-	clarificationAnswerSchema   = "pactum.clarification_answer.v1"
-	clarificationDecisionSchema = "pactum.clarification_decision.v1"
+	clarificationQuestionSchema = "pactum.clarification_question.v1alpha1"
+	clarificationAnswerSchema   = "pactum.clarification_answer.v1alpha1"
+	clarificationDecisionSchema = "pactum.clarification_decision.v1alpha1"
 )
 
 type clarificationQuestionRecord struct {

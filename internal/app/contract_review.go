@@ -15,14 +15,14 @@ import (
 )
 
 const (
-	contractReviewSchema          = "pactum.contract_review.v1"
-	contractReviewerRequestSchema = "pactum.contract_reviewer_request.v1"
-	contractReviewerResultSchema  = "pactum.contract_reviewer_result.v1"
+	contractReviewSchema          = "pactum.contract_review.v1alpha1"
+	contractReviewerRequestSchema = "pactum.contract_reviewer_request.v1alpha1"
+	contractReviewerResultSchema  = "pactum.contract_reviewer_result.v1alpha1"
 
-	contractReviewLoopSchema         = "pactum.contract_review_loop.v1"
-	contractReviewFixerReviseSchema  = "pactum.contract_revise.v1"
-	contractReviewFixerRequestSchema = "pactum.contract_review_fixer_request.v1"
-	contractReviewFixerResultSchema  = "pactum.contract_review_fixer_result.v1"
+	contractReviewLoopSchema         = "pactum.contract_review_loop.v1alpha1"
+	contractReviewFixerReviseSchema  = "pactum.contract_revise.v1alpha1"
+	contractReviewFixerRequestSchema = "pactum.contract_review_fixer_request.v1alpha1"
+	contractReviewFixerResultSchema  = "pactum.contract_review_fixer_result.v1alpha1"
 
 	// contractReviewerAttemptsArtifact is the repo-relative artifact path prefix
 	// for contract review attempts; mirrors reviewerAttemptsArtifact for code review.

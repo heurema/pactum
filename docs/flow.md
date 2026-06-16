@@ -244,7 +244,7 @@ narrows to one) into **pending proposals**. A human then runs
 must be decided before memory can be proposed.
 
 The fixer reports a structured outcome per finding: `pactum review fix apply
-<run_id>` parses a `pactum.review_fix_outcomes.v1` fenced-JSON
+<run_id>` parses a `pactum.review_fix_outcomes.v1alpha1` fenced-JSON
 block from the fixer's captured stdout (best-effort — a missing or malformed
 block warns, never errors) and **resolves** findings accordingly: `fixed` and
 `rebutted` findings become resolved, `blocked` findings stay open. In the

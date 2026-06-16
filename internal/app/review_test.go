@@ -1429,7 +1429,7 @@ func TestReviewFixDryRunArtifactsUseWriteEnabledExecutorAndPrompt(t *testing.T) 
 				"Trace each finding to the relevant code before acting.",
 				"For false positives, explain a concrete rebuttal instead of changing code.",
 				"## Output shape",
-				`"schema": "pactum.review_fix_outcomes.v1"`,
+				`"schema": "pactum.review_fix_outcomes.v1alpha1"`,
 				"Include exactly one outcome entry for every blocking finding listed above with status open.",
 			} {
 				if !strings.Contains(prompt, want) {
@@ -2208,7 +2208,7 @@ func TestReviewPromptIncludesStructuredProposalContract(t *testing.T) {
 	prompt := mustReadFile(t, reviewerLensPromptPath(runPaths, "claude", reviewLenses[0]))
 	for _, want := range []string{
 		"## Optional structured finding proposals",
-		`"schema": "pactum.reviewer_findings.v1"`,
+		`"schema": "pactum.reviewer_findings.v1alpha1"`,
 		"Style or formatting preferences.",
 		"Read the actual file and surrounding context before proposing a finding.",
 		"Check whether the issue is already mitigated or already represented in existing findings/proposals.",

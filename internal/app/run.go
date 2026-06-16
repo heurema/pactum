@@ -19,8 +19,8 @@ import (
 const maxRepoMapContextBytes = 20000
 
 const (
-	runSchema      = "pactum.run.v1"
-	contractSchema = "pactum.contract.v1"
+	runSchema      = "pactum.run.v1alpha1"
+	contractSchema = "pactum.contract.v1alpha1"
 )
 
 type contractRunState struct {

@@ -12,7 +12,7 @@ import (
 	"github.com/alecthomas/kong"
 )
 
-// affordanceEnvelope decodes the pactum.error.v1 envelope with pointer fields
+// affordanceEnvelope decodes the pactum.error.v1alpha1 envelope with pointer fields
 // so tests can distinguish an absent fix/next from an empty one.
 type affordanceEnvelope struct {
 	Schema string `json:"schema"`

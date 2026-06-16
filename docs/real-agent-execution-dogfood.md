@@ -87,7 +87,7 @@ gate→review loop and produced an equivalent in-scope sentence.
 
 - Per-attempt artifacts written under
   `execute/attempts/attempt_NNN/{request,result,stdout,stderr}.log` plus
-  `execute/last-result.json`. `result.json` (`pactum.execution_result.v1`)
+  `execute/last-result.json`. `result.json` (`pactum.execution_result.v1alpha1`)
   records `started_at`/`finished_at`/`duration_ms`/`exit_code`/`timed_out`.
 - **Log channel differs per agent:** codex writes its reasoning/progress trace to
   `stderr` (~23 KB here), with `stdout` carrying the result; claude writes its
@@ -126,7 +126,7 @@ real, non-deterministic agent inside its boundaries.
 1. **`agents doctor` "ready" overpromises.** It only does `exec.LookPath` (PATH
    presence) — it does not verify auth or edit-capability. "ready" should read
    more like "on PATH". (Note: `ready` is an enum value in the
-   `pactum.agents_doctor.v1` schema, so changing it is a schema change, not a
+   `pactum.agents_doctor.v1alpha1` schema, so changing it is a schema change, not a
    cosmetic tweak — deferred, see below.)
 2. **No way to list clarification questions.** `pactum clarify list` errors with
    "unexpected argument list". The question id is shown by `clarify ask`, but

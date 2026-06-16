@@ -175,7 +175,7 @@ reviews across M8–M10. Rough priority in parentheses.
   refreshes artifacts once, and stops `converged` (no open blocking),
   `needs_human` (a round created nothing and resolved nothing), or `max_rounds`
   (the revived `clarify.max_rounds` cap, default 3). The loop writes
-  `clarify/loop-summary.json` (`pactum.clarify_loop_summary.v1`); `contract
+  `clarify/loop-summary.json` (`pactum.clarify_loop_summary.v1alpha1`); `contract
   approve` stays manual — that is the safety story for letting the clarifier's
   own high-confidence recommendations answer its questions. The **task-new
   integration** (M21.0, shipped) folds the loop into task creation: `pactum
@@ -592,7 +592,7 @@ distillation lives in
   upgrade bumps `severity` but not `blocking`, so a finding upgraded low→critical stays
   advisory — revisit whether high/critical severity should imply blocking.
 - Review-loop convergence slice 1 — resolve-on-fix (M12.8) — the fixer now emits a
-  structured `pactum.review_fix_outcomes.v1` fenced-JSON block (one outcome per finding:
+  structured `pactum.review_fix_outcomes.v1alpha1` fenced-JSON block (one outcome per finding:
   `fixed` / `rebutted` / `blocked`), parsed decoupled and best-effort (mirroring `review
   propose-findings`) by the new `review apply-fix-outcomes [run_id] [fixer_attempt_id]`.
   `fixed` and `rebutted` findings become resolved (with a new `outcome` field on the

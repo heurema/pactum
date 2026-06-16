@@ -280,8 +280,8 @@ func TestClarifyAnswerManualRecordsStayByteIdentical(t *testing.T) {
 	var stdout bytes.Buffer
 	assertNoError(t, app.ClarifyAnswer(&stdout, runID, "q_001", "Use SQLite.", "", false))
 
-	wantAnswer := `{"schema":"pactum.clarification_answer.v1","id":"a_001","run_id":"` + runID + `","question_id":"q_001","answer":"Use SQLite.","created_at":"2026-05-31T18:40:12Z","source":"manual"}`
-	wantDecision := `{"schema":"pactum.clarification_decision.v1","id":"d_001","run_id":"` + runID + `","question_id":"q_001","decision":"Use SQLite.","created_at":"2026-05-31T18:40:12Z","source":"manual_answer","decided_by":"manual"}`
+	wantAnswer := `{"schema":"pactum.clarification_answer.v1alpha1","id":"a_001","run_id":"` + runID + `","question_id":"q_001","answer":"Use SQLite.","created_at":"2026-05-31T18:40:12Z","source":"manual"}`
+	wantDecision := `{"schema":"pactum.clarification_decision.v1alpha1","id":"d_001","run_id":"` + runID + `","question_id":"q_001","decision":"Use SQLite.","created_at":"2026-05-31T18:40:12Z","source":"manual_answer","decided_by":"manual"}`
 	if answers := readLines(t, runPaths.AnswersJSONL); len(answers) != 1 || answers[0] != wantAnswer {
 		t.Fatalf("manual answer record drifted:\ngot  %v\nwant %s", answers, wantAnswer)
 	}

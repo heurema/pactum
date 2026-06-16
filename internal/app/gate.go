@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	gateReportSchema              = "pactum.gate_report.v1"
-	validationCommandResultSchema = "pactum.validation_command_result.v1"
+	gateReportSchema              = "pactum.gate_report.v1alpha1"
+	validationCommandResultSchema = "pactum.validation_command_result.v1alpha1"
 	gateReportArtifact            = "gate/gate-report.json"
 	gateDefaultCommandTimeout     = 10 * time.Minute
 )

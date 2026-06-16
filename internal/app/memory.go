@@ -18,10 +18,10 @@ import (
 )
 
 const (
-	memoryCandidateSchema    = "pactum.memory_candidate.v1"
-	memoryAcceptanceSchema   = "pactum.memory_acceptance.v1"
-	memoryItemSchema         = "pactum.memory_item.v1"
-	memoryFreshnessPinSchema = "pactum.memory_freshness_pin.v1"
+	memoryCandidateSchema    = "pactum.memory_candidate.v1alpha1"
+	memoryAcceptanceSchema   = "pactum.memory_acceptance.v1alpha1"
+	memoryItemSchema         = "pactum.memory_item.v1alpha1"
+	memoryFreshnessPinSchema = "pactum.memory_freshness_pin.v1alpha1"
 
 	memoryCandidateArtifact   = "memory/memory-candidate.json"
 	memoryCandidateMDArtifact = "memory/memory-candidate.md"

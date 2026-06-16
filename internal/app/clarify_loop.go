@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	clarifyLoopSummarySchema   = "pactum.clarify_loop_summary.v1"
+	clarifyLoopSummarySchema   = "pactum.clarify_loop_summary.v1alpha1"
 	clarifyLoopSummaryArtifact = "clarify/loop-summary.json"
 
 	clarifyLoopTerminalConverged  = "converged"

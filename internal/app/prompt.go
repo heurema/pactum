@@ -12,7 +12,7 @@ import (
 	"github.com/heurema/pactum/internal/ledger"
 )
 
-const promptManifestSchema = "pactum.executor_prompt.v1"
+const promptManifestSchema = "pactum.executor_prompt.v1alpha1"
 
 type promptManifest struct {
 	Schema         string                  `json:"schema"`

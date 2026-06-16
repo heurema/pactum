@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	memoryRefreshSchema = "pactum.memory_refresh.v1"
+	memoryRefreshSchema = "pactum.memory_refresh.v1alpha1"
 
 	memoryFreshnessFresh   = "fresh"
 	memoryFreshnessStale   = "stale"

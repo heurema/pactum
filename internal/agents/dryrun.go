@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	DryRunSchema                 = "pactum.execute_dry_run.v1"
+	DryRunSchema                 = "pactum.execute_dry_run.v1alpha1"
 	DryRunArtifactPrompt         = "contract/prompt.md"
 	DryRunArtifactContext        = "context/executor-context.md"
 	DryRunArtifactPromptManifest = "contract/prompt-manifest.json"

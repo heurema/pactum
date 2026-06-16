@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	taskListSchema       = "pactum.task_list.v1"
-	taskShowSchema       = "pactum.task.v1"
-	taskUseSchema        = "pactum.task_use.v1"
-	taskNewClarifySchema = "pactum.task_new_clarify.v1"
+	taskListSchema       = "pactum.task_list.v1alpha1"
+	taskShowSchema       = "pactum.task.v1alpha1"
+	taskUseSchema        = "pactum.task_use.v1alpha1"
+	taskNewClarifySchema = "pactum.task_new_clarify.v1alpha1"
 )
 
 type taskCmd struct {

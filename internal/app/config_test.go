@@ -15,7 +15,7 @@ func TestReadConfigRejectsUnknownKeys(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	contents := strings.Join([]string{
-		"schema: pactum.config.v1",
+		"schema: pactum.config.v1alpha1",
 		"default_profile: balanced",
 		"review:",
 		"  max_rounds: 10",
@@ -37,7 +37,7 @@ func TestReadConfigParsesClarifySection(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	contents := strings.Join([]string{
-		"schema: pactum.config.v1",
+		"schema: pactum.config.v1alpha1",
 		"agents:",
 		"  - name: claude",
 		"    model: claude-opus-4-8",
@@ -67,7 +67,7 @@ func TestReadConfigParsesTimeoutsSection(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	contents := strings.Join([]string{
-		"schema: pactum.config.v1",
+		"schema: pactum.config.v1alpha1",
 		"agents:",
 		"  - name: claude",
 		"    model: claude-opus-4-8",
@@ -101,7 +101,7 @@ func TestReadConfigRejectsInvalidIdleTimeout(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "config.yaml")
 			contents := strings.Join([]string{
-				"schema: pactum.config.v1",
+				"schema: pactum.config.v1alpha1",
 				"agents:",
 				"  - name: claude",
 				"    model: claude-opus-4-8",
@@ -128,7 +128,7 @@ func TestResolveIdleTimeout(t *testing.T) {
 		t.Helper()
 		path := filepath.Join(t.TempDir(), "config.yaml")
 		contents := strings.Join(append([]string{
-			"schema: pactum.config.v1",
+			"schema: pactum.config.v1alpha1",
 			"agents:",
 			"  - name: claude",
 			"    model: claude-opus-4-8",
@@ -295,7 +295,7 @@ func TestReadConfigRequiresAgentRegistry(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	contents := strings.Join([]string{
-		"schema: pactum.config.v1",
+		"schema: pactum.config.v1alpha1",
 		"review:",
 		"  max_rounds: 10",
 	}, "\n")
@@ -423,7 +423,7 @@ func TestReadConfigRejectsPreRegistryShapes(t *testing.T) {
 		{
 			name: "old execute.models section",
 			contents: strings.Join([]string{
-				"schema: pactum.config.v1",
+				"schema: pactum.config.v1alpha1",
 				"agents:",
 				"  - name: claude",
 				"    model: claude-opus-4-8",
@@ -435,7 +435,7 @@ func TestReadConfigRejectsPreRegistryShapes(t *testing.T) {
 		{
 			name: "old panel object entries",
 			contents: strings.Join([]string{
-				"schema: pactum.config.v1",
+				"schema: pactum.config.v1alpha1",
 				"agents:",
 				"  - name: claude",
 				"    model: claude-opus-4-8",
@@ -449,7 +449,7 @@ func TestReadConfigRejectsPreRegistryShapes(t *testing.T) {
 		{
 			name: "old registry entries with the removed agent key",
 			contents: strings.Join([]string{
-				"schema: pactum.config.v1",
+				"schema: pactum.config.v1alpha1",
 				"agents:",
 				"  - name: fable",
 				"    agent: claude",

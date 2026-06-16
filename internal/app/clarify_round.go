@@ -12,13 +12,13 @@ import (
 )
 
 const (
-	clarificationSuggestionsSchema = "pactum.clarification_suggestions.v1"
+	clarificationSuggestionsSchema = "pactum.clarification_suggestions.v1alpha1"
 
 	clarifierContextArtifact  = "clarify/clarifier-context.md"
 	clarifierPromptArtifact   = "clarify/clarifier-prompt.md"
 	clarifierAttemptsArtifact = "clarify/clarifier-attempts"
-	clarifierRequestSchema    = "pactum.clarifier_request.v1"
-	clarifierResultSchema     = "pactum.clarifier_result.v1"
+	clarifierRequestSchema    = "pactum.clarifier_request.v1alpha1"
+	clarifierResultSchema     = "pactum.clarifier_result.v1alpha1"
 )
 
 type clarifierPreparation struct {

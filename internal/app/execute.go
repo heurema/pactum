@@ -344,8 +344,8 @@ func pinningMode(modelSpec agents.ModelSpec) string {
 }
 
 const (
-	executionRequestSchema = "pactum.execution_request.v1"
-	executionResultSchema  = "pactum.execution_result.v1"
+	executionRequestSchema = "pactum.execution_request.v1alpha1"
+	executionResultSchema  = "pactum.execution_result.v1alpha1"
 )
 
 type executionRequestDocument struct {

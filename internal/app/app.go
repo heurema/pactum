@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	workspaceSchema = "pactum.workspace.v1"
-	configSchema    = "pactum.config.v1"
+	workspaceSchema = "pactum.workspace.v1alpha1"
+	configSchema    = "pactum.config.v1alpha1"
 
 	gateScopeEnforcementBlock = "block"
 	gateScopeEnforcementWarn  = "warn"
