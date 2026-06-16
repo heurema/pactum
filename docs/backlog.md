@@ -342,48 +342,89 @@ distillation lives in
   reads the whole enclosing function once instead of windowing around the
   hunk — targets the multi-million-token review leg directly.
 
-## Config redesign — settings + stages, and effort (panel-designed)
+## Config redesign — minimal stages map + effort (panel-designed)
 
 The config (`pactum.config.v1alpha1`) is a flat mush: the agents registry, map
 indexing, gate policy, and two *different* review loops (`review` = code,
 `contract` = contract) sit flat with no shared shape and are configured
 inconsistently (`review.panel` vs `contract.reviewers`; `review` has
 rounds/patience, `contract` doesn't). A three-voice design panel (codex
-gpt-5.5 + two opus) settled the redesign. No users → breaking the shape is free.
-Two slices:
+gpt-5.5/xhigh + two opus) settled the redesign under a hard **minimalism** brief:
+sane defaults live in code, the config carries only the genuinely project-specific
+choices. Stay on `v1alpha1` (no version bump — no users, evolve in place). Two
+slices:
 
-- **Config restructure** (med). Bump to `pactum.config.v1alpha2`; reject the old
-  flat shape loudly. Top-level: `schema`, `agents` (the registry — the
-  resolution root, stays top-level), `settings` (global: `map`, `gate` policy,
-  `defaults`, `timeouts`), `stages` (the pipeline). Stages are **typed but share
-  a uniform layout** — the stage *key* is the type (no `type:` discriminator):
-  single-agent stages (`clarify`/`contract_draft`/`execute`/`memory`) accept
-  `agent` and **reject** `reviewers`; panel-loop stages
-  (`contract_review`/`code_review`) accept `reviewers`/`fixer`/`lenses`/`rounds`
-  and reject `agent`; loop knobs on a non-loop stage are a load **error**, not a
-  no-op. **Unify the two review loops** to the identical panel-loop shape
-  (`enabled, reviewers, fixer, lenses, rounds`): `review.panel` →
-  `stages.code_review.reviewers`, `contract.reviewers` →
-  `stages.contract_review.reviewers`; the cross-model reviewer-default rule lives
-  in one place and applies to both. Name `contract_draft` (drafting) vs
-  `contract_review` (reviewing) — not `contract` (the artifact). Strict
-  unknown-field rejection; a stage referencing an unregistered agent name is a
-  load error.
-- **Effort resolution + validation + stamping** (small-med). Effort stays
-  optional. Resolve `agent.effort → settings.defaults.effort[engine] → provider
-  inherit`. Defaults are **per-engine** — a single cross-provider scalar cannot
-  exist (claude effort vocabulary is {low,medium,high,xhigh,max}; codex differs,
-  no `max`). Validate any non-empty resolved effort against the resolved engine's
-  vocabulary **at config load** (reject e.g. `max` on a codex agent) — do **not**
-  invent a normalized pactum vocabulary (lossy: `max`→`xhigh` is the same word
-  meaning different real effort per engine), and do **not** pass through blindly
-  (turns a load-time-catchable typo into a late execute-time failure). Stamp
-  `{model, effort, effort_source}` on every agent attempt — and stamp the
-  **source** (`entry`/`default`/`inherit`), NOT a fabricated inherited value:
-  pactum cannot know the provider's actual default unless it set it (the inherit
-  case is invisible — record that it *was* inherited, for reproducibility).
-  Defer: a `pactum config resolve` effective-config dump, and per-*model* (not
-  just per-engine) effort capability tables.
+- **Config restructure — flat stages map** (med). Keep `schema` on
+  `pactum.config.v1alpha1`. Top level becomes four siblings: `agents` (the
+  registry — the resolution root), `map`, `gate` (project policy, was under no
+  wrapper — there is **no `settings:` wrapper**; a wrapper around two scalars
+  buys nothing), and `stages`. `stages` is a **flat stage→agent map**, not nested
+  blocks: a single-agent stage is `stage: agent_name` (scalar), a review stage is
+  `stage: [reviewer, …]` (list). The value's YAML *type is the stage kind* — no
+  `agent:`/`reviewers:` keys to misremember, no `enabled:` (every stage always
+  runs — stages are mandatory), no per-stage `fixer`/`lenses`/`rounds` (all → code
+  defaults). `stages` names every agent-invoking stage
+  (`clarify, contract_draft, contract_review, execute, code_review, memory`) —
+  which agent runs each stage is the one project choice worth declaring; `gate`
+  stays top-level policy (it runs validation commands, invokes no agent, so it is
+  not a stage). This replaces today's `review.panel` → `stages.code_review`,
+  `contract.reviewers` → `stages.contract_review`, and the implicit role-resolution
+  of `clarify`/`contract_draft`/`execute`/`memory` agents with explicit names.
+  **Review on/off without a flag**: `contract_review: []` (or the key absent)
+  runs the stage as a logged no-op — list-emptiness *is* the on/off — but
+  `code_review` **requires ≥1 reviewer** (empty/absent `code_review` is a **load
+  error**, not a silent skip: you cannot express "skip the mandatory code
+  review", so that silent-skip hazard vanishes; only the genuinely-optional
+  contract review is off-by-empty). Validation that must survive: reject unknown
+  top-level fields, unknown stage names, **object-valued stage blocks**
+  (`execute: {agent: x}` — kills the reflex to write the old nested form), and any
+  stage value referencing an **unregistered agent name** (load error). Optional
+  flat **`timeout`** top-level override only (default idle 25m already lives in
+  code — omit from the shipped config). Fixers are derived in code by stage, not
+  configured: `code_review` fixes with the `execute` agent, `contract_review`
+  fixes with the `contract_draft` agent (a pure function of the stages map).
+- **Effort resolution + validation + stamping** (small-med). Resolve effort as a
+  two-link chain: `agent.effort` (if set) → **code per-engine default**
+  (`claude=high`, `codex=high`) → send a concrete value. There is **no
+  config-level `inherit`**; send-nothing survives only as an internal adapter
+  detail for an engine with no effort knob at all. Per-engine defaults live in
+  **code** (not config — a single cross-provider scalar cannot exist: claude
+  vocabulary is {low,medium,high,xhigh,max}; codex has no `max`). Validate any
+  non-empty effort against the resolved engine's vocabulary **at config load**
+  (reject e.g. `max` on a codex agent) — do **not** invent a normalized pactum
+  vocabulary (lossy), and do **not** pass through blindly (turns a
+  load-time-catchable typo into a late execute-time failure). Stamp
+  `{model, effort, effort_source}` on every agent attempt; `effort_source ∈
+  {agent, engine_default}` is the whole audit story. The run record also stamps
+  the **resolved** lenses/rounds/timeout that actually ran, so the ledger stays
+  self-describing when the code constants later change. Defer: a `pactum config
+  resolve` effective-config dump, and per-*model* (not just per-engine) effort
+  capability tables.
+
+Target shape (the live config, migrated):
+
+```yaml
+schema: pactum.config.v1alpha1
+agents:
+  - {name: sonnet,      model: claude-sonnet-4-6, effort: max}
+  - {name: codex-xhigh, model: gpt-5.5,           effort: xhigh}
+  - {name: opus,        model: claude-opus-4-8}          # no effort → code default
+  - {name: codex,       model: gpt-5.5,           effort: high}
+map:  {max_file_bytes: 500000, code_index: auto}
+gate: {scope_enforcement: block}
+stages:                          # scalar = single agent, list = reviewers
+  clarify:         opus
+  contract_draft:  codex-xhigh
+  contract_review: [opus, codex-xhigh]   # [] or absent = logged no-op
+  execute:         sonnet
+  code_review:     [codex-xhigh]         # ≥1 reviewer required (load error if empty)
+  memory:          opus
+```
+
+Implementation note: the per-stage agent names above must reproduce today's
+resolved role-resolution assignments — verify each stage's current agent against
+the resolution code in `run.go` before hardcoding, so the restructure changes the
+config *shape* without changing *which agent runs where*.
 
 ## Hardening / cleanup
 
