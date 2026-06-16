@@ -12,26 +12,26 @@ The agent-launching commands are:
 
 - `pactum clarify run` (also run by `pactum task new --clarify`)
 - `pactum contract draft`
+- `pactum contract review` (when `contract.reviewers` is configured)
 - `pactum execute run`
 - `pactum review run` (reviewer rounds, plus the write-enabled fixer unless
   `--no-fix` is set)
 - `pactum review fix run`
 
-Every one of these launches external agent tooling, either through the default
-ACP transport — external npm adapter packages downloaded and run via `npx`,
-such as `npx -y @zed-industries/codex-acp@latest` and
-`npx -y @agentclientprotocol/claude-agent-acp@latest` — or through the CLI
-transport (`PACTUM_AGENT_TRANSPORT=cli`), where the executor runs
-`codex exec --json --dangerously-bypass-approvals-and-sandbox` or
-`claude -p --output-format json --dangerously-skip-permissions`. Both paths run
-in your repository, inherit your environment, and execute with your user's
-permissions.
+Every one of these launches external agent tooling through the ACP transport —
+external npm adapter packages downloaded and run via `npx`, such as
+`npx -y @zed-industries/codex-acp@latest` and
+`npx -y @agentclientprotocol/claude-agent-acp@latest`. They run in your
+repository, inherit your environment, and execute with your user's permissions.
 
 The read-only stages (`clarify run`, `contract draft`, and the reviewer rounds
-of `review run`) constrain *file writes*, not the process: reviewer, drafter,
-and clarifier agents still run as external tooling that inherits your
-environment variables. Do not treat any agent-launching stage as safe for
-secrets.
+of `review run`) constrain *agent file writes*, not the pactum process:
+reviewer, drafter, and clarifier agents still run as external tooling that
+inherits your environment variables. Do not treat any agent-launching stage as
+safe for secrets. `contract review` with `contract.reviewers` configured also
+runs read-only agents (both reviewer panel and fixer), but pactum itself applies
+fixer revisions to the contract through `contract revise` — the contract can be
+modified by the convergence loop without any agent getting write permission.
 
 ## Safe usage
 
@@ -43,9 +43,7 @@ secrets.
   setting that can *increase* risk, not what makes a repository safe.
 - **Plan before running.** Prefer `pactum execute plan` before
   `pactum execute run` to inspect the prompt, the boundary checks, and the
-  resolved agent before anything launches. The plan's recorded command is the
-  CLI-transport invocation; under the default ACP transport, `execute run`
-  launches the external `npx` ACP adapter described above instead.
+  resolved ACP adapter command before anything launches.
 - **Review the contract path scope before execution.** Check the approved
   contract's in-scope and out-of-scope paths; the ACP write guard and the gate
   enforce that scope at the file-write boundary and after the fact, but shell
