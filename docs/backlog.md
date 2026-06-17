@@ -639,6 +639,23 @@ prefix, scope context, route models per stage, workflow-shape the pipeline) — 
 measurable against `pactum usage`. **First step: write the deep-research brief from
 these angles; do not start optimizing blind.**
 
+**Concrete observation (data, not hypothesis) — the executor ignores the project
+map.** We feed the executor a *lean* `executor-context.md` (~47 lines): the map as
+**pointers + retrieval guidance** (`repo-map.md` / `llms.txt` / `search.sqlite` paths
++ "use `pactum search` before adding code"), not the map dumped inline — good token
+hygiene. But the executor (Claude Code over ACP, an **external agent with its own
+`Read`/`Grep`/`Bash`**) treats "use `pactum search`" as a weak suggestion and
+**ignores it**: in `run_20260617_115334`'s execute attempt, **0 references** to
+`pactum search` / `repo-map` / `llms.txt` / `search.sqlite` — it re-explores the repo
+from scratch with its own tools. So the map's indexing cost (build + `map refresh`)
+is **not leveraged at execute time**; the executor re-reads, which is a chunk of the
+input-heavy profile. Implication for the research: the map earns its keep for *our
+pipeline* (search-context derivation, reviewer context) more than for the *executor's*
+navigation — so executor-side token savings likely come from **prompt-caching the
+stable prefix** (angle 1) and **scoping context** (angle 2), NOT from harder-selling
+the map to an agent that won't use it. Quantify: how much of `execute` input is
+re-exploration the map could have served vs genuinely-needed file content.
+
 ## Hardening / cleanup
 
 - **Executor resilience: auto-retry on transient failure + resume (not reset)**
