@@ -48,9 +48,11 @@ measured it from the captured usage ledger (`cache_read_tokens` per attempt):
 - **Therefore caching has little headroom for us** (you can't beat 94–97%), and the
   caching×DAG "crux" the research worried about is **moot for pactum** — fresh
   context per task does not cost us cache reuse.
-- **The real blind spot: `pactum usage` shows raw input, not the cache-adjusted
-  cost.** The `cache_read` field is captured but not surfaced. We have been measuring
-  the scary-but-cheap number instead of the true one.
+- **The blind spot (now fixed): `pactum usage` used to show only raw input, not the
+  cache-adjusted cost.** The `cache_read` field was captured but not surfaced — we
+  were measuring the scary-but-cheap number instead of the true one. The command now
+  surfaces `cache_read_ratio` and `effective_units` (per group + total), so the real
+  cost is legible (e.g. 10.5M raw input → 89% cache-read → ~3.78M effective units).
 
 ## Sub-question A — task-DAG decomposition
 
@@ -127,10 +129,9 @@ benchmarks, not coding specifically.)*
 
 ## Recommendations for pactum (re-prioritised after the empirical finding)
 
-1. **Surface cache-adjusted cost in `pactum usage`** (small slice, high clarity).
-   Show `cache_read_ratio` and `effective_units` (the captured fields already exist),
-   so we measure the *true* cost (fresh + 0.1×cache-read), not the misleading raw
-   input. We have been reading the scary number. **Do this first.**
+1. **Surface cache-adjusted cost in `pactum usage`** — ✅ **DONE.** The command now
+   shows `cache_read_ratio` and `effective_units` (per group + total), so we measure
+   the *true* cost (fresh + 0.1×cache-read), not the misleading raw input.
 2. **Context-pack phase before execute** (the top raw-token lever). A deterministic
    step that emits relevant file paths + line-ranges + snippets + acceptance checks,
    handed to the executor as **evidence** — treat the executor's own repo exploration

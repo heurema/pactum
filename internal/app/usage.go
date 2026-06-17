@@ -139,22 +139,30 @@ type usageSummaryCoverage struct {
 }
 
 type usageSummaryTotals struct {
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
-	TotalTokens  int64 `json:"total_tokens"`
-	CapturedOnly bool  `json:"captured_only"`
-	LowerBound   bool  `json:"lower_bound"`
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	TotalTokens         int64   `json:"total_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	CacheReadRatio      float64 `json:"cache_read_ratio"`
+	EffectiveUnits      float64 `json:"effective_units"`
+	CapturedOnly        bool    `json:"captured_only"`
+	LowerBound          bool    `json:"lower_bound"`
 }
 
 type usageSummaryGroup struct {
-	By              string `json:"by"`
-	Key             string `json:"key"`
-	label           string // human display label; absent from JSON
-	InputTokens     int64  `json:"input_tokens"`
-	OutputTokens    int64  `json:"output_tokens"`
-	TotalTokens     int64  `json:"total_tokens"`
-	Records         int    `json:"records"`
-	CapturedRecords int    `json:"captured_records"`
+	By                  string  `json:"by"`
+	Key                 string  `json:"key"`
+	label               string  // human display label; absent from JSON
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	TotalTokens         int64   `json:"total_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	CacheReadRatio      float64 `json:"cache_read_ratio"`
+	EffectiveUnits      float64 `json:"effective_units"`
+	Records             int     `json:"records"`
+	CapturedRecords     int     `json:"captured_records"`
 }
 
 type usageSummaryResponse struct {
@@ -570,7 +578,8 @@ func sortedUsageBreakdowns(values map[string]*usageBreakdown) []usageBreakdown {
 }
 
 func buildUsageSummary(scope usageSummaryScope, by string, records []UsageRecord, warnings []string, unparseable int) usageSummaryResponse {
-	var inputTokens, outputTokens, totalTokens int64
+	var inputTokens, outputTokens, totalTokens, cacheReadTokens, cacheCreationTokens int64
+	var effectiveUnits float64
 	capturedRecords := 0
 	uncapturedMap := map[string]*uncapturedSource{}
 
@@ -580,6 +589,11 @@ func buildUsageSummary(scope usageSummaryScope, by string, records []UsageRecord
 			inputTokens += r.InputTokens
 			outputTokens += r.OutputTokens
 			totalTokens += r.TotalTokens
+			cacheReadTokens += r.CacheReadTokens
+			cacheCreationTokens += r.CacheCreationTokens
+			if units, ok := recordEffectiveUnits(r); ok {
+				effectiveUnits += units
+			}
 		} else {
 			key := r.Provider + "\x00" + normalizeUsageStage(r.Stage)
 			if uc, ok := uncapturedMap[key]; ok {
@@ -594,6 +608,10 @@ func buildUsageSummary(scope usageSummaryScope, by string, records []UsageRecord
 		}
 	}
 
+	var cacheReadRatio float64
+	if inputTokens > 0 {
+		cacheReadRatio = float64(cacheReadTokens) / float64(inputTokens)
+	}
 	uncaptured := sortedUncapturedSources(uncapturedMap)
 	complete := len(uncaptured) == 0
 	if warnings == nil {
@@ -612,11 +630,15 @@ func buildUsageSummary(scope usageSummaryScope, by string, records []UsageRecord
 			UnparseableRecords: unparseable,
 		},
 		Totals: usageSummaryTotals{
-			InputTokens:  inputTokens,
-			OutputTokens: outputTokens,
-			TotalTokens:  totalTokens,
-			CapturedOnly: true,
-			LowerBound:   !complete,
+			InputTokens:         inputTokens,
+			OutputTokens:        outputTokens,
+			TotalTokens:         totalTokens,
+			CacheReadTokens:     cacheReadTokens,
+			CacheCreationTokens: cacheCreationTokens,
+			CacheReadRatio:      cacheReadRatio,
+			EffectiveUnits:      effectiveUnits,
+			CapturedOnly:        true,
+			LowerBound:          !complete,
 		},
 		Groups:   buildSummaryGroups(by, records),
 		Warnings: warnings,
@@ -641,13 +663,16 @@ func sortedUncapturedSources(m map[string]*uncapturedSource) []uncapturedSource 
 
 func buildSummaryGroups(by string, records []UsageRecord) []usageSummaryGroup {
 	type groupAccum struct {
-		jsonKey         string
-		displayLabel    string
-		inputTokens     int64
-		outputTokens    int64
-		totalTokens     int64
-		records         int
-		capturedRecords int
+		jsonKey             string
+		displayLabel        string
+		inputTokens         int64
+		outputTokens        int64
+		totalTokens         int64
+		cacheReadTokens     int64
+		cacheCreationTokens int64
+		effectiveUnits      float64
+		records             int
+		capturedRecords     int
 	}
 	groups := map[string]*groupAccum{}
 	for _, r := range records {
@@ -663,6 +688,11 @@ func buildSummaryGroups(by string, records []UsageRecord) []usageSummaryGroup {
 			g.inputTokens += r.InputTokens
 			g.outputTokens += r.OutputTokens
 			g.totalTokens += r.TotalTokens
+			g.cacheReadTokens += r.CacheReadTokens
+			g.cacheCreationTokens += r.CacheCreationTokens
+			if units, ok := recordEffectiveUnits(r); ok {
+				g.effectiveUnits += units
+			}
 		}
 	}
 
@@ -675,15 +705,23 @@ func buildSummaryGroups(by string, records []UsageRecord) []usageSummaryGroup {
 	out := make([]usageSummaryGroup, 0, len(keys))
 	for _, k := range keys {
 		g := groups[k]
+		var groupCacheReadRatio float64
+		if g.inputTokens > 0 {
+			groupCacheReadRatio = float64(g.cacheReadTokens) / float64(g.inputTokens)
+		}
 		out = append(out, usageSummaryGroup{
-			By:              by,
-			Key:             g.jsonKey,
-			label:           g.displayLabel,
-			InputTokens:     g.inputTokens,
-			OutputTokens:    g.outputTokens,
-			TotalTokens:     g.totalTokens,
-			Records:         g.records,
-			CapturedRecords: g.capturedRecords,
+			By:                  by,
+			Key:                 g.jsonKey,
+			label:               g.displayLabel,
+			InputTokens:         g.inputTokens,
+			OutputTokens:        g.outputTokens,
+			TotalTokens:         g.totalTokens,
+			CacheReadTokens:     g.cacheReadTokens,
+			CacheCreationTokens: g.cacheCreationTokens,
+			CacheReadRatio:      groupCacheReadRatio,
+			EffectiveUnits:      g.effectiveUnits,
+			Records:             g.records,
+			CapturedRecords:     g.capturedRecords,
 		})
 	}
 	return out
@@ -727,16 +765,17 @@ func writeUsageSummaryHuman(stdout io.Writer, r usageSummaryResponse, by string)
 	}
 
 	fmt.Fprintln(stdout)
-	fmt.Fprintf(stdout, "  %-24s  %10s  %10s  %10s  %s\n",
-		strings.ToUpper(by), "INPUT", "OUTPUT", "TOTAL", "CAPTURED")
+	fmt.Fprintf(stdout, "  %-24s  %10s  %10s  %10s  %8s  %10s  %10s  %12s  %s\n",
+		strings.ToUpper(by), "INPUT", "CR_READ", "CR_WRITE", "CACHE%", "OUTPUT", "TOTAL", "EFFECTIVE", "CAPTURED")
 	for _, g := range r.Groups {
 		label := g.label
 		if label == "" {
 			label = g.Key
 		}
 		captured := fmt.Sprintf("%d/%d", g.CapturedRecords, g.Records)
-		fmt.Fprintf(stdout, "  %-24s  %10d  %10d  %10d  %s\n",
-			label, g.InputTokens, g.OutputTokens, g.TotalTokens, captured)
+		cachePercent := fmt.Sprintf("%.1f%%", g.CacheReadRatio*100)
+		fmt.Fprintf(stdout, "  %-24s  %10d  %10d  %10d  %8s  %10d  %10d  %12.1f  %s\n",
+			label, g.InputTokens, g.CacheReadTokens, g.CacheCreationTokens, cachePercent, g.OutputTokens, g.TotalTokens, g.EffectiveUnits, captured)
 	}
 
 	fmt.Fprintln(stdout)
@@ -745,8 +784,9 @@ func writeUsageSummaryHuman(stdout io.Writer, r usageSummaryResponse, by string)
 		totalLabel += " (LOWER BOUND)"
 	}
 	totalCaptured := fmt.Sprintf("%d/%d", r.Coverage.CapturedRecords, r.Coverage.Records)
-	fmt.Fprintf(stdout, "  %-24s  %10d  %10d  %10d  %s\n",
-		totalLabel, r.Totals.InputTokens, r.Totals.OutputTokens, r.Totals.TotalTokens, totalCaptured)
+	totalCachePercent := fmt.Sprintf("%.1f%%", r.Totals.CacheReadRatio*100)
+	fmt.Fprintf(stdout, "  %-24s  %10d  %10d  %10d  %8s  %10d  %10d  %12.1f  %s\n",
+		totalLabel, r.Totals.InputTokens, r.Totals.CacheReadTokens, r.Totals.CacheCreationTokens, totalCachePercent, r.Totals.OutputTokens, r.Totals.TotalTokens, r.Totals.EffectiveUnits, totalCaptured)
 
 	fmt.Fprintln(stdout)
 	if r.Coverage.Complete {
