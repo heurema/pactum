@@ -67,11 +67,11 @@ func TestReadStageParsersExtractFromJSONWrappedAgentOutput(t *testing.T) {
 	reviewerBlocks, reviewerWarnings := parseReviewerFindingBlocks(codexJSONLOutputForTest(t, reviewerStructuredOutput([]map[string]any{
 		{"message": "wrapped reviewer finding", "severity": "medium", "category": "quality"},
 	})))
-	if len(reviewerWarnings) != 0 || len(reviewerBlocks) != 1 || len(reviewerBlocks[0].Findings) != 1 {
+	if len(reviewerWarnings) != 0 || len(reviewerBlocks) != 1 || reviewerBlocks[0].Findings == nil || len(*reviewerBlocks[0].Findings) != 1 {
 		t.Fatalf("wrapped reviewer parse mismatch: blocks=%#v warnings=%#v", reviewerBlocks, reviewerWarnings)
 	}
 	var reviewerFinding reviewerFindingProposalInput
-	assertNoError(t, json.Unmarshal(reviewerBlocks[0].Findings[0], &reviewerFinding))
+	assertNoError(t, json.Unmarshal((*reviewerBlocks[0].Findings)[0], &reviewerFinding))
 	if reviewerFinding.Message != "wrapped reviewer finding" {
 		t.Fatalf("wrapped reviewer finding = %#v", reviewerFinding)
 	}

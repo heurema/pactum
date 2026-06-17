@@ -62,8 +62,8 @@ type reviewProposalSummary struct {
 }
 
 type reviewerFindingBlock struct {
-	Schema   string            `json:"schema"`
-	Findings []json.RawMessage `json:"findings"`
+	Schema   string             `json:"schema"`
+	Findings *[]json.RawMessage `json:"findings"`
 }
 
 type reviewerFindingProposalInput struct {
@@ -136,7 +136,7 @@ func (a App) ReviewProposeFindings(stdout io.Writer, runID string, reviewerAttem
 			warnings = append(warnings, prefixAttemptWarning(attemptIDs, attemptID, warning))
 		}
 		for _, block := range blocks {
-			for _, rawFinding := range block.Findings {
+			for _, rawFinding := range *block.Findings {
 				var input reviewerFindingProposalInput
 				if err := json.Unmarshal(rawFinding, &input); err != nil {
 					warnings = append(warnings, prefixAttemptWarning(attemptIDs, attemptID, "proposal skipped: invalid finding object"))
@@ -425,23 +425,39 @@ func parseReviewerFindingBlocks(output string) ([]reviewerFindingBlock, []string
 	jsonBlocks := extractFencedJSONBlocks(text)
 	blocks := make([]reviewerFindingBlock, 0, len(jsonBlocks))
 	warnings := []string{}
+	// schemaBlockCount tracks every fenced block that carries the schema string,
+	// whether or not it is valid JSON or has a valid findings key. More than one
+	// is structurally ambiguous and is always a parse miss.
+	schemaBlockCount := 0
 	for _, raw := range jsonBlocks {
 		var block reviewerFindingBlock
 		if err := json.Unmarshal([]byte(raw), &block); err != nil {
-			warnings = append(warnings, "structured proposal block skipped: invalid JSON")
+			if strings.Contains(raw, reviewerFindingsSchema) {
+				schemaBlockCount++
+				warnings = append(warnings, "reviewer findings block has invalid JSON — parse miss (inspect attempt stdout)")
+			} else {
+				warnings = append(warnings, "structured proposal block skipped: invalid JSON")
+			}
 			continue
 		}
 		if block.Schema != reviewerFindingsSchema {
 			continue
 		}
+		schemaBlockCount++
+		if block.Findings == nil {
+			warnings = append(warnings, "reviewer findings block has null or absent findings key — parse miss (inspect attempt stdout)")
+			continue
+		}
 		blocks = append(blocks, block)
 	}
-	// The schema marker without a single parsed block means the reviewer did
-	// emit findings that this parse missed (e.g. a stream cut before the
-	// closing fence) — zero proposals must read as a parse miss, not a clean
-	// review.
-	if len(blocks) == 0 && strings.Contains(text, reviewerFindingsSchema) {
-		warnings = append(warnings, "findings schema marker present but no findings block parsed: zero proposals is a parse miss, not a clean review (inspect the attempt stdout)")
+	// Multiple schema blocks are ambiguous regardless of their individual validity.
+	if schemaBlockCount > 1 {
+		warnings = append(warnings, fmt.Sprintf("multiple reviewer findings blocks found (%d) — parse miss (inspect attempt stdout)", schemaBlockCount))
+		return nil, warnings
+	}
+	// Any non-empty reviewer output without a valid findings block is a parse miss.
+	if len(blocks) == 0 && strings.TrimSpace(text) != "" {
+		warnings = append(warnings, "no valid reviewer findings block parsed — parse miss (inspect attempt stdout)")
 	}
 	return blocks, warnings
 }

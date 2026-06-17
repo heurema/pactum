@@ -106,6 +106,10 @@ func reviewerLensPromptPath(runPaths contractRunPathSet, member string, lens rev
 	return filepath.Join(runPaths.ReviewDir, fmt.Sprintf("reviewer-prompt-%s-%s.md", member, lens.Key))
 }
 
+func reviewerLensCorrectivePromptArtifact(member string, lens reviewLens) string {
+	return fmt.Sprintf("review/reviewer-prompt-%s-%s-corrective.md", member, lens.Key)
+}
+
 type reviewContext struct {
 	Root     string
 	Paths    artifacts.Paths
@@ -1154,7 +1158,7 @@ func renderReviewerPrompt(runID string, lens reviewLens) string {
 	fmt.Fprintln(&b, "# Reviewer Prompt")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "This prompt is prepared for a reviewer agent subprocess.")
-	fmt.Fprintln(&b, "Pactum captures reviewer output as artifacts and may parse optional structured proposal blocks, but it does not trust reviewer output automatically.")
+	fmt.Fprintln(&b, "Pactum captures reviewer output as artifacts. The structured findings block is mandatory — see the Required structured output section below.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Objective")
 	fmt.Fprintln(&b, "Review the executed task against the approved Pactum contract and gate report.")
@@ -1211,18 +1215,22 @@ func renderReviewerPrompt(runID string, lens reviewLens) string {
 	fmt.Fprintln(&b, "- Summary last.")
 	fmt.Fprintln(&b, "- If there are no findings, say so explicitly and name residual risks or testing gaps.")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "## Output shape")
-	fmt.Fprintln(&b, "If you report findings in prose, make them easy for a human to convert manually:")
-	fmt.Fprintln(&b, "- message")
-	fmt.Fprintln(&b, "- severity")
-	fmt.Fprintln(&b, "- category")
-	fmt.Fprintln(&b, "- file")
-	fmt.Fprintln(&b, "- line")
-	fmt.Fprintln(&b, "- blocking")
+	fmt.Fprintln(&b, "## Required structured output")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "## Optional structured finding proposals")
+	fmt.Fprintln(&b, "You MUST emit exactly one fenced JSON block using the schema below.")
+	fmt.Fprintln(&b, "The block is mandatory — even when you have no findings, emit `\"findings\": []`.")
+	fmt.Fprintln(&b, "Prose commentary is supplemental only; the parser ignores it.")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "If you propose findings, include a fenced JSON block exactly like:")
+	fmt.Fprintln(&b, "Clean example (no findings):")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "```json")
+	fmt.Fprintln(&b, "{")
+	fmt.Fprintf(&b, "  \"schema\": %q,\n", reviewerFindingsSchema)
+	fmt.Fprintln(&b, `  "findings": []`)
+	fmt.Fprintln(&b, "}")
+	fmt.Fprintln(&b, "```")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "Example with one finding:")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "```json")
 	fmt.Fprintln(&b, "{")
@@ -1254,6 +1262,53 @@ func renderReviewerPrompt(runID string, lens reviewLens) string {
 	fmt.Fprintln(&b, "- A missing confidence defaults to medium.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "Important: Pactum does not trust this output automatically. A human must accept proposals.")
+	return b.String()
+}
+
+// renderReviewerCorrectivePrompt generates a corrective prompt that includes
+// the full artifact context for a fresh reviewer attempt. A corrective retry
+// is a new single-turn attempt (ACP is strictly single-turn), so the reviewer
+// cannot see the previous attempt's output — it must re-review from scratch.
+func renderReviewerCorrectivePrompt(runID string, lens reviewLens) string {
+	reviewerContextPath := runArtifactRepoRel(runID, reviewerContextArtifact)
+	contractPath := runArtifactRepoRel(runID, "contract/contract.json")
+	gateReportPath := runArtifactRepoRel(runID, gateReportArtifact)
+	reviewPath := runArtifactRepoRel(runID, reviewArtifact)
+	findingsPath := runArtifactRepoRel(runID, reviewFindingsArtifact)
+	resolutionsPath := runArtifactRepoRel(runID, reviewResolutionsArtifact)
+	proposalsPath := runArtifactRepoRel(runID, reviewProposalsArtifact)
+	proposalDecisionsPath := runArtifactRepoRel(runID, reviewProposalDecisionsArtifact)
+
+	var b strings.Builder
+	fmt.Fprintln(&b, "# Corrective Reviewer Prompt")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "This prompt is prepared for a corrective reviewer attempt.")
+	fmt.Fprintln(&b, "Your previous response did not include a valid `pactum.reviewer_findings.v1alpha1` JSON block.")
+	fmt.Fprintln(&b, "Findings expressed only in prose in the previous attempt are not recoverable; re-review the task using the inputs below.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Inputs")
+	fmt.Fprintf(&b, "- Reviewer context: %s\n", reviewerContextPath)
+	fmt.Fprintf(&b, "- Contract: %s\n", contractPath)
+	fmt.Fprintf(&b, "- Gate report: %s\n", gateReportPath)
+	fmt.Fprintf(&b, "- Review artifacts: %s, %s, %s, %s, %s\n", reviewPath, findingsPath, resolutionsPath, proposalsPath, proposalDecisionsPath)
+	fmt.Fprintln(&b)
+	fmt.Fprintf(&b, "## Review lens: %s\n", lens.Heading)
+	fmt.Fprintln(&b)
+	fmt.Fprintf(&b, "You are the %s reviewer. Review the task against the approved contract and gate report, focusing on your lens:\n", lens.Key)
+	for _, item := range lens.Checklist {
+		fmt.Fprintf(&b, "- %s\n", item)
+	}
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Required structured output")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "You MUST emit exactly one fenced JSON block. If you have no findings, emit `\"findings\": []`.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "```json")
+	fmt.Fprintln(&b, "{")
+	fmt.Fprintf(&b, "  \"schema\": %q,\n", reviewerFindingsSchema)
+	fmt.Fprintln(&b, `  "findings": []`)
+	fmt.Fprintln(&b, "}")
+	fmt.Fprintln(&b, "```")
 	return b.String()
 }
 
