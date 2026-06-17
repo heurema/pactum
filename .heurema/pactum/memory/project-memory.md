@@ -99,3 +99,10 @@
 - Files: none
 - Summary: Reviewed run run_20260613_090426 with gate status passed and review status approved. Goal: Run a no-edit Pactum execution through the rebuilt Pactum binary and local codex-acp adapter to verify captured and coherent ACP PromptResponse.Us...
 - Candidate: runs/run_20260613_090426/memory/memory-candidate.json
+
+### mem_015 - Extract a shared bounded-loop engine into a new internal/loop package and por...
+- Run: run_20260616_192306
+- Freshness: fresh
+- Files: docs/contract-review-design.md, internal/app/app.go, internal/app/contract_review.go, internal/app/contract_review_test.go, internal/loop/loop.go, internal/loop/loop_test.go
+- Summary: Reviewed run run_20260616_192306 with gate status needs_review and review status approved. Goal: Extract a shared bounded-loop engine into a new internal/loop package and port the contract_review loop onto it, behaviour-preserving, plus ...
+- Candidate: runs/run_20260616_192306/memory/memory-candidate.json
