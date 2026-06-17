@@ -641,6 +641,25 @@ selectors, judge panels by default, select on any MERGE stage.
     two-layer verification (gate + the contract-encoding review panel, which caught
     two spec-drift bugs the tests missed) held — not because compaction was harmless.
 
+- **Proactive fresh-context restart (pre-compaction), configurable** (feature —
+  record only, not yet designed/built). The *reactive* policy above resumes after a
+  failure/compaction; this is its *proactive* complement: don't let the executor
+  reach auto-compaction at all. Watch the agent's context fill level and, **before**
+  it crosses a configurable threshold, checkpoint and **restart the agent with a
+  fresh window** — resuming from the externalized state (on-disk partial work + the
+  re-readable contract), exactly the resume path above. Motivation is the same
+  research: a fresh focused window beats a long/compacted one, and compaction is
+  lossy/irreversible — so avoiding the compaction entirely (rather than recovering
+  from it) is strictly better when the state is externalized. **Configurable:** a
+  threshold (e.g. fraction of the context window, absolute token budget, or turn
+  count) plus on/off, so an operator can tune how aggressively to recycle the
+  window — or disable it. Open mechanism question (for the design pass, not now):
+  how pactum *observes and controls* the agent's context level over ACP — Claude
+  Code auto-compacts internally, so proactive restart means either pactum kills the
+  ACP session at the threshold and opens a fresh one with a resume prompt, or the
+  underlying agent is configured to surface fill level / suppress auto-compact and
+  signal pactum. Depends on the resume-from-disk capability landing first.
+
 - **`operator` field in the trace** (small). Record *who drove* each agent
   invocation — the principal that ran the pactum command — distinct from `agent`
   (the model that did the work) and `role` (the stage). In the human → agent →
