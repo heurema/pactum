@@ -700,6 +700,27 @@ selectors, judge panels by default, select on any MERGE stage.
   be re-run with fable removed from the panel. Skip/retry the failed lens with a
   recorded warning and converge on the available reviewers instead of failing
   the run.
+- **Contract-review: bound rounds + halt on unresolved blockers, separate
+  blocking from advisory** (med). Observed live in run_20260617_060708 (the
+  `review_loop` port): on a long contract (15 enumerated sub-tests) the
+  contract-review loop **ran the full 10 rounds, hit `max_rounds`, and never
+  converged** — the panel kept piling on *advisory precision nits* (each round the
+  contract grew), and the fixer **never landed the one real blocking finding**
+  (a wrong arithmetic assertion: "reviewer-attempt events == max_rounds", but each
+  round fans out across the fixed 5 lenses → `5 × max_rounds × panelSize`). It then
+  **silently terminated and handed back a contract with the blocking finding still
+  open** — the operator had to spot it and hand-fix the criterion. Three fixes:
+  (a) **`max_rounds` with any unresolved *blocking* finding must HALT for the
+  operator** (a distinct non-approvable terminal), not silently pass — a contract
+  with an open blocker should never reach `approve`; (b) **separate blocking from
+  advisory** so advisory nits never drive non-convergence (converge once blockers
+  are clear; advisory findings are recorded, not loop-extending); (c) a
+  **fixer-no-progress escalation** — if the fixer fails to change the blocking
+  finding's status for K consecutive rounds, stop and escalate rather than burn the
+  remaining rounds rewording around it. Also a tighter default round cap for
+  contract review (10 is too many when each round is an opus+codex panel + fixer —
+  the run took ~90 min). Net: the recursion correctly *finds* blockers; it must not
+  *pretend to have resolved* them.
 - **Codex usage not recorded on the non-fork CLI path** (small). `parseCodexUsage`
   exists, but codex drafter/reviewer attempts (`codex exec --json`) recorded
   `captured=false`. Folds into the ACP-only item above once that lands; until
