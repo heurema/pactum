@@ -592,15 +592,26 @@ multi-`by` with one code-resolved judge + admissibility filtering + deterministi
 fallback + full run-record stamping. **Never:** universal select-best, configurable
 selectors, judge panels by default, select on any MERGE stage.
 
-## Token-efficiency optimization (deep-research topic — formulated, not yet run)
+## Token-efficiency optimization (research DONE → [token-efficiency-research.md](token-efficiency-research.md))
 
-The whole ecosystem is moving toward cost optimization, and pactum's future is
-likely **API-metered** (every token billed). Our own runs are **input-heavy** —
-`execute` ~10M input / ~80k output; a **fresh ACP session per actor** re-reads the
-context each time (reproducible, but re-pays the full input); the contract-review
-opus panel over rounds is a major line item. We are adding cost *visibility*
-(`pactum usage`); the next question is cost *reduction*. Recorded as a deep-research
-topic to run later (like the agent-navigation and plan-DAG research arcs).
+**The research has been run** (web deep-research + gpt-5.5 reasoning + an empirical
+measurement of pactum's own usage ledger) — distilled in
+[`token-efficiency-research.md`](token-efficiency-research.md). The empirical finding
+**overturned the headline priority**: pactum already gets **79–97% cache-read**
+across its fresh ACP sessions (measured), so prompt caching — the literature's top
+billable lever — has almost no headroom for us, and the "fresh-session kills caching"
+worry is empirically false. The input-heavy profile is *misleading*: ~94% of input is
+cheap cache-read (0.1×), so effective cost is ~85% below the raw token count. **Revised
+top priorities:** (1) **surface cache-adjusted cost in `pactum usage`** (`cache_read_ratio`
++ `effective_units`, already captured but not shown — we have been reading the
+scary-but-cheap raw number); (2) **context-pack phase before execute** — hand the
+executor file/line-range *evidence* (it ignores the map and re-explores), the top
+*raw-token* lever; (3) **plan-DAG with complexity-gated granularity** (3–10 leaf tasks,
+not microtasks) — valued for quality/convergence + small per-task fresh input, NOT as
+a cache-cost fix (caching is solved); (4) model routing at task boundaries; (5)
+workflow-shape the deterministic stages. The scary "decomposition costs 4–10× tokens"
+claim was *refuted* in verification. The remaining recorded angles + sources are in the
+doc. **Original framing (kept for the record):**
 **Goal: minimize tokens spent for a given output quality, across BOTH contract
 composition and task execution.** Prereq: `pactum usage` + codex capture fixed, so
 optimizations are measurable.
