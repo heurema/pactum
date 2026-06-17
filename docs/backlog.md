@@ -592,6 +592,53 @@ multi-`by` with one code-resolved judge + admissibility filtering + deterministi
 fallback + full run-record stamping. **Never:** universal select-best, configurable
 selectors, judge panels by default, select on any MERGE stage.
 
+## Token-efficiency optimization (deep-research topic — formulated, not yet run)
+
+The whole ecosystem is moving toward cost optimization, and pactum's future is
+likely **API-metered** (every token billed). Our own runs are **input-heavy** —
+`execute` ~10M input / ~80k output; a **fresh ACP session per actor** re-reads the
+context each time (reproducible, but re-pays the full input); the contract-review
+opus panel over rounds is a major line item. We are adding cost *visibility*
+(`pactum usage`); the next question is cost *reduction*. Recorded as a deep-research
+topic to run later (like the agent-navigation and plan-DAG research arcs).
+**Goal: minimize tokens spent for a given output quality, across BOTH contract
+composition and task execution.** Prereq: `pactum usage` + codex capture fixed, so
+optimizations are measurable.
+
+Research angles (to investigate with primary sources when run):
+1. **Prompt caching** (Anthropic `cache_control` / ephemeral cache): structure the
+   stable prefix (system + contract + code context) so it is cached across the many
+   sub-agent calls — reviewers per lens, fixer, every round — that currently re-pay
+   full input each time. Likely the **single biggest lever** given the input-heavy
+   profile. Quantify savings, TTL (5-min cache window), and the prompt-structuring
+   constraints (stable prefix first, volatile suffix last).
+2. **Context selection / minimal-sufficient context**: how much code to feed vs
+   retrieval/relevance; the cost of over-context; repo-map/code-index targeting; the
+   trade between fewer input tokens and weak-model success.
+3. **Workflows vs autonomous agents** (Anthropic "Building Effective Agents"):
+   prescriptive workflows are cheaper/deterministic than open-ended agents; where
+   pactum's pipeline can be more workflow-shaped (less re-deciding) to cut tokens,
+   and when autonomy actually earns its cost.
+4. **Model routing / right-sizing per stage**: a cheap/small model for cheap
+   subtasks (clarify, memory, trivial fixes), the strong model only where it pays;
+   the economics of which stage needs which tier.
+5. **Reducing redundant re-reads**: fresh-session-per-actor re-reads context
+   (reproducible but expensive) — can caching / scoped handoff / a shared cached
+   prefix cut it without losing the read-only↔write boundary; Batch API for the
+   parallelizable reviewer fan-out.
+6. **Token-efficient contract composition**: convey the spec in the fewest tokens
+   while staying executable by a weak model (ties to *contract-sizing* + the plan-DAG
+   arc); structured vs prose; compression without losing precision.
+7. **Empirical cost-vs-quality**: known token-cost/quality Pareto data (SWE-bench
+   cost-per-solve and similar); budget-bounded agents; where diminishing returns hit.
+8. **The API-metered future**: cost as a first-class metric, budget caps, the
+   industry optimization trend — and what that implies for pactum's defaults.
+
+Once run, the research feeds concrete pactum changes (cache the contract/context
+prefix, scope context, route models per stage, workflow-shape the pipeline) — each
+measurable against `pactum usage`. **First step: write the deep-research brief from
+these angles; do not start optimizing blind.**
+
 ## Hardening / cleanup
 
 - **Executor resilience: auto-retry on transient failure + resume (not reset)**
