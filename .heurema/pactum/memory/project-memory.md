@@ -120,3 +120,10 @@
 - Files: docs/agents.md, internal/app/agent_attempt_transport_test.go, internal/app/agent_resolve.go, internal/app/app.go, internal/app/app_test.go, internal/app/clarify_loop.go, internal/app/clarify_loop_test.go, internal/app/clarify_round.go, internal/app/cli.go, internal/app/config.go, internal/app/config_test.go, internal/app/contract_draft.go, internal/app/contract_review.go, internal/app/contract_review_test.go, internal/app/execute.go, internal/app/gate.go, internal/app/gate_test.go, internal/app/resolve.go, internal/app/review.go, internal/app/review_fix.go, internal/app/review_loop.go, internal/app/review_loop_test.go
 - Summary: Reviewed run run_20260617_090147 with gate status needs_review and review status approved. Goal: Rework the pactum config to the new pipeline shape and wire it through the existing code; behaviour-preserving (no new runtime capability), ...
 - Candidate: runs/run_20260617_090147/memory/memory-candidate.json
+
+### mem_018 - Add a new top-level CLI command 'pactum usage [run_id]' that summarizes agent...
+- Run: run_20260617_115334
+- Freshness: fresh
+- Files: docs/backlog.md, docs/cost-budget-design.md, internal/app/cli.go, internal/app/commands.go, internal/app/usage.go, internal/app/usage_test.go
+- Summary: Reviewed run run_20260617_115334 with gate status needs_review and review status approved. Goal: Add a new top-level CLI command 'pactum usage [run_id]' that summarizes agent token usage from a run's ledger/usage.jsonl — a plain 'where d...
+- Candidate: runs/run_20260617_115334/memory/memory-candidate.json
