@@ -134,3 +134,10 @@
 - Files: docs/token-efficiency-research.md, internal/app/usage.go, internal/app/usage_test.go
 - Summary: Reviewed run run_20260617_150710 with gate status needs_review and review status approved. Goal: Surface cache reuse and effective cost in the existing 'pactum usage' command. The data is already captured and computed — it is just not sh...
 - Candidate: runs/run_20260617_150710/memory/memory-candidate.json
+
+### mem_020 - Add the plan-DAG schema and structural validation to the contract — slice 1 o...
+- Run: run_20260617_182429
+- Freshness: fresh
+- Files: docs/flow.md, internal/app/clarify.go, internal/app/contract.go, internal/app/contract_plan_test.go, internal/app/run.go
+- Summary: Reviewed run run_20260617_182429 with gate status needs_review and review status approved. Goal: Add the plan-DAG schema and structural validation to the contract — slice 1 of the plan-DAG arc (see docs/contract-plan-dag-design.md). SCHE...
+- Candidate: runs/run_20260617_182429/memory/memory-candidate.json
