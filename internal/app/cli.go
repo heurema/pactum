@@ -334,7 +334,7 @@ type statusCmd struct {
 type usageCmd struct {
 	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
 	All        bool   `name:"all" help:"Aggregate token usage across every run in the workspace."`
-	Top        *int   `name:"top" help:"With --all, cap the by-run list to the N runs with the most tokens."`
+	By         string `name:"by" default:"stage" enum:"stage,model,agent,provider" help:"Grouping dimension: stage, model, agent, or provider."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 

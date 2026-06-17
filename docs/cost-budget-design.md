@@ -293,12 +293,12 @@ Getting the rich, structured split requires `--json` (codex) / `--output-format 
   run / stage / agent / model / day. Never the source of truth. The static
   cross-run aggregate (by run / stage / agent / model) is implemented as
   `pactum usage --all` (M13.0); the per-day trend series is a deferred follow-up.
-  `--all` leads with the workspace summary, sorts the `by_run` rows by captured
-  total tokens descending, and takes `--top N` to cap that run list (totals and
-  the other breakdowns still aggregate every run).
+  `--all` aggregates every run's `usage.jsonl`; the breakdown dimension is selected
+  with `--by stage|model|agent|provider` (the earlier `by_run` rows and `--top N`
+  flag were dropped when the command moved to the uniform `--by` model).
 - **"Tokens for this task"** = fold the run's `usage.jsonl` (sum each class, count
-  calls). `pactum usage [run_id]` reports the per-run total + by-stage / by-agent /
-  by-attempt breakdowns; `status` carries the per-run total. Both report the cache
+  calls). `pactum usage [run_id]` reports the per-run total + a breakdown selected
+  with `--by stage|model|agent|provider`; `status` carries the per-run total. Both report the cache
   **hit rate** (cache_read vs input, JSON field `cache_read_ratio`) — caching is the
   biggest cost lever in the loop.
 - **Effective units (M25.1).** Every total and breakdown also reports
