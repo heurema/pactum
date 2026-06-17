@@ -717,10 +717,26 @@ selectors, judge panels by default, select on any MERGE stage.
   are clear; advisory findings are recorded, not loop-extending); (c) a
   **fixer-no-progress escalation** — if the fixer fails to change the blocking
   finding's status for K consecutive rounds, stop and escalate rather than burn the
-  remaining rounds rewording around it. Also a tighter default round cap for
-  contract review (10 is too many when each round is an opus+codex panel + fixer —
-  the run took ~90 min). Net: the recursion correctly *finds* blockers; it must not
-  *pretend to have resolved* them.
+  remaining rounds rewording around it. **Keep `max_rounds` default at 10** — the
+  ~90-min run was bounded (for the later config slice) by a *manual one-off* cap,
+  not by lowering the default; the round count is not the real lever.
+
+  **The root cause is contract SIZE, not rounds.** A too-large contract (the
+  15-sub-test monster) hands the panel an unbounded supply of advisory nits, so it
+  never converges regardless of the cap; a focused contract (the config slice's ~10
+  criteria) converges fast. So the real fix is **right-sizing the contract** — keep
+  each contract small enough that draft + review converges quickly. *Open how to
+  enforce it:* a soft size budget on the contract, a "too big → decompose" signal at
+  draft time, or splitting the work before drafting. **The plan-DAG is the likely
+  structural answer** (see the *Contract plan DAG* arc /
+  `contract-plan-dag-design.md`): if a contract is split into a DAG of self-contained
+  tasks, the heavy detail moves *into* small per-task specs — each tiny enough to
+  draft and converge quickly — while the top-level contract stays a lean
+  constitution. That reframes the DAG as the cure for **contract-review convergence
+  and contract size**, not only execution decomposition — another argument for the
+  arc. Net: the recursion correctly *finds* blockers; it must not *pretend to have
+  resolved* them — and the deeper fix is to never hand it an oversized contract in
+  the first place.
 - **Codex usage not recorded on the non-fork CLI path** (small). `parseCodexUsage`
   exists, but codex drafter/reviewer attempts (`codex exec --json`) recorded
   `captured=false`. Folds into the ACP-only item above once that lands; until
