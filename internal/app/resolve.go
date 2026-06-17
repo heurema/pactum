@@ -307,7 +307,7 @@ func contractReviewersConfigured(configPath string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return len(config.Contract.Reviewers) > 0, nil
+	return len(config.Pipeline.ContractReview.By) > 0, nil
 }
 
 // openBlockingQuestionCount counts open blocking clarification questions. An

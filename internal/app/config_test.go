@@ -3,7 +3,6 @@ package app
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -11,14 +10,18 @@ import (
 	"github.com/heurema/pactum/internal/agents"
 )
 
+// minimalValidConfig returns a minimal YAML config string with the given agents
+// block. Use it as a base and append extra lines.
+func minimalValidConfig(agentsBlock string) string {
+	return "version: v1alpha1\n" + agentsBlock
+}
+
 func TestReadConfigRejectsUnknownKeys(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	contents := strings.Join([]string{
-		"schema: pactum.config.v1alpha1",
+		"version: v1alpha1",
 		"default_profile: balanced",
-		"review:",
-		"  max_rounds: 10",
 	}, "\n")
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -33,129 +36,536 @@ func TestReadConfigRejectsUnknownKeys(t *testing.T) {
 	}
 }
 
-func TestReadConfigParsesClarifySection(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	contents := strings.Join([]string{
-		"schema: pactum.config.v1alpha1",
-		"agents:",
-		"  - name: claude",
-		"    model: claude-opus-4-8",
-		"clarify:",
-		"  max_rounds: 5",
-	}, "\n")
-	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	config, err := readConfig(path)
-	if err != nil {
-		t.Fatalf("readConfig: %v", err)
-	}
-	if config.Clarify.MaxRounds != 5 {
-		t.Fatalf("clarify.max_rounds = %d, want 5", config.Clarify.MaxRounds)
-	}
-}
-
-func TestDefaultConfigClarifyMaxRounds(t *testing.T) {
-	if got := defaultConfigFile().Clarify.MaxRounds; got != 3 {
-		t.Fatalf("default clarify.max_rounds = %d, want 3", got)
-	}
-}
-
-func TestReadConfigParsesTimeoutsSection(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	contents := strings.Join([]string{
-		"schema: pactum.config.v1alpha1",
-		"agents:",
-		"  - name: claude",
-		"    model: claude-opus-4-8",
-		"timeouts:",
-		"  idle: 15m",
-	}, "\n")
-	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	config, err := readConfig(path)
-	if err != nil {
-		t.Fatalf("readConfig: %v", err)
-	}
-	if config.Timeouts.Idle != "15m" {
-		t.Fatalf("timeouts.idle = %q, want 15m", config.Timeouts.Idle)
-	}
-}
-
-func TestReadConfigRejectsInvalidIdleTimeout(t *testing.T) {
-	cases := []struct {
-		name string
-		idle string
+func TestReadConfigRejectsLegacyTopLevelKeys(t *testing.T) {
+	legacyKeys := []struct {
+		name    string
+		snippet string
 	}{
-		{name: "garbage value", idle: "soon"},
-		{name: "zero duration", idle: "0s"},
-		{name: "negative duration", idle: "-5m"},
+		{"schema", "schema: pactum.config.v1alpha1"},
+		{"gate", "gate:\n  scope_enforcement: block"},
+		{"review", "review:\n  max_rounds: 10"},
+		{"contract", "contract:\n  reviewers: []"},
+		{"clarify", "clarify:\n  max_rounds: 3"},
+		{"timeouts", "timeouts:\n  idle: 15m"},
 	}
-	for _, tc := range cases {
+	for _, tc := range legacyKeys {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "config.yaml")
-			contents := strings.Join([]string{
-				"schema: pactum.config.v1alpha1",
-				"agents:",
-				"  - name: claude",
-				"    model: claude-opus-4-8",
-				"timeouts:",
-				"  idle: " + strconv.Quote(tc.idle),
-			}, "\n")
+			contents := "version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\n" + tc.snippet + "\n"
 			if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 				t.Fatalf("write config: %v", err)
 			}
-
 			_, err := readConfig(path)
 			if err == nil {
-				t.Fatalf("readConfig should reject timeouts.idle %q", tc.idle)
+				t.Fatalf("readConfig should reject legacy key %q", tc.name)
 			}
-			if !strings.Contains(err.Error(), "timeouts.idle") || !strings.Contains(err.Error(), tc.idle) {
-				t.Fatalf("error should name timeouts.idle and the value %q: %v", tc.idle, err)
+			if !strings.Contains(err.Error(), tc.name) {
+				t.Fatalf("error for legacy key %q should mention the key: %v", tc.name, err)
 			}
 		})
 	}
 }
 
-func TestResolveIdleTimeout(t *testing.T) {
-	writeConfig := func(t *testing.T, lines ...string) string {
-		t.Helper()
-		path := filepath.Join(t.TempDir(), "config.yaml")
-		contents := strings.Join(append([]string{
-			"schema: pactum.config.v1alpha1",
-			"agents:",
-			"  - name: claude",
-			"    model: claude-opus-4-8",
-		}, lines...), "\n")
-		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
-			t.Fatalf("write config: %v", err)
-		}
-		return path
-	}
-	withIdle := writeConfig(t, "timeouts:", "  idle: 15m")
-	withoutIdle := writeConfig(t)
-
+func TestReadConfigRejectsInvalidVersion(t *testing.T) {
 	cases := []struct {
-		name       string
-		configPath string
-		override   time.Duration
-		want       time.Duration
-		wantErr    string
+		name    string
+		version string
 	}{
-		{name: "explicit flag wins over config", configPath: withIdle, override: 90 * time.Second, want: 90 * time.Second},
-		{name: "config beats built-in", configPath: withIdle, override: 0, want: 15 * time.Minute},
-		{name: "built-in when both unset", configPath: withoutIdle, override: 0, want: 25 * time.Minute},
-		{name: "negative flag is rejected", configPath: withIdle, override: -time.Second, wantErr: "timeout must be positive"},
+		{"empty", ""},
+		{"old schema value", "pactum.config.v1alpha1"},
+		{"wrong prefix", "config.v1alpha1"},
+		{"v2", "v2"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := resolveIdleTimeout(tc.configPath, tc.override)
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			var contents string
+			if tc.version == "" {
+				contents = "agents:\n  - name: claude\n    model: claude-opus-4-8\n"
+			} else {
+				contents = "version: " + tc.version + "\nagents:\n  - name: claude\n    model: claude-opus-4-8\n"
+			}
+			if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			_, err := readConfig(path)
+			if err == nil {
+				t.Fatalf("readConfig should reject version %q", tc.version)
+			}
+			if !strings.Contains(err.Error(), "version") {
+				t.Fatalf("error should mention version: %v", err)
+			}
+		})
+	}
+}
+
+func TestReadConfigParsesOutOfScope(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"absent defaults to block", "", gateScopeEnforcementBlock},
+		{"explicit block", "block", gateScopeEnforcementBlock},
+		{"explicit warn", "warn", gateScopeEnforcementWarn},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			var contents string
+			if tc.value == "" {
+				contents = "version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\n"
+			} else {
+				contents = "version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\nout_of_scope: " + tc.value + "\n"
+			}
+			if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			config, err := readConfig(path)
+			if err != nil {
+				t.Fatalf("readConfig: %v", err)
+			}
+			if config.OutOfScope != tc.want {
+				t.Fatalf("out_of_scope = %q, want %q", config.OutOfScope, tc.want)
+			}
+		})
+	}
+}
+
+func TestReadConfigRejectsUnknownPipelineStage(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	contents := "version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\npipeline:\n  foobar:\n    by: claude\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	_, err := readConfig(path)
+	if err == nil {
+		t.Fatal("readConfig should reject an unknown pipeline stage name")
+	}
+	if !strings.Contains(err.Error(), "foobar") {
+		t.Fatalf("error should mention the unknown stage name: %v", err)
+	}
+}
+
+func TestReadConfigParsesPipelineByScalar(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	contents := strings.Join([]string{
+		"version: v1alpha1",
+		"agents:",
+		"  - name: claude",
+		"    model: claude-opus-4-8",
+		"pipeline:",
+		"  execute:",
+		"    by: claude",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	config, err := readConfig(path)
+	if err != nil {
+		t.Fatalf("readConfig: %v", err)
+	}
+	if len(config.Pipeline.Execute.By) != 1 || config.Pipeline.Execute.By[0] != "claude" {
+		t.Fatalf("execute.by scalar should normalize to [\"claude\"]: %#v", config.Pipeline.Execute.By)
+	}
+}
+
+func TestReadConfigParsesPipelineByList(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	contents := strings.Join([]string{
+		"version: v1alpha1",
+		"agents:",
+		"  - name: claude",
+		"    model: claude-opus-4-8",
+		"  - name: fable",
+		"    model: claude-fable-5",
+		"pipeline:",
+		"  code_review:",
+		"    by:",
+		"      - claude",
+		"      - fable",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	config, err := readConfig(path)
+	if err != nil {
+		t.Fatalf("readConfig: %v", err)
+	}
+	if len(config.Pipeline.CodeReview.By) != 2 || config.Pipeline.CodeReview.By[0] != "claude" || config.Pipeline.CodeReview.By[1] != "fable" {
+		t.Fatalf("code_review.by list: %#v", config.Pipeline.CodeReview.By)
+	}
+}
+
+func TestReadConfigPipelineLoopValidation(t *testing.T) {
+	loopSnippet := "    loop:\n      max: 3\n"
+	// loop is accepted on the loop-capable stages.
+	for _, stage := range []string{"clarify", "contract_review", "code_review"} {
+		t.Run("accepted on "+stage, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			contents := "version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\npipeline:\n  " + stage + ":\n" + loopSnippet
+			if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			if _, err := readConfig(path); err != nil {
+				t.Fatalf("loop on %s should be accepted: %v", stage, err)
+			}
+		})
+	}
+	// loop is rejected on the non-loop stages.
+	for _, stage := range []string{"contract_draft", "execute", "memory"} {
+		t.Run("rejected on "+stage, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			contents := "version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\npipeline:\n  " + stage + ":\n" + loopSnippet
+			if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			_, err := readConfig(path)
+			if err == nil {
+				t.Fatalf("loop on %s should be a load error", stage)
+			}
+			if !strings.Contains(err.Error(), stage) || !strings.Contains(err.Error(), "loop") {
+				t.Fatalf("error should name the stage and 'loop': %v", err)
+			}
+		})
+	}
+}
+
+func TestReadConfigPipelineMultiAgentByValidation(t *testing.T) {
+	multiBySnippet := "    by:\n      - claude\n      - fable\n"
+	// Multi-agent by is accepted on panel stages.
+	for _, stage := range []string{"contract_review", "code_review"} {
+		t.Run("accepted on "+stage, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			contents := "version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\n  - name: fable\n    model: claude-fable-5\npipeline:\n  " + stage + ":\n" + multiBySnippet
+			if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			if _, err := readConfig(path); err != nil {
+				t.Fatalf("multi-agent by on %s should be accepted: %v", stage, err)
+			}
+		})
+	}
+	// Multi-agent by is rejected on single-agent stages.
+	for _, stage := range []string{"clarify", "contract_draft", "execute", "memory"} {
+		t.Run("rejected on "+stage, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			contents := "version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\n  - name: fable\n    model: claude-fable-5\npipeline:\n  " + stage + ":\n" + multiBySnippet
+			if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			_, err := readConfig(path)
+			if err == nil {
+				t.Fatalf("multi-agent by on %s should be a load error", stage)
+			}
+			if !strings.Contains(err.Error(), stage) {
+				t.Fatalf("error should name the stage: %v", err)
+			}
+		})
+	}
+}
+
+func TestReadConfigPipelineUnresolvedAgentIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	contents := strings.Join([]string{
+		"version: v1alpha1",
+		"agents:",
+		"  - name: claude",
+		"    model: claude-opus-4-8",
+		"pipeline:",
+		"  execute:",
+		"    by: ghost-agent",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	_, err := readConfig(path)
+	if err == nil {
+		t.Fatal("unresolved agent in by should be a load error")
+	}
+	if !strings.Contains(err.Error(), "ghost-agent") || !strings.Contains(err.Error(), "pipeline.execute") {
+		t.Fatalf("error should name the stage and the agent: %v", err)
+	}
+}
+
+func TestReadConfigPipelineEmptyByIsValid(t *testing.T) {
+	cases := []struct {
+		name     string
+		contents string
+	}{
+		{
+			"absent by",
+			"version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\n",
+		},
+		{
+			"empty list by",
+			"version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\npipeline:\n  code_review:\n    by: []\n",
+		},
+		{
+			"empty string by",
+			"version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\npipeline:\n  execute:\n    by: \"\"\n",
+		},
+		{
+			"absent contract_review by disables contract review",
+			"version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.contents), 0o644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			_, err := readConfig(path)
+			if err != nil {
+				t.Fatalf("empty/absent by should be valid: %v", err)
+			}
+		})
+	}
+}
+
+func TestReadConfigPipelineOmittedLoopFallsBackToDefault(t *testing.T) {
+	// Omitted loop on a loop-capable stage falls back to the built-in defaults.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	contents := "version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	config, err := readConfig(path)
+	if err != nil {
+		t.Fatalf("readConfig: %v", err)
+	}
+	if config.Pipeline.CodeReview.Loop != nil {
+		t.Fatalf("omitted code_review loop should decode as nil (fallback at resolve time): %#v", config.Pipeline.CodeReview.Loop)
+	}
+	defaults := defaultConfigFile().Pipeline.CodeReview.Loop
+	limits, err := resolveContractReviewLoopLimits(path)
+	if err != nil {
+		t.Fatalf("resolveContractReviewLoopLimits with absent loop: %v", err)
+	}
+	if limits.MaxRounds != defaults.Max || limits.Patience != defaults.Patience || limits.CleanRounds != defaults.Settle {
+		t.Fatalf("absent loop should fall back to defaults {max:%d patience:%d settle:%d}, got %+v",
+			defaults.Max, defaults.Patience, defaults.Settle, limits)
+	}
+}
+
+func TestDefaultConfigRoundTripsStrictReader(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := writeDefaultConfigIfMissing(path); err != nil {
+		t.Fatalf("writeDefaultConfigIfMissing: %v", err)
+	}
+
+	config, err := readConfig(path)
+	if err != nil {
+		t.Fatalf("readConfig: %v", err)
+	}
+	if config.Version != "v1alpha1" {
+		t.Fatalf("default config version = %q, want v1alpha1", config.Version)
+	}
+	if len(config.Agents) != 1 || config.Agents[0].Name != "claude" {
+		t.Fatalf("default config should register the single claude entry: %#v", config.Agents)
+	}
+	if config.Agents[0].Model != "claude-opus-4-8" || config.Agents[0].Effort != "" {
+		t.Fatalf("default claude entry should pin claude-opus-4-8 with no effort: %#v", config.Agents[0])
+	}
+	if engine, ok := agents.InferAgentFromModel(config.Agents[0].Model); !ok || engine != agents.BuiltinClaude {
+		t.Fatalf("default entry model should infer the claude engine: %q", config.Agents[0].Model)
+	}
+	if config.OutOfScope != gateScopeEnforcementBlock {
+		t.Fatalf("default out_of_scope = %q, want block", config.OutOfScope)
+	}
+	// code_review and contract_review panels are empty by default.
+	if len(config.Pipeline.CodeReview.By) != 0 {
+		t.Fatalf("default code_review by should be empty: %#v", config.Pipeline.CodeReview.By)
+	}
+	if len(config.Pipeline.ContractReview.By) != 0 {
+		t.Fatalf("default contract_review by should be empty: %#v", config.Pipeline.ContractReview.By)
+	}
+	// Default config must not emit legacy top-level keys. Check for them as
+	// line-starting tokens (top-level YAML keys have no leading whitespace).
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read generated config: %v", err)
+	}
+	rawStr := string(raw)
+	for _, forbidden := range []string{"\nschema:", "\ngate:", "\nreview:", "\ncontract:", "\nclarify:", "\ntimeouts:"} {
+		if strings.Contains(rawStr, forbidden) {
+			t.Fatalf("generated default config should not emit legacy key %q:\n%s", strings.TrimPrefix(forbidden, "\n"), rawStr)
+		}
+	}
+	for _, required := range []string{"version: v1alpha1", "agents:", "map:", "out_of_scope:", "pipeline:"} {
+		if !strings.Contains(rawStr, required) {
+			t.Fatalf("generated default config missing %q:\n%s", required, rawStr)
+		}
+	}
+}
+
+// TestResolverEquivalence pins behaviour-preservation: loading a new-shape
+// config equivalent to today's defaults resolves to the same per-stage values
+// as the old defaults did.
+func TestResolverEquivalence(t *testing.T) {
+	defaults := defaultConfigFile()
+
+	// code_review loop limits.
+	cr := defaults.Pipeline.CodeReview.Loop
+	if cr == nil {
+		t.Fatal("default pipeline.code_review.loop must not be nil")
+	}
+	if cr.Max != 10 {
+		t.Fatalf("pipeline.code_review.loop.max = %d, want 10 (was review.max_rounds)", cr.Max)
+	}
+	if cr.Patience != 2 {
+		t.Fatalf("pipeline.code_review.loop.patience = %d, want 2 (was review.patience)", cr.Patience)
+	}
+	if cr.Settle != 1 {
+		t.Fatalf("pipeline.code_review.loop.settle = %d, want 1 (was review.clean_rounds)", cr.Settle)
+	}
+
+	// contract_review loop limits must equal code_review limits (today's default).
+	ctr := defaults.Pipeline.ContractReview.Loop
+	if ctr == nil {
+		t.Fatal("default pipeline.contract_review.loop must not be nil")
+	}
+	if ctr.Max != cr.Max || ctr.Patience != cr.Patience || ctr.Settle != cr.Settle {
+		t.Fatalf("contract_review.loop {%d,%d,%d} must equal code_review.loop {%d,%d,%d}",
+			ctr.Max, ctr.Patience, ctr.Settle, cr.Max, cr.Patience, cr.Settle)
+	}
+
+	// clarify loop max.
+	cl := defaults.Pipeline.Clarify.Loop
+	if cl == nil {
+		t.Fatal("default pipeline.clarify.loop must not be nil")
+	}
+	if cl.Max != 3 {
+		t.Fatalf("pipeline.clarify.loop.max = %d, want 3 (was clarify.max_rounds)", cl.Max)
+	}
+
+	// out_of_scope default.
+	if defaults.OutOfScope != gateScopeEnforcementBlock {
+		t.Fatalf("default out_of_scope = %q, want block (was gate.scope_enforcement)", defaults.OutOfScope)
+	}
+
+	// Single-agent stages have empty by by default (uses default role assignment).
+	for _, stage := range []struct {
+		name string
+		by   stageBy
+	}{
+		{"contract_draft", defaults.Pipeline.ContractDraft.By},
+		{"execute", defaults.Pipeline.Execute.By},
+		{"memory", defaults.Pipeline.Memory.By},
+		{"clarify", defaults.Pipeline.Clarify.By},
+	} {
+		if len(stage.by) != 0 {
+			t.Fatalf("default pipeline.%s.by should be empty (uses default role): %#v", stage.name, stage.by)
+		}
+	}
+
+	// Panel stages have empty by by default (no reviewers = fallback / disabled).
+	for _, stage := range []struct {
+		name string
+		by   stageBy
+	}{
+		{"code_review", defaults.Pipeline.CodeReview.By},
+		{"contract_review", defaults.Pipeline.ContractReview.By},
+	} {
+		if len(stage.by) != 0 {
+			t.Fatalf("default pipeline.%s.by should be empty: %#v", stage.name, stage.by)
+		}
+	}
+
+	// Observable equivalence: load the default config from disk and assert the
+	// runtime resolvers produce the same per-stage assignments as the old config
+	// mapping did (first registry entry for single-agent stages, empty panel for
+	// code_review and contract_review).
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := writeDefaultConfigIfMissing(configPath); err != nil {
+		t.Fatalf("writeDefaultConfigIfMissing: %v", err)
+	}
+	config, err := readConfig(configPath)
+	if err != nil {
+		t.Fatalf("readConfig: %v", err)
+	}
+	wantAgent := config.Agents[0].Name // "claude" — the single default entry
+
+	// execute stage: resolveExecutorEntry with empty stageBy → first registry entry.
+	execEntry, err := resolveExecutorEntry(config, config.Pipeline.Execute.By, "")
+	if err != nil {
+		t.Fatalf("resolveExecutorEntry(execute): %v", err)
+	}
+	if execEntry.Name != wantAgent {
+		t.Fatalf("execute resolved to %q, want %q", execEntry.Name, wantAgent)
+	}
+
+	// clarify stage: resolveReviewerEntry with empty stageBy + empty context
+	// (no execution yet) → cross-model selection falls back to first registry entry.
+	clarifyEntry, err := resolveReviewerEntry(config, config.Pipeline.Clarify.By, reviewContext{}, "")
+	if err != nil {
+		t.Fatalf("resolveReviewerEntry(clarify): %v", err)
+	}
+	if clarifyEntry.Name != wantAgent {
+		t.Fatalf("clarify resolved to %q, want %q", clarifyEntry.Name, wantAgent)
+	}
+
+	// contract_draft stage: same cross-model fallback.
+	draftEntry, err := resolveReviewerEntry(config, config.Pipeline.ContractDraft.By, reviewContext{}, "")
+	if err != nil {
+		t.Fatalf("resolveReviewerEntry(contract_draft): %v", err)
+	}
+	if draftEntry.Name != wantAgent {
+		t.Fatalf("contract_draft resolved to %q, want %q", draftEntry.Name, wantAgent)
+	}
+
+	// code_review loop limits from the loaded config match the expected defaults.
+	loadedCR := config.Pipeline.CodeReview.Loop
+	if loadedCR == nil {
+		t.Fatal("loaded pipeline.code_review.loop must not be nil")
+	}
+	if loadedCR.Max != cr.Max || loadedCR.Patience != cr.Patience || loadedCR.Settle != cr.Settle {
+		t.Fatalf("loaded code_review loop {%d,%d,%d} differs from default {%d,%d,%d}",
+			loadedCR.Max, loadedCR.Patience, loadedCR.Settle, cr.Max, cr.Patience, cr.Settle)
+	}
+
+	// contract_review loop limits via the real resolver path (resolveContractReviewLoopLimits).
+	contractLimits, err := resolveContractReviewLoopLimits(configPath)
+	if err != nil {
+		t.Fatalf("resolveContractReviewLoopLimits: %v", err)
+	}
+	if contractLimits.MaxRounds != cr.Max || contractLimits.Patience != cr.Patience || contractLimits.CleanRounds != cr.Settle {
+		t.Fatalf("resolved contract_review limits {%d,%d,%d} differ from code_review default {%d,%d,%d}",
+			contractLimits.MaxRounds, contractLimits.Patience, contractLimits.CleanRounds,
+			cr.Max, cr.Patience, cr.Settle)
+	}
+}
+
+func TestResolveIdleTimeout(t *testing.T) {
+	cases := []struct {
+		name     string
+		override time.Duration
+		want     time.Duration
+		wantErr  string
+	}{
+		{name: "explicit flag used", override: 90 * time.Second, want: 90 * time.Second},
+		{name: "built-in default when not given", override: 0, want: 25 * time.Minute},
+		{name: "negative flag is rejected", override: -time.Second, wantErr: "timeout must be positive"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveIdleTimeout(tc.override)
 			if tc.wantErr != "" {
 				if err == nil || err.Error() != tc.wantErr {
 					t.Fatalf("error = %v, want %q", err, tc.wantErr)
@@ -169,6 +579,20 @@ func TestResolveIdleTimeout(t *testing.T) {
 				t.Fatalf("resolveIdleTimeout = %s, want %s", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestReadConfigRequiresAgentRegistry(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	contents := "version: v1alpha1\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := readConfig(path)
+	if err == nil || err.Error() != "config agents: at least one agent must be registered" {
+		t.Fatalf("readConfig should require a non-empty registry, got: %v", err)
 	}
 }
 
@@ -244,108 +668,10 @@ func TestValidateAgentRegistryNormalizesNames(t *testing.T) {
 	}
 }
 
-func TestValidateReviewPanel(t *testing.T) {
-	registry := []agentRegistryEntry{
-		{Name: "claude", Model: "claude-opus-4-8"},
-		{Name: "fable", Model: "claude-fable-5"},
-		{Name: "codex", Model: "gpt-5"},
-	}
-	cases := []struct {
-		name    string
-		panel   []string
-		wantErr string
-	}{
-		{
-			name:  "registered names pass, including two names on one built-in",
-			panel: []string{"fable", "claude"},
-		},
-		{
-			name:    "unregistered name is rejected",
-			panel:   []string{"gpt6"},
-			wantErr: `config review.panel: unknown agent "gpt6" (not registered in config agents)`,
-		},
-		{
-			name:    "duplicate name is rejected",
-			panel:   []string{"fable", "fable"},
-			wantErr: `config review.panel: duplicate name "fable"`,
-		},
-		{
-			name:    "blank name is rejected",
-			panel:   []string{"  "},
-			wantErr: "config review.panel: entry is missing the agent name",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := validateReviewPanel(tc.panel, registry)
-			if tc.wantErr == "" {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-				return
-			}
-			if err == nil || err.Error() != tc.wantErr {
-				t.Fatalf("error = %v, want %q", err, tc.wantErr)
-			}
-		})
-	}
-}
-
-func TestReadConfigRequiresAgentRegistry(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	contents := strings.Join([]string{
-		"schema: pactum.config.v1alpha1",
-		"review:",
-		"  max_rounds: 10",
-	}, "\n")
-	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	_, err := readConfig(path)
-	if err == nil || err.Error() != "config agents: at least one agent must be registered" {
-		t.Fatalf("readConfig should require a non-empty registry, got: %v", err)
-	}
-}
-
-func TestDefaultConfigRoundTripsStrictReader(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	if err := writeDefaultConfigIfMissing(path); err != nil {
-		t.Fatalf("writeDefaultConfigIfMissing: %v", err)
-	}
-
-	config, err := readConfig(path)
-	if err != nil {
-		t.Fatalf("readConfig: %v", err)
-	}
-	if len(config.Agents) != 1 || config.Agents[0].Name != "claude" {
-		t.Fatalf("default config should register the single claude entry: %#v", config.Agents)
-	}
-	// The model must be pinned (the engine is inferred from it) and infer the
-	// claude engine, so the generated default round-trips inference.
-	if config.Agents[0].Model != "claude-opus-4-8" || config.Agents[0].Effort != "" {
-		t.Fatalf("default claude entry should pin claude-opus-4-8 with no effort: %#v", config.Agents[0])
-	}
-	if engine, ok := agents.InferAgentFromModel(config.Agents[0].Model); !ok || engine != agents.BuiltinClaude {
-		t.Fatalf("default entry model should infer the claude engine: %q", config.Agents[0].Model)
-	}
-	if len(config.Review.Panel) != 0 {
-		t.Fatalf("default review panel should be empty: %#v", config.Review.Panel)
-	}
-	// The generated default carries only deviations from the built-ins, so it
-	// must not emit a timeouts key; the absent section resolves to the
-	// built-in idle window.
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read generated config: %v", err)
-	}
-	if strings.Contains(string(raw), "timeouts") {
-		t.Fatalf("generated default config should not emit a timeouts key:\n%s", raw)
-	}
-	if idle, err := resolveIdleTimeout(path, 0); err != nil || idle != 25*time.Minute {
-		t.Fatalf("absent timeouts section should resolve the built-in: %s, %v, want 25m", idle, err)
+func TestDefaultConfigClarifyLoopMax(t *testing.T) {
+	l := defaultConfigFile().Pipeline.Clarify.Loop
+	if l == nil || l.Max != 3 {
+		t.Fatalf("default pipeline.clarify.loop.max = %v, want 3", l)
 	}
 }
 
@@ -365,7 +691,6 @@ func TestResolveAgentForRoleUsesInferredEngine(t *testing.T) {
 		t.Fatalf("resolveAgentForRole reviewer: %v", err)
 	}
 	// Codex runs over ACP; the built-in reviewer descriptor has no CLI command or args.
-	// Read-only enforcement is applied at the ACP layer via RunRequest.ReadOnly=true.
 	if reviewer.Name != "deep" || reviewer.Agent.Name != agents.BuiltinCodex || reviewer.Agent.Command != "" {
 		t.Fatalf("o3 entry should resolve the codex reviewer descriptor: %#v", reviewer)
 	}
@@ -377,7 +702,6 @@ func TestResolveAgentForRoleUsesInferredEngine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveAgentForRole executor: %v", err)
 	}
-	// Claude runs over ACP: no CLI command or args; model/effort are in ModelSpec.
 	if executor.Name != "writer" || executor.Agent.Name != agents.BuiltinClaude || executor.Agent.Command != "" {
 		t.Fatalf("claude-model entry should resolve the claude executor descriptor: %#v", executor)
 	}
@@ -400,8 +724,7 @@ func TestResolveAgentForRoleFailsOnUninferableModel(t *testing.T) {
 }
 
 // TestFindRegistryEntryRejectsUnregisteredBuiltIn pins the source-of-truth
-// rule: a bare built-in name that is not registered does not resolve — the
-// registry is the only namespace, and built-ins are not implicitly available.
+// rule: a bare built-in name that is not registered does not resolve.
 func TestFindRegistryEntryRejectsUnregisteredBuiltIn(t *testing.T) {
 	config := configFile{Agents: []agentRegistryEntry{{Name: "claude", Model: "claude-opus-4-8"}}}
 	_, err := findRegistryEntry(config, "codex")
@@ -410,52 +733,34 @@ func TestFindRegistryEntryRejectsUnregisteredBuiltIn(t *testing.T) {
 	}
 }
 
-// TestReadConfigRejectsPreRegistryShapes pins that the strict parser rejects
-// the removed config shapes loudly: the old execute section, the old
-// review.panel object entries, and the removed per-entry agent key all fail
-// naming the offending key.
-func TestReadConfigRejectsPreRegistryShapes(t *testing.T) {
+// TestReadConfigRejectsOldShapes pins that old config shapes (pre-registry
+// execute section, old panel object entries, removed agent key) are now
+// rejected as unknown keys rather than with legacy-specific messages.
+func TestReadConfigRejectsOldShapes(t *testing.T) {
 	cases := []struct {
 		name     string
 		contents string
-		wantErr  string
 	}{
 		{
 			name: "old execute.models section",
 			contents: strings.Join([]string{
-				"schema: pactum.config.v1alpha1",
+				"version: v1alpha1",
 				"agents:",
 				"  - name: claude",
 				"    model: claude-opus-4-8",
 				"execute:",
 				"  models: []",
 			}, "\n"),
-			wantErr: "execute",
-		},
-		{
-			name: "old panel object entries",
-			contents: strings.Join([]string{
-				"schema: pactum.config.v1alpha1",
-				"agents:",
-				"  - name: claude",
-				"    model: claude-opus-4-8",
-				"review:",
-				"  panel:",
-				"    - agent: claude",
-				"      model: claude-fable-5",
-			}, "\n"),
-			wantErr: "panel",
 		},
 		{
 			name: "old registry entries with the removed agent key",
 			contents: strings.Join([]string{
-				"schema: pactum.config.v1alpha1",
+				"version: v1alpha1",
 				"agents:",
 				"  - name: fable",
 				"    agent: claude",
 				"    model: claude-fable-5",
 			}, "\n"),
-			wantErr: "field agent not found",
 		},
 	}
 	for _, tc := range cases {
@@ -466,58 +771,8 @@ func TestReadConfigRejectsPreRegistryShapes(t *testing.T) {
 				t.Fatalf("write config: %v", err)
 			}
 			_, err := readConfig(path)
-			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("pre-registry shape %q should fail mentioning %q: %v", tc.name, tc.wantErr, err)
-			}
-		})
-	}
-}
-
-func TestValidateContractReviewers(t *testing.T) {
-	registry := []agentRegistryEntry{
-		{Name: "claude", Model: "claude-opus-4-8"},
-		{Name: "fable", Model: "claude-fable-5"},
-	}
-	cases := []struct {
-		name      string
-		reviewers []string
-		wantErr   string
-	}{
-		{
-			name:      "registered names pass",
-			reviewers: []string{"fable", "claude"},
-		},
-		{
-			name:      "empty is allowed",
-			reviewers: []string{},
-		},
-		{
-			name:      "unregistered name is rejected",
-			reviewers: []string{"gpt6"},
-			wantErr:   `config contract.reviewers: unknown agent "gpt6" (not registered in config agents)`,
-		},
-		{
-			name:      "duplicate name is rejected",
-			reviewers: []string{"fable", "fable"},
-			wantErr:   `config contract.reviewers: duplicate name "fable"`,
-		},
-		{
-			name:      "blank name is rejected",
-			reviewers: []string{"  "},
-			wantErr:   "config contract.reviewers: entry is missing the agent name",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := validateContractReviewers(tc.reviewers, registry)
-			if tc.wantErr == "" {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-				return
-			}
-			if err == nil || err.Error() != tc.wantErr {
-				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			if err == nil {
+				t.Fatalf("old shape %q should be rejected", tc.name)
 			}
 		})
 	}

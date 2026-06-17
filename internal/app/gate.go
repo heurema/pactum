@@ -161,7 +161,7 @@ func (a App) GateRun(stdout io.Writer, runID string, jsonOutput bool) error {
 		}
 	}
 	changes := a.buildGateChangeReport(context.Root, context.Paths)
-	scope := buildGateScopeReport(context.Contract, changes, config.Gate.ScopeEnforcement)
+	scope := buildGateScopeReport(context.Contract, changes, config.OutOfScope)
 
 	summary := gateSummary{
 		ExecutionPassed:   attempt.Result.ExitCode == 0 && (!attempt.Result.TimedOut || attempt.Result.CompletedDespiteTimeout),

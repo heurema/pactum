@@ -158,7 +158,7 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 	if _, err := a.ensureReviewRecord(context, "run review"); err != nil {
 		return err
 	}
-	options.Timeout, err = resolveIdleTimeout(context.Paths.Config, options.Timeout)
+	options.Timeout, err = resolveIdleTimeout(options.Timeout)
 	if err != nil {
 		return err
 	}
@@ -461,16 +461,20 @@ func (a App) resolveReviewLoopLimits(context reviewContext, options reviewRunOpt
 	if err != nil {
 		return reviewLimits{}, err
 	}
-	defaults := defaultConfigFile().Review
-	maxRounds, err := resolveReviewLoopLimit("max rounds", options.MaxRounds, config.Review.MaxRounds, defaults.MaxRounds)
+	defaults := defaultConfigFile().Pipeline.CodeReview.Loop
+	var configMax, configPatience, configSettle int
+	if l := config.Pipeline.CodeReview.Loop; l != nil {
+		configMax, configPatience, configSettle = l.Max, l.Patience, l.Settle
+	}
+	maxRounds, err := resolveReviewLoopLimit("max rounds", options.MaxRounds, configMax, defaults.Max)
 	if err != nil {
 		return reviewLimits{}, err
 	}
-	patience, err := resolveReviewLoopLimit("patience", options.Patience, config.Review.Patience, defaults.Patience)
+	patience, err := resolveReviewLoopLimit("patience", options.Patience, configPatience, defaults.Patience)
 	if err != nil {
 		return reviewLimits{}, err
 	}
-	cleanRounds, err := resolveReviewLoopLimit("clean rounds", options.CleanRounds, config.Review.CleanRounds, defaults.CleanRounds)
+	cleanRounds, err := resolveReviewLoopLimit("clean rounds", options.CleanRounds, configSettle, defaults.Settle)
 	if err != nil {
 		return reviewLimits{}, err
 	}
@@ -512,8 +516,8 @@ func (a App) resolveReviewLoopReviewers(context reviewContext, reviewerName stri
 			return nil, err
 		}
 		roster = []agentRegistryEntry{entry}
-	} else if len(config.Review.Panel) > 0 {
-		for _, name := range config.Review.Panel {
+	} else if len(config.Pipeline.CodeReview.By) > 0 {
+		for _, name := range config.Pipeline.CodeReview.By {
 			entry, err := findRegistryEntry(config, name)
 			if err != nil {
 				return nil, err
@@ -523,7 +527,7 @@ func (a App) resolveReviewLoopReviewers(context reviewContext, reviewerName stri
 	} else {
 		// Empty panel: cross-model default — a single reviewer whose underlying
 		// agent differs from the run executor's when the registry has one.
-		entry, err := resolveReviewerEntry(config, context, "")
+		entry, err := resolveReviewerEntry(config, nil, context, "")
 		if err != nil {
 			return nil, err
 		}

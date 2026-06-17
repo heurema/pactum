@@ -188,7 +188,7 @@ func configureHelperContractFixer(t *testing.T, app App, paths artifacts.Paths) 
 		Args:    []string{"-test.run=TestContractReviewFixerHelperProcess", "--"},
 		Input:   agents.InputPromptFile,
 	}
-	reviewers := testHelperDescriptors(config.Contract.Reviewers, "TestContractReviewHelperProcess")
+	reviewers := testHelperDescriptors([]string(config.Pipeline.ContractReview.By), "TestContractReviewHelperProcess")
 	app.AgentRegistry = testAgentRegistryRoles(reviewers, append([]agents.AgentDescriptor{fixer}, reviewers...))
 	return app
 }
@@ -196,22 +196,28 @@ func configureHelperContractFixer(t *testing.T, app App, paths artifacts.Paths) 
 func setContractReviewersConfig(t *testing.T, paths artifacts.Paths, names ...string) {
 	t.Helper()
 	config := readConfigForTest(t, paths.Config)
-	config.Contract.Reviewers = names
+	config.Pipeline.ContractReview.By = stageBy(names)
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 
 func setContractReviewPatienceConfig(t *testing.T, paths artifacts.Paths, patience int) {
 	t.Helper()
 	config := readConfigForTest(t, paths.Config)
-	config.Review.Patience = patience
+	if config.Pipeline.ContractReview.Loop == nil {
+		config.Pipeline.ContractReview.Loop = &loopConfig{}
+	}
+	config.Pipeline.ContractReview.Loop.Patience = patience
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 
 func setContractReviewMaxRoundsConfig(t *testing.T, paths artifacts.Paths, maxRounds int) {
 	t.Helper()
 	config := readConfigForTest(t, paths.Config)
-	config.Review.MaxRounds = maxRounds
-	config.Review.Patience = maxRounds + 10 // prevent stalemate from firing before max_rounds
+	if config.Pipeline.ContractReview.Loop == nil {
+		config.Pipeline.ContractReview.Loop = &loopConfig{}
+	}
+	config.Pipeline.ContractReview.Loop.Max = maxRounds
+	config.Pipeline.ContractReview.Loop.Patience = maxRounds + 10 // prevent stalemate from firing before max_rounds
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 

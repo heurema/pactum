@@ -91,7 +91,7 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 	if err != nil || !ok {
 		return err
 	}
-	timeout, err = resolveIdleTimeout(context.Paths.Config, timeout)
+	timeout, err = resolveIdleTimeout(timeout)
 	if err != nil {
 		return err
 	}
@@ -202,7 +202,7 @@ func (a App) prepareReviewFixer(context reviewContext, agentName string) (review
 	// The fixer is an executor-stage agent: an explicit --agent resolves a
 	// registry name, an omitted one defaults to the first registry entry, and
 	// the entry's pins travel with the name.
-	entry, err := resolveExecutorEntry(config, agentName)
+	entry, err := resolveExecutorEntry(config, config.Pipeline.Execute.By, agentName)
 	if err != nil {
 		return reviewFixPreparation{}, err
 	}

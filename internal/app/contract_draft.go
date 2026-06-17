@@ -126,7 +126,7 @@ func (a App) ContractDraft(stdout io.Writer, liveOutput io.Writer, runID string,
 	if err != nil || !ok {
 		return err
 	}
-	timeout, err = resolveIdleTimeout(context.Paths.Config, timeout)
+	timeout, err = resolveIdleTimeout(timeout)
 	if err != nil {
 		return err
 	}
@@ -317,9 +317,9 @@ func (a App) prepareContractDrafter(context runContext, reviewerName string) (co
 		return contractDraftPreparation{}, err
 	}
 	// The drafter is a reviewer-role agent: an explicit --reviewer resolves a
-	// registry name, an omitted one applies the cross-model rule against the
-	// registry, and the entry's pins travel with the name.
-	entry, err := resolveReviewerEntry(config, reviewContext{
+	// registry name, a configured pipeline.contract_draft.by[0] is tried next,
+	// then the cross-model rule, and the entry's pins travel with the name.
+	entry, err := resolveReviewerEntry(config, config.Pipeline.ContractDraft.By, reviewContext{
 		Root:     context.Root,
 		Paths:    context.Paths,
 		RunPaths: context.RunPaths,

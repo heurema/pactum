@@ -252,19 +252,10 @@ func TestClarifierRoundMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 	}
 }
 
-// setIdleTimeoutConfig sets timeouts.idle in the workspace config.
-func setIdleTimeoutConfig(t *testing.T, paths artifacts.Paths, idle string) {
-	t.Helper()
-	config := readConfigForTest(t, paths.Config)
-	config.Timeouts.Idle = idle
-	assertNoError(t, writeYAML(paths.Config, config))
-}
-
-func TestClarifierRoundOmittedTimeoutUsesConfigIdleDefault(t *testing.T) {
+func TestClarifierRoundOmittedTimeoutUsesBuiltInDefault(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
 	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4"})
-	setIdleTimeoutConfig(t, paths, "15m")
 	transport := &recordingAgentTransport{stdout: clarifierStructuredOutput([]map[string]any{})}
 	app.AgentTransport = transport
 
@@ -275,16 +266,15 @@ func TestClarifierRoundOmittedTimeoutUsesConfigIdleDefault(t *testing.T) {
 	}
 
 	request := singleTransportRequest(t, transport)
-	if request.Timeout != 15*time.Minute {
-		t.Fatalf("omitted --timeout should resolve timeouts.idle: %s, want 15m", request.Timeout)
+	if request.Timeout != defaultIdleTimeout {
+		t.Fatalf("omitted --timeout should use the built-in default: %s, want %s", request.Timeout, defaultIdleTimeout)
 	}
 }
 
-func TestClarifierRoundExplicitTimeoutOverridesConfigIdleDefault(t *testing.T) {
+func TestClarifierRoundExplicitTimeoutOverridesDefault(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
 	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4"})
-	setIdleTimeoutConfig(t, paths, "15m")
 	transport := &recordingAgentTransport{stdout: clarifierStructuredOutput([]map[string]any{})}
 	app.AgentTransport = transport
 
@@ -296,7 +286,7 @@ func TestClarifierRoundExplicitTimeoutOverridesConfigIdleDefault(t *testing.T) {
 
 	request := singleTransportRequest(t, transport)
 	if request.Timeout != 90*time.Second {
-		t.Fatalf("explicit --timeout should win over timeouts.idle: %s, want 90s", request.Timeout)
+		t.Fatalf("explicit --timeout should win over the built-in default: %s, want 90s", request.Timeout)
 	}
 }
 

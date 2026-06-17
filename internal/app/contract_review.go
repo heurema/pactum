@@ -253,7 +253,7 @@ func (a App) ContractReview(stdout io.Writer, liveOutput io.Writer, runID string
 
 	lensKeys := contractReviewLensKeys()
 
-	if len(config.Contract.Reviewers) == 0 {
+	if len(config.Pipeline.ContractReview.By) == 0 {
 		// Emit loop events unconditionally even for the no-reviewer no-op path.
 		now := a.nowUTC()
 		if err := ledger.Append(activeStore, context.Paths.EventsJSONL, ledger.Event{Type: "contract_review_loop_started", Timestamp: now, RunID: runID}); err != nil {
@@ -277,7 +277,7 @@ func (a App) ContractReview(stdout io.Writer, liveOutput io.Writer, runID string
 		return nil
 	}
 
-	timeout, err = resolveIdleTimeout(context.Paths.Config, timeout)
+	timeout, err = resolveIdleTimeout(timeout)
 	if err != nil {
 		return err
 	}
@@ -549,7 +549,7 @@ func (a App) runContractReviewFixRound(
 		return "", 0, 0, nil, err
 	}
 
-	entry, err := resolveExecutorEntry(config, "")
+	entry, err := resolveExecutorEntry(config, config.Pipeline.Execute.By, "")
 	if err != nil {
 		return "", 0, 0, nil, err
 	}
@@ -741,23 +741,27 @@ func parseContractReviewFixerOutput(output string) ([]byte, bool) {
 	return nil, false
 }
 
-// resolveContractReviewLoopLimits reads loop limits from the review config
-// section. Contract review reuses the same limits as code review.
+// resolveContractReviewLoopLimits reads loop limits from the contract_review
+// pipeline stage, falling back to the same in-code defaults used by code review.
 func resolveContractReviewLoopLimits(configPath string) (reviewLimits, error) {
 	config, err := readConfig(configPath)
 	if err != nil {
 		return reviewLimits{}, err
 	}
-	defaults := defaultConfigFile().Review
-	maxRounds, err := resolveReviewLoopLimit("max rounds", 0, config.Review.MaxRounds, defaults.MaxRounds)
+	defaults := defaultConfigFile().Pipeline.ContractReview.Loop
+	var configMax, configPatience, configSettle int
+	if l := config.Pipeline.ContractReview.Loop; l != nil {
+		configMax, configPatience, configSettle = l.Max, l.Patience, l.Settle
+	}
+	maxRounds, err := resolveReviewLoopLimit("max rounds", 0, configMax, defaults.Max)
 	if err != nil {
 		return reviewLimits{}, err
 	}
-	patience, err := resolveReviewLoopLimit("patience", 0, config.Review.Patience, defaults.Patience)
+	patience, err := resolveReviewLoopLimit("patience", 0, configPatience, defaults.Patience)
 	if err != nil {
 		return reviewLimits{}, err
 	}
-	cleanRounds, err := resolveReviewLoopLimit("clean rounds", 0, config.Review.CleanRounds, defaults.CleanRounds)
+	cleanRounds, err := resolveReviewLoopLimit("clean rounds", 0, configSettle, defaults.Settle)
 	if err != nil {
 		return reviewLimits{}, err
 	}
@@ -765,8 +769,8 @@ func resolveContractReviewLoopLimits(configPath string) (reviewLimits, error) {
 }
 
 func (a App) resolveContractReviewers(config configFile) ([]reviewLoopReviewer, error) {
-	reviewers := make([]reviewLoopReviewer, 0, len(config.Contract.Reviewers))
-	for _, name := range config.Contract.Reviewers {
+	reviewers := make([]reviewLoopReviewer, 0, len(config.Pipeline.ContractReview.By))
+	for _, name := range config.Pipeline.ContractReview.By {
 		entry, err := findRegistryEntry(config, name)
 		if err != nil {
 			return nil, err

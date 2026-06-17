@@ -623,7 +623,7 @@ func setupGatePreparedRunWithRevision(t *testing.T, root string, contractUpdate 
 func setGateScopeEnforcementConfig(t *testing.T, paths artifacts.Paths, enforcement string) {
 	t.Helper()
 	config := readConfigForTest(t, paths.Config)
-	config.Gate.ScopeEnforcement = enforcement
+	config.OutOfScope = enforcement
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 
