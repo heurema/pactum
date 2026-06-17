@@ -106,3 +106,10 @@
 - Files: docs/contract-review-design.md, internal/app/app.go, internal/app/contract_review.go, internal/app/contract_review_test.go, internal/loop/loop.go, internal/loop/loop_test.go
 - Summary: Reviewed run run_20260616_192306 with gate status needs_review and review status approved. Goal: Extract a shared bounded-loop engine into a new internal/loop package and port the contract_review loop onto it, behaviour-preserving, plus ...
 - Candidate: runs/run_20260616_192306/memory/memory-candidate.json
+
+### mem_016 - Port the code-review loop (internal/app/review_loop.go) onto the existing int...
+- Run: run_20260617_060708
+- Freshness: fresh
+- Files: docs/backlog.md, internal/app/review_loop.go, internal/app/review_loop_test.go
+- Summary: Reviewed run run_20260617_060708 with gate status needs_review and review status approved. Goal: Port the code-review loop (internal/app/review_loop.go) onto the existing internal/loop engine, behaviour-preserving. The engine internal/lo...
+- Candidate: runs/run_20260617_060708/memory/memory-candidate.json

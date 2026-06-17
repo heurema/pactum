@@ -1,0 +1,22 @@
+{
+  "schema": "pactum.run.v1alpha1",
+  "run_id": "run_20260617_060708",
+  "status": "contract_approved",
+  "task": "Port the code-review loop (internal/app/review_loop.go) onto the existing internal/loop engine, behaviour-preserving. The engine internal/loop.Run(ctx, Limits{Max,Patience,Settle}, Step) (Outcome, error) ALREADY EXISTS and is already used by contract_review.go — reuse it, do NOT modify or recreate it. Replace review_loop.go's hand-rolled 'for round := 1; round \u003c= maxRounds; round++' loop with a loop.Run call whose Step closure runs the existing per-round work unchanged (reviewer fan-out across lenses, finding proposal/dedup/accept, fixer apply, gate run, stop-signal computation). Stop semantics must match today EXACTLY: max rounds -\u003e existing max_rounds terminal, stalemate/patience -\u003e existing terminal, clean_rounds convergence -\u003e existing resolved terminal. Map review_loop's streak fields to the engine's signals exactly as contract_review did: RoundResult.Clean = (blocking findings this round == 0); RoundResult.Progress = the fixer ran AND the working tree changed (mirror contract_review's content-hash progress signal, adapted to the code-review fixer/working-tree). A clean round must leave the stale streak UNCHANGED (the engine already enforces this). Preserve ALL existing review_loop behaviour, the public JSON response shape and field names, ledger events, and existing tests. Constraints: do NOT change internal/loop/*, do NOT change contract_review.go or clarify_loop.go, do NOT change any config or config schema, no multi-model/best-of-N. Validation: go test ./internal/loop, go test ./internal/app -run TestReviewLoop, go test ./internal/app -run TestContractReview, go build ./..., go test ./..., make check.",
+  "created_at": "2026-06-17T06:07:08.368735Z",
+  "updated_at": "2026-06-17T07:41:06.477059Z",
+  "repo_root": ".",
+  "workspace": ".heurema/pactum",
+  "map_run_id": "map_20260617_060707",
+  "artifacts": {
+    "task": "task.md",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json",
+    "executor_context": "context/executor-context.md",
+    "contract_json": "contract/contract.json",
+    "contract_md": "contract/contract.md",
+    "prompt": "contract/prompt.md",
+    "prompt_manifest": "contract/prompt-manifest.json",
+    "approval": "contract/approval.json"
+  }
+}

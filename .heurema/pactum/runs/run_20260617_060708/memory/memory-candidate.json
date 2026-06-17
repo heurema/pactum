@@ -1,0 +1,255 @@
+{
+  "schema": "pactum.memory_candidate.v1alpha1",
+  "run_id": "run_20260617_060708",
+  "created_at": "2026-06-17T08:36:44Z",
+  "source": "deterministic",
+  "status": "proposed",
+  "freshness_pin": {
+    "schema": "pactum.memory_freshness_pin.v1alpha1",
+    "review_state_sha256": "0060d6d0dbce00975b19261b07454d3cad3c38132b09cee12b0758ef65937ab1"
+  },
+  "contract": {
+    "goal": "Port the code-review loop (internal/app/review_loop.go) onto the existing internal/loop engine, behaviour-preserving. The engine internal/loop.Run(ctx, Limits{Max,Patience,Settle}, Step) (Outcome, error) ALREADY EXISTS and is already used by contract_review.go — reuse it, do NOT modify or recreate it. Replace review_loop.go's hand-rolled 'for round := 1; round \u003c= maxRounds; round++' loop with a loop.Run call whose Step closure runs the existing per-round work unchanged (reviewer fan-out across lenses, finding proposal/dedup/accept, fixer apply, gate run, stop-signal computation). Stop semantics must match today EXACTLY: max rounds -\u003e existing max_rounds terminal, stalemate/patience -\u003e existing terminal, clean_rounds convergence -\u003e existing resolved terminal. Map review_loop's streak fields to the engine's signals exactly as contract_review did: RoundResult.Clean = (blocking findings this round == 0); RoundResult.Progress = the fixer ran AND the working tree changed (mirror contract_review's content-hash progress signal, adapted to the code-review fixer/working-tree). A clean round must leave the stale streak UNCHANGED (the engine already enforces this). Preserve ALL existing review_loop behaviour, the public JSON response shape and field names, ledger events, and existing tests. Constraints: do NOT change internal/loop/*, do NOT change contract_review.go or clarify_loop.go, do NOT change any config or config schema, no multi-model/best-of-N. Validation: go test ./internal/loop, go test ./internal/app -run TestReviewLoop, go test ./internal/app -run TestContractReview, go build ./..., go test ./..., make check.",
+    "in_scope": [
+      "Refactor internal/app/review_loop.go so ReviewRun uses internal/loop.Run with loop.Limits populated from the existing reviewLimits values.",
+      "Move the existing per-round code-review work into the loop.Run Step closure: reviewer fan-out, proposal collection, deduplication, acceptance, fixer invocation, fix outcome application, gate run, summary updates, and stop-signal computation.",
+      "Map loop outcomes back to the existing code-review terminal_reason strings and summary fields without changing the public JSON response or summary artifact shape.",
+      "Measure RoundResult.Progress from whether the code-review fixer ran and changed the working tree fingerprint, not from whether proposals were created, accepted, skipped, or whether the gate status changed.",
+      "Keep code-review-specific early terminals such as findings_open, reviewer_findings_unparsed, gate_failed, and error observable exactly as they are today."
+    ],
+    "out_of_scope": [
+      "Changing internal/loop/* or the loop engine semantics.",
+      "Changing internal/app/contract_review.go or internal/app/clarify_loop.go.",
+      "Changing review configuration keys, defaults, command-line flags, or config schema.",
+      "Changing reviewer panel selection, lens fan-out, stagger behavior, proposal parsing, deduplication, finding IDs, fixer output parsing, or gate execution behavior.",
+      "Adding multi-model selection, best-of-N behavior, or new agent execution strategies.",
+      "Changing ledger event names, public JSON field names, artifact paths, or next-command affordances."
+    ],
+    "acceptance_criteria": [
+      "RoundResult.Clean semantics (authoritative, supersedes any contradictory language in the Goal): The Step closure must set RoundResult.Clean = true if and only if proposals.Created == 0 AND warnings == 0 in that round. This is the governing predicate for the clean signal — a round is clean only when the reviewer produced no proposals of any kind and no parse warnings. The per-round terminal conditions are evaluated in the following explicit precedence order, which matches today's implementation where the warnings-only branch is nested inside the proposals.Created == 0 condition (accepted == 0 \u0026\u0026 duplicates == 0): (1) when proposals.Created \u003e 0 and blockingOpen \u003e 0, the fixer path executes without setting Clean=true; (2) when proposals.Created \u003e 0 and blockingOpen == 0, the Step closure returns errResolved without setting Clean=true; (3) when proposals.Created == 0 and warnings \u003e 0, the Step closure returns errReviewerUnparsed without setting Clean=true; (4) when proposals.Created == 0 and warnings == 0, the Step closure sets Clean=true and returns nil. A round where both proposals.Created \u003e 0 and warnings \u003e 0 co-occur follows path (1) or (2) based solely on blockingOpen — the errReviewerUnparsed path (3) is unreachable when proposals.Created \u003e 0. proposals.Created == 0 is equivalent to accepted == 0 AND duplicates == 0 because every created proposal is counted as either accepted or duplicate. The Goal section's phrase 'blocking findings this round == 0' is informal shorthand describing the convergence condition the loop works toward, not the literal Clean predicate; the authoritative definition in this criterion governs and implementers must follow this criterion rather than the Goal's shorthand.",
+      "internal/app/review_loop.go contains a call to internal/loop.Run for the code-review loop and no longer drives normal review rounds with the previous hand-written `for round := 1; round \u003c= maxRounds; round++` loop.",
+      "A clean code-review round — one where the reviewer produced no new proposals of any kind (proposals.Created == 0, which is equivalent to accepted == 0 AND duplicates == 0 because every created proposal is counted as either accepted or duplicate) and no parse-warning proposals (warnings == 0) — increments clean_streak, leaves unchanged_fingerprint_streak unchanged, does not invoke the fixer, and returns RoundResult.Clean=true with a nil Step error. When loop.Run returns Converged (Settle consecutive clean rounds), the calling code emits terminal_reason \"clean_round\". Rounds where warnings \u003e 0 exit via the errReviewerUnparsed sentinel before any clean_streak update and do not return Clean=true. Rounds where proposals.Created \u003e 0 (whether blocking \u003e 0 or blocking == 0) do not return Clean=true. Note: the Goal section's phrase 'clean_rounds convergence -\u003e existing resolved terminal' is a misstatement; terminal_reason \"clean_round\" as specified in this criterion is authoritative and governs over the Goal's phrasing.",
+      "A round where proposals.Created \u003e 0 AND blocking findings == 0 (all accepted proposals are non-blocking) terminates immediately without invoking the fixer. The Step closure returns a sentinel error errResolved; loop.Run aborts after this round. The calling code detects errResolved and emits terminal_reason \"resolved\" without waiting for additional Settle-count rounds. Accepted non-blocking findings are still recorded and open_blocking_findings remains 0.",
+      "A round with open blocking findings still invokes the fixer unless --no-fix is set, applies fixer outcomes, runs the gate, updates open_findings and open_blocking_findings, and records fixer_attempt_id, fix outcome counts, gate_status, and gate_report_artifact as before. If gate passes and blocking findings == 0 after applying fixer outcomes, the Step closure returns the sentinel error errResolved; the calling code emits terminal_reason \"resolved\" immediately. If gate fails (gate process error), the Step closure returns the sentinel error errGateFailed; the calling code emits terminal_reason \"gate_failed\" and records the gate status/report fields.",
+      "Stalemate detection still uses unchanged_fingerprint_streak and terminal_reason \"stalemate\" when consecutive dirty no-progress rounds reach patience; clean rounds do not reset that stale streak.",
+      "A fixer round that changes the working tree fingerprint resets unchanged_fingerprint_streak to 0 and prevents premature stalemate.",
+      "Max-round termination still reports terminal_reason \"max_rounds\" and executes no reviewer or fixer attempts beyond max_rounds.",
+      "--no-fix still stops after the first round with open blocking findings and creates no fixer attempt. The Step closure signals this condition by returning a sentinel error errFindingsOpen; the calling code maps this sentinel to terminal_reason \"findings_open\".",
+      "Reviewer findings that cannot be parsed still trigger the existing warnings. The Step closure signals this condition by returning a sentinel error errReviewerUnparsed; the calling code maps this sentinel to terminal_reason \"reviewer_findings_unparsed\" with the same warnings as today. Rounds with parse warnings do not increment clean_streak.",
+      "Gate process failure still records the gate status/report fields already present today. The Step closure signals gate failure by returning a sentinel error errGateFailed; the calling code maps this sentinel to terminal_reason \"gate_failed\".",
+      "All five early-exit conditions — findings_open, reviewer_findings_unparsed, gate_failed, and the two resolved paths (pre-fixer and post-fixer) — are implemented by returning a named sentinel error from the Step closure, using loop.Run's error-abort as the single early-exit mechanism. This mechanism is viable without engine modification because internal/loop.Run propagates the Step closure's error verbatim: when Step returns a non-nil error, Run immediately executes `return Outcome{}, err` (internal/loop/loop.go:78-79), performing no wrapping, so named sentinel errors are detectable at the call site via errors.Is or direct pointer equality. The calling code checks the error returned by loop.Run against each sentinel before falling back to the generic error terminal: errFindingsOpen → \"findings_open\", errReviewerUnparsed → \"reviewer_findings_unparsed\", errGateFailed → \"gate_failed\", errResolved → \"resolved\". Only errors that match none of the sentinels map to terminal_reason \"error\" with the same error message and warning as today, creating no additional reviewer or fixer attempt for that round.",
+      "The stdout JSON response and review/loop-summary.json artifact retain the existing schema, field names, field omission behavior, round ordering, reviewer attempt references, timestamps, artifacts.summary path, and next-command behavior. The authoritative field lists are: stdout JSON response (reviewLoopResponse) always-present top-level fields: schema, run_id, started_at, finished_at, max_rounds, stalemate_patience, clean_rounds_required, terminal_reason, rounds, artifacts, next; optional omitempty top-level fields present only when non-empty: reviewer (single-reviewer name), reviewers (multi-reviewer list), agent (fixer agent name). The review/loop-summary.json artifact contains the same fields except next. Per-round entries in the rounds array always-present fields: round, reviewer_attempt_id, proposals_created, proposals_accepted, open_findings, open_blocking_findings, clean_streak, unchanged_fingerprint_streak; omitempty per-round fields present only when non-zero or non-nil: reviewer_attempt_ids, reviewer_attempts, warnings, skipped_lenses, working_tree_fingerprint, fixer_attempt_id, fix_outcomes_resolved, fix_outcomes_rebutted, fix_outcomes_blocked, gate_status, gate_report_artifact. No fields may be added to or removed from either document relative to these lists. Sub-test (k) must verify this preservation explicitly.",
+      "Ledger events emitted by review run, reviewer attempts, fixer attempts, proposal decisions, finding changes, gate runs, and review_loop_started/review_loop_finished remain present with the existing event names. The authoritative event-name baseline is: review-loop lifecycle: review_loop_started, review_loop_finished; reviewer attempt lifecycle: reviewer_attempt_started, reviewer_attempt_finished; fixer attempt lifecycle: review_fix_attempt_started, review_fix_attempt_finished; gate run lifecycle: gate_run_started, gate_run_finished; proposal pipeline (accept path): review_findings_proposed, review_proposal_accepted, review_finding_added; proposal pipeline (duplicate path): review_proposal_duplicate; finding severity upgrade: review_finding_severity_upgraded; fix outcome application: review_fix_outcomes_applied. Sub-test (l) must verify this preservation explicitly.",
+      "The working-tree fingerprint used for RoundResult.Progress must exclude review run-records (.heurema/ directory), ledger files, gate reports, summary artifacts, and other files written by the review runner itself, so that runner-side writes do not falsely signal progress and do not prevent stalemate. If the existing code-review fingerprint helper already implements these exclusions, it must be used as-is; if it does not, extending the helper to add the required exclusions is explicitly in scope for this port, and any such extension must not alter the helper's behavior for paths it already covers correctly. Test sub-test (h) must empirically verify these exclusions are in effect regardless of whether they were pre-existing or newly added.",
+      "TestReviewLoop must include named sub-tests implemented via t.Run calls within the TestReviewLoop test function (not as separately-named top-level test functions), so that each sub-test is addressable via -run TestReviewLoop/\u003cname\u003e and appears as '=== RUN   TestReviewLoop/\u003cname\u003e' in verbose test output. There must be at least fifteen such sub-tests, individually asserting the following behaviors: (a) clean_round terminal fires after Settle consecutive fully-clean rounds (proposals.Created == 0, warnings == 0); (b) resolved terminal fires after exactly one round with proposals.Created \u003e 0 and blocking == 0, without waiting for additional Settle-count rounds, and RoundResult.Clean is false for that round; (c) resolved terminal fires after a fixer round where gate passes and blocking == 0 following fixer outcome application; (d) stalemate terminal fires after patience consecutive dirty no-progress rounds, driven by unchanged_fingerprint_streak reaching the patience limit; (e) findings_open terminal fires on the first blocking-findings round when --no-fix is set; (f) gate_failed terminal fires on gate process failure; (g) reviewer_findings_unparsed terminal fires on a round with unparseable reviewer output and does not increment clean_streak; (h) working-tree fingerprint computation excludes .heurema/ directory contents, ledger files, gate reports, and review summary artifacts; (i) for each named-terminal scenario the stdout JSON response includes the fields terminal_reason, open_blocking_findings, open_findings, and round with values matching the scenario outcome; (j) for any run that completes normally or via a named sentinel, ledger events with names review_loop_started and review_loop_finished are both emitted; (k) the stdout JSON response for a completed run includes exactly the always-present top-level fields enumerated in the schema-preservation criterion (schema, run_id, started_at, finished_at, max_rounds, stalemate_patience, clean_rounds_required, terminal_reason, rounds, artifacts, next) and the review/loop-summary.json artifact includes the same fields except next, with each round entry containing the always-present per-round fields (round, reviewer_attempt_id, proposals_created, proposals_accepted, open_findings, open_blocking_findings, clean_streak, unchanged_fingerprint_streak) plus optional fields only when non-zero or non-nil, and no fields are added to or removed from either document relative to the enumeration in the schema-preservation criterion; (l) for a run that involves at least one reviewer execution, one fixer execution, one gate execution, and one proposal decision (accept path), the ledger must contain events with the exact event-type names enumerated in the ledger-events criterion; at minimum the sub-test must assert the presence of: review_loop_started, review_loop_finished, reviewer_attempt_started, reviewer_attempt_finished, review_fix_attempt_started, review_fix_attempt_finished, gate_run_started, gate_run_finished, review_findings_proposed, review_proposal_accepted, review_finding_added; (m) a round where proposals.Created \u003e 0 and warnings \u003e 0 co-occur routes to path (1) or (2) based solely on blockingOpen, not to path (3) (errReviewerUnparsed) — specifically, when proposals.Created \u003e 0 and blocking \u003e 0 and warnings \u003e 0, the fixer executes and clean_streak is not incremented, confirming that errReviewerUnparsed is unreachable when proposals.Created \u003e 0; (n) max-rounds termination fires after exactly max_rounds reviewer executions and creates no additional reviewer or fixer attempt beyond round max_rounds, verified by asserting that the rounds array has exactly max_rounds entries (len(response.rounds) == max_rounds) and no round summary has round \u003e max_rounds — reviewer attempt events are NOT counted directly, since each round fans out across len(reviewLenses) lenses per panel member, so they number max_rounds × len(reviewLenses) × panelSize, not max_rounds; (o) a fixer round that changes the working tree fingerprint resets unchanged_fingerprint_streak to 0, so that a subsequent no-progress dirty round begins that streak from 0 — assert that stalemate requires patience additional consecutive no-progress rounds after the fingerprint-changing fixer round rather than firing sooner based on pre-fixer stale history."
+    ],
+    "validation_commands": [
+      "go test ./internal/loop",
+      "go test ./internal/app -run TestReviewLoop",
+      "go test ./internal/app -run TestContractReview",
+      "go build ./...",
+      "go test ./...",
+      "make check"
+    ]
+  },
+  "outcome": {
+    "gate_status": "needs_review",
+    "review_status": "approved",
+    "execution_exit_code": 0,
+    "validation_passed": true,
+    "changes_need_review": true
+  },
+  "changes": {
+    "changed_files": [
+      "docs/backlog.md",
+      "internal/app/review_loop.go",
+      "internal/app/review_loop_test.go"
+    ],
+    "new_files": [],
+    "missing_files": []
+  },
+  "clarifications": [],
+  "review": {
+    "findings": [
+      {
+        "id": "f_001",
+        "message": "TestReviewLoop is missing several contract-required sub-tests: fingerprint exclusions for runner artifacts, named-terminal stdout field assertions, exact JSON schema preservation, and the full ledger event baseline.",
+        "severity": "medium",
+        "category": "validation",
+        "file": "internal/app/review_loop_test.go",
+        "line": 1028,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "Added four new t.Run sub-tests inside TestReviewLoop to cover the missing contract-required behaviors: (k) exact_json_schema_top_level_and_per_round parses stdout and the summary artifact into map[string]json.RawMessage and checks the exact key set against the contract's enumerated always-present and omitempty lists; (h) fingerprint_excludes_runner_artifacts runs two consecutive clean rounds, verifies both record the same WorkingTreeFingerprint, and asserts that round-1 reviewer attempt files (under .heurema/) exist before round-2's fingerprint was computed — proving the exclusion; (j) lifecycle_events_emitted_for_any_terminal asserts review_loop_started and review_loop_finished appear in the ledger with the correct ordering; (i) named_terminal_stdout_field_round_numbers parses the stalemate-scenario JSON into map[string]json.RawMessage and explicitly checks that round, open_findings, and open_blocking_findings fields exist and that each round entry has round == i+1. The existing summary_artifact_matches_stdout_json test was replaced by exact_json_schema_top_level_and_per_round."
+      },
+      {
+        "id": "f_002",
+        "message": "TestReviewLoop does not verify the exact stdout/summary JSON schema required by the contract; the current summary_artifact_matches_stdout_json subtest unmarshals into structs and compares only a few fields, so added or removed JSON keys would still pass.",
+        "severity": "medium",
+        "category": "quality",
+        "file": "internal/app/review_loop_test.go",
+        "line": 1427,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "Replaced the summary_artifact_matches_stdout_json sub-test (which only compared a few fields via struct) with exact_json_schema_top_level_and_per_round, which unmarshals both the stdout JSON and the artifact into map[string]json.RawMessage, verifies all 11 always-present top-level keys are present, rejects unexpected keys, checks all 8 always-present per-round keys in every round entry, rejects unexpected round keys, and confirms the artifact lacks the 'next' field. This catches added or removed JSON keys that struct unmarshaling would silently absorb."
+      },
+      {
+        "id": "f_003",
+        "message": "TestReviewLoop has no subtest asserting the required review-loop ledger event-name baseline.",
+        "severity": "medium",
+        "category": "quality",
+        "file": "internal/app/review_loop_test.go",
+        "line": 1028,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "Added ledger_event_baseline_reviewer_fixer_gate sub-test inside TestReviewLoop. It runs an always_findings reviewer with fix_f001 fixer mode (so reviewer, fixer, and gate all execute with a proposal accepted), then calls ledgerEventTypes and asserts the presence of all 11 event names required by the contract: review_loop_started, review_loop_finished, reviewer_attempt_started, reviewer_attempt_finished, review_fix_attempt_started, review_fix_attempt_finished, gate_run_started, gate_run_finished, review_findings_proposed, review_proposal_accepted, review_finding_added."
+      },
+      {
+        "id": "f_004",
+        "message": "TestReviewLoop has no empirical test that review-loop working-tree fingerprints exclude runner-written artifacts such as .heurema/, ledger files, gate reports, and review summaries.",
+        "severity": "medium",
+        "category": "quality",
+        "file": "internal/app/review_loop_test.go",
+        "line": 1028,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "Added fingerprint_excludes_runner_artifacts sub-test inside TestReviewLoop. The test first asserts that EventsJSONL, ReviewLoopSummaryJSON, and GateReportJSON paths are all under .heurema/ (making the exclusion claim meaningful). It then runs two consecutive clean rounds (--clean-rounds 2), reads WorkingTreeFingerprint from both round summaries, and asserts fp1 == fp2. It also asserts that round-1 reviewer attempt files exist on disk before round-2's fingerprint was computed, confirming runner artifacts were present but excluded."
+      },
+      {
+        "id": "f_005",
+        "message": "reviewLoopTerminalFindingsOpen is now dead code after the loop.Run refactor replaced its only use with errFindingsOpen and a hard-coded terminal string.",
+        "severity": "low",
+        "category": "quality",
+        "file": "internal/app/review_loop.go",
+        "line": 27,
+        "blocking": false,
+        "status": "resolved",
+        "resolution": "Removed the dead reviewLoopTerminalFindingsOpen const (orphaned after the loop.Run refactor)."
+      }
+    ],
+    "proposal_summary": {
+      "pending": 0,
+      "accepted": 5,
+      "rejected": 0
+    }
+  },
+  "decisions": [
+    {
+      "kind": "scope",
+      "text": "in scope: Refactor internal/app/review_loop.go so ReviewRun uses internal/loop.Run with loop.Limits populated from the existing reviewLimits values."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Move the existing per-round code-review work into the loop.Run Step closure: reviewer fan-out, proposal collection, deduplication, acceptance, fixer invocation, fix outcome application, gate run, summary updates, and stop-signal computation."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Map loop outcomes back to the existing code-review terminal_reason strings and summary fields without changing the public JSON response or summary artifact shape."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Measure RoundResult.Progress from whether the code-review fixer ran and changed the working tree fingerprint, not from whether proposals were created, accepted, skipped, or whether the gate status changed."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Keep code-review-specific early terminals such as findings_open, reviewer_findings_unparsed, gate_failed, and error observable exactly as they are today."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Changing internal/loop/* or the loop engine semantics."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Changing internal/app/contract_review.go or internal/app/clarify_loop.go."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Changing review configuration keys, defaults, command-line flags, or config schema."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Changing reviewer panel selection, lens fan-out, stagger behavior, proposal parsing, deduplication, finding IDs, fixer output parsing, or gate execution behavior."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Adding multi-model selection, best-of-N behavior, or new agent execution strategies."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Changing ledger event names, public JSON field names, artifact paths, or next-command affordances."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_001 resolved: TestReviewLoop is missing several contract-required sub-tests: fingerprint exclusions for runner artifacts, named-terminal stdout field assertions, exact JSON schema preservation, and the full ledger event baseline.; resolution: Added four new t.Run sub-tests inside TestReviewLoop to cover the missing contract-required behaviors: (k) exact_json_schema_top_level_and_per_round parses stdout and the summary artifact into map[string]json.RawMessage and checks the exact key set against the contract's enumerated always-present and omitempty lists; (h) fingerprint_excludes_runner_artifacts runs two consecutive clean rounds, verifies both record the same WorkingTreeFingerprint, and asserts that round-1 reviewer attempt files (under .heurema/) exist before round-2's fingerprint was computed — proving the exclusion; (j) lifecycle_events_emitted_for_any_terminal asserts review_loop_started and review_loop_finished appear in the ledger with the correct ordering; (i) named_terminal_stdout_field_round_numbers parses the stalemate-scenario JSON into map[string]json.RawMessage and explicitly checks that round, open_findings, and open_blocking_findings fields exist and that each round entry has round == i+1. The existing summary_artifact_matches_stdout_json test was replaced by exact_json_schema_top_level_and_per_round."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_002 resolved: TestReviewLoop does not verify the exact stdout/summary JSON schema required by the contract; the current summary_artifact_matches_stdout_json subtest unmarshals into structs and compares only a few fields, so added or removed JSON keys would still pass.; resolution: Replaced the summary_artifact_matches_stdout_json sub-test (which only compared a few fields via struct) with exact_json_schema_top_level_and_per_round, which unmarshals both the stdout JSON and the artifact into map[string]json.RawMessage, verifies all 11 always-present top-level keys are present, rejects unexpected keys, checks all 8 always-present per-round keys in every round entry, rejects unexpected round keys, and confirms the artifact lacks the 'next' field. This catches added or removed JSON keys that struct unmarshaling would silently absorb."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_003 resolved: TestReviewLoop has no subtest asserting the required review-loop ledger event-name baseline.; resolution: Added ledger_event_baseline_reviewer_fixer_gate sub-test inside TestReviewLoop. It runs an always_findings reviewer with fix_f001 fixer mode (so reviewer, fixer, and gate all execute with a proposal accepted), then calls ledgerEventTypes and asserts the presence of all 11 event names required by the contract: review_loop_started, review_loop_finished, reviewer_attempt_started, reviewer_attempt_finished, review_fix_attempt_started, review_fix_attempt_finished, gate_run_started, gate_run_finished, review_findings_proposed, review_proposal_accepted, review_finding_added."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_004 resolved: TestReviewLoop has no empirical test that review-loop working-tree fingerprints exclude runner-written artifacts such as .heurema/, ledger files, gate reports, and review summaries.; resolution: Added fingerprint_excludes_runner_artifacts sub-test inside TestReviewLoop. The test first asserts that EventsJSONL, ReviewLoopSummaryJSON, and GateReportJSON paths are all under .heurema/ (making the exclusion claim meaningful). It then runs two consecutive clean rounds (--clean-rounds 2), reads WorkingTreeFingerprint from both round summaries, and asserts fp1 == fp2. It also asserts that round-1 reviewer attempt files exist on disk before round-2's fingerprint was computed, confirming runner artifacts were present but excluded."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_005 resolved: reviewLoopTerminalFindingsOpen is now dead code after the loop.Run refactor replaced its only use with errFindingsOpen and a hard-coded terminal string.; resolution: Removed the dead reviewLoopTerminalFindingsOpen const (orphaned after the loop.Run refactor)."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_001 accepted as f_001"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_002 accepted as f_002"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_003 accepted as f_003"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_004 accepted as f_004"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_005 accepted as f_005"
+    },
+    {
+      "kind": "validation",
+      "text": "go test ./internal/loop passed"
+    },
+    {
+      "kind": "validation",
+      "text": "go test ./internal/app -run TestReviewLoop passed"
+    },
+    {
+      "kind": "validation",
+      "text": "go test ./internal/app -run TestContractReview passed"
+    },
+    {
+      "kind": "validation",
+      "text": "go build ./... passed"
+    },
+    {
+      "kind": "validation",
+      "text": "go test ./... passed"
+    },
+    {
+      "kind": "validation",
+      "text": "make check passed"
+    }
+  ],
+  "artifacts": {
+    "contract": "contract/contract.json",
+    "gate_report": "gate/gate-report.json",
+    "review": "review/review.json",
+    "findings": "review/findings.jsonl",
+    "resolutions": "review/resolutions.jsonl",
+    "proposals": "review/proposals.jsonl",
+    "proposal_decisions": "review/proposal-decisions.jsonl"
+  }
+}
