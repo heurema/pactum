@@ -55,7 +55,7 @@ type clarifyRunCmd struct {
 	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the clarifier. Defaults to cross-model selection against the run executor."`
 	MaxRounds  int           `name:"max-rounds" help:"Maximum clarifier rounds. Defaults to clarify.max_rounds."`
 	NoAuto     bool          `name:"no-auto" help:"Skip auto-resolution of high-confidence recommendations; created questions stay open for the human."`
-	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without clarifier output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
+	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without clarifier output. Defaults to 25m when not given."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -134,7 +134,7 @@ type contractShowCmd struct {
 type contractDraftCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to draft contract fields for."`
 	Reviewer   string        `name:"reviewer" help:"Registry name (config agents) of the read-only drafter. Defaults to cross-model selection against the run executor."`
-	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without drafter output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
+	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without drafter output. Defaults to 25m when not given."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -159,7 +159,7 @@ type contractApproveCmd struct {
 
 type contractReviewCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id whose contract to review."`
-	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without reviewer output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
+	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without reviewer output. Defaults to 25m when not given."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -182,7 +182,7 @@ type executePlanCmd struct {
 type executeRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to execute."`
 	Agent      string        `name:"agent" help:"Registry name (config agents) of the executor. Defaults to the first registry entry."`
-	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without agent output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
+	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without agent output. Defaults to 25m when not given."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -254,14 +254,14 @@ type reviewRunCmd struct {
 	Patience    int           `name:"patience" help:"Consecutive no-change fixer rounds before stopping as stalemate. Defaults to review.patience."`
 	CleanRounds int           `name:"clean-rounds" help:"Consecutive clean review rounds required before convergence. Defaults to review.clean_rounds."`
 	NoFix       bool          `name:"no-fix" help:"Never invoke the fixer; stop after the first round that leaves open blocking findings."`
-	Timeout     time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without reviewer or fixer output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
+	Timeout     time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without reviewer or fixer output. Defaults to 25m when not given."`
 	JSONOutput  bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewFixRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id whose review findings should be fixed."`
 	Agent      string        `name:"agent" help:"Registry name (config agents) of the fixer. Defaults to the first registry entry."`
-	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without fixer output. Defaults to timeouts.idle in the workspace config (25m when unset)."`
+	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without fixer output. Defaults to 25m when not given."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 

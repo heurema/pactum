@@ -40,22 +40,30 @@ func findRegistryEntry(config configFile, name string) (agentRegistryEntry, erro
 
 // resolveExecutorEntry picks the registry entry for an executor-stage
 // invocation (execute, review fix): an explicit name resolves against the
-// registry; an omitted name defaults to the first registry entry.
-func resolveExecutorEntry(config configFile, name string) (agentRegistryEntry, error) {
-	if strings.TrimSpace(name) == "" {
-		return config.Agents[0], nil
+// registry; a non-empty stageBy[0] is the configured stage default; otherwise
+// the first registry entry.
+func resolveExecutorEntry(config configFile, stageBy stageBy, name string) (agentRegistryEntry, error) {
+	if strings.TrimSpace(name) != "" {
+		return findRegistryEntry(config, name)
 	}
-	return findRegistryEntry(config, name)
+	if len(stageBy) > 0 {
+		return findRegistryEntry(config, stageBy[0])
+	}
+	return config.Agents[0], nil
 }
 
 // resolveReviewerEntry picks the registry entry for a reviewer-role
 // invocation (review, clarifier round, contract draft): an explicit name
-// resolves against the registry; an omitted name keeps cross-model semantics
-// against inferred engines — the first entry whose engine differs from the
-// run executor's, falling back to the first entry.
-func resolveReviewerEntry(config configFile, context reviewContext, name string) (agentRegistryEntry, error) {
+// resolves against the registry; a non-empty stageBy[0] is the configured
+// stage default; otherwise cross-model semantics apply against inferred
+// engines — the first entry whose engine differs from the run executor's,
+// falling back to the first entry.
+func resolveReviewerEntry(config configFile, stageBy stageBy, context reviewContext, name string) (agentRegistryEntry, error) {
 	if strings.TrimSpace(name) != "" {
 		return findRegistryEntry(config, name)
+	}
+	if len(stageBy) > 0 {
+		return findRegistryEntry(config, stageBy[0])
 	}
 	executorEngine, ok := latestExecutionExecutorName(context)
 	if !ok {

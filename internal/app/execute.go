@@ -69,7 +69,7 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 	if err != nil {
 		return err
 	}
-	timeout, err = resolveIdleTimeout(prep.Paths.Config, timeout)
+	timeout, err = resolveIdleTimeout(timeout)
 	if err != nil {
 		return err
 	}
@@ -224,7 +224,7 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 	if err != nil {
 		return executionPreparation{}, err
 	}
-	entry, err := resolveExecutorEntry(config, agentName)
+	entry, err := resolveExecutorEntry(config, config.Pipeline.Execute.By, agentName)
 	if err != nil {
 		return executionPreparation{}, err
 	}

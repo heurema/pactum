@@ -1,4 +1,4 @@
-schema: pactum.config.v1alpha1
+version: v1alpha1
 agents:
   - name: sonnet
     model: claude-sonnet-4-6
@@ -14,15 +14,12 @@ agents:
 map:
   max_file_bytes: 500000
   code_index: auto
-gate:
-  scope_enforcement: block
-review:
-  max_rounds: 10
-  patience: 2
-  clean_rounds: 1
-  panel:
-    - codex-xhigh
-contract:
-  reviewers:
-    - opus
-    - codex-xhigh
+out_of_scope: block
+pipeline:
+  contract_review:
+    by:
+      - opus
+      - codex-xhigh
+  code_review:
+    by:
+      - codex-xhigh

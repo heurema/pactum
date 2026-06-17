@@ -28,7 +28,7 @@ review); Pactum feeds that file to the agent process on standard input.
 
 The top-level `agents` list in `.heurema/pactum/config.yaml` is the config's
 source of truth for agents: every reference — `--agent`, `--reviewer`, and
-`review.panel` — resolves a registry **name**, and a name carries its
+`pipeline.code_review.by` — resolves a registry **name**, and a name carries its
 model+effort wherever it is used. Each entry has:
 
 - `name` (required) — how the entry is referenced everywhere; a free,
@@ -46,8 +46,9 @@ agents:
     model: gpt-5.5          # infers the codex engine
     effort: high
 
-review:
-  panel: [fable, codex]   # registry names; empty = cross-model single reviewer
+pipeline:
+  code_review:
+    by: [fable, codex]   # registry names; empty = cross-model single reviewer
 ```
 
 There is no `agent` key: the engine is inferred from the model alone, by
@@ -98,7 +99,7 @@ executor is the first registry entry, so the same rule applies against it. An
 explicit `--reviewer` always wins. Check the selected entry in the `Resolved`
 block for `contract draft`, `review plan`, and `review fix run`.
 
-`review.panel` is the reviewer-round roster: a list of registry names. When
+`pipeline.code_review.by` is the reviewer-round roster: a list of registry names. When
 `pactum review run` runs without `--reviewer`, each review round runs all
 panel members concurrently — every member expanding into the five built-in
 lens attempts described under [Review: plan vs run](#review-plan-vs-run),
@@ -322,14 +323,11 @@ There is also **no Docker support yet**.
   container, VM, or filesystem confinement, exactly as described in the execution
   model above. It honors `--timeout` as an idle safety timeout: the process is
   cancelled only after the configured duration passes with no stdout or stderr
-  output. The idle window resolves in order: an explicit `--timeout`, then the
-  `timeouts.idle` workspace config key (a duration string, e.g. `15m`), then
-  the built-in 25 minutes — the same resolution applies to every agent-running
-  command that honors `--timeout`. The generated config carries no `timeouts`
-  section; set `timeouts.idle` only to deviate from the built-in. Execution is
-  **unsandboxed** and `execute run` never prompts: the CLI's consumer is an
-  agent relaying decisions already made in conversation, so launching the
-  executor is itself the recorded decision.
+  output. An explicit `--timeout` wins; otherwise the built-in 25 minutes
+  applies — the same resolution applies to every agent-running command that
+  honors `--timeout`. Execution is **unsandboxed** and `execute run` never
+  prompts: the CLI's consumer is an agent relaying decisions already made in
+  conversation, so launching the executor is itself the recorded decision.
 
 The idle timeout is **completion-aware**: when the watchdog fires but codex's
 terminal `turn.completed` event appears in the captured output, or (for both
@@ -434,7 +432,7 @@ instead):
   With `--no-auto`, any open blocking question after a round ends the loop
   here — auto-resolution is off, so only the human can make progress.
 - `max_rounds` — the round cap was reached. `--max-rounds` overrides the
-  `clarify.max_rounds` workspace config key (default 3).
+  `pipeline.clarify.loop.max` workspace config key (default 3).
 
 The loop writes `clarify/loop-summary.json`
 (`pactum.clarify_loop_summary.v1alpha1`) with per-round counts (questions created,
@@ -594,16 +592,16 @@ separate preparation step.
 
 The rounds stop after the configured number of consecutive clean reviewer
 rounds, after repeated no-change fixer rounds, or when `--max-rounds` is
-reached. If the flags are omitted, Pactum reads `review.max_rounds`,
-`review.clean_rounds`, and `review.patience` from the workspace
-config. The default clean-round requirement is 1, preserving the original "first
-clean round converges" behavior. The default no-change patience is 2: when a
-fixer runs but the source fingerprint is unchanged for two consecutive fixer
-rounds, the run terminates as `stalemate`. `--no-fix` never invokes the fixer:
-the first round that leaves open blocking findings ends the run as
-`findings_open`, with the findings awaiting the human in `pactum review show`.
-The idle `--timeout` applies to each reviewer or fixer subprocess, and `--json`
-prints the summary as JSON.
+reached. If the flags are omitted, Pactum reads `pipeline.code_review.loop.max`,
+`pipeline.code_review.loop.settle`, and `pipeline.code_review.loop.patience`
+from the workspace config. The default clean-round requirement is 1, preserving
+the original "first clean round converges" behavior. The default no-change
+patience is 2: when a fixer runs but the source fingerprint is unchanged for two
+consecutive fixer rounds, the run terminates as `stalemate`. `--no-fix` never
+invokes the fixer: the first round that leaves open blocking findings ends the
+run as `findings_open`, with the findings awaiting the human in `pactum review
+show`. The idle `--timeout` applies to each reviewer or fixer subprocess, and
+`--json` prints the summary as JSON.
 
 Every run writes `review/loop-summary.json` with the terminal reason and
 per-round open-finding counts, clean streak, and unchanged-fingerprint streak.

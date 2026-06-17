@@ -75,8 +75,8 @@ func helper() {}
 	}
 	config, err := readConfig(paths.Config)
 	assertNoError(t, err)
-	if config.Schema != "pactum.config.v1alpha1" {
-		t.Fatalf("config schema = %q, want pactum.config.v1alpha1", config.Schema)
+	if config.Version != "v1alpha1" {
+		t.Fatalf("config version = %q, want v1alpha1", config.Version)
 	}
 	if config.Map.MaxFileBytes != 500000 {
 		t.Fatalf("config map.max_file_bytes = %d, want 500000", config.Map.MaxFileBytes)
@@ -84,14 +84,14 @@ func helper() {}
 	if config.Map.CodeIndex != codeindex.ModeAuto {
 		t.Fatalf("config map.code_index = %q, want auto", config.Map.CodeIndex)
 	}
-	if config.Gate.ScopeEnforcement != gateScopeEnforcementBlock {
-		t.Fatalf("config gate.scope_enforcement = %q, want block", config.Gate.ScopeEnforcement)
+	if config.OutOfScope != gateScopeEnforcementBlock {
+		t.Fatalf("config out_of_scope = %q, want block", config.OutOfScope)
 	}
 	if len(config.Agents) != 1 || config.Agents[0].Name != "claude" || config.Agents[0].Model != "claude-opus-4-8" {
 		t.Fatalf("config agents should register the single pinned claude entry: %#v", config.Agents)
 	}
 	configYAML := mustReadFile(t, paths.Config)
-	for _, want := range []string{"agents:", "- name: claude", "model: claude-opus-4-8", "map:", "gate:", "scope_enforcement: block", "review:", "panel: []"} {
+	for _, want := range []string{"agents:", "- name: claude", "model: claude-opus-4-8", "map:", "out_of_scope: block", "pipeline:"} {
 		if !strings.Contains(configYAML, want) {
 			t.Fatalf("config.yaml missing %q:\n%s", want, configYAML)
 		}
@@ -287,7 +287,7 @@ func helper() {}
 	}
 }
 
-func TestReadConfigNormalizesGateScopeEnforcement(t *testing.T) {
+func TestReadConfigNormalizesOutOfScope(t *testing.T) {
 	root := t.TempDir()
 	paths := artifacts.New(root)
 	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
@@ -298,42 +298,19 @@ func TestReadConfigNormalizesGateScopeEnforcement(t *testing.T) {
 		want    string
 	}{
 		{
-			name:    "missing",
-			content: "schema: pactum.config.v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\n",
+			name:    "missing defaults to block",
+			content: "version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\n",
 			want:    gateScopeEnforcementBlock,
 		},
 		{
-			name: "empty",
-			content: `schema: pactum.config.v1alpha1
-agents:
-  - name: claude
-    model: claude-opus-4-8
-gate:
-  scope_enforcement: ""
-`,
-			want: gateScopeEnforcementBlock,
+			name:    "block",
+			content: "version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\nout_of_scope: block\n",
+			want:    gateScopeEnforcementBlock,
 		},
 		{
-			name: "block",
-			content: `schema: pactum.config.v1alpha1
-agents:
-  - name: claude
-    model: claude-opus-4-8
-gate:
-  scope_enforcement: block
-`,
-			want: gateScopeEnforcementBlock,
-		},
-		{
-			name: "warn",
-			content: `schema: pactum.config.v1alpha1
-agents:
-  - name: claude
-    model: claude-opus-4-8
-gate:
-  scope_enforcement: warn
-`,
-			want: gateScopeEnforcementWarn,
+			name:    "warn",
+			content: "version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\nout_of_scope: warn\n",
+			want:    gateScopeEnforcementWarn,
 		},
 	}
 	for _, tt := range tests {
@@ -341,54 +318,43 @@ gate:
 			mustWriteFile(t, paths.Config, tt.content)
 			config, err := readConfig(paths.Config)
 			assertNoError(t, err)
-			if config.Gate.ScopeEnforcement != tt.want {
-				t.Fatalf("gate.scope_enforcement = %q, want %q", config.Gate.ScopeEnforcement, tt.want)
+			if config.OutOfScope != tt.want {
+				t.Fatalf("out_of_scope = %q, want %q", config.OutOfScope, tt.want)
 			}
 		})
 	}
 }
 
-func TestReadConfigRejectsInvalidGateScopeEnforcement(t *testing.T) {
+func TestReadConfigRejectsInvalidOutOfScope(t *testing.T) {
 	root := t.TempDir()
 	paths := artifacts.New(root)
 	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
-	mustWriteFile(t, paths.Config, `schema: pactum.config.v1alpha1
-gate:
-  scope_enforcement: advisory
-`)
+	mustWriteFile(t, paths.Config, "version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\nout_of_scope: advisory\n")
 
 	_, err := readConfig(paths.Config)
 	if err == nil {
-		t.Fatalf("readConfig should reject invalid gate.scope_enforcement")
+		t.Fatalf("readConfig should reject invalid out_of_scope")
 	}
-	if !strings.Contains(err.Error(), "gate.scope_enforcement") {
-		t.Fatalf("invalid gate.scope_enforcement error mismatch: %v", err)
+	if !strings.Contains(err.Error(), "out_of_scope") {
+		t.Fatalf("invalid out_of_scope error mismatch: %v", err)
 	}
 }
 
-// TestReadConfigRejectsRemovedReviewBudget pins that a leftover review.budget
-// block fails strict config loading with an error naming the full review.budget
-// path, so the removed surface migrates loudly rather than parsing silently.
-func TestReadConfigRejectsRemovedReviewBudget(t *testing.T) {
+// TestReadConfigRejectsLegacyReviewBudget pins that the old review.budget block
+// is rejected as an unknown key (review: is no longer a known top-level key).
+func TestReadConfigRejectsLegacyReviewBudget(t *testing.T) {
 	root := t.TempDir()
 	paths := artifacts.New(root)
 	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
-	mustWriteFile(t, paths.Config, `schema: pactum.config.v1alpha1
-agents:
-  - name: claude
-    model: claude-opus-4-8
-review:
-  budget:
-    mode: block
-    max_tokens: 1000
-`)
+	mustWriteFile(t, paths.Config, "version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\nreview:\n  budget:\n    mode: block\n")
 
 	_, err := readConfig(paths.Config)
 	if err == nil {
-		t.Fatal("readConfig should reject a leftover review.budget key")
+		t.Fatal("readConfig should reject the legacy review key")
 	}
-	if !strings.Contains(err.Error(), "review.budget") {
-		t.Fatalf("error should name review.budget: %v", err)
+	// The strict decoder reports the unknown top-level key "review".
+	if !strings.Contains(err.Error(), "review") {
+		t.Fatalf("error should mention the unknown key: %v", err)
 	}
 }
 
@@ -637,7 +603,7 @@ func TestMapStalenessPinsOnlyMapSection(t *testing.T) {
 	config, err := readConfig(paths.Config)
 	assertNoError(t, err)
 	config.Agents = append(config.Agents, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
-	config.Review.Panel = []string{"codex"}
+	config.Pipeline.CodeReview.By = stageBy{"codex"}
 	assertNoError(t, writeYAML(paths.Config, config))
 
 	statusReasons := func() []string {

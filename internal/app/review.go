@@ -685,7 +685,7 @@ func (a App) prepareReviewer(context reviewContext, reviewerName string, action 
 	// An explicit --reviewer resolves a registry name; an omitted one applies
 	// the cross-model rule against the registry. The entry's pins travel with
 	// the name.
-	entry, err := resolveReviewerEntry(config, context, reviewerName)
+	entry, err := resolveReviewerEntry(config, nil, context, reviewerName)
 	if err != nil {
 		return reviewerDryRunPreparation{}, err
 	}

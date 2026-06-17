@@ -27,14 +27,11 @@ type workspaceManifest struct {
 }
 
 type configFile struct {
-	Schema   string               `yaml:"schema"`
-	Agents   []agentRegistryEntry `yaml:"agents"`
-	Map      mapConfig            `yaml:"map"`
-	Gate     gateConfig           `yaml:"gate"`
-	Clarify  clarifyConfig        `yaml:"clarify"`
-	Contract contractConfig       `yaml:"contract,omitempty"`
-	Review   reviewConfig         `yaml:"review"`
-	Timeouts timeoutsConfig       `yaml:"timeouts,omitempty"`
+	Version    string               `yaml:"version"`
+	Agents     []agentRegistryEntry `yaml:"agents"`
+	Map        mapConfig            `yaml:"map"`
+	OutOfScope string               `yaml:"out_of_scope"`
+	Pipeline   pipelineConfig       `yaml:"pipeline"`
 }
 
 type mapConfig struct {
@@ -42,42 +39,62 @@ type mapConfig struct {
 	CodeIndex    string `yaml:"code_index"`
 }
 
-type gateConfig struct {
-	ScopeEnforcement string `yaml:"scope_enforcement"`
+// pipelineConfig holds the closed set of pipeline stages. Absent stages decode
+// as zero pipelineStage{}, which is valid — empty by uses the stage's default
+// role assignment, and absent loop uses the in-code limit defaults.
+type pipelineConfig struct {
+	Clarify        pipelineStage `yaml:"clarify,omitempty"`
+	ContractDraft  pipelineStage `yaml:"contract_draft,omitempty"`
+	ContractReview pipelineStage `yaml:"contract_review,omitempty"`
+	Execute        pipelineStage `yaml:"execute,omitempty"`
+	CodeReview     pipelineStage `yaml:"code_review,omitempty"`
+	Memory         pipelineStage `yaml:"memory,omitempty"`
 }
 
-// clarifyConfig bounds the autonomous clarify loop. MaxRounds is the Phase 1
-// round cap; like the review limits it is resolved at loop time, where a
-// non-positive value falls back to the default.
-type clarifyConfig struct {
-	MaxRounds int `yaml:"max_rounds"`
+// pipelineStage is the performer + optional loop knobs for one pipeline stage.
+type pipelineStage struct {
+	// By names the agent(s) that perform the stage; normalized to []string on
+	// load. Empty/absent means the stage uses its default role assignment.
+	By   stageBy     `yaml:"by,omitempty"`
+	Loop *loopConfig `yaml:"loop,omitempty"`
 }
 
-type reviewConfig struct {
-	MaxRounds   int      `yaml:"max_rounds"`
-	Patience    int      `yaml:"patience"`
-	CleanRounds int      `yaml:"clean_rounds"`
-	Panel       []string `yaml:"panel"`
+// stageBy accepts a bare agent name (scalar) or a list of names, normalizing
+// both to []string. Empty string and null decode as nil.
+type stageBy []string
+
+func (b *stageBy) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		if value.Tag == "!!null" || strings.TrimSpace(value.Value) == "" {
+			*b = nil
+			return nil
+		}
+		*b = stageBy{strings.TrimSpace(value.Value)}
+		return nil
+	case yaml.SequenceNode:
+		var items []string
+		if err := value.Decode(&items); err != nil {
+			return err
+		}
+		*b = stageBy(items)
+		return nil
+	default:
+		return fmt.Errorf("pipeline by: must be a string or a list")
+	}
 }
 
-// contractConfig holds contract-stage settings. Reviewers is the list of
-// registry agent names that form the optional contract review panel; an absent
-// or empty list disables contract review (human gate only).
-type contractConfig struct {
-	Reviewers []string `yaml:"reviewers,omitempty"`
-}
-
-// timeoutsConfig carries the project-wide timeout defaults for the
-// agent-running commands. Idle is the idle window as a duration string
-// (e.g. 15m); empty means no project default. The section is plural to leave
-// room for a future absolute total cap without a new section.
-type timeoutsConfig struct {
-	Idle string `yaml:"idle"`
+// loopConfig carries the convergence knobs for loop-capable stages: max rounds,
+// stalemate patience, and settle (consecutive clean rounds required to stop).
+type loopConfig struct {
+	Max      int `yaml:"max"`
+	Patience int `yaml:"patience"`
+	Settle   int `yaml:"settle"`
 }
 
 // agentRegistryEntry registers one invocable agent in the top-level agents
 // registry, the config's source of truth for agents. Name is how the entry is
-// referenced everywhere (review.panel, --agent, --reviewer); Model is required
+// referenced everywhere (pipeline.*.by, --agent, --reviewer); Model is required
 // because the underlying engine is inferred solely from it (see
 // agents.InferAgentFromModel); Effort is an optional pin. Name and engine are
 // decoupled, so two entries may run the same engine with different pins.
@@ -100,7 +117,7 @@ func writeDefaultConfigIfMissing(path string) error {
 
 func defaultConfigFile() configFile {
 	return configFile{
-		Schema: configSchema,
+		Version: "v1alpha1",
 		Agents: []agentRegistryEntry{
 			// The model must be pinned: the engine is inferred from it, so an
 			// inherit-the-CLI-default entry cannot exist.
@@ -110,21 +127,18 @@ func defaultConfigFile() configFile {
 			MaxFileBytes: 500000,
 			CodeIndex:    codeindex.ModeAuto,
 		},
-		Gate: gateConfig{
-			ScopeEnforcement: gateScopeEnforcementBlock,
+		OutOfScope: gateScopeEnforcementBlock,
+		Pipeline: pipelineConfig{
+			Clarify: pipelineStage{
+				Loop: &loopConfig{Max: 3},
+			},
+			ContractReview: pipelineStage{
+				Loop: &loopConfig{Max: 10, Patience: 2, Settle: 1},
+			},
+			CodeReview: pipelineStage{
+				Loop: &loopConfig{Max: 10, Patience: 2, Settle: 1},
+			},
 		},
-		Clarify: clarifyConfig{
-			MaxRounds: 3,
-		},
-		Review: reviewConfig{
-			MaxRounds:   10,
-			Patience:    2,
-			CleanRounds: 1,
-			Panel:       []string{},
-		},
-		// No Timeouts: the generated config carries only deviations from the
-		// built-in defaults, and the absent section falls back to
-		// defaultIdleTimeout.
 	}
 }
 
@@ -159,9 +173,6 @@ func readConfig(path string) (configFile, error) {
 	if err != nil {
 		return configFile{}, err
 	}
-	if err := rejectRemovedReviewBudget(data); err != nil {
-		return configFile{}, err
-	}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	// Reject unknown keys so removed or mistyped keys fail loudly instead of
 	// accumulating silently as dead config.
@@ -169,29 +180,113 @@ func readConfig(path string) (configFile, error) {
 	if err := decoder.Decode(&config); err != nil && !errors.Is(err, io.EOF) {
 		return configFile{}, fmt.Errorf("config %s: %w", path, err)
 	}
-	if config.Schema == "" {
-		return configFile{}, errors.New("config is incomplete")
+	if config.Version != "v1alpha1" {
+		return configFile{}, fmt.Errorf("config version must be %q, got %q", "v1alpha1", config.Version)
 	}
-	scopeEnforcement, err := normalizeGateScopeEnforcement(config.Gate.ScopeEnforcement)
+	outOfScope, err := normalizeOutOfScope(config.OutOfScope)
 	if err != nil {
 		return configFile{}, err
 	}
-	config.Gate.ScopeEnforcement = scopeEnforcement
-	idleTimeout, err := normalizeIdleTimeout(config.Timeouts.Idle)
-	if err != nil {
-		return configFile{}, err
-	}
-	config.Timeouts.Idle = idleTimeout
+	config.OutOfScope = outOfScope
 	if err := validateAgentRegistry(config.Agents); err != nil {
 		return configFile{}, err
 	}
-	if err := validateReviewPanel(config.Review.Panel, config.Agents); err != nil {
+	if err := validatePipeline(config.Pipeline, config.Agents); err != nil {
 		return configFile{}, err
 	}
-	if err := validateContractReviewers(config.Contract.Reviewers, config.Agents); err != nil {
-		return configFile{}, err
-	}
+	normalizePipelineBy(&config.Pipeline)
 	return config, nil
+}
+
+func normalizeOutOfScope(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return gateScopeEnforcementBlock, nil
+	}
+	switch value {
+	case gateScopeEnforcementBlock, gateScopeEnforcementWarn:
+		return value, nil
+	default:
+		return "", fmt.Errorf("config out_of_scope must be %q or %q, got %q", gateScopeEnforcementBlock, gateScopeEnforcementWarn, value)
+	}
+}
+
+var (
+	// stageLoopAllowed is the closed set of stages that may carry loop knobs.
+	stageLoopAllowed = map[string]bool{
+		"clarify":         true,
+		"contract_review": true,
+		"code_review":     true,
+	}
+	// stageMultiAgentAllowed is the closed set of stages that may name more than
+	// one agent in by (the panel stages).
+	stageMultiAgentAllowed = map[string]bool{
+		"contract_review": true,
+		"code_review":     true,
+	}
+)
+
+func validatePipeline(pipeline pipelineConfig, registry []agentRegistryEntry) error {
+	type namedStage struct {
+		name  string
+		stage pipelineStage
+	}
+	stages := []namedStage{
+		{"clarify", pipeline.Clarify},
+		{"contract_draft", pipeline.ContractDraft},
+		{"contract_review", pipeline.ContractReview},
+		{"execute", pipeline.Execute},
+		{"code_review", pipeline.CodeReview},
+		{"memory", pipeline.Memory},
+	}
+	registered := make(map[string]bool, len(registry))
+	for _, entry := range registry {
+		registered[entry.Name] = true
+	}
+	for _, ns := range stages {
+		if ns.stage.Loop != nil && !stageLoopAllowed[ns.name] {
+			return fmt.Errorf("config pipeline.%s: loop is not valid for this stage", ns.name)
+		}
+		// Count and validate non-empty by entries only; empty strings are treated
+		// as absent and normalized out after this validation step.
+		var nonEmpty []string
+		for _, name := range ns.stage.By {
+			if name = strings.TrimSpace(name); name != "" {
+				nonEmpty = append(nonEmpty, name)
+			}
+		}
+		if len(nonEmpty) > 1 && !stageMultiAgentAllowed[ns.name] {
+			return fmt.Errorf("config pipeline.%s.by: multi-agent list requires a panel stage (contract_review or code_review), got %d agents", ns.name, len(nonEmpty))
+		}
+		for i, name := range nonEmpty {
+			if !registered[name] {
+				return fmt.Errorf("config pipeline.%s.by[%d]: unknown agent %q (not registered in config agents)", ns.name, i, name)
+			}
+		}
+	}
+	return nil
+}
+
+// normalizePipelineBy strips empty and whitespace-only entries from all stage
+// by lists so consumers can rely on len(by) == 0 meaning "absent" and all
+// entries being valid non-empty agent names.
+func normalizePipelineBy(p *pipelineConfig) {
+	p.Clarify.By = filterEmptyBy(p.Clarify.By)
+	p.ContractDraft.By = filterEmptyBy(p.ContractDraft.By)
+	p.ContractReview.By = filterEmptyBy(p.ContractReview.By)
+	p.Execute.By = filterEmptyBy(p.Execute.By)
+	p.CodeReview.By = filterEmptyBy(p.CodeReview.By)
+	p.Memory.By = filterEmptyBy(p.Memory.By)
+}
+
+func filterEmptyBy(by stageBy) stageBy {
+	var out stageBy
+	for _, name := range by {
+		if name = strings.TrimSpace(name); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // agentNameIsPathSafe reports whether a registry name is safe to embed in
@@ -246,129 +341,19 @@ func validateAgentRegistry(entries []agentRegistryEntry) error {
 	return nil
 }
 
-// validateReviewPanel checks that every panel member references a registered
-// name exactly once. Two names backed by the same built-in are allowed — the
-// panel is a list of registry names, not built-ins.
-func validateReviewPanel(panel []string, registry []agentRegistryEntry) error {
-	registered := map[string]bool{}
-	for _, entry := range registry {
-		registered[entry.Name] = true
-	}
-	seen := map[string]bool{}
-	for i := range panel {
-		name := strings.TrimSpace(panel[i])
-		if name == "" {
-			return fmt.Errorf("config review.panel: entry is missing the agent name")
-		}
-		if !registered[name] {
-			return fmt.Errorf("config review.panel: unknown agent %q (not registered in config agents)", name)
-		}
-		if seen[name] {
-			return fmt.Errorf("config review.panel: duplicate name %q", name)
-		}
-		seen[name] = true
-		panel[i] = name
-	}
-	return nil
-}
-
-// validateContractReviewers checks that every contract reviewer references a
-// registered name exactly once. Mirrors validateReviewPanel.
-func validateContractReviewers(reviewers []string, registry []agentRegistryEntry) error {
-	registered := map[string]bool{}
-	for _, entry := range registry {
-		registered[entry.Name] = true
-	}
-	seen := map[string]bool{}
-	for i := range reviewers {
-		name := strings.TrimSpace(reviewers[i])
-		if name == "" {
-			return fmt.Errorf("config contract.reviewers: entry is missing the agent name")
-		}
-		if !registered[name] {
-			return fmt.Errorf("config contract.reviewers: unknown agent %q (not registered in config agents)", name)
-		}
-		if seen[name] {
-			return fmt.Errorf("config contract.reviewers: duplicate name %q", name)
-		}
-		seen[name] = true
-		reviewers[i] = name
-	}
-	return nil
-}
-
-func normalizeGateScopeEnforcement(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return gateScopeEnforcementBlock, nil
-	}
-	switch value {
-	case gateScopeEnforcementBlock, gateScopeEnforcementWarn:
-		return value, nil
-	default:
-		return "", fmt.Errorf("config gate.scope_enforcement must be %q or %q, got %q", gateScopeEnforcementBlock, gateScopeEnforcementWarn, value)
-	}
-}
-
-// normalizeIdleTimeout validates timeouts.idle: empty means no project
-// default, anything else must parse as a positive duration.
-func normalizeIdleTimeout(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", nil
-	}
-	parsed, err := time.ParseDuration(value)
-	if err != nil {
-		return "", fmt.Errorf("config timeouts.idle: cannot parse %q as a duration (e.g. 15m)", value)
-	}
-	if parsed <= 0 {
-		return "", fmt.Errorf("config timeouts.idle must be a positive duration, got %q", value)
-	}
-	return value, nil
-}
-
 // defaultIdleTimeout is the built-in idle window for the agent-running
-// commands when neither --timeout nor timeouts.idle sets one.
+// commands when --timeout is not given.
 const defaultIdleTimeout = 25 * time.Minute
 
 // resolveIdleTimeout resolves the idle window for an agent-running command: an
-// explicit --timeout wins, then timeouts.idle from the workspace config, then
-// the built-in default. Like the loop limits, 0 means the flag was not given;
-// a negative flag value is rejected.
-func resolveIdleTimeout(configPath string, override time.Duration) (time.Duration, error) {
+// explicit --timeout wins, otherwise the built-in default. Like the loop
+// limits, 0 means the flag was not given; a negative flag value is rejected.
+func resolveIdleTimeout(override time.Duration) (time.Duration, error) {
 	if override < 0 {
 		return 0, errors.New("timeout must be positive")
 	}
 	if override > 0 {
 		return override, nil
 	}
-	config, err := readConfig(configPath)
-	if err != nil {
-		return 0, err
-	}
-	if config.Timeouts.Idle == "" {
-		return defaultIdleTimeout, nil
-	}
-	return time.ParseDuration(config.Timeouts.Idle)
-}
-
-// rejectRemovedReviewBudget fails loudly on a leftover review.budget key. The
-// budget surface gated nothing real and was removed; a designed budget feature
-// will return later (see docs/cost-budget-design.md). The strict decoder would
-// already reject the now-unknown key, but this names the full review.budget
-// path so the migration is obvious rather than a bare "field budget not found".
-func rejectRemovedReviewBudget(data []byte) error {
-	var probe struct {
-		Review struct {
-			Budget yaml.Node `yaml:"budget"`
-		} `yaml:"review"`
-	}
-	if err := yaml.Unmarshal(data, &probe); err != nil {
-		// Leave the real parse error to the strict decoder below.
-		return nil
-	}
-	if !probe.Review.Budget.IsZero() {
-		return errors.New("config review.budget was removed; delete it (budget enforcement will return later, see docs/cost-budget-design.md)")
-	}
-	return nil
+	return defaultIdleTimeout, nil
 }

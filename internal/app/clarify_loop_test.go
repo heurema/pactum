@@ -300,7 +300,10 @@ func readClarifyLoopSummary(t *testing.T, path string) clarifyLoopSummaryDocumen
 func setClarifyLoopMaxRoundsConfig(t *testing.T, paths artifacts.Paths, maxRounds int) {
 	t.Helper()
 	config := readConfigForTest(t, paths.Config)
-	config.Clarify.MaxRounds = maxRounds
+	if config.Pipeline.Clarify.Loop == nil {
+		config.Pipeline.Clarify.Loop = &loopConfig{}
+	}
+	config.Pipeline.Clarify.Loop.Max = maxRounds
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 

@@ -601,7 +601,7 @@ func TestReviewLoopUnknownPanelReviewerFailsClearly(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("unknown panel reviewer exited %d, want 1", code)
 	}
-	if got := stderr.String(); !strings.Contains(got, `config review.panel: unknown agent "missing-reviewer"`) {
+	if got := stderr.String(); !strings.Contains(got, `"missing-reviewer"`) || !strings.Contains(got, "pipeline.code_review") {
 		t.Fatalf("unknown panel reviewer error mismatch:\n%s", got)
 	}
 }
@@ -1771,14 +1771,17 @@ func configureReviewLoopPanelHelpers(t *testing.T, app App, paths artifacts.Path
 func setReviewLoopMaxRoundsConfig(t *testing.T, paths artifacts.Paths, maxRounds int) {
 	t.Helper()
 	config := readConfigForTest(t, paths.Config)
-	config.Review.MaxRounds = maxRounds
+	if config.Pipeline.CodeReview.Loop == nil {
+		config.Pipeline.CodeReview.Loop = &loopConfig{}
+	}
+	config.Pipeline.CodeReview.Loop.Max = maxRounds
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 
 func setReviewPanelConfig(t *testing.T, paths artifacts.Paths, reviewers ...string) {
 	t.Helper()
 	config := readConfigForTest(t, paths.Config)
-	config.Review.Panel = append([]string{}, reviewers...)
+	config.Pipeline.CodeReview.By = stageBy(append([]string{}, reviewers...))
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 

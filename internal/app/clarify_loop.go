@@ -80,7 +80,7 @@ func (a App) ClarifyLoop(stdout io.Writer, liveOutput io.Writer, runID string, o
 	if err != nil {
 		return err
 	}
-	options.Timeout, err = resolveIdleTimeout(context.Paths.Config, options.Timeout)
+	options.Timeout, err = resolveIdleTimeout(options.Timeout)
 	if err != nil {
 		return err
 	}
@@ -233,7 +233,11 @@ func (a App) resolveClarifyLoopMaxRounds(configPath string, override int) (int, 
 	if err != nil {
 		return 0, err
 	}
-	return resolveReviewLoopLimit("max rounds", override, config.Clarify.MaxRounds, defaultConfigFile().Clarify.MaxRounds)
+	var configMax int
+	if l := config.Pipeline.Clarify.Loop; l != nil {
+		configMax = l.Max
+	}
+	return resolveReviewLoopLimit("max rounds", override, configMax, defaultConfigFile().Pipeline.Clarify.Loop.Max)
 }
 
 // runClarifyLoopSuggestRound runs one clarifier round (same prompt, artifacts,
