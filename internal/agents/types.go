@@ -80,13 +80,12 @@ type RunRequest struct {
 	// file-write boundary: it reports whether a write to the given repo-relative
 	// slash path is within the contract scope. The ACP transport denies (errors,
 	// no disk write) any write the predicate rejects, giving a real-time scope
-	// guard in addition to the post-hoc gate. The CLI transport ignores this
-	// field. Leaving it nil preserves allow-all behavior for every caller.
+	// guard in addition to the post-hoc gate. Leaving it nil preserves allow-all
+	// behavior for every caller.
 	WritePathAllowed func(repoRelPath string) bool
 	// Model is the resolved model pin for this attempt. The ACP transport
-	// threads it to the adapter (codex: -c overrides, claude: env vars); the CLI
-	// transport ignores it — the pin is already applied to the agent CLI args
-	// via ApplyModelSpec. A zero spec means unpinned.
+	// threads it to the adapter (codex: -c overrides, claude: env vars) via
+	// ApplyModelSpec. A zero spec means unpinned.
 	Model ModelSpec
 	// ReadOnly marks the attempt as a read-only stage (review, clarifier round,
 	// contract draft). The ACP transport denies WriteTextFile and refuses
