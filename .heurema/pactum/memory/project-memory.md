@@ -127,3 +127,10 @@
 - Files: docs/backlog.md, docs/cost-budget-design.md, internal/app/cli.go, internal/app/commands.go, internal/app/usage.go, internal/app/usage_test.go
 - Summary: Reviewed run run_20260617_115334 with gate status needs_review and review status approved. Goal: Add a new top-level CLI command 'pactum usage [run_id]' that summarizes agent token usage from a run's ledger/usage.jsonl — a plain 'where d...
 - Candidate: runs/run_20260617_115334/memory/memory-candidate.json
+
+### mem_019 - Surface cache reuse and effective cost in the existing 'pactum usage' command...
+- Run: run_20260617_150710
+- Freshness: fresh
+- Files: docs/token-efficiency-research.md, internal/app/usage.go, internal/app/usage_test.go
+- Summary: Reviewed run run_20260617_150710 with gate status needs_review and review status approved. Goal: Surface cache reuse and effective cost in the existing 'pactum usage' command. The data is already captured and computed — it is just not sh...
+- Candidate: runs/run_20260617_150710/memory/memory-candidate.json
