@@ -302,12 +302,12 @@ func TestUsageSummaryAll(t *testing.T) {
 	appendWorkspaceUsageRecord(t, paths, runA, UsageRecord{
 		RecordID: "ua1", RunID: runA, Stage: "execute",
 		Provider: "codex", Agent: "codex",
-		InputTokens: 100, OutputTokens: 50, TotalTokens: 150, Captured: true,
+		InputTokens: 100, CacheReadTokens: 20, OutputTokens: 50, TotalTokens: 150, Captured: true,
 	})
 	appendWorkspaceUsageRecord(t, paths, runB, UsageRecord{
 		RecordID: "ub1", RunID: runB, Stage: "execute",
 		Provider: "anthropic", Agent: "claude",
-		InputTokens: 200, OutputTokens: 100, TotalTokens: 300, Captured: true,
+		InputTokens: 200, CacheReadTokens: 30, CacheCreationTokens: 5, OutputTokens: 100, TotalTokens: 300, Captured: true,
 	})
 
 	var stdout, stderr bytes.Buffer
@@ -328,6 +328,19 @@ func TestUsageSummaryAll(t *testing.T) {
 	}
 	if !got.Coverage.Complete || got.Totals.LowerBound {
 		t.Fatalf("all captured should be complete and not lower-bound")
+	}
+	// cache and effective_units aggregate across runs.
+	if got.Totals.CacheReadTokens != 50 || got.Totals.CacheCreationTokens != 5 {
+		t.Fatalf("--all cache tokens: read=%d create=%d, want 50/5", got.Totals.CacheReadTokens, got.Totals.CacheCreationTokens)
+	}
+	wantRatio := 50.0 / 300.0
+	if got.Totals.CacheReadRatio < wantRatio-0.001 || got.Totals.CacheReadRatio > wantRatio+0.001 {
+		t.Fatalf("--all cache_read_ratio = %f, want ~%f", got.Totals.CacheReadRatio, wantRatio)
+	}
+	// codex: fresh=80+read=20+output=50 → 80+2+250=332; anthropic: fresh=165+read=30+create=5+output=100 → 165+3+500+6.25=674.25
+	const wantEff = 332.0 + 674.25
+	if got.Totals.EffectiveUnits < wantEff-0.1 || got.Totals.EffectiveUnits > wantEff+0.1 {
+		t.Fatalf("--all effective_units = %f, want ~%f", got.Totals.EffectiveUnits, wantEff)
 	}
 
 	// Human output.
@@ -358,25 +371,28 @@ func TestUsageSummaryByDimensions(t *testing.T) {
 		RecordID: "u1", RunID: runID, Stage: "execute",
 		Provider: "codex", Agent: "codex", AgentName: "helper",
 		RequestModel: "gpt-5",
-		InputTokens:  100, OutputTokens: 50, TotalTokens: 150,
+		InputTokens:  100, CacheReadTokens: 20, OutputTokens: 50, TotalTokens: 150,
 		Captured: true,
 	})
 	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
 		RecordID: "u2", RunID: runID, Stage: "review",
 		Provider: "anthropic", Agent: "claude", AgentName: "opus",
 		RequestModel: "claude-opus",
-		InputTokens:  200, OutputTokens: 100, TotalTokens: 300,
+		InputTokens:  200, CacheReadTokens: 30, CacheCreationTokens: 5, OutputTokens: 100, TotalTokens: 300,
 		Captured: true,
 	})
 
+	// wantCacheRead is [groups[0].CacheReadTokens, groups[1].CacheReadTokens] after sorting by key.
+	// stage: execute(codex,20) < review(anthropic,30); others: anthropic/claude/claude-opus(30) < codex/gpt-5(20).
 	cases := []struct {
-		by      string
-		wantKey []string
+		by            string
+		wantKey       []string
+		wantCacheRead [2]int64
 	}{
-		{"stage", []string{"execute", "review"}},
-		{"model", []string{"claude-opus", "gpt-5"}},
-		{"agent", []string{"claude", "codex"}},
-		{"provider", []string{"anthropic", "codex"}},
+		{"stage", []string{"execute", "review"}, [2]int64{20, 30}},
+		{"model", []string{"claude-opus", "gpt-5"}, [2]int64{30, 20}},
+		{"agent", []string{"claude", "codex"}, [2]int64{30, 20}},
+		{"provider", []string{"anthropic", "codex"}, [2]int64{30, 20}},
 	}
 
 	for _, tc := range cases {
@@ -402,6 +418,18 @@ func TestUsageSummaryByDimensions(t *testing.T) {
 		for i := 1; i < len(got.Groups); i++ {
 			if got.Groups[i].Key < got.Groups[i-1].Key {
 				t.Fatalf("--by %s groups not sorted: %q before %q", tc.by, got.Groups[i-1].Key, got.Groups[i].Key)
+			}
+		}
+		// cache_read_tokens must aggregate per group regardless of --by dimension.
+		if got.Groups[0].CacheReadTokens != tc.wantCacheRead[0] || got.Groups[1].CacheReadTokens != tc.wantCacheRead[1] {
+			t.Fatalf("--by %s cache_read_tokens: [%d, %d], want [%d, %d]",
+				tc.by, got.Groups[0].CacheReadTokens, got.Groups[1].CacheReadTokens,
+				tc.wantCacheRead[0], tc.wantCacheRead[1])
+		}
+		// effective_units must be positive for captured groups.
+		for _, g := range got.Groups {
+			if g.CapturedRecords > 0 && g.EffectiveUnits <= 0 {
+				t.Fatalf("--by %s group %q: effective_units should be positive for captured records, got %f", tc.by, g.Key, g.EffectiveUnits)
 			}
 		}
 	}
@@ -810,6 +838,158 @@ func TestUsageSummaryNoRunIDNoCurrentRunFails(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "run id") {
 		t.Fatalf("expected 'run id' in error, got: %s", stderr.String())
+	}
+}
+
+// TestUsageSummaryCacheAndEffectiveUnits pins that cache token fields and
+// effective_units are correctly aggregated in JSON totals and groups, and that
+// the human table shows the new columns with correct values.
+func TestUsageSummaryCacheAndEffectiveUnits(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	// codex: fresh=75, cache_read=25, output=50
+	// effective = 75*1.0 + 25*0.1 + 50*5.0 + 0*1.0 = 327.5
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u1", RunID: runID, Stage: "execute",
+		Provider: "codex", Agent: "codex",
+		InputTokens: 100, CacheReadTokens: 25, OutputTokens: 50, TotalTokens: 150,
+		Captured: true,
+	})
+	// anthropic: fresh=140, cache_read=50, cache_create=10, output=100
+	// effective = 140*1.0 + 50*0.1 + 100*5.0 + 10*1.25 = 657.5
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u2", RunID: runID, Stage: "fix",
+		Provider: "anthropic", Agent: "claude",
+		InputTokens: 200, CacheReadTokens: 50, CacheCreationTokens: 10,
+		OutputTokens: 100, TotalTokens: 300,
+		Captured: true,
+	})
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"usage", runID, "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var got usageSummaryResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &got))
+
+	// Totals: sum of both captured records.
+	if got.Totals.CacheReadTokens != 75 {
+		t.Fatalf("totals.cache_read_tokens = %d, want 75", got.Totals.CacheReadTokens)
+	}
+	if got.Totals.CacheCreationTokens != 10 {
+		t.Fatalf("totals.cache_creation_tokens = %d, want 10", got.Totals.CacheCreationTokens)
+	}
+	// cache_read_ratio = 75/300 = 0.25
+	if got.Totals.CacheReadRatio < 0.249 || got.Totals.CacheReadRatio > 0.251 {
+		t.Fatalf("totals.cache_read_ratio = %f, want ~0.25", got.Totals.CacheReadRatio)
+	}
+	// effective_units = 327.5 + 657.5 = 985.0
+	if got.Totals.EffectiveUnits < 984.9 || got.Totals.EffectiveUnits > 985.1 {
+		t.Fatalf("totals.effective_units = %f, want ~985.0", got.Totals.EffectiveUnits)
+	}
+
+	// Groups: execute group (codex).
+	groups := indexSummaryGroups(got.Groups)
+	exec := groups["execute"]
+	if exec.CacheReadTokens != 25 || exec.CacheCreationTokens != 0 {
+		t.Fatalf("execute group cache tokens: read=%d, create=%d, want 25/0", exec.CacheReadTokens, exec.CacheCreationTokens)
+	}
+	if exec.CacheReadRatio < 0.249 || exec.CacheReadRatio > 0.251 {
+		t.Fatalf("execute group cache_read_ratio = %f, want ~0.25", exec.CacheReadRatio)
+	}
+	if exec.EffectiveUnits < 327.4 || exec.EffectiveUnits > 327.6 {
+		t.Fatalf("execute group effective_units = %f, want ~327.5", exec.EffectiveUnits)
+	}
+
+	// Human table must include the new columns and a known value.
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"usage", runID}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage exited %d, stderr: %s", code, stderr.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{"CR_READ", "CR_WRITE", "CACHE%", "EFFECTIVE", "25.0%", "985"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("human output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+// TestUsageSummaryUncapturedContributesZeroCache pins that uncaptured records
+// do not add to cache_read_tokens, cache_creation_tokens, or effective_units.
+func TestUsageSummaryUncapturedContributesZeroCache(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u1", RunID: runID, Stage: "execute",
+		Provider: "codex", Agent: "codex",
+		InputTokens: 100, CacheReadTokens: 25, OutputTokens: 50, TotalTokens: 150,
+		Captured: true,
+	})
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u2", RunID: runID, Stage: "review",
+		Provider: "anthropic", Agent: "claude",
+		InputTokens: 9999, CacheReadTokens: 8000, CacheCreationTokens: 500,
+		OutputTokens: 999, TotalTokens: 9999,
+		Captured: false, // must not contribute to any totals
+	})
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"usage", runID, "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var got usageSummaryResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &got))
+
+	if got.Totals.CacheReadTokens != 25 {
+		t.Fatalf("uncaptured must not add cache_read: got %d, want 25", got.Totals.CacheReadTokens)
+	}
+	if got.Totals.CacheCreationTokens != 0 {
+		t.Fatalf("uncaptured must not add cache_creation: got %d, want 0", got.Totals.CacheCreationTokens)
+	}
+	if got.Totals.EffectiveUnits <= 0 {
+		t.Fatalf("effective_units should be positive from the captured record: %f", got.Totals.EffectiveUnits)
+	}
+
+	groups := indexSummaryGroups(got.Groups)
+	if groups["execute"].CacheReadTokens != 25 {
+		t.Fatalf("execute group cache_read_tokens = %d, want 25", groups["execute"].CacheReadTokens)
+	}
+	if groups["review"].CacheReadTokens != 0 || groups["review"].EffectiveUnits != 0 {
+		t.Fatalf("review group (uncaptured) must have zero cache/effective: %#v", groups["review"])
+	}
+}
+
+// TestUsageSummaryZeroInputCacheRatio pins that cache_read_ratio is 0 when
+// input_tokens is 0, not a division-by-zero error or NaN.
+func TestUsageSummaryZeroInputCacheRatio(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	appendUsageRecordForTest(t, runPaths.UsageJSONL, UsageRecord{
+		RecordID: "u1", RunID: runID, Stage: "execute",
+		Provider: "codex", Agent: "codex",
+		InputTokens: 0, CacheReadTokens: 0, OutputTokens: 0, TotalTokens: 0,
+		Captured: true,
+	})
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"usage", runID, "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("usage --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var got usageSummaryResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &got))
+
+	if got.Totals.CacheReadRatio != 0 {
+		t.Fatalf("cache_read_ratio with zero input must be 0, got %f", got.Totals.CacheReadRatio)
+	}
+	if len(got.Groups) != 1 || got.Groups[0].CacheReadRatio != 0 {
+		t.Fatalf("group cache_read_ratio with zero input must be 0: %#v", got.Groups)
 	}
 }
 
