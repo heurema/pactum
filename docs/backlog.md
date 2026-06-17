@@ -737,10 +737,21 @@ selectors, judge panels by default, select on any MERGE stage.
   arc. Net: the recursion correctly *finds* blockers; it must not *pretend to have
   resolved* them — and the deeper fix is to never hand it an oversized contract in
   the first place.
-- **Codex usage not recorded on the non-fork CLI path** (small). `parseCodexUsage`
-  exists, but codex drafter/reviewer attempts (`codex exec --json`) recorded
-  `captured=false`. Folds into the ACP-only item above once that lands; until
-  then the CLI parse path yields no usage row for the draft/review stages.
+- **Codex usage needs the forked codex-acp adapter** (small). *(Reframed — the old
+  "non-fork CLI path" framing is stale: the `codex exec --json` CLI path was removed
+  by the ACP-only change; everything is ACP now.)* Codex usage is read from the
+  `_meta["codex/token_usage"]` notification (`acp_transport.go:378`), which the
+  **forked** `codex-acp` (`~/repos/personal/codex-acp/target/release/codex-acp`)
+  emits but the **default** adapter (`@zed-industries/codex-acp@latest`) does **not**.
+  So unless `PACTUM_CODEX_ACP_COMMAND` points at the fork, every codex
+  drafter/reviewer/fixer attempt records `captured=false` — observed across the
+  loop-engine dogfood runs (~56 uncaptured codex records/run, the entire
+  drafter + code-review panel invisible in cost stats). Fixes: (a) **operationally**,
+  export `PACTUM_CODEX_ACP_COMMAND=<fork>` for dogfood runs (the fork is built
+  locally — capture works immediately); (b) **durably**, upstream the
+  `codex/token_usage` meta into the default adapter (or document the fork as
+  required) so codex cost isn't silently dropped. Until one lands, all
+  cost-accounting numbers are a lower bound missing every codex stage.
 - **`contract revise` cannot remove fields** (small). Only `--add-*` flags
   exist, so a bad/over-specified validation command (or scope/acceptance entry)
   can't be dropped via CLI — forcing a hand-edit of `contract.json` that orphans
