@@ -1,0 +1,53 @@
+{
+  "schema": "pactum.contract_draft_proposal.v1alpha1",
+  "run_id": "run_20260616_192306",
+  "status": "accepted",
+  "created_at": "2026-06-16T19:23:25Z",
+  "source": "drafter_attempt",
+  "drafter_attempt_id": "drafter_attempt_001",
+  "drafter": "codex",
+  "in_scope": [
+    "Create internal/loop with the specified Run, Limits, RoundContext, HumanExit, RoundResult, Outcome, and Step API.",
+    "Add table-driven tests for internal/loop covering settled, stalemate, max, human exit, error propagation, and streak reset behavior.",
+    "Refactor internal/app/contract_review.go so the configured reviewer/fixer convergence loop delegates round counting and stop decisions to loop.Run.",
+    "Preserve contract review per-round behavior: reviewer fan-out, skipped lens handling, finding parsing, blocking/advisory distinction, fixer invocation, contract revise application, warnings, and JSON/human output shape.",
+    "Emit contract review loop ledger events using the existing ledger.Event shape and contract-review-specific event names.",
+    "Update focused contract review tests to assert preserved stop semantics and the new ledger events."
+  ],
+  "out_of_scope": [
+    "Changing the contract goal.",
+    "Changing config files, config defaults, CLI flags, or config schema.",
+    "Changing internal/app/review_loop.go or internal/app/clarify_loop.go.",
+    "Adding multi-model, best-of-N, judge, or new agent-selection behavior.",
+    "Changing reviewer, fixer, gate, or attempt artifact schemas outside what is required to use the shared loop.",
+    "Adding a new contract-review loop summary artifact unless already required by existing code paths."
+  ],
+  "acceptance": [
+    "internal/loop.Run calls Step with 1-based consecutive RoundContext.Round values and stops without domain knowledge of reviewers, fixers, contracts, files, or ledger events.",
+    "internal/loop.Run returns Outcome.Reason \"settled\" after Settle consecutive Clean rounds when Settle \u003e 0, resets the clean streak on a non-clean round, and records the stopping round count and last result.",
+    "internal/loop.Run returns Outcome.Reason \"stalemate\" after Patience consecutive rounds where Clean is false and Progress is false when Patience \u003e 0, and resets the stale streak on either Clean or Progress.",
+    "internal/loop.Run returns Outcome.Reason \"human\" immediately when Step returns a RoundResult with Human != nil, returns Outcome.Reason \"max\" after exactly Max rounds when no earlier stop applies, and returns Step errors without calling Step again.",
+    "contract review still reports the existing public terminal_reason values: loop settled maps to \"resolved\", loop stalemate maps to \"stalemate\", and loop max maps to \"max_rounds\".",
+    "Contract review clean and stale streak fields in each round summary match existing semantics: blocking_findings == 0 increments clean_streak; blocking findings reset clean_streak; unchanged contract version after a fixer round increments unchanged_version_streak; changed contract version resets it.",
+    "Blocking findings still invoke the contract fixer; advisory-only findings do not invoke the fixer and allow convergence according to clean-round limits.",
+    "Existing contract review behaviours remain covered and passing for no reviewers, single reviewer, multiple reviewers, partial lens failure, clean convergence, max rounds, and stale-version stalemate.",
+    "When configured contract reviewers run, events.jsonl contains exactly one contract_review_loop_started event before contract reviewer/fixer attempt events and exactly one contract_review_loop_finished event after the loop reaches a terminal reason, each with the run_id populated.",
+    "The no-reviewers contract review path remains a no-op and does not invoke loop.Run, agents, fixer attempts, or contract review loop ledger events."
+  ],
+  "validation": [
+    "go test ./internal/loop",
+    "go test ./internal/app -run TestContractReview",
+    "go test ./internal/app -run TestReviewLoop",
+    "go build ./...",
+    "go test ./...",
+    "make check"
+  ],
+  "assumptions": [
+    "Mirroring review_loop.go ledger events means adding contract_review_loop_started and contract_review_loop_finished records with only type, timestamp, and run_id fields, not adding per-round ledger payloads.",
+    "Contract review continues to reuse existing review loop limit configuration through resolveContractReviewLoopLimits; no new config keys are introduced.",
+    "Callers provide Limits.Max \u003e 0; Patience \u003c= 0 and Settle \u003c= 0 disable their respective stop conditions.",
+    "HumanExit support is required for the shared loop API but contract_review does not need a new human-exit trigger unless existing contract review logic already has one."
+  ],
+  "accepted_at": "2026-06-16T19:26:08Z",
+  "accepted_by": "manual"
+}
