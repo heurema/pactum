@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -17,9 +18,9 @@ import (
 )
 
 const (
-	usageRecordSchemaVersion     = 1
-	usageResponseSchema          = "pactum.usage.v1alpha1"
-	usageWorkspaceResponseSchema = "pactum.usage.workspace.v1"
+	usageRecordSchemaVersion = 1
+	usageResponseSchema      = "pactum.usage.v1alpha1"
+	usageSummarySchema       = "pactum.usage_summary.v1alpha1"
 )
 
 // Effective-unit multipliers normalize each token class to a "fresh input"
@@ -115,26 +116,57 @@ type usageResponse struct {
 	ByAttempt                      []usageBreakdown `json:"by_attempt"`
 }
 
-// usageWorkspaceResponse is the cross-run aggregate produced by `pactum usage
-// --all`: a derived view recomputed on demand from the per-run usage.jsonl
-// ledgers, never an authoritative store. Runs counts only the run ledgers that
-// contributed at least one usage record.
-type usageWorkspaceResponse struct {
-	Schema                         string           `json:"schema"`
-	Runs                           int              `json:"runs"`
-	Calls                          int              `json:"calls"`
-	CapturedCalls                  int              `json:"captured_calls"`
-	UncapturedCalls                int              `json:"uncaptured_calls"`
-	EffectiveUnitsUnavailableCalls int              `json:"effective_units_unavailable_calls"`
-	CacheReadRatio                 float64          `json:"cache_read_ratio"`
-	Total                          usageCounts      `json:"total"`
-	ByRun                          []usageBreakdown `json:"by_run"`
-	ByStage                        []usageBreakdown `json:"by_stage"`
-	ByAgent                        []usageBreakdown `json:"by_agent"`
-	ByModel                        []usageBreakdown `json:"by_model"`
+// --- pactum.usage_summary.v1alpha1 ---
+
+type usageSummaryScope struct {
+	Kind  string  `json:"kind"`
+	RunID *string `json:"run_id"`
 }
 
-func (a App) Usage(stdout io.Writer, runID string, jsonOutput bool) error {
+type uncapturedSource struct {
+	Provider string `json:"provider"`
+	Stage    string `json:"stage"`
+	Records  int    `json:"records"`
+}
+
+type usageSummaryCoverage struct {
+	Records            int                `json:"records"`
+	CapturedRecords    int                `json:"captured_records"`
+	UncapturedRecords  int                `json:"uncaptured_records"`
+	Complete           bool               `json:"complete"`
+	Uncaptured         []uncapturedSource `json:"uncaptured"`
+	UnparseableRecords int                `json:"unparseable_records"`
+}
+
+type usageSummaryTotals struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+	TotalTokens  int64 `json:"total_tokens"`
+	CapturedOnly bool  `json:"captured_only"`
+	LowerBound   bool  `json:"lower_bound"`
+}
+
+type usageSummaryGroup struct {
+	By              string `json:"by"`
+	Key             string `json:"key"`
+	label           string // human display label; absent from JSON
+	InputTokens     int64  `json:"input_tokens"`
+	OutputTokens    int64  `json:"output_tokens"`
+	TotalTokens     int64  `json:"total_tokens"`
+	Records         int    `json:"records"`
+	CapturedRecords int    `json:"captured_records"`
+}
+
+type usageSummaryResponse struct {
+	Schema   string               `json:"schema"`
+	Scope    usageSummaryScope    `json:"scope"`
+	Coverage usageSummaryCoverage `json:"coverage"`
+	Totals   usageSummaryTotals   `json:"totals"`
+	Groups   []usageSummaryGroup  `json:"groups"`
+	Warnings []string             `json:"warnings"`
+}
+
+func (a App) Usage(stdout io.Writer, runID string, by string, jsonOutput bool) error {
 	_, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
 	if err != nil || !ok {
 		return err
@@ -143,39 +175,56 @@ func (a App) Usage(stdout io.Writer, runID string, jsonOutput bool) error {
 		return fmt.Errorf("run not found: %s", runID)
 	}
 
-	response, err := usageForRun(paths, runID)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	records, warnings, unparseable, err := readUsageSummaryRecords(runPaths.UsageJSONL)
 	if err != nil {
 		return err
 	}
+
+	runIDVal := runID
+	scope := usageSummaryScope{Kind: "run", RunID: &runIDVal}
+	response := buildUsageSummary(scope, by, records, warnings, unparseable)
+
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
-	writeUsage(stdout, response)
+	writeUsageSummaryHuman(stdout, response, by)
 	return nil
 }
 
-// UsageAll reports the workspace-wide cross-run token aggregate. It reads the
-// per-run usage ledgers as a derived view and is best-effort: a missing or
-// corrupt ledger contributes nothing and is skipped, never fatal. An empty
-// workspace reports a clean zero result. A positive top caps only the sorted
-// by-run list; the workspace totals and other breakdowns still aggregate every
-// run.
-func (a App) UsageAll(stdout io.Writer, jsonOutput bool, top int) error {
+func (a App) UsageAll(stdout io.Writer, by string, jsonOutput bool) error {
 	_, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
 	if err != nil || !ok {
 		return err
 	}
-	response, err := workspaceUsage(paths)
+
+	runIDs, err := listRunIDs(paths)
 	if err != nil {
 		return err
 	}
-	if top > 0 && len(response.ByRun) > top {
-		response.ByRun = response.ByRun[:top]
+
+	var allRecords []UsageRecord
+	var allWarnings []string
+	allUnparseable := 0
+
+	for _, id := range runIDs {
+		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, id))
+		records, warnings, unparseable, err := readUsageSummaryRecords(runPaths.UsageJSONL)
+		if err != nil {
+			return err
+		}
+		allRecords = append(allRecords, records...)
+		allWarnings = append(allWarnings, warnings...)
+		allUnparseable += unparseable
 	}
+
+	scope := usageSummaryScope{Kind: "all", RunID: nil}
+	response := buildUsageSummary(scope, by, allRecords, allWarnings, allUnparseable)
+
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
-	writeWorkspaceUsage(stdout, response)
+	writeUsageSummaryHuman(stdout, response, by)
 	return nil
 }
 
@@ -263,52 +312,9 @@ func usageForRun(paths artifacts.Paths, runID string) (usageResponse, error) {
 	return summarizeUsage(runID, records), nil
 }
 
-// workspaceUsage folds every run's usage ledger into one cross-run aggregate.
-// Each run's ledger is read best-effort (readUsageRecords swallows missing and
-// corrupt input), so a degraded run simply contributes nothing. Runs with no
-// usage records are skipped and do not count toward the run total.
-func workspaceUsage(paths artifacts.Paths) (usageWorkspaceResponse, error) {
-	runIDs, err := listRunIDs(paths)
-	if err != nil {
-		return usageWorkspaceResponse{}, err
-	}
-	response := usageWorkspaceResponse{
-		Schema:  usageWorkspaceResponseSchema,
-		ByRun:   []usageBreakdown{},
-		ByStage: []usageBreakdown{},
-		ByAgent: []usageBreakdown{},
-		ByModel: []usageBreakdown{},
-	}
-	byRun := map[string]*usageBreakdown{}
-	byStage := map[string]*usageBreakdown{}
-	byAgent := map[string]*usageBreakdown{}
-	byModel := map[string]*usageBreakdown{}
-	for _, runID := range runIDs {
-		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-		records, _ := readUsageRecords(runPaths.UsageJSONL)
-		if len(records) == 0 {
-			continue
-		}
-		response.Runs++
-		for _, record := range records {
-			addRecordToUsageTotals(&response.Calls, &response.CapturedCalls, &response.UncapturedCalls, &response.EffectiveUnitsUnavailableCalls, &response.Total, record)
-			accumulateUsageByRun(byRun, runID, record)
-			accumulateUsageByStage(byStage, record)
-			accumulateUsageByAgent(byAgent, record)
-			accumulateUsageByModel(byModel, record)
-		}
-	}
-	response.CacheReadRatio = cacheReadRatio(response.Total)
-	response.ByRun = sortUsageBreakdownsByTotalTokensDesc(byRun)
-	response.ByStage = sortedUsageBreakdowns(byStage)
-	response.ByAgent = sortedUsageBreakdowns(byAgent)
-	response.ByModel = sortedUsageBreakdowns(byModel)
-	return response, nil
-}
-
 // readUsageRecords is best-effort: usage accounting must never fail status or
-// `pactum usage`. An absent or unreadable ledger yields no records, a corrupt or
-// oversized line is skipped, and a scan error degrades to the records read so
+// internal summaries. An absent or unreadable ledger yields no records, a corrupt
+// or oversized line is skipped, and a scan error degrades to the records read so
 // far — none of these ever propagates an error to the caller.
 func readUsageRecords(path string) ([]UsageRecord, error) {
 	file, err := activeStore.Open(path)
@@ -332,6 +338,53 @@ func readUsageRecords(path string) ([]UsageRecord, error) {
 		records = append(records, record)
 	}
 	return records, nil
+}
+
+// readUsageSummaryRecords reads usage records for `pactum usage`. The final
+// line is always treated as potentially torn: if it fails JSON parsing it is
+// skipped, a warning is added, and it is counted in unparseable. Non-final
+// lines that fail parsing return an error. A missing file returns zero records
+// and a warning instead of an error.
+func readUsageSummaryRecords(path string) (records []UsageRecord, warnings []string, unparseable int, err error) {
+	data, readErr := activeStore.ReadBytes(path)
+	if readErr != nil {
+		if os.IsNotExist(readErr) {
+			return nil, []string{fmt.Sprintf("no usage ledger: %s", filepath.Base(path))}, 0, nil
+		}
+		return nil, nil, 0, readErr
+	}
+
+	lines := splitJSONLLines(string(data))
+	if len(lines) == 0 {
+		return nil, nil, 0, nil
+	}
+
+	records = make([]UsageRecord, 0, len(lines))
+	for i, line := range lines[:len(lines)-1] {
+		var r UsageRecord
+		if jsonErr := json.Unmarshal([]byte(line), &r); jsonErr != nil {
+			return nil, nil, 0, fmt.Errorf("malformed usage record at line %d in %s: %w", i+1, filepath.Base(path), jsonErr)
+		}
+		records = append(records, r)
+	}
+
+	var last UsageRecord
+	if jsonErr := json.Unmarshal([]byte(lines[len(lines)-1]), &last); jsonErr != nil {
+		w := fmt.Sprintf("skipped unparseable final line in %s (possibly torn)", filepath.Base(path))
+		return records, []string{w}, 1, nil
+	}
+	return append(records, last), nil, 0, nil
+}
+
+func splitJSONLLines(s string) []string {
+	raw := strings.Split(s, "\n")
+	out := make([]string, 0, len(raw))
+	for _, line := range raw {
+		if line = strings.TrimSpace(line); line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
 }
 
 func summarizeUsage(runID string, records []UsageRecord) usageResponse {
@@ -382,25 +435,6 @@ func accumulateUsageByAgent(byAgent map[string]*usageBreakdown, record UsageReco
 	if agent.Provider == "" {
 		agent.Provider = record.Provider
 	}
-}
-
-func accumulateUsageByRun(byRun map[string]*usageBreakdown, runID string, record UsageRecord) {
-	run := byRun[runID]
-	if run == nil {
-		run = &usageBreakdown{Run: runID}
-		byRun[runID] = run
-	}
-	addRecordToUsageBreakdown(run, record)
-}
-
-func accumulateUsageByModel(byModel map[string]*usageBreakdown, record UsageRecord) {
-	key := usageRecordModel(record)
-	model := byModel[key]
-	if model == nil {
-		model = &usageBreakdown{Model: key}
-		byModel[key] = model
-	}
-	addRecordToUsageBreakdown(model, record)
 }
 
 func accumulateUsageByAttempt(byAttempt map[string]*usageBreakdown, record UsageRecord) {
@@ -535,102 +569,200 @@ func sortedUsageBreakdowns(values map[string]*usageBreakdown) []usageBreakdown {
 	return breakdowns
 }
 
-// sortUsageBreakdownsByTotalTokensDesc orders run rows by captured total tokens
-// descending so the heaviest runs lead; ties fall back to the deterministic key
-// order (run id ascending) for stable output.
-func sortUsageBreakdownsByTotalTokensDesc(values map[string]*usageBreakdown) []usageBreakdown {
-	breakdowns := sortedUsageBreakdowns(values)
-	sort.SliceStable(breakdowns, func(i, j int) bool {
-		return breakdowns[i].TotalTokens > breakdowns[j].TotalTokens
-	})
-	return breakdowns
+func buildUsageSummary(scope usageSummaryScope, by string, records []UsageRecord, warnings []string, unparseable int) usageSummaryResponse {
+	var inputTokens, outputTokens, totalTokens int64
+	capturedRecords := 0
+	uncapturedMap := map[string]*uncapturedSource{}
+
+	for _, r := range records {
+		if r.Captured {
+			capturedRecords++
+			inputTokens += r.InputTokens
+			outputTokens += r.OutputTokens
+			totalTokens += r.TotalTokens
+		} else {
+			key := r.Provider + "\x00" + normalizeUsageStage(r.Stage)
+			if uc, ok := uncapturedMap[key]; ok {
+				uc.Records++
+			} else {
+				uncapturedMap[key] = &uncapturedSource{
+					Provider: r.Provider,
+					Stage:    normalizeUsageStage(r.Stage),
+					Records:  1,
+				}
+			}
+		}
+	}
+
+	uncaptured := sortedUncapturedSources(uncapturedMap)
+	complete := len(uncaptured) == 0
+	if warnings == nil {
+		warnings = []string{}
+	}
+
+	return usageSummaryResponse{
+		Schema: usageSummarySchema,
+		Scope:  scope,
+		Coverage: usageSummaryCoverage{
+			Records:            len(records),
+			CapturedRecords:    capturedRecords,
+			UncapturedRecords:  len(records) - capturedRecords,
+			Complete:           complete,
+			Uncaptured:         uncaptured,
+			UnparseableRecords: unparseable,
+		},
+		Totals: usageSummaryTotals{
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
+			TotalTokens:  totalTokens,
+			CapturedOnly: true,
+			LowerBound:   !complete,
+		},
+		Groups:   buildSummaryGroups(by, records),
+		Warnings: warnings,
+	}
 }
 
-func writeUsage(stdout io.Writer, response usageResponse) {
-	fmt.Fprintln(stdout, "Pactum usage")
+func sortedUncapturedSources(m map[string]*uncapturedSource) []uncapturedSource {
+	if len(m) == 0 {
+		return []uncapturedSource{}
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]uncapturedSource, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, *m[k])
+	}
+	return out
+}
+
+func buildSummaryGroups(by string, records []UsageRecord) []usageSummaryGroup {
+	type groupAccum struct {
+		jsonKey         string
+		displayLabel    string
+		inputTokens     int64
+		outputTokens    int64
+		totalTokens     int64
+		records         int
+		capturedRecords int
+	}
+	groups := map[string]*groupAccum{}
+	for _, r := range records {
+		jsonKey, displayLabel := summaryGroupKey(by, r)
+		g := groups[jsonKey]
+		if g == nil {
+			g = &groupAccum{jsonKey: jsonKey, displayLabel: displayLabel}
+			groups[jsonKey] = g
+		}
+		g.records++
+		if r.Captured {
+			g.capturedRecords++
+			g.inputTokens += r.InputTokens
+			g.outputTokens += r.OutputTokens
+			g.totalTokens += r.TotalTokens
+		}
+	}
+
+	keys := make([]string, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	out := make([]usageSummaryGroup, 0, len(keys))
+	for _, k := range keys {
+		g := groups[k]
+		out = append(out, usageSummaryGroup{
+			By:              by,
+			Key:             g.jsonKey,
+			label:           g.displayLabel,
+			InputTokens:     g.inputTokens,
+			OutputTokens:    g.outputTokens,
+			TotalTokens:     g.totalTokens,
+			Records:         g.records,
+			CapturedRecords: g.capturedRecords,
+		})
+	}
+	return out
+}
+
+func summaryGroupKey(by string, r UsageRecord) (jsonKey, displayLabel string) {
+	switch by {
+	case "model":
+		k := usageRecordModel(r)
+		return k, k
+	case "agent":
+		k := r.Agent
+		if k == "" {
+			k = "unknown"
+		}
+		label := strings.TrimSpace(r.AgentName)
+		if label == "" {
+			label = k
+		}
+		return k, label
+	case "provider":
+		k := r.Provider
+		if k == "" {
+			k = "unknown"
+		}
+		return k, k
+	default: // "stage"
+		k := normalizeUsageStage(r.Stage)
+		return k, k
+	}
+}
+
+func writeUsageSummaryHuman(stdout io.Writer, r usageSummaryResponse, by string) {
+	if r.Scope.Kind == "all" {
+		fmt.Fprintln(stdout, "Pactum usage (all runs)")
+	} else {
+		fmt.Fprintln(stdout, "Pactum usage")
+		if r.Scope.RunID != nil {
+			fmt.Fprintf(stdout, "\n  run: %s\n", *r.Scope.RunID)
+		}
+	}
+
 	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Run:")
-	fmt.Fprintf(stdout, "  id: %s\n", response.RunID)
+	fmt.Fprintf(stdout, "  %-24s  %10s  %10s  %10s  %s\n",
+		strings.ToUpper(by), "INPUT", "OUTPUT", "TOTAL", "CAPTURED")
+	for _, g := range r.Groups {
+		label := g.label
+		if label == "" {
+			label = g.Key
+		}
+		captured := fmt.Sprintf("%d/%d", g.CapturedRecords, g.Records)
+		fmt.Fprintf(stdout, "  %-24s  %10d  %10d  %10d  %s\n",
+			label, g.InputTokens, g.OutputTokens, g.TotalTokens, captured)
+	}
+
 	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Usage:")
-	writeUsageSummary(stdout, response.Calls, response.CapturedCalls, response.UncapturedCalls, response.EffectiveUnitsUnavailableCalls, response.Total, response.CacheReadRatio)
-	writeUsageBreakdownGroup(stdout, "By stage:", response.ByStage, func(item usageBreakdown) string { return item.Stage })
-	writeUsageBreakdownGroup(stdout, "By agent:", response.ByAgent, func(item usageBreakdown) string { return item.Agent })
-	writeUsageBreakdownGroup(stdout, "By attempt:", response.ByAttempt, func(item usageBreakdown) string {
-		return fmt.Sprintf("%s (stage=%s, agent=%s, provider=%s)", item.Attempt, item.Stage, item.Agent, item.Provider)
-	})
-}
+	totalLabel := "TOTAL"
+	if !r.Coverage.Complete {
+		totalLabel += " (LOWER BOUND)"
+	}
+	totalCaptured := fmt.Sprintf("%d/%d", r.Coverage.CapturedRecords, r.Coverage.Records)
+	fmt.Fprintf(stdout, "  %-24s  %10d  %10d  %10d  %s\n",
+		totalLabel, r.Totals.InputTokens, r.Totals.OutputTokens, r.Totals.TotalTokens, totalCaptured)
 
-func writeWorkspaceUsage(stdout io.Writer, response usageWorkspaceResponse) {
-	fmt.Fprintln(stdout, "Pactum usage (workspace)")
 	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Workspace:")
-	fmt.Fprintf(stdout, "  runs: %d\n", response.Runs)
-	writeUsageSummary(stdout, response.Calls, response.CapturedCalls, response.UncapturedCalls, response.EffectiveUnitsUnavailableCalls, response.Total, response.CacheReadRatio)
-	writeUsageBreakdownGroup(stdout, "By run:", response.ByRun, func(item usageBreakdown) string { return item.Run })
-	writeUsageBreakdownGroup(stdout, "By stage:", response.ByStage, func(item usageBreakdown) string { return item.Stage })
-	writeUsageBreakdownGroup(stdout, "By agent:", response.ByAgent, func(item usageBreakdown) string {
-		return fmt.Sprintf("%s (provider=%s)", item.Agent, item.Provider)
-	})
-	writeUsageBreakdownGroup(stdout, "By model:", response.ByModel, func(item usageBreakdown) string { return item.Model })
-}
+	if r.Coverage.Complete {
+		fmt.Fprintf(stdout, "Coverage: %d/%d captured\n", r.Coverage.CapturedRecords, r.Coverage.Records)
+	} else {
+		fmt.Fprintf(stdout, "Coverage: %d/%d captured — LOWER BOUND\n", r.Coverage.CapturedRecords, r.Coverage.Records)
+		for _, uc := range r.Coverage.Uncaptured {
+			fmt.Fprintf(stdout, "  uncaptured: %s/%s (%d record(s))\n", uc.Provider, uc.Stage, uc.Records)
+		}
+	}
 
-// writeUsageSummary renders the shared call/token summary that leads both the
-// per-run and workspace human output: call counts, token classes, the derived
-// effective units, and the cache hit rate.
-func writeUsageSummary(stdout io.Writer, calls, capturedCalls, uncapturedCalls, unavailableCalls int, counts usageCounts, cacheHitRate float64) {
-	fmt.Fprintf(stdout, "  calls: %d\n", calls)
-	fmt.Fprintf(stdout, "  captured calls: %d\n", capturedCalls)
-	fmt.Fprintf(stdout, "  uncaptured calls: %d\n", uncapturedCalls)
-	if unavailableCalls > 0 {
-		fmt.Fprintf(stdout, "  effective units unavailable calls: %d\n", unavailableCalls)
+	if len(r.Warnings) > 0 {
+		fmt.Fprintln(stdout)
+		fmt.Fprintln(stdout, "Warnings:")
+		for _, w := range r.Warnings {
+			fmt.Fprintf(stdout, "  - %s\n", w)
+		}
 	}
-	writeUsageCounts(stdout, "  ", counts)
-	fmt.Fprintf(stdout, "  effective units: %.2f\n", counts.EffectiveUnits)
-	fmt.Fprintf(stdout, "  cache hit rate: %.2f%%\n", cacheHitRate*100)
-}
-
-func writeUsageCounts(stdout io.Writer, indent string, counts usageCounts) {
-	fmt.Fprintf(stdout, "%sinput tokens: %d\n", indent, counts.InputTokens)
-	fmt.Fprintf(stdout, "%soutput tokens: %d\n", indent, counts.OutputTokens)
-	fmt.Fprintf(stdout, "%stotal tokens: %d\n", indent, counts.TotalTokens)
-	fmt.Fprintf(stdout, "%scache read tokens: %d\n", indent, counts.CacheReadTokens)
-	fmt.Fprintf(stdout, "%scache creation tokens: %d\n", indent, counts.CacheCreationTokens)
-	fmt.Fprintf(stdout, "%sreasoning tokens: %d\n", indent, counts.ReasoningTokens)
-}
-
-func writeUsageBreakdownGroup(stdout io.Writer, heading string, items []usageBreakdown, label func(usageBreakdown) string) {
-	if len(items) == 0 {
-		return
-	}
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, heading)
-	for _, item := range items {
-		fmt.Fprintf(stdout, "  %s: %s\n", label(item), usageBreakdownDetail(item))
-	}
-}
-
-// usageBreakdownDetail renders one breakdown row's token detail. A row with no
-// captured calls is unknown usage — the agent reported nothing — so it is
-// annotated honestly rather than printed as a misleading zero. Captured rows
-// (including genuine zero-token rows) print their counts, effective units, and,
-// where input exists, the cache hit rate; a mixed row whose tokens cover only
-// some of its calls flags the uncaptured remainder, and a trailing note flags
-// any calls whose provider has no effective-unit multipliers.
-func usageBreakdownDetail(item usageBreakdown) string {
-	if item.Calls > 0 && item.CapturedCalls == 0 {
-		return fmt.Sprintf("calls=%d, usage not reported by the agent", item.Calls)
-	}
-	detail := fmt.Sprintf("calls=%d captured=%d total_tokens=%d input_tokens=%d output_tokens=%d cache_read_tokens=%d effective_units=%.2f",
-		item.Calls, item.CapturedCalls, item.TotalTokens, item.InputTokens, item.OutputTokens, item.CacheReadTokens, item.EffectiveUnits)
-	if item.InputTokens > 0 {
-		detail += fmt.Sprintf(" cache_hit_rate=%.2f%%", item.CacheReadRatio*100)
-	}
-	if item.UncapturedCalls > 0 {
-		detail += fmt.Sprintf(" (%d calls: usage not reported)", item.UncapturedCalls)
-	}
-	if item.EffectiveUnitsUnavailableCalls > 0 {
-		detail += " effective units unavailable"
-	}
-	return detail
 }
