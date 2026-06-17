@@ -77,6 +77,16 @@ type draftContract struct {
 	OpenQuestions      []string           `json:"open_questions"`
 	Clarifications     contractClarifySet `json:"clarifications,omitempty"`
 	MemoryContext      draftMemoryContext `json:"memory_context"`
+	Plan               *contractPlan      `json:"plan,omitempty"`
+}
+
+// normalizeDraftContractPlan sets Plan to nil when Tasks is empty so a plan
+// with zero tasks serializes identically to a plan-less contract (no "plan"
+// key in the JSON, same SHA-256 hash).
+func normalizeDraftContractPlan(contract *draftContract) {
+	if contract.Plan != nil && len(contract.Plan.Tasks) == 0 {
+		contract.Plan = nil
+	}
 }
 
 type draftContractScope struct {
@@ -90,6 +100,27 @@ type draftValidation struct {
 
 type draftMemoryContext struct {
 	UsedItems []string `json:"used_items"`
+}
+
+type contractPlan struct {
+	Tasks []planTask `json:"tasks"`
+}
+
+type planTask struct {
+	ID            string                `json:"id"`
+	Title         string                `json:"title,omitempty"`
+	DependsOn     []string              `json:"depends_on,omitempty"`
+	Context       []planContextSelector `json:"context,omitempty"`
+	ExpectedFiles []string              `json:"expected_files,omitempty"`
+	Acceptance    []string              `json:"acceptance"`
+	Validation    []string              `json:"validation"`
+}
+
+type planContextSelector struct {
+	Path   string `json:"path,omitempty"`
+	Lines  string `json:"lines,omitempty"`
+	Symbol string `json:"symbol,omitempty"`
+	Why    string `json:"why,omitempty"`
 }
 
 type approvalState struct {
@@ -761,6 +792,55 @@ func renderContractMDFromDraft(contract draftContract, mapRunID string, searchRe
 	} else {
 		for _, question := range contract.OpenQuestions {
 			fmt.Fprintf(&buffer, "- %s\n", question)
+		}
+	}
+	if contract.Plan != nil && len(contract.Plan.Tasks) > 0 {
+		fmt.Fprintln(&buffer)
+		fmt.Fprintf(&buffer, "## Plan (%d tasks)\n", len(contract.Plan.Tasks))
+		for _, task := range contract.Plan.Tasks {
+			fmt.Fprintln(&buffer)
+			if task.Title != "" {
+				fmt.Fprintf(&buffer, "### %s: %s\n", task.ID, task.Title)
+			} else {
+				fmt.Fprintf(&buffer, "### %s\n", task.ID)
+			}
+			if len(task.DependsOn) > 0 {
+				fmt.Fprintf(&buffer, "Depends on: %s\n", strings.Join(task.DependsOn, ", "))
+			}
+			if len(task.Context) > 0 {
+				fmt.Fprintln(&buffer, "Context:")
+				for _, ctx := range task.Context {
+					fmt.Fprint(&buffer, "-")
+					if ctx.Symbol != "" {
+						fmt.Fprintf(&buffer, " symbol %s", ctx.Symbol)
+					}
+					if ctx.Path != "" {
+						fmt.Fprintf(&buffer, " %s", ctx.Path)
+						if ctx.Lines != "" {
+							fmt.Fprintf(&buffer, " lines %s", ctx.Lines)
+						}
+					}
+					if ctx.Why != "" {
+						fmt.Fprintf(&buffer, " — %s", ctx.Why)
+					}
+					fmt.Fprintln(&buffer)
+				}
+			}
+			if len(task.ExpectedFiles) > 0 {
+				fmt.Fprintf(&buffer, "Expected files: %s\n", strings.Join(task.ExpectedFiles, ", "))
+			}
+			if len(task.Acceptance) > 0 {
+				fmt.Fprintln(&buffer, "Acceptance:")
+				for _, a := range task.Acceptance {
+					fmt.Fprintf(&buffer, "- %s\n", a)
+				}
+			}
+			if len(task.Validation) > 0 {
+				fmt.Fprintln(&buffer, "Validation:")
+				for _, v := range task.Validation {
+					fmt.Fprintf(&buffer, "- %s\n", v)
+				}
+			}
 		}
 	}
 	return buffer.Bytes()

@@ -603,7 +603,18 @@ func readContractRunState(path string) (contractRunState, error) {
 
 func readDraftContract(path string) (draftContract, error) {
 	var contract draftContract
-	return contract, readJSON(path, &contract)
+	if err := readJSON(path, &contract); err != nil {
+		return draftContract{}, err
+	}
+	normalizeDraftContractPlan(&contract)
+	if issues := validateContractPlan(contract); len(issues) > 0 {
+		msgs := make([]string, len(issues))
+		for i, issue := range issues {
+			msgs[i] = fmt.Sprintf("%s: %s", issue.Field, issue.Message)
+		}
+		return draftContract{}, fmt.Errorf("contract plan is invalid: %s", strings.Join(msgs, "; "))
+	}
+	return contract, nil
 }
 
 func readClarificationQuestions(path string) ([]clarificationQuestionRecord, error) {

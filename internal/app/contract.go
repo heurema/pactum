@@ -44,6 +44,7 @@ type contractPartialUpdate struct {
 	AcceptanceCriteria *[]string
 	ValidationCommands *[]string
 	Assumptions        *[]string
+	Plan               *contractPlan
 }
 
 // contractReviseFailureError is returned after writing a structured failure JSON
@@ -58,6 +59,15 @@ func (contractReviseFailureError) Error() string { return "contract revise faile
 type approvalResetGateError struct{}
 
 func (approvalResetGateError) Error() string { return "approval reset required" }
+
+// planValidationError carries plan structural validation issues. It is
+// returned by contractReviseWithUpdate so ContractRevise can emit a
+// structured failure response.
+type planValidationError struct {
+	Issues []contractReviseIssue
+}
+
+func (e planValidationError) Error() string { return "plan validation failed" }
 
 // runContext is the fully-loaded state of a run directory: its resolved paths,
 // run state, contract draft, and approval. Shared by the contract, prompt, and
@@ -187,6 +197,14 @@ func (a App) ContractRevise(stdout io.Writer, runID string, input []byte, allowA
 			}
 			return contractReviseFailureError{}
 		}
+		var planErr planValidationError
+		if errors.As(err, &planErr) {
+			failure := contractReviseFailure{OK: false, ContractUnchanged: true, Issues: planErr.Issues}
+			if err := writeReviseFailure(stdout, failure); err != nil {
+				return err
+			}
+			return contractReviseFailureError{}
+		}
 		return err
 	}
 	result.BaseVersion = baseVersion
@@ -217,6 +235,16 @@ func (a App) contractReviseWithUpdate(context runContext, update contractPartial
 	contract := context.Contract
 	deduped := applyContractPartialUpdate(&contract, update)
 	applyClarificationStatusToContract(&contract, status)
+
+	// Validate the plan on every revise, not only when the update touches the
+	// plan field: a revise that narrows paths_in_scope can leave an existing
+	// plan's expected_files out of scope, which would otherwise persist a
+	// structurally invalid contract. normalizeDraftContractPlan and
+	// validateContractPlan are no-ops when the contract carries no plan.
+	normalizeDraftContractPlan(&contract)
+	if planIssues := validateContractPlan(contract); len(planIssues) > 0 {
+		return contractReviseResponse{}, planValidationError{Issues: planIssues}
+	}
 
 	newVersion, err := contractVersionHash(contract)
 	if err != nil {
@@ -492,7 +520,7 @@ func parseContractReviseInput(input []byte) (baseVersion string, update contract
 		return baseVersion, contractPartialUpdate{}, issues
 	}
 
-	knownContract := []string{"goal", "scope", "paths_in_scope", "paths_out_of_scope", "acceptance_criteria", "validation", "assumptions"}
+	knownContract := []string{"goal", "scope", "paths_in_scope", "paths_out_of_scope", "acceptance_criteria", "validation", "assumptions", "plan"}
 	for k := range contractFields {
 		known := false
 		for _, kc := range knownContract {
@@ -629,6 +657,28 @@ func parseContractReviseInput(input []byte) (baseVersion string, update contract
 		}
 	}
 
+	if raw, ok := contractFields["plan"]; ok {
+		var v any
+		if err := json.Unmarshal(raw, &v); err != nil || v == nil {
+			issues = append(issues, contractReviseIssue{
+				Field:   "contract.plan",
+				Code:    "NULL_NOT_ALLOWED",
+				Message: "plan must be a non-null object",
+			})
+		} else {
+			var plan contractPlan
+			if err := json.Unmarshal(raw, &plan); err != nil {
+				issues = append(issues, contractReviseIssue{
+					Field:   "contract.plan",
+					Code:    "INVALID_TYPE",
+					Message: "plan must be an object with a tasks array: " + err.Error(),
+				})
+			} else {
+				update.Plan = &plan
+			}
+		}
+	}
+
 	return baseVersion, update, issues
 }
 
@@ -710,6 +760,9 @@ func applyContractPartialUpdate(contract *draftContract, update contractPartialU
 		contract.Assumptions = deduped
 		dropped = append(dropped, prefixedDropped("assumptions", dups)...)
 	}
+	if update.Plan != nil {
+		contract.Plan = update.Plan
+	}
 	return dropped
 }
 
@@ -741,6 +794,7 @@ func stableDedup(items []string) ([]string, []string) {
 // contractVersionHash computes the SHA256 that storeFileSHA256 would return
 // after writing contract with writeJSON, enabling a no-op check without disk IO.
 func contractVersionHash(contract draftContract) (string, error) {
+	normalizeDraftContractPlan(&contract)
 	data, err := json.MarshalIndent(contract, "", "  ")
 	if err != nil {
 		return "", err
@@ -764,6 +818,137 @@ func countExecutionAttempts(attemptsDir string) int {
 		}
 	}
 	return count
+}
+
+// validateContractPlan checks the structural integrity of the plan if present.
+// Returns nil when the plan is absent or has zero tasks (both are valid).
+// Validation order: id issues (empty/duplicate) → acceptance/validation empty →
+// missing dependency ids → cycle → expected_files scope.
+func validateContractPlan(contract draftContract) []contractReviseIssue {
+	if contract.Plan == nil || len(contract.Plan.Tasks) == 0 {
+		return nil
+	}
+	tasks := contract.Plan.Tasks
+	var issues []contractReviseIssue
+	seen := make(map[string]bool, len(tasks))
+	hasIDIssue := false
+
+	for i, task := range tasks {
+		if strings.TrimSpace(task.ID) == "" {
+			issues = append(issues, contractReviseIssue{
+				Field:   fmt.Sprintf("plan.tasks[%d].id", i),
+				Code:    "EMPTY_TASK_ID",
+				Message: fmt.Sprintf("plan task at index %d has an empty id; each task must have a non-empty id", i),
+			})
+			hasIDIssue = true
+			continue
+		}
+		if seen[task.ID] {
+			issues = append(issues, contractReviseIssue{
+				Field:   fmt.Sprintf("plan.tasks[%d].id", i),
+				Code:    "DUPLICATE_TASK_ID",
+				Message: fmt.Sprintf("plan task id %q is duplicated; task ids must be unique within plan.tasks", task.ID),
+			})
+			hasIDIssue = true
+		} else {
+			seen[task.ID] = true
+		}
+		if len(task.Acceptance) == 0 {
+			issues = append(issues, contractReviseIssue{
+				Field:   fmt.Sprintf("plan.tasks[%d].acceptance", i),
+				Code:    "EMPTY_ACCEPTANCE",
+				Message: fmt.Sprintf("plan task %q has an empty acceptance list; each task must have at least one acceptance criterion", task.ID),
+			})
+		}
+		if len(task.Validation) == 0 {
+			issues = append(issues, contractReviseIssue{
+				Field:   fmt.Sprintf("plan.tasks[%d].validation", i),
+				Code:    "EMPTY_VALIDATION",
+				Message: fmt.Sprintf("plan task %q has an empty validation list; each task must have at least one validation command", task.ID),
+			})
+		}
+	}
+
+	if hasIDIssue {
+		return issues
+	}
+
+	hasDepIssue := false
+	for i, task := range tasks {
+		for j, dep := range task.DependsOn {
+			if !seen[dep] {
+				issues = append(issues, contractReviseIssue{
+					Field:   fmt.Sprintf("plan.tasks[%d].depends_on[%d]", i, j),
+					Code:    "MISSING_DEPENDENCY",
+					Message: fmt.Sprintf("plan task %q depends_on entry %q does not match any task id in plan.tasks", task.ID, dep),
+				})
+				hasDepIssue = true
+			}
+		}
+	}
+
+	if !hasDepIssue && detectPlanDAGCycle(tasks) {
+		issues = append(issues, contractReviseIssue{
+			Field:   "plan.tasks",
+			Code:    "CYCLE_IN_DAG",
+			Message: "plan.tasks depends_on forms a cycle; the dependency graph must be acyclic",
+		})
+	}
+
+	pathsInScope := nonEmptyPathGlobs(contract.PathsInScope)
+	if len(pathsInScope) > 0 {
+		for i, task := range tasks {
+			for j, file := range task.ExpectedFiles {
+				if !pathGlobMatchesAny(pathsInScope, file) {
+					issues = append(issues, contractReviseIssue{
+						Field:   fmt.Sprintf("plan.tasks[%d].expected_files[%d]", i, j),
+						Code:    "EXPECTED_FILE_OUT_OF_SCOPE",
+						Message: fmt.Sprintf("plan task %q expected_files[%d] %q does not match any paths_in_scope glob", task.ID, j, file),
+					})
+				}
+			}
+		}
+	}
+
+	return issues
+}
+
+// detectPlanDAGCycle reports whether the tasks dependency graph contains a cycle.
+func detectPlanDAGCycle(tasks []planTask) bool {
+	adj := make(map[string][]string, len(tasks))
+	for _, task := range tasks {
+		adj[task.ID] = task.DependsOn
+	}
+	const (
+		unvisited = 0
+		inStack   = 1
+		done      = 2
+	)
+	state := make(map[string]int, len(tasks))
+	var dfs func(id string) bool
+	dfs = func(id string) bool {
+		state[id] = inStack
+		for _, dep := range adj[id] {
+			if state[dep] == inStack {
+				return true
+			}
+			if state[dep] == unvisited {
+				if dfs(dep) {
+					return true
+				}
+			}
+		}
+		state[id] = done
+		return false
+	}
+	for _, task := range tasks {
+		if state[task.ID] == unvisited {
+			if dfs(task.ID) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // didYouMean returns the closest known string within Levenshtein distance 3,
@@ -820,6 +1005,7 @@ func writeReviseFailure(stdout io.Writer, failure contractReviseFailure) error {
 }
 
 func writeContractArtifacts(runPaths contractRunPathSet, contract draftContract, mapRunID string) error {
+	normalizeDraftContractPlan(&contract)
 	if err := writeJSON(runPaths.ContractJSON, contract); err != nil {
 		return err
 	}
