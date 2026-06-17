@@ -1,0 +1,66 @@
+{
+  "schema": "pactum.review_loop.v1alpha1",
+  "run_id": "run_20260617_150710",
+  "started_at": "2026-06-17T17:28:54Z",
+  "finished_at": "2026-06-17T17:37:11Z",
+  "reviewer": "codex-xhigh",
+  "agent": "claude",
+  "max_rounds": 10,
+  "stalemate_patience": 2,
+  "clean_rounds_required": 1,
+  "terminal_reason": "gate_failed",
+  "rounds": [
+    {
+      "round": 1,
+      "reviewer_attempt_id": "reviewer_attempt_003",
+      "reviewer_attempt_ids": [
+        "reviewer_attempt_003",
+        "reviewer_attempt_005",
+        "reviewer_attempt_001",
+        "reviewer_attempt_002",
+        "reviewer_attempt_004"
+      ],
+      "reviewer_attempts": [
+        {
+          "attempt_id": "reviewer_attempt_003",
+          "reviewer": "codex-xhigh",
+          "lens": "correctness"
+        },
+        {
+          "attempt_id": "reviewer_attempt_005",
+          "reviewer": "codex-xhigh",
+          "lens": "implementation"
+        },
+        {
+          "attempt_id": "reviewer_attempt_001",
+          "reviewer": "codex-xhigh",
+          "lens": "tests"
+        },
+        {
+          "attempt_id": "reviewer_attempt_002",
+          "reviewer": "codex-xhigh",
+          "lens": "over_engineering"
+        },
+        {
+          "attempt_id": "reviewer_attempt_004",
+          "reviewer": "codex-xhigh",
+          "lens": "docs"
+        }
+      ],
+      "proposals_created": 2,
+      "proposals_accepted": 2,
+      "open_findings": 1,
+      "open_blocking_findings": 0,
+      "clean_streak": 0,
+      "unchanged_fingerprint_streak": 0,
+      "working_tree_fingerprint": "66302202e5de8cc702e9e5afca00c24d104da90fb43de5cb546500f306fe3196",
+      "fixer_attempt_id": "attempt_001",
+      "fix_outcomes_resolved": 1,
+      "gate_status": "failed",
+      "gate_report_artifact": "gate/gate-report.json"
+    }
+  ],
+  "artifacts": {
+    "summary": "review/loop-summary.json"
+  }
+}

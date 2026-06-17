@@ -1,0 +1,2 @@
+{"schema":"pactum.review_proposal_decision.v1alpha1","id":"pd_001","run_id":"run_20260617_150710","proposal_id":"p_001","decision":"accepted","finding_id":"f_001","created_at":"2026-06-17T17:31:28Z","source":"review_loop"}
+{"schema":"pactum.review_proposal_decision.v1alpha1","id":"pd_002","run_id":"run_20260617_150710","proposal_id":"p_002","decision":"accepted","finding_id":"f_002","created_at":"2026-06-17T17:31:28Z","source":"review_loop"}
