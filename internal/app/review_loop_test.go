@@ -776,17 +776,22 @@ func TestReviewLoopUnparsedFindingsIsNotCleanRound(t *testing.T) {
 	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "malformed")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "2", "--json"}, &stdout, &stderr)
+	// patience=5 prevents stalemate before max-rounds=2, so the loop runs both
+	// no-progress rounds and stops as max_rounds.
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "2", "--patience", "5", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
 	}
 	var summary reviewLoopSummaryDocument
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
-	if summary.TerminalReason != "reviewer_findings_unparsed" {
-		t.Fatalf("unparseable reviewer findings must not be a clean pass: terminal=%q\n%#v", summary.TerminalReason, summary)
+	// "malformed" emits a valid block with a field-invalid finding (empty message).
+	// That produces a field-level warning but no parse-miss, so the round is a
+	// no-progress round rather than reviewer_findings_unparsed.
+	if summary.TerminalReason != "max_rounds" {
+		t.Fatalf("field-level-warning-only round must not be reviewer_findings_unparsed: terminal=%q\n%#v", summary.TerminalReason, summary)
 	}
-	if len(summary.Rounds) != 1 || summary.Rounds[0].ProposalsCreated != 0 || len(summary.Rounds[0].Warnings) == 0 {
-		t.Fatalf("expected one round with 0 created proposals and warnings: %#v", summary.Rounds)
+	if len(summary.Rounds) != 2 || summary.Rounds[0].ProposalsCreated != 0 || len(summary.Rounds[0].Warnings) == 0 {
+		t.Fatalf("expected two rounds each with 0 created proposals and warnings: %#v", summary.Rounds)
 	}
 	// Nothing was accepted, so the fixer must not have run.
 	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
@@ -965,8 +970,8 @@ func TestReviewLoopPartialLensFailureProceedsWithWarning(t *testing.T) {
 		t.Fatalf("partial lens failure must not abort the round: %v", err)
 	}
 	summary := readReviewLoopSummary(t, runPaths.ReviewLoopSummaryJSON)
-	if summary.TerminalReason != "clean_round" || len(summary.Rounds) != 1 {
-		t.Fatalf("partial failure should reach clean_round: %#v", summary)
+	if summary.TerminalReason != "reviewer_findings_unparsed" || len(summary.Rounds) != 1 {
+		t.Fatalf("partial failure with empty-stdout lenses must stop as reviewer_findings_unparsed: %#v", summary)
 	}
 	round := summary.Rounds[0]
 	if len(round.SkippedLenses) != 1 {
@@ -1020,6 +1025,193 @@ type alwaysErrTransport struct{ err error }
 
 func (tr alwaysErrTransport) Run(req agents.RunRequest) (agents.RunResult, error) {
 	return agents.RunResult{}, tr.err
+}
+
+// TestReviewLoopTransportFailureIsNotCleanWhenOtherLensesClean verifies that a
+// lens transport failure prevents the round from being clean even when all other
+// lenses emit valid empty findings blocks — the transport-failed lens must set
+// ParseMiss and cause the round to stop as reviewer_findings_unparsed.
+func TestReviewLoopTransportFailureIsNotCleanWhenOtherLensesClean(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4-6"})
+
+	// Fail one lens; the remaining four succeed with a valid empty findings block.
+	failingPrompt := runArtifactRepoRel(runID, reviewerLensPromptArtifact("claude", reviewLenses[1]))
+	tr := &staggerTransport{stdout: reviewerStructuredOutput([]map[string]any{})}
+	tr.failFor = failingPrompt
+	app.AgentTransport = tr
+
+	var stdout, stderr bytes.Buffer
+	if err := app.ReviewRun(&stdout, &stderr, runID, reviewRunOptions{Reviewer: "claude"}); err != nil {
+		t.Fatalf("partial lens failure must not abort the round: %v", err)
+	}
+	summary := readReviewLoopSummary(t, runPaths.ReviewLoopSummaryJSON)
+	if summary.TerminalReason != "reviewer_findings_unparsed" || len(summary.Rounds) != 1 {
+		t.Fatalf("transport failure must stop as reviewer_findings_unparsed even when other lenses are clean: %#v", summary)
+	}
+	round := summary.Rounds[0]
+	// Transport failure is recorded as a skipped lens with a reason.
+	if len(round.SkippedLenses) != 1 {
+		t.Fatalf("skipped lenses = %d, want 1: %#v", len(round.SkippedLenses), round)
+	}
+	// Warnings must include lens and attempt tokens.
+	allWarnings := strings.Join(round.Warnings, "\n")
+	if !strings.Contains(allWarnings, "lens="+reviewLenses[1].Key) || !strings.Contains(allWarnings, "attempt=1") {
+		t.Fatalf("warnings must include lens= and attempt= tokens: %v", round.Warnings)
+	}
+	// No findings must be written when the round has a parse miss.
+	// (ReviewRun scaffolds the file empty; check content, not existence.)
+	if findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL); len(findings) != 0 {
+		t.Fatalf("no findings must be written when round has a parse miss: got %d", len(findings))
+	}
+}
+
+// TestReviewLoopMixedRoundParseMissStopsUnparsed verifies that when one lens
+// emits valid findings and another lens has a transport failure, the round
+// terminates as reviewer_findings_unparsed and the valid lens's findings are
+// not written to findings.jsonl.
+func TestReviewLoopMixedRoundParseMissStopsUnparsed(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4-6"})
+
+	// Most lenses succeed with a valid blocking finding; one lens fails.
+	validFinding := reviewLoopFixtureFinding("valid finding from non-failing lens", 77)
+	failingPrompt := runArtifactRepoRel(runID, reviewerLensPromptArtifact("claude", reviewLenses[2]))
+	tr := &staggerTransport{stdout: reviewerStructuredOutput([]map[string]any{validFinding})}
+	tr.failFor = failingPrompt
+	app.AgentTransport = tr
+
+	var stdout, stderr bytes.Buffer
+	if err := app.ReviewRun(&stdout, &stderr, runID, reviewRunOptions{Reviewer: "claude"}); err != nil {
+		t.Fatalf("mixed round must not return a hard error: %v", err)
+	}
+	summary := readReviewLoopSummary(t, runPaths.ReviewLoopSummaryJSON)
+	if summary.TerminalReason != "reviewer_findings_unparsed" || len(summary.Rounds) != 1 {
+		t.Fatalf("mixed parse-miss round must stop as reviewer_findings_unparsed: %#v", summary)
+	}
+	// No findings written — the valid-lens proposals must not be accepted.
+	// (ReviewRun scaffolds the file empty; check content, not existence.)
+	if findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL); len(findings) != 0 {
+		t.Fatalf("no findings must be accepted when a parse miss occurs: got %d", len(findings))
+	}
+}
+
+// TestReviewLoopCorrectiveRetrySuccess verifies that when a lens attempt
+// produces no valid findings block, a corrective retry that returns a valid
+// non-empty findings block captures those findings and the run proceeds.
+func TestReviewLoopCorrectiveRetrySuccess(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	app = configureReviewLoopHelpers(t, app, paths)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "corrective_retry_success")
+	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_MODE", "fix_f001")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("corrective retry success must not fail: exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.TerminalReason == "reviewer_findings_unparsed" {
+		t.Fatalf("corrective retry success must not stop as reviewer_findings_unparsed: %#v", summary)
+	}
+	// The corrective retry finding must have been captured.
+	findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL)
+	if len(findings) == 0 {
+		t.Fatalf("corrective retry finding must be captured in findings.jsonl: %#v", summary)
+	}
+	// Round 1 warnings must include lens= and attempt= tokens identifying the
+	// corrective retry.
+	if len(summary.Rounds) == 0 {
+		t.Fatalf("expected at least one round: %#v", summary)
+	}
+	allWarnings := strings.Join(summary.Rounds[0].Warnings, "\n")
+	if !strings.Contains(allWarnings, "lens=correctness") || !strings.Contains(allWarnings, "attempt=1") {
+		t.Fatalf("round 1 warnings must include lens= and attempt= tokens: %v", summary.Rounds[0].Warnings)
+	}
+}
+
+// TestReviewLoopCorrectiveRetryEmptyStopsUnparsed verifies that a corrective
+// retry that returns "findings": [] is unverifiable and terminates with
+// terminal_reason=reviewer_findings_unparsed.
+func TestReviewLoopCorrectiveRetryEmptyStopsUnparsed(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	app = configureReviewLoopHelpers(t, app, paths)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "corrective_retry_empty")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("corrective retry empty must not hard-fail: exit=%d stderr=%s", code, stderr.String())
+	}
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	if summary.TerminalReason != "reviewer_findings_unparsed" || len(summary.Rounds) != 1 {
+		t.Fatalf("corrective retry returning empty must stop as reviewer_findings_unparsed: %#v", summary)
+	}
+	// No findings must be written when every corrective retry is unverifiable.
+	// (ReviewRun scaffolds the file empty; check content, not existence.)
+	if findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL); len(findings) != 0 {
+		t.Fatalf("no findings must be written when corrective retry is unverifiable: got %d", len(findings))
+	}
+	// Warnings must mention the corrective-retry outcome.
+	allWarnings := strings.Join(summary.Rounds[0].Warnings, "\n")
+	if !strings.Contains(allWarnings, "lens=correctness") || !strings.Contains(allWarnings, "attempt=2") {
+		t.Fatalf("round warnings must include lens= and attempt=2 for corrective outcome: %v", summary.Rounds[0].Warnings)
+	}
+}
+
+// TestReviewLoopCorrectiveRetryCountsAsOneRound verifies that a corrective
+// retry within a round does not increment the outer round counter: a round
+// in which attempt=1 lacks a valid block and attempt=2 (corrective) returns
+// valid findings counts as exactly one logical round.
+func TestReviewLoopCorrectiveRetryCountsAsOneRound(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runReviewCommand(t, app, "gate", "run", runID)
+	app = configureReviewLoopHelpers(t, app, paths)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "corrective_retry_success")
+	t.Setenv("PACTUM_REVIEW_LOOP_FIXER_MODE", "fix_f001")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review run exited %d: %s", code, stderr.String())
+	}
+	var summary reviewLoopSummaryDocument
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
+	// The corrective retry (attempt=2) does not add a round. Round 1 has the
+	// corrective retry; round 2 is the follow-up (clean or resolved).
+	for _, r := range summary.Rounds {
+		if r.Round < 1 {
+			t.Fatalf("round index must be >= 1: %#v", r)
+		}
+	}
+	// The round that had the corrective retry must record warnings about it.
+	if len(summary.Rounds) == 0 {
+		t.Fatalf("expected rounds: %#v", summary)
+	}
+	firstRoundWarnings := strings.Join(summary.Rounds[0].Warnings, "\n")
+	if !strings.Contains(firstRoundWarnings, "lens=correctness") || !strings.Contains(firstRoundWarnings, "attempt=1") {
+		t.Fatalf("first round must record corrective retry warnings: %v", summary.Rounds[0].Warnings)
+	}
+	// The corrective retry is intra-round: summary.Rounds[0] is the one logical
+	// round containing both attempt=1 (prose) and attempt=2 (corrective).
+	// The outer loop counter advances once, so Rounds[0].Round == 1.
+	if summary.Rounds[0].Round != 1 {
+		t.Fatalf("first round must have Round=1 (corrective retry is intra-round): %d", summary.Rounds[0].Round)
+	}
 }
 
 // TestReviewLoop is the comprehensive sub-test suite for the loop engine
@@ -1158,8 +1350,8 @@ func TestReviewLoop(t *testing.T) {
 		assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 	})
 
-	// (f) Malformed reviewer output (no parseable proposals, only warnings) stops the
-	// loop as reviewer_findings_unparsed.
+	// (f) A reviewer round with only field-level warnings (valid block, no parseable
+	// proposals) produces no-progress rounds rather than reviewer_findings_unparsed.
 	t.Run("reviewer_unparsed_when_output_is_malformed", func(t *testing.T) {
 		root := t.TempDir()
 		stateDir := t.TempDir()
@@ -1170,17 +1362,18 @@ func TestReviewLoop(t *testing.T) {
 		setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "malformed")
 
 		var stdout, stderr bytes.Buffer
-		code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3", "--json"}, &stdout, &stderr)
+		// patience=5 prevents stalemate before max-rounds=3.
+		code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "3", "--patience", "5", "--json"}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
 		}
 		var summary reviewLoopSummaryDocument
 		assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
-		if summary.TerminalReason != "reviewer_findings_unparsed" || len(summary.Rounds) != 1 {
-			t.Fatalf("malformed reviewer output should stop as reviewer_findings_unparsed: %#v", summary)
+		if summary.TerminalReason != "max_rounds" || len(summary.Rounds) != 3 {
+			t.Fatalf("field-level warnings should produce no-progress rounds: %#v", summary)
 		}
 		if got := summary.Rounds[0]; got.ProposalsCreated != 0 || len(got.Warnings) == 0 || got.FixerAttemptID != "" {
-			t.Fatalf("malformed round summary mismatch: %#v", got)
+			t.Fatalf("field-level-warning round summary mismatch: %#v", got)
 		}
 		assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 	})
@@ -1891,9 +2084,10 @@ func TestReviewLoopReviewerHelperProcess(t *testing.T) {
 	}
 	fmt.Printf("stdin_has_reviewer_prompt=%t\n", strings.Contains(string(stdin), "# Reviewer Prompt"))
 	// Only the correctness-lens attempt of the five-lens fan-out reports and
-	// advances the round sequence; the other lenses come back clean. This keeps
-	// one reviewer finding per round, so the sequence file counts rounds.
+	// advances the round sequence; the other lenses always emit a clean block.
+	// This keeps one reviewer finding per round, so the sequence file counts rounds.
 	if !strings.Contains(string(stdin), "You are the correctness reviewer") {
+		fmt.Print(reviewerStructuredOutput([]map[string]any{}))
 		os.Exit(0)
 	}
 	attempt := nextReviewLoopReviewerAttempt()
@@ -1922,9 +2116,11 @@ func TestReviewLoopReviewerHelperProcess(t *testing.T) {
 	case mode == "clean_findings_clean_clean":
 		if attempt == 2 {
 			fmt.Print(reviewerStructuredOutput(validFinding))
+		} else {
+			fmt.Print(reviewerStructuredOutput([]map[string]any{}))
 		}
 	case mode == "always_clean":
-		// No proposals, no warnings: always a clean round.
+		fmt.Print(reviewerStructuredOutput([]map[string]any{}))
 	case mode == "findings_and_malformed":
 		// One valid blocking finding plus one malformed (empty-message) entry;
 		// the malformed entry becomes a warning, so the round has both a
@@ -1933,8 +2129,26 @@ func TestReviewLoopReviewerHelperProcess(t *testing.T) {
 			reviewLoopFixtureFinding("loop reviewer found a fixable issue", 42),
 			{"message": "", "severity": "medium", "category": "quality"},
 		}))
+	case mode == "corrective_retry_success":
+		// attempt=1: prose only (triggers corrective retry)
+		// attempt=2 (corrective): valid findings captured, run proceeds
+		if attempt == 1 {
+			fmt.Print("prose only — no structured findings block\n")
+		} else {
+			fmt.Print(reviewerStructuredOutput(validFinding))
+		}
+	case mode == "corrective_retry_empty":
+		// attempt=1: prose only (triggers corrective retry)
+		// attempt=2 (corrective): empty findings — unverifiable, must stop as unparsed
+		if attempt == 1 {
+			fmt.Print("prose only — no structured findings block\n")
+		} else {
+			fmt.Print(reviewerStructuredOutput([]map[string]any{}))
+		}
 	case attempt == 1:
 		fmt.Print(reviewerStructuredOutput(validFinding))
+	default:
+		fmt.Print(reviewerStructuredOutput([]map[string]any{}))
 	}
 	os.Exit(0)
 }
@@ -1963,6 +2177,7 @@ func runReviewLoopPanelReviewerHelper(label string, severity string) {
 	mode := os.Getenv("PACTUM_REVIEW_LOOP_REVIEWER_MODE")
 	switch mode {
 	case "panel_clean":
+		fmt.Print(reviewerStructuredOutput([]map[string]any{}))
 	case "panel_duplicate":
 		fmt.Print(reviewerStructuredOutput([]map[string]any{
 			reviewLoopFixtureFindingWithSeverity("panel reviewers found a shared issue", 77, severity),

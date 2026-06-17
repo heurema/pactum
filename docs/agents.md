@@ -542,9 +542,12 @@ issues as non-blocking advisories, and a per-finding `confidence`
 design sources are condensed in
 [`review-prompt-design.md`](review-prompt-design.md).
 
-A reviewer can emit optional structured finding proposals as a fenced JSON block.
-`pactum review run` parses and accepts valid proposals automatically as part of
-its rounds. The surgical alternative is `pactum review proposal collect
+Every reviewer attempt **must** emit exactly one fenced `pactum.reviewer_findings.v1alpha1`
+JSON block — even when there are no findings (emit `"findings": []`). `pactum review run`
+parses and accepts valid proposals automatically as part of its rounds; an attempt that
+omits the block or emits a malformed block triggers one corrective retry, and if the
+retry also fails the round terminates with `terminal_reason=reviewer_findings_unparsed`.
+The surgical alternative is `pactum review proposal collect
 <run_id>`, which parses the captured reviewer stdout of **every completed
 reviewer attempt** (all lenses) into **pending proposals** — it does not create
 findings; pass `--attempt <id>` to parse a single attempt, and with several

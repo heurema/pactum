@@ -130,8 +130,9 @@ type reviewLoopSkippedLens struct {
 }
 
 type reviewLoopProposalBatch struct {
-	Created  []reviewProposalRecord
-	Warnings []string
+	Created   []reviewProposalRecord
+	Warnings  []string
+	ParseMiss bool
 }
 
 type synchronizedWriter struct {
@@ -205,6 +206,42 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 		}
 		proposals := reviewerResult.Proposals
 
+		// ParseMiss on any lens prevents the round from being approvable — fail
+		// before accepting any proposals so findings.jsonl stays consistent.
+		if proposals.ParseMiss {
+			cleanStreak = 0
+			reviewSummaryForMiss, missErr := reviewLoopReviewSummary(context.RunPaths)
+			roundSummary := reviewLoopRoundSummary{
+				Round:                      round,
+				ReviewerAttemptID:          firstString(reviewerResult.AttemptIDs),
+				ProposalsCreated:           len(proposals.Created),
+				Warnings:                   append([]string{}, proposals.Warnings...),
+				SkippedLenses:              append([]reviewLoopSkippedLens{}, reviewerResult.SkippedLenses...),
+				CleanStreak:                cleanStreak,
+				UnchangedFingerprintStreak: unchangedFingerprintStreak,
+			}
+			if len(reviewerResult.AttemptIDs) > 1 {
+				roundSummary.ReviewerAttemptIDs = append([]string{}, reviewerResult.AttemptIDs...)
+			}
+			roundSummary.ReviewerAttempts = append([]reviewLoopAttemptRef{}, reviewerResult.Attempts...)
+			if missErr == nil {
+				roundSummary.OpenFindings = reviewSummaryForMiss.Open
+				roundSummary.OpenBlockingFindings = reviewSummaryForMiss.BlockingOpen
+			}
+			fingerprint, fpErr := a.reviewLoopWorkingTreeFingerprint(context)
+			if fpErr == nil {
+				roundSummary.WorkingTreeFingerprint = fingerprint
+			}
+			summary.Rounds = append(summary.Rounds, roundSummary)
+			if missErr != nil {
+				return loop.RoundResult{}, missErr
+			}
+			if fpErr != nil {
+				return loop.RoundResult{}, fpErr
+			}
+			return loop.RoundResult{}, errReviewerUnparsed
+		}
+
 		openFindings, rebuttedFindings, err := reviewLoopDedupFindingFingerprints(context.RunPaths)
 		if err != nil {
 			return loop.RoundResult{}, err
@@ -265,7 +302,7 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 		// Path (3) and (4): proposals.Created == 0 (accepted == 0 && duplicates == 0 by invariant)
 		if accepted == 0 && duplicates == 0 {
 			if len(proposals.Warnings) == 0 {
-				// Path (4): clean round — no proposals, no warnings.
+				// Path (4): clean round — no proposals, no warnings, no parse-miss.
 				cleanStreak++
 				roundSummary.CleanStreak = cleanStreak
 				roundSummary.UnchangedFingerprintStreak = unchangedFingerprintStreak
@@ -278,18 +315,23 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 				summary.Rounds = append(summary.Rounds, roundSummary)
 				return loop.RoundResult{Clean: true}, nil
 			}
-			// Path (3): no proposals but warnings → reviewer output unparseable.
+			// Path (3b): field-level warnings only — not clean, not a parse-miss.
+			// No blocking findings: no-progress round; let the loop engine handle patience.
+			// Blocking findings from a prior round still open: fall through to fixer.
 			cleanStreak = 0
 			roundSummary.CleanStreak = cleanStreak
-			roundSummary.UnchangedFingerprintStreak = unchangedFingerprintStreak
-			fingerprint, err := a.reviewLoopWorkingTreeFingerprint(context)
-			if err != nil {
+			if reviewSummaryAfterAccept.BlockingOpen == 0 {
+				roundSummary.UnchangedFingerprintStreak = unchangedFingerprintStreak
+				fingerprint, err := a.reviewLoopWorkingTreeFingerprint(context)
+				if err != nil {
+					summary.Rounds = append(summary.Rounds, roundSummary)
+					return loop.RoundResult{}, err
+				}
+				roundSummary.WorkingTreeFingerprint = fingerprint
 				summary.Rounds = append(summary.Rounds, roundSummary)
-				return loop.RoundResult{}, err
+				return loop.RoundResult{Clean: false, Progress: false}, nil
 			}
-			roundSummary.WorkingTreeFingerprint = fingerprint
-			summary.Rounds = append(summary.Rounds, roundSummary)
-			return loop.RoundResult{}, errReviewerUnparsed
+			// Fall through to fixer path for pre-existing blocking findings.
 		}
 
 		// proposals.Created > 0 — path (1) or (2).
@@ -614,15 +656,63 @@ func (a App) runReviewLoopReviewRound(context reviewContext, liveOutput io.Write
 	attempts := make([]reviewLoopAttemptRef, 0, len(reviewers)*len(reviewLenses))
 	for index, reviewer := range reviewers {
 		for lensIndex, result := range memberResults[index] {
+			lens := reviewLenses[lensIndex]
 			if errs[index][lensIndex] != nil {
+				// Hard failure: transport error. Not eligible for corrective retry.
+				batch.ParseMiss = true
+				batch.Warnings = append(batch.Warnings, fmt.Sprintf("lens=%s attempt=1: transport error — hard failure (parse miss): %v", lens.Key, errs[index][lensIndex]))
 				continue
 			}
+
+			// Always record the attempt that ran.
 			attemptIDs = append(attemptIDs, result.AttemptID)
 			attempts = append(attempts, reviewLoopAttemptRef{
 				AttemptID: result.AttemptID,
 				Reviewer:  reviewer.Name,
 				Lens:      result.Lens,
 			})
+
+			// Read the agent stdout to check for a valid findings block.
+			stdoutBytes, err := activeStore.ReadBytes(reviewerAttemptPaths(prep.Context.RunPaths, result.AttemptID).StdoutLog)
+			if err != nil {
+				return reviewLoopReviewRoundResult{}, err
+			}
+
+			if len(stdoutBytes) == 0 {
+				// Hard failure: empty stdout cannot be corrected.
+				batch.ParseMiss = true
+				batch.Warnings = append(batch.Warnings, fmt.Sprintf("lens=%s attempt=1: empty stdout — hard failure (parse miss)", lens.Key))
+				continue
+			}
+
+			blocks, blockWarnings := parseReviewerFindingBlocks(string(stdoutBytes))
+			if len(blocks) == 0 {
+				// Soft failure: non-empty stdout with no valid block — one corrective retry.
+				batch.Warnings = append(batch.Warnings, fmt.Sprintf("lens=%s attempt=1: no valid findings block — corrective retry", lens.Key))
+				batch.Warnings = append(batch.Warnings, blockWarnings...)
+				corrResult, corrOK, corrWarnings := a.runReviewerCorrectiveAttempt(liveOutput, runID, prep, reviewer, lens, timeout)
+				for _, w := range corrWarnings {
+					batch.Warnings = append(batch.Warnings, fmt.Sprintf("lens=%s attempt=2: %s", lens.Key, w))
+				}
+				if corrOK {
+					attemptIDs = append(attemptIDs, corrResult.AttemptID)
+					attempts = append(attempts, reviewLoopAttemptRef{
+						AttemptID: corrResult.AttemptID,
+						Reviewer:  reviewer.Name,
+						Lens:      lens.Key,
+					})
+					proposals, propErr := a.runReviewLoopProposeFindings(runID, corrResult.AttemptID)
+					if propErr != nil {
+						return reviewLoopReviewRoundResult{}, propErr
+					}
+					batch.Created = append(batch.Created, proposals.Created...)
+					batch.Warnings = append(batch.Warnings, proposals.Warnings...)
+				} else {
+					batch.ParseMiss = true
+				}
+				continue
+			}
+
 			proposals, err := a.runReviewLoopProposeFindings(runID, result.AttemptID)
 			if err != nil {
 				return reviewLoopReviewRoundResult{}, err
@@ -824,8 +914,13 @@ func reviewerStaggerModelLabel(key reviewerStaggerKey) string {
 }
 
 func (a App) runReviewLoopReviewerWithAgent(liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration, onFirstOutput func()) (reviewerResultDocument, error) {
+	promptRepoPath := runArtifactRepoRel(runID, reviewerLensPromptArtifact(reviewer.Name, lens))
+	return a.runReviewLoopReviewerWithPrompt(liveOutput, runID, prep, reviewer, lens, timeout, onFirstOutput, promptRepoPath)
+}
+
+func (a App) runReviewLoopReviewerWithPrompt(liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration, onFirstOutput func(), promptRepoPath string) (reviewerResultDocument, error) {
 	var stdout bytes.Buffer
-	runErr := a.runReviewerAttempt(&stdout, liveOutput, runID, prep, reviewer, lens, timeout, onFirstOutput)
+	runErr := a.runReviewerAttempt(&stdout, liveOutput, runID, prep, reviewer, lens, timeout, onFirstOutput, promptRepoPath)
 	var result reviewerResultDocument
 	if stdout.Len() > 0 {
 		if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
@@ -838,7 +933,7 @@ func (a App) runReviewLoopReviewerWithAgent(liveOutput io.Writer, runID string, 
 	return result, runErr
 }
 
-func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration, onFirstOutput func()) error {
+func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration, onFirstOutput func(), promptRepoPath string) error {
 	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[reviewerLensAttemptPlan, reviewerRequestDocument, reviewerResultDocument, struct{}]{
 		Stdout:          stdout,
 		LiveOutput:      liveOutput,
@@ -854,7 +949,7 @@ func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID st
 		AgentName:       reviewer.Name,
 		Agent:           reviewer.Agent,
 		Model:           reviewer.ModelSpec,
-		PromptRepoPath:  runArtifactRepoRel(runID, reviewerLensPromptArtifact(reviewer.Name, lens)),
+		PromptRepoPath:  promptRepoPath,
 		ArtifactDir:     reviewerAttemptsArtifact,
 		Timeout:         timeout,
 		ReadOnly:        true,
@@ -911,6 +1006,41 @@ func (a App) runReviewLoopProposeFindings(runID string, reviewerAttemptID string
 		return reviewProposeFindingsResponse{}, err
 	}
 	return response, nil
+}
+
+// runReviewerCorrectiveAttempt writes a corrective prompt and runs one
+// additional reviewer attempt. Returns (result, true, nil) when the corrective
+// attempt emitted a valid block with at least one finding. Returns
+// (result, false, warnings) for every failure mode: transport error, empty
+// stdout, no valid block, or `"findings": []` (unverifiable clean).
+func (a App) runReviewerCorrectiveAttempt(liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration) (reviewerResultDocument, bool, []string) {
+	corrPath := filepath.Join(prep.Context.RunPaths.ReviewDir, fmt.Sprintf("reviewer-prompt-%s-%s-corrective.md", reviewer.Name, lens.Key))
+	if err := activeStore.WriteBytes(corrPath, []byte(renderReviewerCorrectivePrompt(runID, lens)), 0o644); err != nil {
+		return reviewerResultDocument{}, false, []string{fmt.Sprintf("corrective prompt write failed: %v", err)}
+	}
+	corrRepoPath := runArtifactRepoRel(runID, reviewerLensCorrectivePromptArtifact(reviewer.Name, lens))
+
+	result, err := a.runReviewLoopReviewerWithPrompt(liveOutput, runID, prep, reviewer, lens, timeout, nil, corrRepoPath)
+	if err != nil {
+		return reviewerResultDocument{}, false, []string{fmt.Sprintf("corrective attempt failed: %v", err)}
+	}
+
+	stdoutBytes, readErr := activeStore.ReadBytes(reviewerAttemptPaths(prep.Context.RunPaths, result.AttemptID).StdoutLog)
+	if readErr != nil {
+		return result, false, []string{fmt.Sprintf("corrective attempt stdout unreadable: %v", readErr)}
+	}
+	if len(stdoutBytes) == 0 {
+		return result, false, []string{"corrective attempt produced no output — parse miss"}
+	}
+
+	blocks, warnings := parseReviewerFindingBlocks(string(stdoutBytes))
+	if len(blocks) == 0 {
+		return result, false, warnings
+	}
+	if len(*blocks[0].Findings) == 0 {
+		return result, false, []string{"corrective attempt returned empty findings — unverifiable"}
+	}
+	return result, true, nil
 }
 
 func (a App) acceptReviewLoopProposal(context reviewContext, proposalID string) (reviewFindingRecord, error) {

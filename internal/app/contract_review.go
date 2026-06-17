@@ -509,7 +509,7 @@ func (a App) runContractReviewRound(
 				parseWarnings = append(parseWarnings, fmt.Sprintf("%s/%s: %s", reviewer.Name, lensKey, w))
 			}
 			for _, block := range blocks {
-				for _, rawFinding := range block.Findings {
+				for _, rawFinding := range *block.Findings {
 					var input reviewerFindingProposalInput
 					if err := json.Unmarshal(rawFinding, &input); err != nil {
 						parseWarnings = append(parseWarnings, fmt.Sprintf("%s/%s: finding skipped: invalid JSON", reviewer.Name, lensKey))

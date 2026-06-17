@@ -1893,6 +1893,81 @@ func TestReviewProposeFindingsSkipsInvalidProposals(t *testing.T) {
 	}
 }
 
+// TestReviewProposeFindingsRequiredFieldContract pins the required-field
+// rejection contract: message, severity, and category are required; absence
+// of any one rejects the finding with a warning. The optional fields (file,
+// line, blocking, confidence, evidence) are not required.
+func TestReviewProposeFindingsRequiredFieldContract(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+
+	// (a) All required fields present → accepted.
+	// (b) Missing message → rejected with warning.
+	// (c) Missing severity → rejected with warning.
+	// (d) Missing category → rejected with warning.
+	// (e) Optional fields absent → still accepted (only required fields matter).
+	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", reviewerStructuredOutput([]map[string]any{
+		// (a) valid — all required fields
+		{"message": "valid finding", "severity": "medium", "category": "quality"},
+		// (b) missing message
+		{"severity": "medium", "category": "quality"},
+		// (c) missing severity
+		{"message": "missing severity", "category": "quality"},
+		// (d) missing category
+		{"message": "missing category", "severity": "medium"},
+		// (e) optional fields absent — must still be accepted
+		{"message": "no optional fields", "severity": "low", "category": "correctness"},
+		// (e) optional fields present — also accepted
+		{
+			"message":    "all optional fields",
+			"severity":   "high",
+			"category":   "correctness",
+			"file":       "internal/app/review.go",
+			"line":       10,
+			"blocking":   true,
+			"confidence": "high",
+			"evidence":   "some evidence",
+		},
+	}), true)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "proposal", "collect", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review propose-findings --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var response reviewProposeFindingsResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+
+	// Three findings accepted: (a), (e-no-optional), (e-all-optional).
+	if len(response.Created) != 3 {
+		t.Fatalf("expected 3 accepted proposals (valid + 2 optional-field variants), got %d: %#v", len(response.Created), response.Created)
+	}
+	messages := make([]string, len(response.Created))
+	for i, p := range response.Created {
+		messages[i] = p.Message
+	}
+	for _, want := range []string{"valid finding", "no optional fields", "all optional fields"} {
+		found := false
+		for _, m := range messages {
+			if m == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected accepted proposal %q in %v", want, messages)
+		}
+	}
+
+	// Three findings rejected (b, c, d) — each must produce a warning.
+	warnings := strings.Join(response.Warnings, "\n")
+	for _, want := range []string{"message is required", "severity must be", "category must be"} {
+		if !strings.Contains(warnings, want) {
+			t.Fatalf("warnings missing %q:\n%v", want, response.Warnings)
+		}
+	}
+}
+
 func TestReviewProposeFindingsUsesExplicitAttemptID(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
@@ -2207,8 +2282,17 @@ func TestReviewPromptIncludesStructuredProposalContract(t *testing.T) {
 	runReviewCommand(t, app, "review", "plan", runID)
 	prompt := mustReadFile(t, reviewerLensPromptPath(runPaths, "claude", reviewLenses[0]))
 	for _, want := range []string{
-		"## Optional structured finding proposals",
+		"## Required structured output",
 		`"schema": "pactum.reviewer_findings.v1alpha1"`,
+		// Mandatory-block language.
+		"You MUST emit exactly one fenced JSON block",
+		"mandatory",
+		// Prose is supplemental only and ignored by the parser.
+		"Prose commentary is supplemental only; the parser ignores it.",
+		// Worked clean example with findings: [].
+		`"findings": []`,
+		"Clean example (no findings):",
+		// Existing contract assertions.
 		"Style or formatting preferences.",
 		"Read the actual file and surrounding context before proposing a finding.",
 		"Check whether the issue is already mitigated or already represented in existing findings/proposals.",
@@ -2216,6 +2300,14 @@ func TestReviewPromptIncludesStructuredProposalContract(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("reviewer prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	// The introductory line must not describe the block as optional.
+	for _, gone := range []string{
+		"may parse optional structured proposal blocks",
+	} {
+		if strings.Contains(prompt, gone) {
+			t.Fatalf("reviewer prompt still contains optional-block language %q:\n%s", gone, prompt)
 		}
 	}
 }
@@ -2730,6 +2822,9 @@ func TestReviewerHelperProcess(t *testing.T) {
 		fmt.Println("FINDING: critical issue in generated code")
 	}
 	fmt.Fprintln(os.Stderr, "reviewer-stderr-line")
+	// Always emit a mandatory structured block (even on non-zero exit, so
+	// the stdout.log has parseable content for artifact tests).
+	fmt.Print(reviewerStructuredOutput([]map[string]any{}))
 	if raw := os.Getenv("PACTUM_REVIEWER_EXIT"); raw != "" {
 		code, err := strconv.Atoi(raw)
 		if err != nil {

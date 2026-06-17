@@ -40,23 +40,33 @@ func TestResolveReviewerAttemptsForProposalsDefaultsToAllCompleted(t *testing.T)
 	}
 }
 
-// TestParseReviewerFindingBlocksWarnsOnUnparsedMarker mirrors the clarify-side
-// silent-zero guard: a findings schema marker that yields no parsed block is a
-// parse miss (e.g. a stream cut before the closing fence) and must warn
-// instead of reading as a clean review.
-func TestParseReviewerFindingBlocksWarnsOnUnparsedMarker(t *testing.T) {
+// TestParseReviewerFindingBlocksWarnsOnMissingBlock verifies that any
+// non-empty reviewer output without a valid findings block is a parse miss:
+// a truncated block, a prose-only response, or a schema block missing the
+// findings key all produce a warning; only truly empty input stays silent.
+func TestParseReviewerFindingBlocksWarnsOnMissingBlock(t *testing.T) {
 	truncated := "Findings below.\n```json\n{\"schema\": \"" + reviewerFindingsSchema + "\", \"findings\": [\n"
 	blocks, warnings := parseReviewerFindingBlocks(truncated)
 	if len(blocks) != 0 {
 		t.Fatalf("a block cut before its closing fence should not parse: %#v", blocks)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "parse miss") {
-		t.Fatalf("expected the parse-miss warning, got %v", warnings)
+	if len(warnings) == 0 || !strings.Contains(warnings[0], "parse miss") {
+		t.Fatalf("expected parse-miss warning for truncated block, got %v", warnings)
 	}
 
+	// Prose-only output (no schema marker) must also warn — it has no valid block.
 	blocks, warnings = parseReviewerFindingBlocks("no findings here at all")
+	if len(blocks) != 0 {
+		t.Fatalf("prose-only output must not parse any blocks: %#v", blocks)
+	}
+	if len(warnings) == 0 || !strings.Contains(warnings[0], "parse miss") {
+		t.Fatalf("prose-only output must warn about parse miss: %v", warnings)
+	}
+
+	// Genuinely empty input (zero bytes after agentMessageText) stays silent.
+	blocks, warnings = parseReviewerFindingBlocks("")
 	if len(blocks) != 0 || len(warnings) != 0 {
-		t.Fatalf("genuinely empty output must stay warning-free: %#v %v", blocks, warnings)
+		t.Fatalf("empty input must stay warning-free: %#v %v", blocks, warnings)
 	}
 }
 
