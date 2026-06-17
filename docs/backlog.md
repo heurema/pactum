@@ -682,17 +682,22 @@ selectors, judge panels by default, select on any MERGE stage.
   `contract-review-fix`) — preferred, one field — or keep the plan-DAG usage
   schema's separate `phase` (where) + function axes.
 
-- **ACP-only transport — remove the `claude -p` CLI path** (med). All agent
-  invocation must go through ACP (`internal/agents/acp_transport.go`). The
-  built-in claude descriptor (`internal/agents/config.go`) runs a CLI process
-  `claude -p --output-format json …`, while reviewers run over ACP — and that
-  split is the root cause of inconsistent token-usage capture (in the
-  2026-06-15 Sonnet dogfood the executor captured usage via the CLI
-  `parseClaudeUsage`, reviewers via ACP `PromptResponse.Usage`). Drop the CLI
-  claude descriptor and the CLI usage parsers (`parseClaudeUsage`, the `--json`
-  `parseCodexUsage` path in `internal/agents/usage.go`); usage then comes
-  uniformly from ACP `PromptResponse.Usage` (claude) and `codex/token_usage`
-  `_meta` (codex, via the forked adapter). Directive — keep one transport.
+- **ACP-only transport — DONE; permanent directive + residual cleanup** (small).
+  All agent invocation goes through ACP (`internal/agents/acp_transport.go`); the
+  `claude -p` / `codex exec` CLI paths and the CLITransport were removed (#152/#155)
+  — there is **no CLI invocation left in the code** (verified: no CLI descriptor, no
+  `claude -p`, no `codex exec`). **Directive (permanent): ACP is the ONLY transport
+  and the default everywhere; no CLI fallback may be reintroduced, and anything new
+  — new engines, usage capture, effort, timeouts — must go through ACP, never a CLI
+  shim.** Residual cleanup (small): (a) remove the 4 stale `// The CLI transport
+  ignores it` comments (`agent_attempt.go:48,52`, `acp_transport.go:234`,
+  `types.go:83`) — they reference a transport that no longer exists; (b) reconcile
+  docs that still describe `claude -p` / `codex exec` invocation as current
+  (`cost-budget-design.md`, `real-agent-execution-dogfood.md`) — keep them as history
+  only. This connects to the codex-usage item: *ACP by default everywhere* means
+  codex usage must capture via the **default** ACP adapter (upstream the
+  `codex/token_usage` meta), not via a fork / `PACTUM_CODEX_ACP_COMMAND` workaround
+  that re-smells the CLI era.
 - **Graceful reviewer degradation** (small-med). A reviewer model that is
   unavailable / rate-limited (or whose process dies) currently aborts the whole
   review loop with a non-zero exit — observed when `claude-fable-5` returned
