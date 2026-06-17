@@ -715,17 +715,47 @@ re-exploration the map could have served vs genuinely-needed file content.
     mid-task compaction and shipped a correct, in-scope engine *because* the
     two-layer verification (gate + the contract-encoding review panel, which caught
     two spec-drift bugs the tests missed) held — not because compaction was harmless.
-  - **A transient/flaky gate failure should not hard-stop the review loop** (small).
-    Observed live in `run_20260617_115334` (the `pactum usage` slice): the
-    code-review loop's in-loop gate hit `gate_failed` and terminated, but the full
-    suite was green 5× before and after (the fixer attributed it to flaky
-    pre-existing tests). The loop's hard-stop left the review non-approvable and
-    required a manual operator re-gate + override — brittle. Options: re-run the
-    gate once on `gate_failed` and only terminate on a *reproducible* failure;
-    distinguish a flaky/transient failure from a real regression; and separately,
-    **track down the flaky tests** (a flaky gate is a silent false-stop in any
-    autonomous loop). Ties to the resilience theme: a verifier that flakes is a
-    liveness hazard, not just a noise nuisance.
+  - **`PACTUM_CODEX_ACP_COMMAND` in the gate environment fails the adapter tests
+    deterministically** (small — was mis-filed as "flaky gate"). Originally
+    observed in `run_20260617_115334` (the `pactum usage` slice) and again during
+    plan-DAG slice 1: the in-loop gate hit `gate_failed` while the full suite was
+    green when run by hand. **Root cause found — it is not flaky.** When
+    `PACTUM_CODEX_ACP_COMMAND` is exported (the codex-usage fork override), the
+    adapter resolves the codex command to the fork path, so the tests that assert
+    the *default* `npx @zed-industries/codex-acp` invocation fail every time:
+    `TestExecutePlanAppliesExecutorModelConfigToCodex`, `TestExecutePlanExplicitCodex`,
+    `TestExecutePlanJSONOutput`, `TestExecutePlanPinAppliesOnlyToMatchingAgent`,
+    `TestAgentsDoctorSelectedBuiltIn`. The "green before and after" was simply runs
+    *without* the env. **Operational fix (now in practice): never set the fork env
+    on gate / `go test` / `review run` steps** — it is only for live codex execution
+    where usage capture matters. **Code fix (do): make those tests env-robust** —
+    either clear `PACTUM_CODEX_ACP_COMMAND` inside the test (t.Setenv to empty) or
+    assert against the resolved adapter command rather than hard-coding the default,
+    so a developer with the fork env exported in their shell still gets a green
+    suite. Separately the loop could re-run the gate once on `gate_failed` and only
+    terminate on a *reproducible* failure, but the adapter-test case is a real
+    deterministic failure, not noise — fix the tests, don't paper over with retries.
+
+- **codex reviewers inconsistently emit the structured findings envelope → the
+  review loop captures 0 findings while real ones exist** (medium — reliability).
+  Observed live in plan-DAG slice 1's code-review (`run_20260617_182429`): all five
+  codex lenses (correctness, implementation, tests, docs, over_engineering)
+  reasoned out **real, confirmed** findings in their stdout — a validation-gating
+  hole, a lossy plain-text renderer, three test-quality gaps, and a docs miss — but
+  only the `docs` and `tests` lenses wrapped them in the
+  `pactum.reviewer_findings.v1alpha1` JSON block. The others reported findings as
+  prose only, so the loop's structured sink aggregated **0 findings** and
+  `findings.jsonl` was empty, leaving the review trivially "clean" and approvable
+  despite four real issues. An operator had to read the raw stdout to recover them.
+  This is a silent false-negative in the review pipeline — the inverse of a flaky
+  gate. Options: (a) make the reviewer prompt's "emit exactly one JSON block"
+  instruction load-bearing and **reject/retry an attempt that produces prose
+  findings with no JSON envelope** (detect "Findings:" prose + no parsed block);
+  (b) add a cheap extraction fallback that parses the prose findings when the JSON
+  block is absent; (c) at minimum, **warn loudly** when a reviewer attempt exits 0
+  but yields no parsed findings *and* its stdout contains finding-like prose, so the
+  gap is never silent. Ties to the codex-adapter usage gap — codex-over-ACP is the
+  weak link in structured-output fidelity.
 
 - **Proactive fresh-context restart (pre-compaction), configurable** (feature —
   record only, not yet designed/built). The *reactive* policy above resumes after a

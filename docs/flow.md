@@ -158,6 +158,19 @@ hash. Revising an already-approved contract with content changes requires
 response reports `approval_reset`, `previous_approval_hash`, and
 `attempts_orphaned`.
 
+A contract may optionally carry a `plan` object holding a `tasks` array — the
+execution DAG. Each task has `id`, optional `title`, `depends_on` (ids of other
+tasks), `context` (evidence selectors: `path`+`lines` and/or `symbol`, with a
+`why`), advisory `expected_files`, and required non-empty `acceptance` and
+`validation` lists. `plan` is omitted entirely when there are no tasks, so a
+plan-less contract hashes identically to one before the field existed. Every
+revise validates the resulting plan structurally — unique ids, no missing
+`depends_on` targets, no dependency cycles, `expected_files` within
+`paths_in_scope`, and non-empty `acceptance`/`validation` — and rejects the
+revise atomically on any violation. Validation runs even when the update does
+not touch `plan` (for example narrowing `paths_in_scope`), so an approved
+contract can never hold a structurally invalid plan.
+
 ### Prompt
 
 `pactum prompt build <run_id>` builds the executor **prompt boundary**: a
