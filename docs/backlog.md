@@ -704,6 +704,17 @@ re-exploration the map could have served vs genuinely-needed file content.
     mid-task compaction and shipped a correct, in-scope engine *because* the
     two-layer verification (gate + the contract-encoding review panel, which caught
     two spec-drift bugs the tests missed) held — not because compaction was harmless.
+  - **A transient/flaky gate failure should not hard-stop the review loop** (small).
+    Observed live in `run_20260617_115334` (the `pactum usage` slice): the
+    code-review loop's in-loop gate hit `gate_failed` and terminated, but the full
+    suite was green 5× before and after (the fixer attributed it to flaky
+    pre-existing tests). The loop's hard-stop left the review non-approvable and
+    required a manual operator re-gate + override — brittle. Options: re-run the
+    gate once on `gate_failed` and only terminate on a *reproducible* failure;
+    distinguish a flaky/transient failure from a real regression; and separately,
+    **track down the flaky tests** (a flaky gate is a silent false-stop in any
+    autonomous loop). Ties to the resilience theme: a verifier that flakes is a
+    liveness hazard, not just a noise nuisance.
 
 - **Proactive fresh-context restart (pre-compaction), configurable** (feature —
   record only, not yet designed/built). The *reactive* policy above resumes after a
