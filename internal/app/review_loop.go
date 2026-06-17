@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	stdctx "context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,13 +17,21 @@ import (
 
 	"github.com/heurema/pactum/internal/agents"
 	"github.com/heurema/pactum/internal/ledger"
+	"github.com/heurema/pactum/internal/loop"
 )
 
 const (
 	reviewLoopSummarySchema   = "pactum.review_loop.v1alpha1"
 	reviewLoopSummaryArtifact = "review/loop-summary.json"
+)
 
-	reviewLoopTerminalFindingsOpen = "findings_open"
+// sentinel errors returned by the Step closure to signal early-exit conditions;
+// loop.Run propagates them verbatim so the call site can detect them with errors.Is.
+var (
+	errFindingsOpen     = errors.New("findings_open")
+	errReviewerUnparsed = errors.New("reviewer_findings_unparsed")
+	errGateFailed       = errors.New("gate_failed")
+	errResolved         = errors.New("resolved")
 )
 
 type reviewRunOptions struct {
@@ -161,7 +170,6 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 	if err != nil {
 		return err
 	}
-	maxRounds := limits.MaxRounds
 	reviewerNames := reviewLoopReviewerNames(reviewers)
 
 	startedAt := a.nowUTC()
@@ -170,7 +178,7 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 		RunID:               runID,
 		StartedAt:           startedAt.Format(time.RFC3339),
 		Reviewer:            strings.Join(reviewerNames, ","),
-		MaxRounds:           maxRounds,
+		MaxRounds:           limits.MaxRounds,
 		StalematePatience:   limits.Patience,
 		CleanRoundsRequired: limits.CleanRounds,
 		Rounds:              []reviewLoopRoundSummary{},
@@ -185,21 +193,21 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 		return err
 	}
 
-	var loopErr error
 	cleanStreak := 0
 	unchangedFingerprintStreak := 0
-	for round := 1; round <= maxRounds; round++ {
+
+	step := func(_ stdctx.Context, rc loop.RoundContext) (loop.RoundResult, error) {
+		round := rc.Round
+
 		reviewerResult, err := a.runReviewLoopReviewRound(context, liveOutput, runID, reviewers, options.Timeout)
 		if err != nil {
-			loopErr = err
-			break
+			return loop.RoundResult{}, err
 		}
 		proposals := reviewerResult.Proposals
 
 		openFindings, rebuttedFindings, err := reviewLoopDedupFindingFingerprints(context.RunPaths)
 		if err != nil {
-			loopErr = err
-			break
+			return loop.RoundResult{}, err
 		}
 		accepted := 0
 		duplicates := 0
@@ -207,13 +215,11 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 			fingerprint := fingerprintReviewFinding(proposal.findingCore)
 			if existingFinding, ok := openFindings[fingerprint]; ok {
 				if err := a.recordDuplicateReviewLoopProposal(context, proposal.ID, existingFinding.ID, "matches currently open finding"); err != nil {
-					loopErr = err
-					break
+					return loop.RoundResult{}, err
 				}
 				upgradedFinding, upgraded, err := a.upgradeDuplicateReviewFindingSeverity(context, existingFinding, proposal)
 				if err != nil {
-					loopErr = err
-					break
+					return loop.RoundResult{}, err
 				}
 				if upgraded {
 					openFindings[fingerprint] = upgradedFinding
@@ -223,27 +229,22 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 			}
 			if existingFinding, ok := rebuttedFindings[fingerprint]; ok {
 				if err := a.recordDuplicateReviewLoopProposal(context, proposal.ID, existingFinding.ID, "matches rebutted finding"); err != nil {
-					loopErr = err
-					break
+					return loop.RoundResult{}, err
 				}
 				duplicates++
 				continue
 			}
 			finding, err := a.acceptReviewLoopProposal(context, proposal.ID)
 			if err != nil {
-				loopErr = err
-				break
+				return loop.RoundResult{}, err
 			}
 			openFindings[fingerprint] = finding
 			accepted++
 		}
-		if loopErr != nil {
-			break
-		}
+
 		reviewSummaryAfterAccept, err := reviewLoopReviewSummary(context.RunPaths)
 		if err != nil {
-			loopErr = err
-			break
+			return loop.RoundResult{}, err
 		}
 
 		roundSummary := reviewLoopRoundSummary{
@@ -260,87 +261,77 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 			roundSummary.ReviewerAttemptIDs = append([]string{}, reviewerResult.AttemptIDs...)
 		}
 		roundSummary.ReviewerAttempts = append([]reviewLoopAttemptRef{}, reviewerResult.Attempts...)
-		// A round with no accepted or duplicate proposals ends the loop, but only a
-		// round that reported NOTHING is a clean pass. If the reviewer reported
-		// findings that could not be parsed into proposals (warnings), the code was
-		// not actually cleared.
+
+		// Path (3) and (4): proposals.Created == 0 (accepted == 0 && duplicates == 0 by invariant)
 		if accepted == 0 && duplicates == 0 {
-			if len(proposals.Created) == 0 && len(proposals.Warnings) == 0 {
+			if len(proposals.Warnings) == 0 {
+				// Path (4): clean round — no proposals, no warnings.
 				cleanStreak++
-			} else {
-				cleanStreak = 0
+				roundSummary.CleanStreak = cleanStreak
+				roundSummary.UnchangedFingerprintStreak = unchangedFingerprintStreak
+				fingerprint, err := a.reviewLoopWorkingTreeFingerprint(context)
+				if err != nil {
+					summary.Rounds = append(summary.Rounds, roundSummary)
+					return loop.RoundResult{}, err
+				}
+				roundSummary.WorkingTreeFingerprint = fingerprint
+				summary.Rounds = append(summary.Rounds, roundSummary)
+				return loop.RoundResult{Clean: true}, nil
 			}
+			// Path (3): no proposals but warnings → reviewer output unparseable.
+			cleanStreak = 0
 			roundSummary.CleanStreak = cleanStreak
 			roundSummary.UnchangedFingerprintStreak = unchangedFingerprintStreak
 			fingerprint, err := a.reviewLoopWorkingTreeFingerprint(context)
 			if err != nil {
 				summary.Rounds = append(summary.Rounds, roundSummary)
-				loopErr = err
-				break
+				return loop.RoundResult{}, err
 			}
 			roundSummary.WorkingTreeFingerprint = fingerprint
 			summary.Rounds = append(summary.Rounds, roundSummary)
-			if len(proposals.Warnings) > 0 {
-				summary.TerminalReason = "reviewer_findings_unparsed"
-			} else if cleanStreak >= limits.CleanRounds {
-				summary.TerminalReason = "clean_round"
-			} else if round == maxRounds {
-				summary.TerminalReason = "max_rounds"
-			} else {
-				continue
-			}
-			break
+			return loop.RoundResult{}, errReviewerUnparsed
 		}
 
+		// proposals.Created > 0 — path (1) or (2).
 		cleanStreak = 0
 		roundSummary.CleanStreak = cleanStreak
 
-		// Fixer gate: only OPEN BLOCKING findings drive the fixer. A round whose
-		// accepted proposals are all advisory (non-blocking) leaves no blocking
-		// work, so the loop converges resolved without invoking the fixer.
+		// Path (2): proposals created but no blocking findings — resolve without fixer.
 		if reviewSummaryAfterAccept.BlockingOpen == 0 {
 			roundSummary.UnchangedFingerprintStreak = unchangedFingerprintStreak
 			fingerprint, err := a.reviewLoopWorkingTreeFingerprint(context)
 			if err != nil {
 				summary.Rounds = append(summary.Rounds, roundSummary)
-				loopErr = err
-				break
+				return loop.RoundResult{}, err
 			}
 			roundSummary.WorkingTreeFingerprint = fingerprint
 			summary.Rounds = append(summary.Rounds, roundSummary)
-			summary.TerminalReason = "resolved"
-			break
+			return loop.RoundResult{}, errResolved
 		}
 
-		// With --no-fix nothing can change the tree, so further reviewer-only
-		// rounds would only churn: stop at the first round that leaves open
-		// blocking findings and hand the review to the human.
+		// Path (1): blocking findings remain; try to fix unless --no-fix.
 		if options.NoFix {
 			roundSummary.UnchangedFingerprintStreak = unchangedFingerprintStreak
 			fingerprint, err := a.reviewLoopWorkingTreeFingerprint(context)
 			if err != nil {
 				summary.Rounds = append(summary.Rounds, roundSummary)
-				loopErr = err
-				break
+				return loop.RoundResult{}, err
 			}
 			roundSummary.WorkingTreeFingerprint = fingerprint
 			summary.Rounds = append(summary.Rounds, roundSummary)
-			summary.TerminalReason = reviewLoopTerminalFindingsOpen
-			break
+			return loop.RoundResult{}, errFindingsOpen
 		}
 
 		fingerprintBefore, err := a.reviewLoopWorkingTreeFingerprint(context)
 		if err != nil {
 			summary.Rounds = append(summary.Rounds, roundSummary)
-			loopErr = err
-			break
+			return loop.RoundResult{}, err
 		}
 
 		fixResult, err := a.runReviewLoopFixRound(liveOutput, runID, options.Agent, options.Timeout)
 		if err != nil {
 			summary.Rounds = append(summary.Rounds, roundSummary)
-			loopErr = err
-			break
+			return loop.RoundResult{}, err
 		}
 		if summary.Agent == "" {
 			summary.Agent = fixResult.Fixer
@@ -349,8 +340,7 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 		fixOutcomes, err := a.applyReviewLoopFixOutcomes(runID, fixResult.AttemptID)
 		if err != nil {
 			summary.Rounds = append(summary.Rounds, roundSummary)
-			loopErr = err
-			break
+			return loop.RoundResult{}, err
 		}
 		roundSummary.FixOutcomesResolved = fixOutcomes.Fixed
 		roundSummary.FixOutcomesRebutted = fixOutcomes.Rebutted
@@ -359,22 +349,21 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 		reviewSummaryAfterFix, err := reviewLoopReviewSummary(context.RunPaths)
 		if err != nil {
 			summary.Rounds = append(summary.Rounds, roundSummary)
-			loopErr = err
-			break
+			return loop.RoundResult{}, err
 		}
 		roundSummary.OpenFindings = reviewSummaryAfterFix.Open
 		roundSummary.OpenBlockingFindings = reviewSummaryAfterFix.BlockingOpen
 		fingerprintAfter, err := a.reviewLoopWorkingTreeFingerprint(context)
 		if err != nil {
 			summary.Rounds = append(summary.Rounds, roundSummary)
-			loopErr = err
-			break
+			return loop.RoundResult{}, err
 		}
 		roundSummary.WorkingTreeFingerprint = fingerprintAfter
-		if fingerprintAfter == fingerprintBefore {
-			unchangedFingerprintStreak++
-		} else {
+		progress := fingerprintAfter != fingerprintBefore
+		if progress {
 			unchangedFingerprintStreak = 0
+		} else {
+			unchangedFingerprintStreak++
 		}
 		roundSummary.UnchangedFingerprintStreak = unchangedFingerprintStreak
 
@@ -385,31 +374,50 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 				roundSummary.GateStatus = gateReport.Status
 				roundSummary.GateReportArtifact = gateReportArtifact
 				summary.Rounds = append(summary.Rounds, roundSummary)
-				summary.TerminalReason = "gate_failed"
-				break
+				return loop.RoundResult{}, errGateFailed
 			}
 			summary.Rounds = append(summary.Rounds, roundSummary)
-			loopErr = err
-			break
+			return loop.RoundResult{}, err
 		}
 		roundSummary.GateStatus = gateReport.Status
 		roundSummary.GateReportArtifact = gateReportArtifact
 		summary.Rounds = append(summary.Rounds, roundSummary)
 
-		// Primary success terminal: no open blocking findings remain after the
-		// fixer applied its outcomes — the same condition that makes a review
-		// approvable. Non-blocking findings may still be open (advisory).
+		// Primary success terminal: no open blocking findings after fixer outcomes.
 		if reviewSummaryAfterFix.BlockingOpen == 0 {
-			summary.TerminalReason = "resolved"
-			break
+			return loop.RoundResult{}, errResolved
 		}
-		if unchangedFingerprintStreak >= limits.Patience {
+
+		return loop.RoundResult{Clean: false, Progress: progress}, nil
+	}
+
+	outcome, loopErr := loop.Run(stdctx.Background(), loop.Limits{
+		Max:      limits.MaxRounds,
+		Patience: limits.Patience,
+		Settle:   limits.CleanRounds,
+	}, step)
+
+	switch {
+	case errors.Is(loopErr, errFindingsOpen):
+		summary.TerminalReason = "findings_open"
+		loopErr = nil
+	case errors.Is(loopErr, errReviewerUnparsed):
+		summary.TerminalReason = "reviewer_findings_unparsed"
+		loopErr = nil
+	case errors.Is(loopErr, errGateFailed):
+		summary.TerminalReason = "gate_failed"
+		loopErr = nil
+	case errors.Is(loopErr, errResolved):
+		summary.TerminalReason = "resolved"
+		loopErr = nil
+	case loopErr == nil:
+		switch outcome.Reason {
+		case "settled":
+			summary.TerminalReason = "clean_round"
+		case "stalemate":
 			summary.TerminalReason = "stalemate"
-			break
-		}
-		if round == maxRounds {
+		case "max":
 			summary.TerminalReason = "max_rounds"
-			break
 		}
 	}
 
