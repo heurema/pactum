@@ -1,0 +1,13 @@
+{
+  "schema": "pactum.contract_review_fixer_result.v1alpha1",
+  "run_id": "run_20260617_182429",
+  "attempt_id": "contract_fixer_attempt_001",
+  "fixer": "claude",
+  "started_at": "2026-06-17T18:29:34.936359Z",
+  "finished_at": "2026-06-17T18:31:00.975902Z",
+  "duration_ms": 86039,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "contract/fixer/attempts/contract_fixer_attempt_001/stdout.log",
+  "stderr": "contract/fixer/attempts/contract_fixer_attempt_001/stderr.log"
+}

@@ -1,0 +1,29 @@
+{
+  "schema": "pactum.execution_request.v1alpha1",
+  "run_id": "run_20260617_182429",
+  "attempt_id": "attempt_001",
+  "created_at": "2026-06-17T18:46:30Z",
+  "contract_sha256": "8d26748fd3ff3b25c7115aa0d7cc08a75b58a371a85af1473acac5ba1919c6a8",
+  "agent": {
+    "name": "claude",
+    "command": "",
+    "args": [],
+    "input": "prompt_file"
+  },
+  "artifacts": {
+    "prompt": "contract/prompt.md",
+    "executor_context": "context/executor-context.md",
+    "prompt_manifest": "contract/prompt-manifest.json"
+  },
+  "would_run": {
+    "command": "npx",
+    "args": [
+      "-y",
+      "@agentclientprotocol/claude-agent-acp@latest"
+    ],
+    "env": [
+      "ANTHROPIC_MODEL=claude-sonnet-4-6",
+      "CLAUDE_CODE_EFFORT_LEVEL=max"
+    ]
+  }
+}
