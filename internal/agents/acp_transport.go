@@ -231,8 +231,7 @@ type acpClient struct {
 	// client method: any protocol traffic from the agent (session updates of
 	// every kind, permission requests, file reads/writes, terminal calls)
 	// proves it is alive, even when nothing is streamed to the output. Nil
-	// when no timeout is armed (and for the CLI transport, which never builds
-	// an acpClient); ticking is signal-only and never writes to the log.
+	// when no timeout is armed; ticking is signal-only and never writes to the log.
 	activity func()
 
 	// onFirstOutput fires once on the first non-empty agent message chunk
