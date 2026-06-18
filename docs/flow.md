@@ -15,7 +15,7 @@ report, the review, and the accepted memory are all files you can read.
 | Status / search | `pactum status`, `pactum search "<query>"` | — (reads map + workspace) | No |
 | Task | `pactum task new "<task>"`, `pactum task list`, `pactum task show`, `pactum task use` | `runs/<id>/run.json`, `task.md`, `context/repo-context.md`, `context/search-results.json`, `context/memory-context.md`, `contract/contract.json`, `contract/contract.md`, `contract/approval.json`, `cache/current-run` | `new`/`use`: Yes; `list`/`show`: No |
 | Clarify | `pactum clarify add`, `pactum clarify answer`, `pactum clarify run`, `pactum clarify show` | `clarify/questions.jsonl`, `clarify/answers.jsonl`, `clarify/decisions.jsonl`, `clarify/loop-summary.json` | `add`/`answer`/`run`: Yes; `show`: No |
-| Contract | `pactum contract revise`, `pactum contract approve`, `pactum contract show`, `pactum plan show`, `pactum plan review` | `contract/contract.json`, `contract/contract.md`, `contract/approval.json`, `plan-review/<agent>/{prompt.txt,attempt-N.txt}`, `plan-review/findings.json` | `revise`/`approve`/`plan review`: Yes; `show`/`plan show`: No |
+| Contract | `pactum contract revise`, `pactum contract approve`, `pactum contract show`, `pactum plan show`, `pactum plan review`, `pactum plan context` | `contract/contract.json`, `contract/contract.md`, `contract/approval.json`, `plan-review/<agent>/{prompt.txt,attempt-N.txt}`, `plan-review/findings.json`, `execute/context/<task_id>.md` | `revise`/`approve`/`plan review`/`plan context`: Yes; `show`/`plan show`: No |
 | Prompt | `pactum prompt build`, `pactum prompt show` | `contract/prompt.md`, `contract/prompt-manifest.json`, `context/executor-context.md`, `context/memory-context.md`, `context/memory-selection.json` | `build`: Yes; `show`: No |
 | Execute | `pactum execute plan`, `pactum execute run`, `pactum execute show` | `execute/dry-run.json`, `execute/attempts/attempt_NNN/{request,result,stdout,stderr}`, `execute/last-result.json` | `plan`/`run`: Yes; `show`: No |
 | Gate | `pactum gate run`, `pactum gate show` | `gate/gate-report.json`, `gate/validation/command_NNN/{stdout,stderr,result}` | `run`: Yes; `show`: No |
@@ -203,6 +203,19 @@ severity) and 0 when the panel reports no findings, making it gatable from
 pipeline scripts. With `--json`, it writes a structured JSON object to stdout
 with fields `no_plan`, `no_reviewers`, and `findings`. When the approved
 contract has no plan, the command is a clear no-op that exits 0.
+
+`pactum plan context [run_id] [--json]` builds, for each plan task, a
+deterministic **context pack** — the task's `context[]` evidence selectors
+resolved to repo-relative file slices (path+line ranges and resolved symbols,
+each with its `why`) plus the task's acceptance and frozen validation and the
+constitution constraints — written to `execute/context/<task_id>.md` and
+hashed. Oversized slices/packs are truncated with an explicit marker and a
+`pactum search` pointer (never silently dropped); missing files, invalid line
+ranges, binary content, and unresolved symbols degrade to an explicit note
+rather than failing. The command also runs each task's **baseline-red** check
+(the task's validation against the unchanged tree) and reports the
+classification. These are the per-task node primitives the topological executor
+will consume; this command exposes them for inspection ahead of the loop.
 
 ### Prompt
 

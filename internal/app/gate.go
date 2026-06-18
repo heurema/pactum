@@ -508,6 +508,57 @@ func gateScopeBlocked(scope *gateScopeReport) bool {
 	return scope != nil && scope.Status == "blocked"
 }
 
+// runShellCommandIO executes commandText as sh -c from root, directing stdout
+// and stderr to the provided writers. It handles process-group management and
+// timeout, returning the exit code and whether the command timed out. A non-zero
+// exit code is not an error; callers inspect exitCode directly.
+func runShellCommandIO(root, commandText string, stdout, stderr io.Writer, timeout time.Duration) (exitCode int, timedOut bool, _ error) {
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	cmd := exec.Command("sh", "-c", commandText)
+	setValidationCommandProcessGroup(cmd)
+	cmd.Dir = root
+	cmd.Env = os.Environ()
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+
+	if err := cmd.Start(); err != nil {
+		return -1, false, fmt.Errorf("start command: %w", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	var runErr error
+	select {
+	case runErr = <-done:
+	case <-ctx.Done():
+		killValidationCommandProcessGroup(cmd)
+		runErr = <-done
+	}
+
+	timedOut = errors.Is(ctx.Err(), context.DeadlineExceeded)
+	exitCode = 0
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = -1
+			fmt.Fprintln(stderr, runErr.Error())
+		}
+	}
+	if timedOut && exitCode == 0 {
+		exitCode = -1
+	}
+	return exitCode, timedOut, nil
+}
+
 func (a App) runGateValidationCommand(root string, runPaths contractRunPathSet, id string, commandText string, timeout time.Duration) (gateValidationCommandReport, error) {
 	commandDir := filepath.Join(runPaths.GateValidationDir, id)
 	if err := os.MkdirAll(commandDir, 0o755); err != nil {
@@ -533,52 +584,11 @@ func (a App) runGateValidationCommand(root string, runPaths contractRunPathSet, 
 	defer stderrFile.Close()
 
 	started := time.Now().UTC()
-	ctx := context.Background()
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-
-	command := exec.Command("sh", "-c", commandText)
-	setValidationCommandProcessGroup(command)
-	command.Dir = root
-	command.Env = os.Environ()
-	command.Stdout = stdoutFile
-	command.Stderr = stderrFile
-
-	if err := command.Start(); err != nil {
+	exitCode, timedOut, err := runShellCommandIO(root, commandText, stdoutFile, stderrFile, timeout)
+	if err != nil {
 		return gateValidationCommandReport{}, err
 	}
-
-	done := make(chan error, 1)
-	go func() {
-		done <- command.Wait()
-	}()
-
-	var runErr error
-	select {
-	case runErr = <-done:
-	case <-ctx.Done():
-		killValidationCommandProcessGroup(command)
-		runErr = <-done
-	}
 	finished := time.Now().UTC()
-
-	exitCode := 0
-	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
-	if runErr != nil {
-		var exitError *exec.ExitError
-		if errors.As(runErr, &exitError) {
-			exitCode = exitError.ExitCode()
-		} else {
-			exitCode = -1
-			fmt.Fprintln(stderrFile, runErr.Error())
-		}
-	}
-	if timedOut && exitCode == 0 {
-		exitCode = -1
-	}
 
 	result := validationCommandResultDocument{
 		Schema:  validationCommandResultSchema,
