@@ -240,13 +240,18 @@ loop:
 3. **Validation freeze (the immune system) + `plan_review` hook.** Frozen / non-vacuous
    / baseline-red enforced in code; `pipeline.plan_review.{by}` single-pass with the
    lenses. **Blocking prerequisite before any unattended loop.**
-4. **Minimal topological `execute` loop (auto-only).** Outer scheduler + per-node
-   `loop.Run{Max}`; deterministic context-pack (resolve `context[]` → file slices);
-   commit-on-pass / contain-on-block (workspace boundary); per-node frozen validation;
-   constitution gate after drain. **No `--task` (one writer).** Handoff/context-loss
-   classification wired from run #1. *This slice is the Phase-0 instrument — on
-   probation.*
-   **— hard pre-registered GO/NO-GO gate here → gates everything below —**
+4. **Minimal topological `execute` loop (auto-only).** Split into two shippable PRs
+   (see *Slice 4, finalized* below):
+   - **4a — the node without the loop.** Deterministic context-pack (resolve
+     `context[]` → file slices); per-node frozen-validation runner; baseline-red; the
+     `execute.loop` config gate (reject non-default `patience`/`settle`). Tested on a
+     hand-written single-task plan. No scheduler, no snapshot, no commits.
+   - **4b — the loop.** Outer scheduler + per-node `loop.Run{Max}` with retry-feedback;
+     the workspace boundary (scoped content snapshot + two guards); `tasks-state.json`;
+     drain → constitution gate; terminal states; GO/NO-GO instrumentation.
+   **No `--task` (one writer).** Handoff/context-loss classification wired from run #1.
+   *This slice is the Phase-0 instrument — on probation.*
+   **— hard pre-registered GO/NO-GO gate after 4b → gates everything below —**
 5. **Usage rows gain `task_id` / `role` / `attempt_no` / `contract_revision`** (facts
    only; weak-vs-strong derived at rollup, no stored `tier`).
 6. **Single-writer lease + `--task <id>` / `--by <agent>`.** `--task` is the first
@@ -257,6 +262,93 @@ loop:
 **Never:** unbounded/multi-revision auto-replan, in-place unhashed amendments,
 multi-round plan-review convergence, parallel branch execution, auto-expansion-by-
 complexity, broad per-task routing.
+
+## Slice 4, finalized (after design panels: opus + sonnet + gpt-5.5)
+
+The execution model above stands; three decisions were pinned by adversarial panels and
+must be honored when building 4a/4b.
+
+### Per-node retry carries feedback
+Each attempt is a fresh ACP session, so a naive retry re-runs from the identical base +
+prompt and thrashes (the review loop avoids this only because findings feed the fixer).
+Therefore the per-node `loop.Run` **feeds the prior attempt's validation-failure output
+into the next attempt's prompt suffix** (volatile, behind the cached prefix). Without it,
+`Max>1` mostly burns tokens; with it, the node can self-correct.
+
+### Baseline-red is the teeth, strongest on test-shaped validations
+Before any executor attempt, run the task's frozen `validation` against the unchanged
+tree and require it to **fail**. A **test-shaped** validation that is already green is
+auto-`blocked` (it cannot be a real check — this also catches the Go `-run NoSuchTest`
+exit-0 trap). Build/lint validations that are green-before are recorded as a GO/NO-GO
+signal rather than a hard block (they false-block legitimate refactor/add-behind-flag
+tasks). Frozen: the executor may run a validation, never author it; a task diff that
+touches the hashed `contract.json` is a tamper `human` stop.
+
+### Workspace boundary — scoped content snapshot, NOT git commits
+The boundary is **git-independent** (pactum tracks changes by hash, not git, and must be
+correct in arbitrary user repos where `.gitignore` hides `node_modules`/`dist`/`bin`/
+secrets). Mechanism:
+- **Snapshot** at task start: copy bytes **+ mode + type** (`lstat`; handle binaries,
+  exec-bit, symlinks) of files under `paths_in_scope − paths_out_of_scope` into
+  gitignored `.heurema/pactum/tmp/…`. Backups never land in a versioned path.
+- **Attribute** by re-walking the same set after the attempt (changed / new / deleted).
+- **On pass:** keep the changes (they accumulate in the working tree; final result is the
+  cumulative tree committed once at ship, exactly like single-shot `execute` today —
+  no per-task commits). Record `files_touched`.
+- **On block:** preserve the failing diff as an artifact, then restore the snapshot
+  (modified → prior bytes+mode, new → delete, deleted → recreate); stall only the subtree.
+
+The design's earlier `base_head`/`commit` git fields become snapshot references; per-task
+git commits are deferred to the parallel slice (a content snapshot promotes to a commit
+trivially when worktrees arrive).
+
+**Two guards (both required, regardless of snapshot):**
+1. **Whole-tree out-of-scope detector.** Verified fact: a **codex executor writes
+   natively** and is sandboxed only on read-only legs (`acpAdapterCommand`,
+   `internal/agents/acp_transport.go`) — so pactum's `WriteTextFile` scope check is NOT
+   in codex's write path; codex can write outside `paths_in_scope`. Validation commands
+   (`gofmt -w`, `go generate`, build) also write outside it via `sh -c`. So after each
+   attempt, reuse `buildGateChangeReport` (whole-tree hash diff) and treat any
+   out-of-scope change as an **out-of-scope blocker** (below) — the scoped snapshot
+   covers the in-scope rollback domain (sound for the scope-enforced claude executor, the
+   current default); out-of-scope escapes are surfaced, not silently propagated. *Deferred
+   (follow-on):* full auto-rollback of codex escapes via `sandbox_mode="workspace-write"`
+   on execute + a whole-tree snapshot.
+2. **Clean-in-scope precondition.** Refuse to start if the tree is dirty **within**
+   `paths_in_scope` (excludes `.heurema` and unrelated dirt — not a global clean
+   requirement). This is the attribution guarantee; the snapshot is the rollback tool.
+
+Also: reject empty/over-broad `paths_in_scope` (else the snapshot walks `node_modules`).
+
+### Out-of-scope is a structured blocker, not a crash — and the human is reached via an agent
+A human drives pactum **through an agent**, so the loop is **non-interactive** and every
+escalation is **machine-readable and action-oriented** for the driving agent:
+- The **executor** is told (in the node prompt) to stay in scope and, if the task
+  genuinely needs an out-of-scope file, to **stop and declare a blocker** (file + why)
+  rather than fight the write denial.
+- An out-of-scope condition (declared, or detected by guard 1) records a structured
+  `blocker { reason: "out_of_scope", files, why, proposed: { paths_in_scope_add } }` plus
+  `next` commands, in `tasks-state.json` / `plan show --json`, with the attempted diff as
+  an artifact. The node blocks (subtree stalls); the run ends `blocked`, not crashed.
+- The **driving agent** (separate from the executor) reads the structured blocker between
+  runs, surfaces it to the human with the diff + proposed scope delta, and on approval
+  executes the resolution (`contract revise` to widen scope + `approve --by manual`, then
+  re-run). Scope is never auto-widened — it bounces to the human gate, conveyed through
+  the agent. `--by manual` is the human's recorded decision relayed by the agent; pactum
+  needs clean structured I/O + `next`, never a TTY prompt.
+
+### tasks-state.json (unhashed, single-writer, structure-incapable)
+Per task: `status` (pending/ready/done/blocked/blocked-upstream), `attempts`, `by`,
+`files_touched`, `snapshot` ref, `baseline` result, `validation` result, `blocker`
+(`reason`/`files`/`why`/`proposed`, strings only). No nodes/edges/validation definitions
+(those stay in the hashed contract). Per-task ACP attempts under `execute/tasks/<id>/`.
+
+### GO/NO-GO honesty
+Real, trustworthy signals (from the ACP usage ledger + tasks-state): tokens, retries per
+node, blocked nodes, baseline-green rate, context-pack bytes. **Handoff/context-loss is
+NOT a loop metric** (ACP exposes no file-read telemetry) — it is a structured
+human/reviewer classification over the run. The gate rests on real cost data + that
+classification, sold honestly as such.
 
 ## Forward-compat: parallel worktrees (deferred, but the model already supports it)
 
