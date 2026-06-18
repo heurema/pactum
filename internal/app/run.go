@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -796,54 +797,63 @@ func renderContractMDFromDraft(contract draftContract, mapRunID string, searchRe
 	}
 	if contract.Plan != nil && len(contract.Plan.Tasks) > 0 {
 		fmt.Fprintln(&buffer)
-		fmt.Fprintf(&buffer, "## Plan (%d tasks)\n", len(contract.Plan.Tasks))
-		for _, task := range contract.Plan.Tasks {
-			fmt.Fprintln(&buffer)
-			if task.Title != "" {
-				fmt.Fprintf(&buffer, "### %s: %s\n", task.ID, task.Title)
-			} else {
-				fmt.Fprintf(&buffer, "### %s\n", task.ID)
-			}
-			if len(task.DependsOn) > 0 {
-				fmt.Fprintf(&buffer, "Depends on: %s\n", strings.Join(task.DependsOn, ", "))
-			}
-			if len(task.Context) > 0 {
-				fmt.Fprintln(&buffer, "Context:")
-				for _, ctx := range task.Context {
-					fmt.Fprint(&buffer, "-")
-					if ctx.Symbol != "" {
-						fmt.Fprintf(&buffer, " symbol %s", ctx.Symbol)
-					}
-					if ctx.Path != "" {
-						fmt.Fprintf(&buffer, " %s", ctx.Path)
-						if ctx.Lines != "" {
-							fmt.Fprintf(&buffer, " lines %s", ctx.Lines)
-						}
-					}
-					if ctx.Why != "" {
-						fmt.Fprintf(&buffer, " — %s", ctx.Why)
-					}
-					fmt.Fprintln(&buffer)
+		writePlanSection(&buffer, contract.Plan)
+	}
+	return buffer.Bytes()
+}
+
+// writePlanSection renders the plan.tasks[] to w as a "## Plan (N tasks)" markdown
+// section. It is a no-op when plan is nil or has no tasks.
+func writePlanSection(w io.Writer, plan *contractPlan) {
+	if plan == nil || len(plan.Tasks) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "## Plan (%d tasks)\n", len(plan.Tasks))
+	for _, task := range plan.Tasks {
+		fmt.Fprintln(w)
+		if task.Title != "" {
+			fmt.Fprintf(w, "### %s: %s\n", task.ID, task.Title)
+		} else {
+			fmt.Fprintf(w, "### %s\n", task.ID)
+		}
+		if len(task.DependsOn) > 0 {
+			fmt.Fprintf(w, "Depends on: %s\n", strings.Join(task.DependsOn, ", "))
+		}
+		if len(task.Context) > 0 {
+			fmt.Fprintln(w, "Context:")
+			for _, ctx := range task.Context {
+				fmt.Fprint(w, "-")
+				if ctx.Symbol != "" {
+					fmt.Fprintf(w, " symbol %s", ctx.Symbol)
 				}
-			}
-			if len(task.ExpectedFiles) > 0 {
-				fmt.Fprintf(&buffer, "Expected files: %s\n", strings.Join(task.ExpectedFiles, ", "))
-			}
-			if len(task.Acceptance) > 0 {
-				fmt.Fprintln(&buffer, "Acceptance:")
-				for _, a := range task.Acceptance {
-					fmt.Fprintf(&buffer, "- %s\n", a)
+				if ctx.Path != "" {
+					fmt.Fprintf(w, " %s", ctx.Path)
+					if ctx.Lines != "" {
+						fmt.Fprintf(w, " lines %s", ctx.Lines)
+					}
 				}
-			}
-			if len(task.Validation) > 0 {
-				fmt.Fprintln(&buffer, "Validation:")
-				for _, v := range task.Validation {
-					fmt.Fprintf(&buffer, "- %s\n", v)
+				if ctx.Why != "" {
+					fmt.Fprintf(w, " — %s", ctx.Why)
 				}
+				fmt.Fprintln(w)
+			}
+		}
+		if len(task.ExpectedFiles) > 0 {
+			fmt.Fprintf(w, "Expected files: %s\n", strings.Join(task.ExpectedFiles, ", "))
+		}
+		if len(task.Acceptance) > 0 {
+			fmt.Fprintln(w, "Acceptance:")
+			for _, a := range task.Acceptance {
+				fmt.Fprintf(w, "- %s\n", a)
+			}
+		}
+		if len(task.Validation) > 0 {
+			fmt.Fprintln(w, "Validation:")
+			for _, v := range task.Validation {
+				fmt.Fprintf(w, "- %s\n", v)
 			}
 		}
 	}
-	return buffer.Bytes()
 }
 
 func renderPromptMDFromDraft(contract draftContract) []byte {
