@@ -218,6 +218,8 @@ var (
 		"clarify":         true,
 		"contract_review": true,
 		"code_review":     true,
+		// execute supports loop.max only; patience and settle are rejected below.
+		"execute": true,
 	}
 	// stageMultiAgentAllowed is the closed set of stages that may name more than
 	// one agent in by (the panel stages).
@@ -249,6 +251,16 @@ func validatePipeline(pipeline pipelineConfig, registry []agentRegistryEntry) er
 	for _, ns := range stages {
 		if ns.stage.Loop != nil && !stageLoopAllowed[ns.name] {
 			return fmt.Errorf("config pipeline.%s: loop is not valid for this stage", ns.name)
+		}
+		// execute.loop only exposes max; patience and settle have no defined
+		// semantics for a binary per-node runner and are rejected at load time.
+		if ns.name == "execute" && ns.stage.Loop != nil {
+			if ns.stage.Loop.Patience != 0 {
+				return fmt.Errorf("config pipeline.execute.loop: patience is not configurable (only max is valid for execute)")
+			}
+			if ns.stage.Loop.Settle > 1 {
+				return fmt.Errorf("config pipeline.execute.loop: settle is not configurable (only max is valid for execute)")
+			}
 		}
 		// Count and validate non-empty by entries only; empty strings are treated
 		// as absent and normalized out after this validation step.

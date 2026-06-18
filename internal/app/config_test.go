@@ -206,7 +206,7 @@ func TestReadConfigParsesPipelineByList(t *testing.T) {
 func TestReadConfigPipelineLoopValidation(t *testing.T) {
 	loopSnippet := "    loop:\n      max: 3\n"
 	// loop is accepted on the loop-capable stages.
-	for _, stage := range []string{"clarify", "contract_review", "code_review"} {
+	for _, stage := range []string{"clarify", "contract_review", "code_review", "execute"} {
 		t.Run("accepted on "+stage, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "config.yaml")
@@ -220,7 +220,7 @@ func TestReadConfigPipelineLoopValidation(t *testing.T) {
 		})
 	}
 	// loop is rejected on the non-loop stages.
-	for _, stage := range []string{"contract_draft", "execute", "memory"} {
+	for _, stage := range []string{"contract_draft", "memory"} {
 		t.Run("rejected on "+stage, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "config.yaml")

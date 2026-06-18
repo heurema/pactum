@@ -75,8 +75,14 @@ type contractCmd struct {
 }
 
 type planCmd struct {
-	Show   planShowCmd   `cmd:"show" help:"Show the contract's static plan DAG."`
-	Review planReviewCmd `cmd:"review" help:"Run a single-pass reviewer panel over the plan DAG."`
+	Show    planShowCmd    `cmd:"show" help:"Show the contract's static plan DAG."`
+	Review  planReviewCmd  `cmd:"review" help:"Run a single-pass reviewer panel over the plan DAG."`
+	Context planContextCmd `cmd:"context" help:"Build per-task context packs and run baseline validation checks."`
+}
+
+type planContextCmd struct {
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to prepare context for."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type planShowCmd struct {
