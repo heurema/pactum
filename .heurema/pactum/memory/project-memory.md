@@ -155,3 +155,10 @@
 - Files: docs/flow.md, internal/app/cli.go, internal/app/commands.go, internal/app/contract_draft.go, internal/app/plan.go, internal/app/plan_test.go, internal/app/run.go
 - Summary: Reviewed run run_20260618_054400 with gate status needs_review and review status approved. Goal: Plan-DAG slice 2: the contract drafter emits an optional plan.tasks[] DAG, and add `pactum plan show` to render the static DAG. This is slic...
 - Candidate: runs/run_20260618_054400/memory/memory-candidate.json
+
+### mem_023 - Plan-DAG slice 3: the plan immune system (entry) — static non-vacuous validat...
+- Run: run_20260618_071101
+- Freshness: fresh
+- Files: docs/flow.md, internal/app/app.go, internal/app/cli.go, internal/app/commands.go, internal/app/config.go, internal/app/config_test.go, internal/app/contract.go, internal/app/contract_plan_test.go, internal/app/plan_review.go, internal/app/plan_review_test.go, internal/app/plan_test.go, internal/app/run.go
+- Summary: Reviewed run run_20260618_071101 with gate status needs_review and review status approved. Goal: Plan-DAG slice 3: the plan immune system (entry) — static non-vacuous validation + a single-pass `plan_review` pipeline stage. This is slice...
+- Candidate: runs/run_20260618_071101/memory/memory-candidate.json
