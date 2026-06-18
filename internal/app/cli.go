@@ -12,6 +12,7 @@ type cli struct {
 	Init     initCmd     `cmd:"" help:"Create a Pactum workspace and project map."`
 	Map      mapCmd      `cmd:"" help:"Advanced project map commands."`
 	Memory   memoryCmd   `cmd:"" help:"Propose, inspect, and accept deterministic project memory."`
+	Plan     planCmd     `cmd:"" help:"Inspect the contract's static execution plan."`
 	Prompt   promptCmd   `cmd:"" help:"Build and inspect executor prompt boundaries."`
 	Review   reviewCmd   `cmd:"" help:"Manage manual review artifacts."`
 	Search   searchCmd   `cmd:"" help:"Search the Pactum project map."`
@@ -71,6 +72,15 @@ type contractCmd struct {
 	Revise  contractReviseCmd  `cmd:"" help:"Revise deterministic contract fields."`
 	Review  contractReviewCmd  `cmd:"" help:"Run the configured contract reviewer panel against the contract."`
 	Approve contractApproveCmd `cmd:"" help:"Approve a run contract."`
+}
+
+type planCmd struct {
+	Show planShowCmd `cmd:"show" help:"Show the contract's static plan DAG."`
+}
+
+type planShowCmd struct {
+	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type promptCmd struct {

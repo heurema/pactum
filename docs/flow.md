@@ -15,7 +15,7 @@ report, the review, and the accepted memory are all files you can read.
 | Status / search | `pactum status`, `pactum search "<query>"` | — (reads map + workspace) | No |
 | Task | `pactum task new "<task>"`, `pactum task list`, `pactum task show`, `pactum task use` | `runs/<id>/run.json`, `task.md`, `context/repo-context.md`, `context/search-results.json`, `context/memory-context.md`, `contract/contract.json`, `contract/contract.md`, `contract/approval.json`, `cache/current-run` | `new`/`use`: Yes; `list`/`show`: No |
 | Clarify | `pactum clarify add`, `pactum clarify answer`, `pactum clarify run`, `pactum clarify show` | `clarify/questions.jsonl`, `clarify/answers.jsonl`, `clarify/decisions.jsonl`, `clarify/loop-summary.json` | `add`/`answer`/`run`: Yes; `show`: No |
-| Contract | `pactum contract revise`, `pactum contract approve`, `pactum contract show` | `contract/contract.json`, `contract/contract.md`, `contract/approval.json` | `revise`/`approve`: Yes; `show`: No |
+| Contract | `pactum contract revise`, `pactum contract approve`, `pactum contract show`, `pactum plan show` | `contract/contract.json`, `contract/contract.md`, `contract/approval.json` | `revise`/`approve`: Yes; `show`/`plan show`: No |
 | Prompt | `pactum prompt build`, `pactum prompt show` | `contract/prompt.md`, `contract/prompt-manifest.json`, `context/executor-context.md`, `context/memory-context.md`, `context/memory-selection.json` | `build`: Yes; `show`: No |
 | Execute | `pactum execute plan`, `pactum execute run`, `pactum execute show` | `execute/dry-run.json`, `execute/attempts/attempt_NNN/{request,result,stdout,stderr}`, `execute/last-result.json` | `plan`/`run`: Yes; `show`: No |
 | Gate | `pactum gate run`, `pactum gate show` | `gate/gate-report.json`, `gate/validation/command_NNN/{stdout,stderr,result}` | `run`: Yes; `show`: No |
@@ -169,7 +169,10 @@ revise validates the resulting plan structurally — unique ids, no missing
 `paths_in_scope`, and non-empty `acceptance`/`validation` — and rejects the
 revise atomically on any violation. Validation runs even when the update does
 not touch `plan` (for example narrowing `paths_in_scope`), so an approved
-contract can never hold a structurally invalid plan.
+contract can never hold a structurally invalid plan. The contract drafter emits
+`plan.tasks[]` only when the work has real fan-in or independently-validatable
+surfaces (linear work stays plan-less); `pactum plan show [run_id] [--json]`
+renders the contract's static plan DAG, or reports that no plan is defined.
 
 ### Prompt
 
