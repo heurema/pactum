@@ -1,0 +1,35 @@
+{
+  "schema": "pactum.review_fix_dry_run.v1alpha1",
+  "run_id": "run_20260618_054400",
+  "created_at": "2026-06-18T06:30:12Z",
+  "fixer": {
+    "name": "claude",
+    "command": "",
+    "args": null,
+    "input": "prompt_file"
+  },
+  "checks": {
+    "review_prepared": true,
+    "findings_ready": true,
+    "contract_approved": true
+  },
+  "artifacts": {
+    "fixer_prompt": "review/fix/fixer-prompt.md",
+    "fixer_context": "review/fix/fixer-context.md",
+    "review": "review/review.json",
+    "findings": "review/findings.jsonl",
+    "resolutions": "review/resolutions.jsonl",
+    "contract": "contract/contract.json"
+  },
+  "would_run": {
+    "command": "npx",
+    "args": [
+      "-y",
+      "@agentclientprotocol/claude-agent-acp@latest"
+    ],
+    "env": [
+      "ANTHROPIC_MODEL=claude-sonnet-4-6",
+      "CLAUDE_CODE_EFFORT_LEVEL=max"
+    ]
+  }
+}
