@@ -15,7 +15,7 @@ report, the review, and the accepted memory are all files you can read.
 | Status / search | `pactum status`, `pactum search "<query>"` | — (reads map + workspace) | No |
 | Task | `pactum task new "<task>"`, `pactum task list`, `pactum task show`, `pactum task use` | `runs/<id>/run.json`, `task.md`, `context/repo-context.md`, `context/search-results.json`, `context/memory-context.md`, `contract/contract.json`, `contract/contract.md`, `contract/approval.json`, `cache/current-run` | `new`/`use`: Yes; `list`/`show`: No |
 | Clarify | `pactum clarify add`, `pactum clarify answer`, `pactum clarify run`, `pactum clarify show` | `clarify/questions.jsonl`, `clarify/answers.jsonl`, `clarify/decisions.jsonl`, `clarify/loop-summary.json` | `add`/`answer`/`run`: Yes; `show`: No |
-| Contract | `pactum contract revise`, `pactum contract approve`, `pactum contract show`, `pactum plan show` | `contract/contract.json`, `contract/contract.md`, `contract/approval.json` | `revise`/`approve`: Yes; `show`/`plan show`: No |
+| Contract | `pactum contract revise`, `pactum contract approve`, `pactum contract show`, `pactum plan show`, `pactum plan review` | `contract/contract.json`, `contract/contract.md`, `contract/approval.json`, `plan-review/<agent>/{prompt.txt,attempt-N.txt}`, `plan-review/findings.json` | `revise`/`approve`/`plan review`: Yes; `show`/`plan show`: No |
 | Prompt | `pactum prompt build`, `pactum prompt show` | `contract/prompt.md`, `contract/prompt-manifest.json`, `context/executor-context.md`, `context/memory-context.md`, `context/memory-selection.json` | `build`: Yes; `show`: No |
 | Execute | `pactum execute plan`, `pactum execute run`, `pactum execute show` | `execute/dry-run.json`, `execute/attempts/attempt_NNN/{request,result,stdout,stderr}`, `execute/last-result.json` | `plan`/`run`: Yes; `show`: No |
 | Gate | `pactum gate run`, `pactum gate show` | `gate/gate-report.json`, `gate/validation/command_NNN/{stdout,stderr,result}` | `run`: Yes; `show`: No |
@@ -169,10 +169,40 @@ revise validates the resulting plan structurally — unique ids, no missing
 `paths_in_scope`, and non-empty `acceptance`/`validation` — and rejects the
 revise atomically on any violation. Validation runs even when the update does
 not touch `plan` (for example narrowing `paths_in_scope`), so an approved
-contract can never hold a structurally invalid plan. The contract drafter emits
-`plan.tasks[]` only when the work has real fan-in or independently-validatable
-surfaces (linear work stays plan-less); `pactum plan show [run_id] [--json]`
-renders the contract's static plan DAG, or reports that no plan is defined.
+contract can never hold a structurally invalid plan. Additionally, any task
+whose `expected_files` is non-empty must have at least one validation command
+that is *scoped* to those files — that is, at least one command string contains
+the full expected file path, an enclosing directory segment with a `/`
+separator, or a `<dir>/...` wildcard covering the file's directory as a literal
+substring. A validation list whose commands are all unscoped (for example,
+`go build ./...` or `make check` with no path reference) is rejected with a
+`VACUOUS_VALIDATION` issue, because such commands cannot confirm that a specific
+task's expected file was actually changed. Tasks with empty `expected_files` are
+exempt from this rule. The contract drafter emits `plan.tasks[]` only when the
+work has real fan-in or independently-validatable surfaces (linear work stays
+plan-less); `pactum plan show [run_id] [--json]` renders the contract's static
+plan DAG, or reports that no plan is defined.
+
+`pactum plan review [run_id] [--json]` runs a single-pass reviewer panel over
+the contract's plan DAG. Configure the panel in `config.yaml` under
+`pipeline.plan_review.by` — a scalar agent name or a list of names. An absent
+or empty `by` makes plan review a human-gate-only no-op (no automated review).
+When configured, the command fans out the reviewer panel over the plan tasks,
+evaluating five lenses: **granularity** (tasks are independently scoped, not
+monolithic), **dependency-correctness** (depends_on edges are logically
+correct), **testability** (validation commands are falsifiable and scoped),
+**non-vacuity** (no task relies solely on global commands), and
+**scope-fidelity** (expected files stay within paths_in_scope). Each reviewer
+must emit a `pactum.reviewer_findings.v1alpha1` JSON block — even when there
+are no findings (use an empty array). A reviewer response that omits the block
+triggers a corrective retry; if the block is still absent, plan review returns
+an error. The command writes per-reviewer artifacts under
+`plan-review/<agent>/` (prompt, raw attempt responses) and an aggregated
+`plan-review/findings.json`. It exits 1 when findings are reported (any
+severity) and 0 when the panel reports no findings, making it gatable from
+pipeline scripts. With `--json`, it writes a structured JSON object to stdout
+with fields `no_plan`, `no_reviewers`, and `findings`. When the approved
+contract has no plan, the command is a clear no-op that exits 0.
 
 ### Prompt
 

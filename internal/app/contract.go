@@ -910,7 +910,71 @@ func validateContractPlan(contract draftContract) []contractReviseIssue {
 		}
 	}
 
+	for i, task := range tasks {
+		if len(task.ExpectedFiles) > 0 && len(task.Validation) > 0 && !isTaskValidationNonVacuous(task) {
+			issues = append(issues, contractReviseIssue{
+				Field:   fmt.Sprintf("plan.tasks[%d].validation", i),
+				Code:    "VACUOUS_VALIDATION",
+				Message: fmt.Sprintf("plan task %q has non-empty expected_files but no validation command is scoped to any of them; add a command that targets at least one expected file path", task.ID),
+			})
+		}
+	}
+
 	return issues
+}
+
+// normalizeExpectedFilePath strips a leading "./" and normalizes separators to
+// forward slashes, matching how validation commands typically reference files.
+func normalizeExpectedFilePath(p string) string {
+	p = filepath.ToSlash(p)
+	return strings.TrimPrefix(p, "./")
+}
+
+// isValidationCommandScopedToPath reports whether cmd is "scoped" to the
+// normalized expected file path according to three rules:
+//
+//	(a) cmd contains the full normalized path as a substring.
+//	(b) cmd contains any directory prefix of that path that itself has a '/'.
+//	(c) cmd contains <dir>/... or ./<dir>/... for any <dir> that qualifies under (b).
+func isValidationCommandScopedToPath(cmd, normalizedPath string) bool {
+	if strings.Contains(cmd, normalizedPath) {
+		return true
+	}
+	slash := strings.LastIndex(normalizedPath, "/")
+	if slash < 0 {
+		return false
+	}
+	dir := normalizedPath[:slash]
+	for {
+		if strings.Contains(dir, "/") {
+			if strings.Contains(cmd, dir) {
+				return true
+			}
+			if strings.Contains(cmd, dir+"/...") || strings.Contains(cmd, "./"+dir+"/...") {
+				return true
+			}
+		}
+		next := strings.LastIndex(dir, "/")
+		if next < 0 {
+			break
+		}
+		dir = dir[:next]
+	}
+	return false
+}
+
+// isTaskValidationNonVacuous returns true when at least one validation command
+// is scoped to at least one of the task's expected files.
+func isTaskValidationNonVacuous(task planTask) bool {
+	for _, file := range task.ExpectedFiles {
+		norm := normalizeExpectedFilePath(file)
+		for _, cmd := range task.Validation {
+			if isValidationCommandScopedToPath(cmd, norm) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // detectPlanDAGCycle reports whether the tasks dependency graph contains a cycle.

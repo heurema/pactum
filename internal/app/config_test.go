@@ -242,7 +242,7 @@ func TestReadConfigPipelineLoopValidation(t *testing.T) {
 func TestReadConfigPipelineMultiAgentByValidation(t *testing.T) {
 	multiBySnippet := "    by:\n      - claude\n      - fable\n"
 	// Multi-agent by is accepted on panel stages.
-	for _, stage := range []string{"contract_review", "code_review"} {
+	for _, stage := range []string{"contract_review", "code_review", "plan_review"} {
 		t.Run("accepted on "+stage, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "config.yaml")
