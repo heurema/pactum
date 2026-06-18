@@ -75,12 +75,19 @@ type contractCmd struct {
 }
 
 type planCmd struct {
-	Show planShowCmd `cmd:"show" help:"Show the contract's static plan DAG."`
+	Show   planShowCmd   `cmd:"show" help:"Show the contract's static plan DAG."`
+	Review planReviewCmd `cmd:"review" help:"Run a single-pass reviewer panel over the plan DAG."`
 }
 
 type planShowCmd struct {
 	RunID      string `arg:"" optional:"" name:"run_id" help:"Run id to inspect."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type planReviewCmd struct {
+	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id to review."`
+	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without reviewer output. Defaults to 25m when not given."`
+	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type promptCmd struct {

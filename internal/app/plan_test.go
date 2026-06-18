@@ -51,7 +51,7 @@ func TestPlanShowWithPlan(t *testing.T) {
 					},
 					ExpectedFiles: []string{"internal/app/run.go"},
 					Acceptance:    []string{"Schema lands in JSON"},
-					Validation:    []string{"go build ./..."},
+					Validation:    []string{"go test ./internal/app/..."},
 				},
 				{
 					ID:         "t2",
@@ -84,7 +84,7 @@ func TestPlanShowWithPlan(t *testing.T) {
 		"internal/app/run.go lines 10-50",
 		"Expected files: internal/app/run.go",
 		"Schema lands in JSON",
-		"go build ./...",
+		"go test ./internal/app/...",
 		"Tests pass",
 		"go test ./...",
 	} {
@@ -304,7 +304,7 @@ func TestDraftedPlanProposalRoundTrip(t *testing.T) {
 			},
 			ExpectedFiles: []string{"internal/app/run.go"},
 			Acceptance:    []string{"alpha done"},
-			Validation:    []string{"go build ./..."},
+			Validation:    []string{"go test ./internal/app/..."},
 		},
 		{
 			ID:         "tb",
@@ -361,7 +361,7 @@ func TestDraftedPlanProposalRoundTrip(t *testing.T) {
 		ta.Context[0].Path != "internal/app/run.go" || ta.Context[0].Lines != "1-20" ||
 		len(ta.ExpectedFiles) != 1 || ta.ExpectedFiles[0] != "internal/app/run.go" ||
 		len(ta.Acceptance) != 1 || ta.Acceptance[0] != "alpha done" ||
-		len(ta.Validation) != 1 || ta.Validation[0] != "go build ./..." {
+		len(ta.Validation) != 1 || ta.Validation[0] != "go test ./internal/app/..." {
 		t.Fatalf("show-draft JSON task ta field mismatch: %+v", ta)
 	}
 	tb := showDraftResponse.Proposal.Plan.Tasks[1]
@@ -405,7 +405,7 @@ func TestAcceptDraftedPlanAppliesItToContract(t *testing.T) {
 				Context:       []planContextSelector{{Path: "internal/app/run.go", Why: "entry"}},
 				ExpectedFiles: []string{"internal/app/run.go"},
 				Acceptance:    []string{"t1 done"},
-				Validation:    []string{"go build ./..."},
+				Validation:    []string{"go test ./internal/app/..."},
 			},
 			{
 				ID:         "t2",
@@ -443,7 +443,7 @@ func TestAcceptDraftedPlanAppliesItToContract(t *testing.T) {
 		t1.Context[0].Path != "internal/app/run.go" ||
 		len(t1.ExpectedFiles) != 1 || t1.ExpectedFiles[0] != "internal/app/run.go" ||
 		len(t1.Acceptance) != 1 || t1.Acceptance[0] != "t1 done" ||
-		len(t1.Validation) != 1 || t1.Validation[0] != "go build ./..." {
+		len(t1.Validation) != 1 || t1.Validation[0] != "go test ./internal/app/..." {
 		t.Fatalf("contract show --json task t1 mismatch: %+v", t1)
 	}
 	t2 := showResult.Contract.Plan.Tasks[1]
@@ -480,7 +480,7 @@ func TestAcceptDraftedPlanAppliesItToContract(t *testing.T) {
 	if len(pt1.Acceptance) != 1 || pt1.Acceptance[0] != "t1 done" {
 		t.Fatalf("plan show --json task t1 acceptance mismatch: %+v", pt1.Acceptance)
 	}
-	if len(pt1.Validation) != 1 || pt1.Validation[0] != "go build ./..." {
+	if len(pt1.Validation) != 1 || pt1.Validation[0] != "go test ./internal/app/..." {
 		t.Fatalf("plan show --json task t1 validation mismatch: %+v", pt1.Validation)
 	}
 	pt2 := planResult.Plan.Tasks[1]

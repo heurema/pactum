@@ -130,6 +130,11 @@ func (a App) Run(args []string, stdout, stderr io.Writer) (code int) {
 			if errors.As(err, &loopFatal) {
 				return 1
 			}
+			// Plan review already wrote its JSON response with findings.
+			var planFindings planReviewFindingsError
+			if errors.As(err, &planFindings) {
+				return 1
+			}
 			if encErr := writeErrorEnvelope(stdout, err); encErr == nil {
 				return 1
 			}
@@ -137,6 +142,11 @@ func (a App) Run(args []string, stdout, stderr io.Writer) (code int) {
 		// A contract revise failure already wrote structured issues JSON to stdout.
 		var reviseFailureHuman contractReviseFailureError
 		if errors.As(err, &reviseFailureHuman) {
+			return 1
+		}
+		// Plan review already wrote its human output with findings.
+		var planFindingsHuman planReviewFindingsError
+		if errors.As(err, &planFindingsHuman) {
 			return 1
 		}
 		fmt.Fprintf(stderr, "pactum %s: %v\n", ctx.Command(), err)

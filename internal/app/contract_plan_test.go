@@ -110,7 +110,7 @@ func TestPlanDAGValid(t *testing.T) {
 				},
 				ExpectedFiles: []string{"internal/app/run.go"},
 				Acceptance:    []string{"plan schema added"},
-				Validation:    []string{"go build ./..."},
+				Validation:    []string{"go test ./internal/app/..."},
 			},
 			{
 				ID:         "t2",
@@ -175,7 +175,7 @@ func TestPlanDAGValid(t *testing.T) {
 	if len(t1.Acceptance) != 1 || t1.Acceptance[0] != "plan schema added" {
 		t.Fatalf("show --json: task t1 acceptance mismatch: %+v", t1.Acceptance)
 	}
-	if len(t1.Validation) != 1 || t1.Validation[0] != "go build ./..." {
+	if len(t1.Validation) != 1 || t1.Validation[0] != "go test ./internal/app/..." {
 		t.Fatalf("show --json: task t1 validation mismatch: %+v", t1.Validation)
 	}
 	t2 := showResult.Contract.Plan.Tasks[1]
@@ -202,7 +202,7 @@ func TestPlanDAGValid(t *testing.T) {
 		"internal/app/run.go lines 60-100",
 		"Expected files: internal/app/run.go",
 		"plan schema added",
-		"go build ./...",
+		"go test ./internal/app/...",
 		"tests pass",
 		"go test ./...",
 	} {
@@ -339,7 +339,7 @@ func TestPlanDAGScopeRevisionInvalidatesExistingPlan(t *testing.T) {
 		ID:            "t1",
 		ExpectedFiles: []string{"internal/app/run.go"},
 		Acceptance:    []string{"ok"},
-		Validation:    []string{"go build ./..."},
+		Validation:    []string{"go test ./internal/app/..."},
 	}}}
 	if code, _ := revise(t, map[string]any{"plan": validPlan}); code != 0 {
 		t.Fatalf("store valid plan exited %d (expected acceptance)", code)
@@ -400,6 +400,144 @@ func TestPlanDAGEmptyID(t *testing.T) {
 		failure := reviseWithBadPlan(t, tasks, nil)
 		assertReviseIssue(t, failure, "EMPTY_TASK_ID")
 	})
+}
+
+// TestPlanDAGVacuousValidation verifies that a task with non-empty
+// expected_files is rejected when all validation commands are unscoped.
+func TestPlanDAGVacuousValidation(t *testing.T) {
+	tasks := []planTask{{
+		ID:            "t1",
+		ExpectedFiles: []string{"internal/app/foo.go"},
+		Acceptance:    []string{"ok"},
+		Validation:    []string{"go build ./...", "make check"}, // neither scoped to internal/app/foo.go
+	}}
+
+	t.Run("load", func(t *testing.T) {
+		_, err := readDraftContractFromTasks(t, tasks, nil)
+		assertPlanLoadError(t, err, "VACUOUS_VALIDATION", "scoped")
+	})
+
+	t.Run("revise", func(t *testing.T) {
+		failure := reviseWithBadPlan(t, tasks, nil)
+		assertReviseIssue(t, failure, "VACUOUS_VALIDATION")
+	})
+}
+
+// TestPlanDAGScopedValidationAccepted verifies that a task with expected_files
+// is accepted when at least one validation command is scoped to a file.
+func TestPlanDAGScopedValidationAccepted(t *testing.T) {
+	tasks := []planTask{{
+		ID:            "t1",
+		ExpectedFiles: []string{"internal/app/foo.go"},
+		Acceptance:    []string{"ok"},
+		// Rule (a): cmd contains the full path.
+		Validation: []string{"go test ./internal/app -run TestFoo"},
+	}}
+
+	_, err := readDraftContractFromTasks(t, tasks, nil)
+	if err != nil {
+		t.Fatalf("expected acceptance but got: %v", err)
+	}
+}
+
+// TestPlanDAGMixedScopedAndGlobalValidationAccepted verifies that having one
+// scoped command alongside global commands satisfies the requirement.
+func TestPlanDAGMixedScopedAndGlobalValidationAccepted(t *testing.T) {
+	tasks := []planTask{{
+		ID:            "t1",
+		ExpectedFiles: []string{"internal/app/plan.go"},
+		Acceptance:    []string{"ok"},
+		// Rule (b): cmd contains directory prefix "internal/app" which has a '/'.
+		Validation: []string{"go build ./...", "go test ./internal/app/..."},
+	}}
+
+	_, err := readDraftContractFromTasks(t, tasks, nil)
+	if err != nil {
+		t.Fatalf("expected acceptance but got: %v", err)
+	}
+}
+
+// TestPlanDAGEmptyExpectedFilesExempt verifies that tasks with no expected_files
+// are not subject to VACUOUS_VALIDATION regardless of validation commands.
+func TestPlanDAGEmptyExpectedFilesExempt(t *testing.T) {
+	tasks := []planTask{{
+		ID:            "t1",
+		ExpectedFiles: []string{},
+		Acceptance:    []string{"ok"},
+		Validation:    []string{"go build ./..."}, // global-only, but exempted
+	}}
+
+	_, err := readDraftContractFromTasks(t, tasks, nil)
+	if err != nil {
+		t.Fatalf("expected acceptance but got: %v", err)
+	}
+}
+
+// TestPlanDAGRootLevelFileScopedByFullPath verifies rule (a): a root-level file
+// like "go.mod" has no directory prefix, so only the full-path rule applies.
+func TestPlanDAGRootLevelFileScopedByFullPath(t *testing.T) {
+	tasks := []planTask{{
+		ID:            "t1",
+		ExpectedFiles: []string{"go.mod"},
+		Acceptance:    []string{"ok"},
+		Validation:    []string{"cat go.mod"}, // contains "go.mod" as substring
+	}}
+
+	_, err := readDraftContractFromTasks(t, tasks, nil)
+	if err != nil {
+		t.Fatalf("expected acceptance but got: %v", err)
+	}
+}
+
+// TestPlanDAGRootLevelFileUnscopedRejected verifies that a root-level file with
+// only global validation commands is rejected with VACUOUS_VALIDATION.
+func TestPlanDAGRootLevelFileUnscopedRejected(t *testing.T) {
+	tasks := []planTask{{
+		ID:            "t1",
+		ExpectedFiles: []string{"go.mod"},
+		Acceptance:    []string{"ok"},
+		Validation:    []string{"go build ./..."}, // does not contain "go.mod"
+	}}
+
+	_, err := readDraftContractFromTasks(t, tasks, nil)
+	assertPlanLoadError(t, err, "VACUOUS_VALIDATION", "scoped")
+}
+
+// TestIsValidationCommandScopedToPath exercises the scoping algorithm directly.
+func TestIsValidationCommandScopedToPath(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		path string
+		want bool
+	}{
+		// Rule (a): full path match
+		{"go test ./internal/app/foo.go", "internal/app/foo.go", true},
+		{"cat internal/app/foo.go", "internal/app/foo.go", true},
+		// Rule (b): directory prefix with '/'
+		// foo_test.go contains "internal/app" as substring → scoped via rule (b)
+		{"go test ./internal/app/foo_test.go", "internal/app/foo.go", true},
+		{"go test ./internal/app/...", "internal/app/foo.go", true},
+		{"go test ./internal/...", "internal/app/foo.go", false}, // "internal" has no '/'
+		{"go test internal/app", "internal/app/foo.go", true},
+		// Rule (c): wildcard patterns
+		{"go test ./internal/app/...", "internal/app/sub/foo.go", true},
+		// Root-level file: only rule (a)
+		{"cat go.mod", "go.mod", true},
+		{"go build ./...", "go.mod", false},
+		// Deep path
+		{"go test ./a/b/c/...", "a/b/c/d/e.go", true},
+		{"go test ./a/b/...", "a/b/c/d/e.go", true},
+		{"go test a/b/c", "a/b/c/d/e.go", true},
+		// Normalize ./
+		{"go test internal/app/foo.go", "./internal/app/foo.go", true},
+	}
+	for _, tc := range cases {
+		norm := normalizeExpectedFilePath(tc.path)
+		got := isValidationCommandScopedToPath(tc.cmd, norm)
+		if got != tc.want {
+			t.Errorf("isValidationCommandScopedToPath(%q, %q) = %v, want %v", tc.cmd, norm, got, tc.want)
+		}
+	}
 }
 
 // --- helpers ---

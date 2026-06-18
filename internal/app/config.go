@@ -49,6 +49,7 @@ type pipelineConfig struct {
 	Execute        pipelineStage `yaml:"execute,omitempty"`
 	CodeReview     pipelineStage `yaml:"code_review,omitempty"`
 	Memory         pipelineStage `yaml:"memory,omitempty"`
+	PlanReview     pipelineStage `yaml:"plan_review,omitempty"`
 }
 
 // pipelineStage is the performer + optional loop knobs for one pipeline stage.
@@ -223,6 +224,7 @@ var (
 	stageMultiAgentAllowed = map[string]bool{
 		"contract_review": true,
 		"code_review":     true,
+		"plan_review":     true,
 	}
 )
 
@@ -238,6 +240,7 @@ func validatePipeline(pipeline pipelineConfig, registry []agentRegistryEntry) er
 		{"execute", pipeline.Execute},
 		{"code_review", pipeline.CodeReview},
 		{"memory", pipeline.Memory},
+		{"plan_review", pipeline.PlanReview},
 	}
 	registered := make(map[string]bool, len(registry))
 	for _, entry := range registry {
@@ -277,6 +280,7 @@ func normalizePipelineBy(p *pipelineConfig) {
 	p.Execute.By = filterEmptyBy(p.Execute.By)
 	p.CodeReview.By = filterEmptyBy(p.CodeReview.By)
 	p.Memory.By = filterEmptyBy(p.Memory.By)
+	p.PlanReview.By = filterEmptyBy(p.PlanReview.By)
 }
 
 func filterEmptyBy(by stageBy) stageBy {
