@@ -1,0 +1,126 @@
+# Contract Draft Proposal
+
+## Status
+- Run id: run_20260618_124220
+- Status: accepted
+- Source: drafter_attempt
+- Drafter attempt: drafter_attempt_001
+- Drafter: codex
+- Accepted by: manual
+- Accepted at: 2026-06-18T12:46:59Z
+
+## In scope
+- Wire `pactum execute run` so approved contracts with `plan.tasks[]` run through a deterministic sequential topological scheduler, while plan-less contracts keep the existing single-shot execution path unchanged.
+- Create and maintain `execute/tasks-state.json` and `execute/loop-summary.json` for plan-DAG runs, tied to the approved contract SHA-256 and containing only execution state, task status, attempts, validation/baseline results, blockers, touched files, snapshot refs, terminal state, and summary metrics.
+- Run each plan task through `internal/loop.Run` with `Limits{Max: pipeline.execute.loop.max, Settle: 1, Patience: 0}`, using one fresh executor attempt per round, task-scoped attempt artifacts under `execute/tasks/<task_id>/attempts/`, per-task context packs, frozen task validation, and retry prompts that include the previous validation failure output.
+- Apply per-task baseline-red gating before executor attempts: already-green test-shaped validations block without an executor attempt, while already-green non-test validations are recorded as signals.
+- Implement the scoped workspace boundary for task attempts: snapshot `paths_in_scope - paths_out_of_scope` before a task, keep in-scope changes on pass, preserve a failing diff artifact and restore only in-scope content on block, including modified/new/deleted files, binary files, executable bits, and symlinks.
+- Add the two required guards for plan-DAG execution: refuse to start when the working tree is dirty inside `paths_in_scope`, and after each attempt detect out-of-scope changes with the existing whole-tree change report and convert them into structured blockers.
+- Drain the DAG to terminal states `completed`, `blocked`, `gate_failed`, `human`, or `error`; run the contract-level validation gate only after all tasks are done, and skip that gate when any task is blocked or blocked-upstream.
+- Expose structured blocker and terminal information in `tasks-state.json`, `execute/loop-summary.json`, human output, and `--json` output, including next commands suitable for a driving agent.
+- Add Go tests using existing helper-process executor fixtures; do not run real agents in tests.
+
+## Out of scope
+- Do not add parallel branch execution, worktrees, per-task commits, merge handling, or concurrent task runners.
+- Do not add `execute run --task`, `--by` per-task routing, or a single-writer lease.
+- Do not implement contract revisioning, bounded auto-replan, or automatic scope widening for blocked tasks.
+- Do not add task_id, role, attempt_no, or contract_revision columns to usage ledger rows.
+- Do not change code_review, memory behavior, plan_review behavior, or the hashed plan schema beyond what is required to consume existing `plan.tasks[]` during execution.
+- Do not auto-rollback out-of-scope writes outside the scoped snapshot domain; detect and hard-block them as structured out-of-scope blockers.
+- Do not claim handoff/context-loss is measured by loop instrumentation.
+
+## Acceptance criteria
+- A plan-less approved contract still runs through the existing single-shot `execute run` path, writes the same style of `execute/attempts/<attempt_id>` and `execute/last-result.json` artifacts, and remains consumable by the existing gate/review flow.
+- For a contract with `plan.tasks[]`, `execute run` creates or resumes `execute/tasks-state.json`, rejects a state file whose `contract_sha256` differs from the approved contract, and never stores task nodes, dependency edges, or validation definitions in that state file.
+- The scheduler picks the first ready task in contract task order, marks tasks done only after their frozen validation passes, marks a maxed-out task blocked, marks only its unreached descendants blocked-upstream, and continues running independent ready branches.
+- Each task attempt builds a task prompt with stable contract/task content plus the slice-4a context pack as a late suffix, runs a fresh ACP executor attempt in `execute/tasks/<task_id>/attempts/`, runs the task validation, and feeds prior validation failure output into the next retry prompt.
+- A test-shaped task validation that is already green before the first executor attempt records a `baseline_green` blocker and performs no executor attempt; an already-green non-test validation is recorded in baseline data without hard-blocking by itself.
+- When a task blocks, the run preserves the failing diff as an artifact and restores only in-scope files to their pre-task bytes, modes, and symlink targets; new in-scope files are removed, deleted in-scope files are recreated, `.heurema` artifacts are preserved, and out-of-scope files are not modified by restore.
+- The loop refuses to start when any file inside `paths_in_scope` is dirty before execution, while unrelated dirty files outside scope do not block startup.
+- Any changed/new/deleted file outside `paths_in_scope` after an attempt is recorded as a structured `out_of_scope` blocker with files, why/proposed text, proposed `paths_in_scope_add`, next commands, and attempted diff artifact; the loop does not crash or auto-widen scope.
+- When all tasks are done, the contract-level validation commands run through the existing gate machinery and the terminal state is `completed` or `gate_failed`; when any task is blocked or blocked-upstream and no ready task remains, the terminal state is `blocked` and the contract-level gate does not run.
+- `execute/loop-summary.json` and `tasks-state.json` record trustworthy GO/NO-GO signals: per-task retry counts, blocked task reasons, baseline-green rate, context-pack byte counts, and per-attempt token usage available from the existing ACP usage ledger.
+- All new tests use helper-process/fake executor fixtures and do not invoke real agents.
+
+## Validation commands
+- go test ./internal/app -run 'Execute|Plan|Task|Loop|Gate|Context|Baseline'
+- go test ./...
+- go build ./...
+- make check
+
+## Assumptions
+- Slice 4a primitives in `internal/app/execute_node.go` are available and should be reused rather than reimplemented.
+- Absent or zero `pipeline.execute.loop.max` should resolve to one deterministic default before calling `internal/loop.Run`; the implementation should make that fallback explicit.
+- The accepted contract should scope implementation paths to cover the touched `internal/app/**` files and any narrow helper path added for this slice.
+- Snapshot backup data belongs under gitignored `.heurema/pactum/tmp/`, while durable run records such as task state and summaries remain under the versioned run record.
+- Structured blocker `proposed` data is human-facing only and must not be machine-applied as a contract revision.
+
+
+## Plan (5 tasks)
+
+### state_and_paths: Task State Artifacts
+Context:
+- internal/app/run.go lines 230-390 — Run artifact path ownership for execute artifacts.
+- docs/contract-plan-dag-design.md lines 330-370 — Finalized tasks-state shape and structure-incapable invariant.
+Expected files: internal/app/run.go, internal/app/execute.go, internal/app/execute_loop_test.go
+Acceptance:
+- `execute/tasks-state.json` has a versioned schema, contract SHA-256, per-task status/state fields, run terminal state, and no plan nodes, edges, or validation definitions.
+- A rerun resumes from compatible task state and rejects incompatible contract hashes.
+Validation:
+- grep -R "TestExecuteTaskStateRoundTrip" internal/app/*_test.go && go test ./internal/app -run 'TestExecuteTaskStateRoundTrip|TestExecuteTaskStateRejectsWrongContractHash|TestExecutePlanDAGResumeFromTaskState'
+
+### scheduler_and_node_loop: Scheduler And Node Attempts
+Depends on: state_and_paths
+Context:
+- internal/app/execute.go — Current single-shot execute lifecycle to preserve and branch from.
+- internal/app/execute_node.go — Slice 4a context-pack, validation, and baseline primitives.
+- internal/loop/loop.go — Reusable loop engine and stop semantics.
+Expected files: internal/app/execute.go, internal/app/execute_node.go, internal/app/execute_loop_test.go
+Acceptance:
+- Plan-DAG runs execute ready tasks in deterministic topological order, including fan-in dependencies.
+- Each node uses `loop.Run` with configured max, settle 1, patience 0, task-scoped attempt artifacts, frozen validation, and retry feedback from prior validation failures.
+- Baseline-green test-shaped validations block without executor attempts.
+Validation:
+- grep -R "TestExecutePlanDAGLinear" internal/app/*_test.go && go test ./internal/app -run 'TestExecutePlanDAGLinear|TestExecutePlanDAGFanIn|TestExecutePlanDAGRetryCarriesValidationFailure|TestExecutePlanDAGBaselineGreenBlocks'
+
+### workspace_boundary: Snapshot And Scope Guards
+Depends on: state_and_paths
+Context:
+- docs/contract-plan-dag-design.md lines 286-330 — Finalized scoped content snapshot and guard requirements.
+- internal/app/path_scope.go — Existing path-scope matching semantics.
+- internal/app/gate.go lines 360-520 — Existing whole-tree change and scope report helpers.
+Expected files: internal/app/execute.go, internal/app/path_scope.go, internal/app/gate.go, internal/app/execute_loop_test.go
+Acceptance:
+- Task start snapshots only files inside `paths_in_scope - paths_out_of_scope` and rejects empty or over-broad snapshot scope.
+- Blocked tasks restore modified, new, deleted, executable, binary, and symlink in-scope content without touching `.heurema` or out-of-scope files.
+- Dirty in-scope precondition and post-attempt out-of-scope blocker detection are enforced.
+Validation:
+- grep -R "TestExecutePlanDAGSnapshotRestoresOnBlock" internal/app/*_test.go && go test ./internal/app -run 'TestExecutePlanDAGSnapshotRestoresOnBlock|TestExecutePlanDAGSnapshotRestoresModesSymlinksAndDeletes|TestExecutePlanDAGOutOfScopeStructuredBlocker|TestExecutePlanDAGDirtyInScopeRefused|TestExecutePlanDAGRejectsEmptyOrOverbroadScope'
+
+### terminal_gate_outputs: Drain Terminals And Output
+Depends on: scheduler_and_node_loop, workspace_boundary
+Context:
+- internal/app/gate.go — Existing gate report and validation command machinery.
+- internal/app/execute_report.go — Execution status and JSON reporting surface.
+- docs/contract-plan-dag-design.md lines 340-370 — Terminal states and structured blocker output requirements.
+Expected files: internal/app/execute.go, internal/app/execute_report.go, internal/app/gate.go, internal/app/execute_loop_test.go
+Acceptance:
+- All-done DAG runs execute the contract-level validation gate and end `completed` or `gate_failed`.
+- Blocked DAG runs skip the contract-level gate and emit structured blocker data plus next commands in human and JSON output.
+- Plan-less execute output remains compatible with existing status/gate/report tests.
+Validation:
+- grep -R "TestExecutePlanDAGCompletedRunsConstitutionGate" internal/app/*_test.go && go test ./internal/app -run 'TestExecutePlanDAGCompletedRunsConstitutionGate|TestExecutePlanDAGBlockedSkipsConstitutionGate|TestExecutePlanDAGPlanlessRunUnchanged|TestExecutePlanDAGJSONStructuredBlocker'
+
+### instrumentation: Loop Summary And Metrics
+Depends on: terminal_gate_outputs
+Context:
+- internal/app/agent_attempt.go lines 220-280 — Existing usage ledger append path for ACP attempts.
+- internal/app/usage.go — Existing usage ledger parsing and cost visibility.
+- internal/ledger/events.go — Ledger event shape for execution_drained.
+Expected files: internal/app/execute.go, internal/app/usage.go, internal/app/execute_loop_test.go
+Acceptance:
+- `execute/loop-summary.json` records per-node retries, blocked node reasons, baseline-green rate, context-pack byte counts, and available token usage.
+- An `execution_drained` ledger event is appended once when the plan-DAG scheduler reaches a terminal drain condition.
+- No summary field claims automatic handoff/context-loss measurement.
+Validation:
+- grep -R "TestExecutePlanDAGLoopSummaryAndLedger" internal/app/*_test.go && go test ./internal/app -run 'TestExecutePlanDAGLoopSummaryAndLedger|TestExecutePlanDAGSummaryDoesNotInventHandoffMetric'

@@ -1,0 +1,26 @@
+{
+  "schema": "pactum.contract_reviewer_request.v1alpha1",
+  "run_id": "run_20260618_124220",
+  "attempt_id": "contract_reviewer_attempt_053",
+  "created_at": "2026-06-18T13:18:03Z",
+  "reviewer": {
+    "name": "claude",
+    "command": "",
+    "args": [],
+    "input": "prompt_file"
+  },
+  "lens": "testability",
+  "artifacts": {
+    "reviewer_prompt": "contract/reviewer/prompt-opus-testability.md"
+  },
+  "would_run": {
+    "command": "npx",
+    "args": [
+      "-y",
+      "@agentclientprotocol/claude-agent-acp@latest"
+    ],
+    "env": [
+      "ANTHROPIC_MODEL=claude-opus-4-8"
+    ]
+  }
+}
