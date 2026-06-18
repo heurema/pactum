@@ -74,6 +74,10 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 		return err
 	}
 
+	if prep.Contract.Plan != nil && len(prep.Contract.Plan.Tasks) > 0 {
+		return planDAGRun(a, stdout, liveOutput, prep, timeout, jsonOutput)
+	}
+
 	promptRepoPath := executionPromptRepoPath(runID)
 	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[agents.DryRunPlan, executionRequestDocument, executionResultDocument, struct{}]{
 		Stdout:           stdout,

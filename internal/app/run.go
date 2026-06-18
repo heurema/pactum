@@ -108,13 +108,15 @@ type contractPlan struct {
 }
 
 type planTask struct {
-	ID            string                `json:"id"`
-	Title         string                `json:"title,omitempty"`
-	DependsOn     []string              `json:"depends_on,omitempty"`
-	Context       []planContextSelector `json:"context,omitempty"`
-	ExpectedFiles []string              `json:"expected_files,omitempty"`
-	Acceptance    []string              `json:"acceptance"`
-	Validation    []string              `json:"validation"`
+	ID              string                `json:"id"`
+	Title           string                `json:"title,omitempty"`
+	DependsOn       []string              `json:"depends_on,omitempty"`
+	Context         []planContextSelector `json:"context,omitempty"`
+	ExpectedFiles   []string              `json:"expected_files,omitempty"`
+	Acceptance      []string              `json:"acceptance"`
+	Validation      []string              `json:"validation"`
+	PathsInScope    []string              `json:"paths_in_scope,omitempty"`
+	PathsOutOfScope []string              `json:"paths_out_of_scope,omitempty"`
 }
 
 type planContextSelector struct {
@@ -302,6 +304,10 @@ type contractRunPathSet struct {
 
 	PlanReviewDir          string
 	PlanReviewFindingsJSON string
+
+	TasksStateJSON  string
+	LoopSummaryJSON string
+	TasksDir        string
 }
 
 func contractRunPaths(runDir string) contractRunPathSet {
@@ -380,6 +386,9 @@ func contractRunPaths(runDir string) contractRunPathSet {
 		ReviewFixLastResultJSON:       filepath.Join(reviewDir, "fix", "last-result.json"),
 		PlanReviewDir:                 filepath.Join(runDir, "plan-review"),
 		PlanReviewFindingsJSON:        filepath.Join(runDir, "plan-review", "findings.json"),
+		TasksStateJSON:                filepath.Join(executeDir, "tasks-state.json"),
+		LoopSummaryJSON:               filepath.Join(executeDir, "loop-summary.json"),
+		TasksDir:                      filepath.Join(executeDir, "tasks"),
 	}
 }
 

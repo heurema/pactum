@@ -17,7 +17,7 @@ report, the review, and the accepted memory are all files you can read.
 | Clarify | `pactum clarify add`, `pactum clarify answer`, `pactum clarify run`, `pactum clarify show` | `clarify/questions.jsonl`, `clarify/answers.jsonl`, `clarify/decisions.jsonl`, `clarify/loop-summary.json` | `add`/`answer`/`run`: Yes; `show`: No |
 | Contract | `pactum contract revise`, `pactum contract approve`, `pactum contract show`, `pactum plan show`, `pactum plan review`, `pactum plan context` | `contract/contract.json`, `contract/contract.md`, `contract/approval.json`, `plan-review/<agent>/{prompt.txt,attempt-N.txt}`, `plan-review/findings.json`, `execute/context/<task_id>.md` | `revise`/`approve`/`plan review`/`plan context`: Yes; `show`/`plan show`: No |
 | Prompt | `pactum prompt build`, `pactum prompt show` | `contract/prompt.md`, `contract/prompt-manifest.json`, `context/executor-context.md`, `context/memory-context.md`, `context/memory-selection.json` | `build`: Yes; `show`: No |
-| Execute | `pactum execute plan`, `pactum execute run`, `pactum execute show` | `execute/dry-run.json`, `execute/attempts/attempt_NNN/{request,result,stdout,stderr}`, `execute/last-result.json` | `plan`/`run`: Yes; `show`: No |
+| Execute | `pactum execute plan`, `pactum execute run`, `pactum execute show` | `execute/dry-run.json`, `execute/attempts/attempt_NNN/{request,result,stdout,stderr}`, `execute/last-result.json`; for plan-DAG runs also: `execute/tasks-state.json`, `execute/loop-summary.json`, `execute/tasks/<task_id>/attempts/` | `plan`/`run`: Yes; `show`: No |
 | Gate | `pactum gate run`, `pactum gate show` | `gate/gate-report.json`, `gate/validation/command_NNN/{stdout,stderr,result}` | `run`: Yes; `show`: No |
 | Review | `pactum review finding add`, `pactum review finding resolve`, `pactum review approve`, `pactum review status/show` | `review/review.json`, `review/findings.jsonl`, `review/resolutions.jsonl` | mutating subcommands: Yes; `status`/`show`: No |
 | Reviewer rounds | `pactum review plan`, `pactum review run`, `pactum review proposal collect`, `pactum review proposal accept`, `pactum review proposal reject` | `review/reviewer-context.md`, `review/reviewer-prompt-<name>-<lens>.md`, `review/reviewer-dry-run.json`, `review/reviewer-attempts/...`, `review/proposals.jsonl`, `review/proposal-decisions.jsonl`, `review/loop-summary.json` | Yes |
@@ -246,6 +246,27 @@ matches the prompt manifest, and the accepted-memory boundary is unchanged.
 the run-level execution summary, and `pactum execute show [run_id]
 <attempt_id>` shows one attempt in detail. See [agents.md](agents.md) for the
 execution model.
+
+When the approved contract includes `plan.tasks[]`, `execute run` enters a
+**plan-DAG execution mode**: it runs each task node sequentially in dependency
+order using a topological scheduler. Each task is executed through an inner
+retry loop (`pipeline.execute.loop.max` attempts, defaulting to 3) that runs
+one fresh executor attempt per round, validates the task's frozen commands, and
+feeds the prior validation failure into the next retry prompt. Before any
+attempt, a scoped workspace snapshot is taken (`paths_in_scope` minus
+`paths_out_of_scope`); on pass the changes accumulate in the working tree; on
+block the failing diff is preserved as an artifact and the snapshot is restored.
+A task blocked by exhausted retries marks its unreached dependents
+`blocked-upstream` while independent branches continue. When all tasks succeed,
+the contract-level validation commands (the constitution gate) run as a final
+check. The run reaches one of five terminal states — `completed`, `blocked`,
+`gate_failed`, `human`, or `error` — which are written to
+`execute/tasks-state.json` and `execute/loop-summary.json`. Structured blocker
+details (reason, files, why, proposed scope additions, next commands) appear in
+those files and in `--json` output to support agent-mediated resolution.
+Executor-declared blockers are communicated via a `PACTUM_BLOCKER:` sentinel
+line in the attempt output. Plan-less contracts take the original single-shot
+execution path unchanged.
 
 ### Gate
 

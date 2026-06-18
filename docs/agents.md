@@ -329,6 +329,24 @@ There is also **no Docker support yet**.
   prompts: the CLI's consumer is an agent relaying decisions already made in
   conversation, so launching the executor is itself the recorded decision.
 
+  When the approved contract contains `plan.tasks[]`, `execute run` enters
+  **plan-DAG execution mode** instead of the single-shot path. It runs tasks
+  node-by-node in topological order, with each task going through an inner retry
+  loop (up to `pipeline.execute.loop.max` attempts, default 3). Attempt
+  artifacts are written under `execute/tasks/<task_id>/attempts/` rather than
+  `execute/attempts/`. A scoped workspace snapshot is taken before each task's
+  first attempt; on block the snapshot is restored and a failing-diff artifact
+  (`scope.diff`) is preserved. Execution state is persisted in
+  `execute/tasks-state.json` (per-task status, blockers, baseline results) and
+  `execute/loop-summary.json` (metrics). The run reaches one of five terminal
+  states: `completed` (all tasks done and constitution gate passed), `blocked`
+  (a task exhausted retries or an out-of-scope escape was detected), `gate_failed`
+  (constitution gate failed after all tasks completed), `human` (the executor
+  declared `requires_human`), or `error` (infrastructure failure). Structured
+  blocker details — reason, files, why, proposed scope additions, next commands —
+  are written to `tasks-state.json` and `--json` output to support agent-mediated
+  resolution without human interaction.
+
 The idle timeout is **completion-aware**: when the watchdog fires but codex's
 terminal `turn.completed` event appears in the captured output, or (for both
 agents over ACP) a prompt response was recorded before the kill — the attempt
