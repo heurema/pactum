@@ -162,3 +162,10 @@
 - Files: docs/flow.md, internal/app/app.go, internal/app/cli.go, internal/app/commands.go, internal/app/config.go, internal/app/config_test.go, internal/app/contract.go, internal/app/contract_plan_test.go, internal/app/plan_review.go, internal/app/plan_review_test.go, internal/app/plan_test.go, internal/app/run.go
 - Summary: Reviewed run run_20260618_071101 with gate status needs_review and review status approved. Goal: Plan-DAG slice 3: the plan immune system (entry) — static non-vacuous validation + a single-pass `plan_review` pipeline stage. This is slice...
 - Candidate: runs/run_20260618_071101/memory/memory-candidate.json
+
+### mem_024 - Plan-DAG slice 4a: the per-task execution NODE primitives, WITHOUT the topolo...
+- Run: run_20260618_110809
+- Freshness: fresh
+- Files: docs/flow.md, internal/app/cli.go, internal/app/commands.go, internal/app/config.go, internal/app/config_test.go, internal/app/execute_node.go, internal/app/execute_node_test.go, internal/app/gate.go
+- Summary: Reviewed run run_20260618_110809 with gate status needs_review and review status approved. Goal: Plan-DAG slice 4a: the per-task execution NODE primitives, WITHOUT the topological loop. This is slice 4a of the plan-DAG arc (see docs/cont...
+- Candidate: runs/run_20260618_110809/memory/memory-candidate.json
