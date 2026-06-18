@@ -141,3 +141,10 @@
 - Files: docs/flow.md, internal/app/clarify.go, internal/app/contract.go, internal/app/contract_plan_test.go, internal/app/run.go
 - Summary: Reviewed run run_20260617_182429 with gate status needs_review and review status approved. Goal: Add the plan-DAG schema and structural validation to the contract — slice 1 of the plan-DAG arc (see docs/contract-plan-dag-design.md). SCHE...
 - Candidate: runs/run_20260617_182429/memory/memory-candidate.json
+
+### mem_021 - Make pactum's code-review loop never silently drop reviewer findings, and rec...
+- Run: run_20260617_210449
+- Freshness: fresh
+- Files: docs/agents.md, internal/app/agent_output_test.go, internal/app/contract_review.go, internal/app/review.go, internal/app/review_loop.go, internal/app/review_loop_test.go, internal/app/review_proposals.go, internal/app/review_proposals_test.go, internal/app/review_test.go
+- Summary: Reviewed run run_20260617_210449 with gate status needs_review and review status approved. Goal: Make pactum's code-review loop never silently drop reviewer findings, and recover automatically when a reviewer omits the structured finding...
+- Candidate: runs/run_20260617_210449/memory/memory-candidate.json
