@@ -1,4 +1,32 @@
-# Contract plan-DAG — design (reconciled)
+# Contract plan-DAG — design (EXPLORED, then REVERTED)
+
+> **Status: REVERTED.** The plan-DAG was built in slices (schema → drafter
+> emission → `plan_review` → per-task node primitives → the topological execute
+> loop) and then **removed in full**, with execution returned to the proven
+> single-shot path. This document is kept as a decision record, not live design.
+>
+> **Why it was reverted (deep research + the GO/NO-GO run):** the cold
+> per-task fresh-context execution loop is a documented **anti-pattern** —
+> production coding agents (OpenHands, SWE-agent) run a *single accumulating
+> coherent context thread*, not isolated-context-per-node; isolated nodes
+> *manufacture* the cross-task incoherence the DAG was meant to prevent (each
+> node started cold with no memory of prior nodes' decisions). Caching had
+> already solved the cost case, leaving only an *unmeasured* quality claim, and
+> the loop's first real run blocked on its own machinery (per-task scope +
+> baseline-red). Single-shot + gate + review had meanwhile built every slice 1–4b.
+>
+> **What replaces it:** one contract = one coherent single-shot session; a task
+> too large for one window is decomposed at the **contract level** (the drafter
+> may emit several sequential contracts, each a clean single-shot run handing off
+> via git) rather than via an in-contract task DAG. Sources and the full reasoning
+> are in [token-efficiency-research.md](token-efficiency-research.md) and the
+> deep-research synthesis (Anthropic *Effective harnesses* / *context
+> engineering*, Cognition *Don't Build Multi-Agents*, SWE-agent + OpenHands
+> papers, UTBoost/EvilGenie on test-gaming).
+>
+> The original (now-historical) design follows.
+
+## Original design (historical)
 
 Status: **approved direction, build in slices**. This reconciles the original
 plan-DAG design notes with what has since shipped (the `internal/loop.Run` engine,

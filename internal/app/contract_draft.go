@@ -2,7 +2,6 @@ package app
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -69,32 +68,30 @@ type contractDrafterResultDocument struct {
 }
 
 type contractDraftProposalBlock struct {
-	Schema      string        `json:"schema"`
-	InScope     []string      `json:"in_scope"`
-	OutOfScope  []string      `json:"out_of_scope"`
-	Acceptance  []string      `json:"acceptance"`
-	Validation  []string      `json:"validation"`
-	Assumptions []string      `json:"assumptions"`
-	Plan        *contractPlan `json:"plan,omitempty"`
+	Schema      string   `json:"schema"`
+	InScope     []string `json:"in_scope"`
+	OutOfScope  []string `json:"out_of_scope"`
+	Acceptance  []string `json:"acceptance"`
+	Validation  []string `json:"validation"`
+	Assumptions []string `json:"assumptions"`
 }
 
 type contractDraftProposalDocument struct {
-	Schema           string        `json:"schema"`
-	RunID            string        `json:"run_id"`
-	Status           string        `json:"status"`
-	CreatedAt        string        `json:"created_at"`
-	Source           string        `json:"source"`
-	DrafterAttemptID string        `json:"drafter_attempt_id"`
-	Drafter          string        `json:"drafter"`
-	InScope          []string      `json:"in_scope"`
-	OutOfScope       []string      `json:"out_of_scope"`
-	Acceptance       []string      `json:"acceptance"`
-	Validation       []string      `json:"validation"`
-	Assumptions      []string      `json:"assumptions"`
-	Plan             *contractPlan `json:"plan,omitempty"`
-	Warnings         []string      `json:"warnings,omitempty"`
-	AcceptedAt       *string       `json:"accepted_at,omitempty"`
-	AcceptedBy       *string       `json:"accepted_by,omitempty"`
+	Schema           string   `json:"schema"`
+	RunID            string   `json:"run_id"`
+	Status           string   `json:"status"`
+	CreatedAt        string   `json:"created_at"`
+	Source           string   `json:"source"`
+	DrafterAttemptID string   `json:"drafter_attempt_id"`
+	Drafter          string   `json:"drafter"`
+	InScope          []string `json:"in_scope"`
+	OutOfScope       []string `json:"out_of_scope"`
+	Acceptance       []string `json:"acceptance"`
+	Validation       []string `json:"validation"`
+	Assumptions      []string `json:"assumptions"`
+	Warnings         []string `json:"warnings,omitempty"`
+	AcceptedAt       *string  `json:"accepted_at,omitempty"`
+	AcceptedBy       *string  `json:"accepted_by,omitempty"`
 }
 
 type contractDraftResponse struct {
@@ -270,14 +267,6 @@ func (a App) ContractAcceptDraft(stdout io.Writer, runID string, acceptedBy stri
 	// knowing it would revise an approved contract.
 	reviseResult, err := a.contractReviseWithUpdate(context, update, true)
 	if err != nil {
-		var planErr planValidationError
-		if errors.As(err, &planErr) {
-			failure := contractReviseFailure{OK: false, ContractUnchanged: true, Issues: planErr.Issues}
-			if writeErr := writeReviseFailure(stdout, failure); writeErr != nil {
-				return writeErr
-			}
-			return contractReviseFailureError{}
-		}
 		return err
 	}
 
@@ -416,7 +405,6 @@ func contractDraftProposalFromBlock(root string, runID string, attemptID string,
 		Acceptance:       cleanContractDraftProposalItems(root, block.Acceptance),
 		Validation:       cleanContractDraftProposalItems(root, block.Validation),
 		Assumptions:      cleanContractDraftProposalItems(root, block.Assumptions),
-		Plan:             block.Plan,
 		Warnings:         append([]string{}, warnings...),
 	}
 }
@@ -459,10 +447,6 @@ func contractPartialUpdateFromDraftProposal(proposal contractDraftProposalDocume
 		assumptions := append([]string{}, proposal.Assumptions...)
 		update.Assumptions = &assumptions
 	}
-	if proposal.Plan != nil && len(proposal.Plan.Tasks) > 0 {
-		plan := *proposal.Plan
-		update.Plan = &plan
-	}
 	return update
 }
 
@@ -474,8 +458,7 @@ func contractPartialUpdateHasChanges(update contractPartialUpdate) bool {
 		update.PathsOutOfScope != nil ||
 		update.AcceptanceCriteria != nil ||
 		update.ValidationCommands != nil ||
-		update.Assumptions != nil ||
-		update.Plan != nil
+		update.Assumptions != nil
 }
 
 func readContractDraftProposal(path string) (contractDraftProposalDocument, error) {
@@ -599,22 +582,6 @@ func renderContractDrafterPrompt(runID string) string {
 	fmt.Fprintln(&b, "- Propose additions only; Pactum will append accepted entries through contract revision.")
 	fmt.Fprintln(&b, "- Use concrete, observable acceptance criteria and runnable validation commands.")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "## Optional plan")
-	fmt.Fprintln(&b, "Include plan.tasks[] only when the work has real intra-contract fan-in (a task with more")
-	fmt.Fprintln(&b, "than one dependency) or independently-validatable surfaces. Target 3-10 leaf tasks.")
-	fmt.Fprintln(&b, "A leaf task is one independently reviewable patch, not one edit.")
-	fmt.Fprintln(&b, "Each task requires one falsifiable validation referencing its expected_files.")
-	fmt.Fprintln(&b, "Linear or simple work: omit plan entirely (no \"plan\" field in the JSON block).")
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "Task fields:")
-	fmt.Fprintln(&b, "- id (required, unique within plan.tasks)")
-	fmt.Fprintln(&b, "- title (optional short label)")
-	fmt.Fprintln(&b, "- depends_on (ids of other tasks this one depends on)")
-	fmt.Fprintln(&b, "- context (evidence selectors: each entry has path with optional lines and/or symbol, plus why)")
-	fmt.Fprintln(&b, "- expected_files (advisory; paths in paths_in_scope)")
-	fmt.Fprintln(&b, "- acceptance (required, non-empty; observable completion criterion)")
-	fmt.Fprintln(&b, "- validation (required, non-empty; falsifiable command referencing expected_files)")
-	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Structured proposal")
 	fmt.Fprintln(&b, "Include a fenced JSON block exactly like:")
 	fmt.Fprintln(&b)
@@ -629,7 +596,7 @@ func renderContractDrafterPrompt(runID string) string {
 	fmt.Fprintln(&b, "}")
 	fmt.Fprintln(&b, "```")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "Use empty arrays for fields that need no additions. Omit \"plan\" entirely for linear work.")
+	fmt.Fprintln(&b, "Use empty arrays for fields that need no additions.")
 	return b.String()
 }
 
@@ -655,10 +622,6 @@ func renderContractDraftProposalMD(proposal contractDraftProposalDocument) strin
 	writeContractDraftProposalList(&b, "Acceptance criteria", proposal.Acceptance)
 	writeContractDraftProposalList(&b, "Validation commands", proposal.Validation)
 	writeContractDraftProposalList(&b, "Assumptions", proposal.Assumptions)
-	if proposal.Plan != nil && len(proposal.Plan.Tasks) > 0 {
-		fmt.Fprintln(&b)
-		writePlanSection(&b, proposal.Plan)
-	}
 	if len(proposal.Warnings) > 0 {
 		fmt.Fprintln(&b, "## Warnings")
 		for _, warning := range proposal.Warnings {
@@ -768,9 +731,6 @@ func writeContractDraftProposalSummary(stdout io.Writer, proposal contractDraftP
 	fmt.Fprintf(stdout, "  acceptance: %d\n", len(proposal.Acceptance))
 	fmt.Fprintf(stdout, "  validation: %d\n", len(proposal.Validation))
 	fmt.Fprintf(stdout, "  assumptions: %d\n", len(proposal.Assumptions))
-	if proposal.Plan != nil && len(proposal.Plan.Tasks) > 0 {
-		fmt.Fprintf(stdout, "  plan tasks: %d\n", len(proposal.Plan.Tasks))
-	}
 }
 
 func writeContractDraftWarnings(stdout io.Writer, warnings []string) {

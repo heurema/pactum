@@ -606,14 +606,6 @@ func readDraftContract(path string) (draftContract, error) {
 	if err := readJSON(path, &contract); err != nil {
 		return draftContract{}, err
 	}
-	normalizeDraftContractPlan(&contract)
-	if issues := validateContractPlan(contract); len(issues) > 0 {
-		msgs := make([]string, len(issues))
-		for i, issue := range issues {
-			msgs[i] = fmt.Sprintf("%s: %s", issue.Field, issue.Message)
-		}
-		return draftContract{}, fmt.Errorf("contract plan is invalid: %s", strings.Join(msgs, "; "))
-	}
 	return contract, nil
 }
 

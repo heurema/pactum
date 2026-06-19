@@ -190,30 +190,6 @@ func (c *contractReviewCmd) Run(r *runner) error {
 	return r.App.ContractReview(r.Stdout, r.Stderr, runID, c.Timeout, c.JSONOutput)
 }
 
-func (c *planShowCmd) Run(r *runner) error {
-	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
-	if err != nil || !ok {
-		return err
-	}
-	return r.App.PlanShow(r.Stdout, runID, c.JSONOutput)
-}
-
-func (c *planReviewCmd) Run(r *runner) error {
-	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
-	if err != nil {
-		return err
-	}
-	return r.App.PlanReview(r.Stdout, r.Stderr, runID, c.Timeout, c.JSONOutput)
-}
-
-func (c *planContextCmd) Run(r *runner) error {
-	runID, ok, err := r.App.resolveRunArgReadOnly(r.Stdout, c.RunID, false, c.JSONOutput)
-	if err != nil || !ok {
-		return err
-	}
-	return r.App.PlanContext(r.Stdout, runID, c.JSONOutput)
-}
-
 func (c *promptBuildCmd) Run(r *runner) error {
 	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
 	if err != nil {
