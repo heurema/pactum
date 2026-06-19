@@ -20,7 +20,7 @@ The agent-launching commands are:
 
 Every one of these launches external agent tooling through the ACP transport —
 external npm adapter packages downloaded and run via `npx`, such as
-`npx -y @zed-industries/codex-acp@latest` and
+`npx -y @heurema/codex-acp@latest` and
 `npx -y @agentclientprotocol/claude-agent-acp@latest`. They run in your
 repository, inherit your environment, and execute with your user's permissions.
 

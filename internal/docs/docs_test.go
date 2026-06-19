@@ -191,7 +191,7 @@ func TestSecurityPolicyMentionsRequiredConcepts(t *testing.T) {
 // how agents run, so these claims must not silently soften or drift from the
 // code.
 var requiredReadmeSecurityMentions = []string{
-	"@zed-industries/codex-acp",
+	"@heurema/codex-acp",
 	"@agentclientprotocol/claude-agent-acp",
 	"unsandboxed",
 	"SECURITY.md",

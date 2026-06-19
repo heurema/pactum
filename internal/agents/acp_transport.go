@@ -216,7 +216,11 @@ func acpAdapterCommand(agentName string, spec ModelSpec, readOnly bool) (string,
 		}
 		return cmd, args, env, nil
 	case BuiltinCodex:
-		cmd, args := acpAdapterCommandPrefix("PACTUM_CODEX_ACP_COMMAND", "@zed-industries/codex-acp@latest")
+		// Default to heurema's fork of @zed-industries/codex-acp: it forwards
+		// Codex token usage in the ACP prompt response (which pactum captures),
+		// matching upstream otherwise. Retire back to @zed-industries when
+		// upstream populates PromptResponse.Usage in a release.
+		cmd, args := acpAdapterCommandPrefix("PACTUM_CODEX_ACP_COMMAND", "@heurema/codex-acp@latest")
 		if readOnly {
 			args = append(args, "-c", `sandbox_mode="read-only"`)
 		}
