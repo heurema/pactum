@@ -96,6 +96,32 @@ reviews across M8–M10. Rough priority in parentheses.
   now blocks a question we actively care about (map/search adoption by the
   executor and reviewer), so it is a prerequisite for measuring whether the map
   we generate is exercised at all — strong candidate to pull forward in priority.
+- **Capture usage from the standard ACP `usage_update` notification — retire the
+  codex-acp fork** (med — reliability/cost; researched + proven 2026-06-19).
+  Today `tokenUsage()` reads usage only from `PromptResponse.Usage` (how the
+  claude adapter reports it) plus a fork-specific `codex/token_usage` `_meta`
+  field — the sole reason the dogfood pins `PACTUM_CODEX_ACP_COMMAND` to a forked
+  codex-acp (see [[codex-usage-fork-adapter]] and the agents-doc note). Upstream
+  has since shipped the standard surface: ACP defines a `usage_update`
+  session/update (`SessionUsageUpdate`, `used`/`size`; cost optional), codex-acp
+  populates it (PR #167; issue #165 closed by #210), and the SDK already in use
+  (`coder/acp-go-sdk@v0.13.5`) decodes it (`types_gen.go`: `SessionUsageUpdate`,
+  `"sessionUpdate":"usage_update"`). pactum *receives* these in
+  `acpClient.SessionUpdate` but **discards** them (only ticks the watchdog — the
+  same discarded stream as the tool-trace item above). **Proven live 2026-06-19:**
+  a `contract draft` via **upstream** `npx @zed-industries/codex-acp@latest`
+  (0.16.0, no fork) → `pactum usage` reports `captured_records: 0`
+  (`codex/draft` uncaptured). Fix on *our* side: accumulate `SessionUsageUpdate`
+  from the session-update stream and fold it into `tokenUsage()` alongside
+  `PromptResponse.Usage`. Payoff: captures upstream codex usage with **no fork**
+  (retires the fork and its ongoing Rust rebase burden), and being standard ACP
+  it works for **any** agent (claude already via PromptResponse.usage; codex and
+  future engines like gemini via `usage_update`). First step verifies codex-acp
+  0.16.0 actually emits `usage_update` (log it once). Cost stays null upstream
+  (OpenAI returns counts, not pricing) → derive locally from a pricing table
+  (optional, separate; see `cost-budget-design.md`). **Supersedes** the idea of
+  publishing our codex-acp fork to npm — fix pactum-side instead, don't ship a
+  fork.
 - **Workspace config leaks across runs/branches** — structurally resolved by the
   M16.0 config redesign: model pins became per-agent entries, so a pin can no
   longer reach a different agent (the M10.2 failure mode — a leaked claude pin
