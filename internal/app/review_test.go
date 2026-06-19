@@ -86,22 +86,21 @@ func TestReviewFindingAddScaffoldsReviewArtifacts(t *testing.T) {
 	}
 }
 
-func TestReviewApproveScaffoldsReviewOnGatedRun(t *testing.T) {
+func TestReviewApproveFailsClosedWhenFindingsAbsent(t *testing.T) {
+	// review approve must not approve when review/findings.jsonl does not exist:
+	// ensureReviewRecord would create an empty file and let zero-finding approval
+	// look legitimate, so we gate on findings existence before scaffolding.
 	root := t.TempDir()
 	app, _, runID, runPaths := setupRunWithGateReport(t, root, "passed")
-	assertNoFile(t, runPaths.ReviewJSON)
+	assertNoFile(t, runPaths.ReviewFindingsJSONL)
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"review", "approve", runID}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("review approve on a gated run exited %d, stderr: %s", code, stderr.String())
+	if code == 0 {
+		t.Fatalf("review approve must refuse when findings.jsonl is absent; got exit 0\nstdout: %s", stdout.String())
 	}
-	review := readReviewDoc(t, runPaths.ReviewJSON)
-	if review.Status != "approved" || review.Gate.Status != "passed" {
-		t.Fatalf("approve should scaffold and approve the review: %#v", review)
-	}
-	assertFile(t, runPaths.ReviewFindingsJSONL)
-	assertFile(t, runPaths.ReviewResolutionsJSONL)
+	// Review record must not have been created.
+	assertNoFile(t, runPaths.ReviewJSON)
 }
 
 func TestReviewStatusNotGatedPrintsGuidance(t *testing.T) {
@@ -333,6 +332,24 @@ func TestReviewApproveSucceeds(t *testing.T) {
 	eventTypes := ledgerEventTypes(t, paths.EventsJSONL)
 	if indexOfEvent(eventTypes, "review_approved") == -1 {
 		t.Fatalf("events missing review_approved:\n%v", eventTypes)
+	}
+}
+
+// TestReviewApproveGuardFailClosedOnMalformedFindings verifies that malformed
+// JSON in the findings JSONL file causes approve to refuse rather than silently
+// treating the run as finding-clean.
+func TestReviewApproveGuardFailClosedOnMalformedFindings(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	// Write a syntactically-broken findings file.
+	if err := activeStore.WriteBytes(runPaths.ReviewFindingsJSONL, []byte("not-valid-json\n"), 0o644); err != nil {
+		t.Fatalf("cannot write malformed findings: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "approve", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("review approve must refuse when findings file is malformed; got exit 0\nstdout: %s", stdout.String())
 	}
 }
 
