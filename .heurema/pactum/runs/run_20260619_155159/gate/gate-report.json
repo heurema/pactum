@@ -1,0 +1,109 @@
+{
+  "schema": "pactum.gate_report.v1alpha1",
+  "run_id": "run_20260619_155159",
+  "created_at": "2026-06-19T17:26:32Z",
+  "status": "needs_review",
+  "execution": {
+    "attempt_id": "attempt_001",
+    "exit_code": 0,
+    "timed_out": false,
+    "result": "execute/last-result.json"
+  },
+  "changes": {
+    "status": "changed",
+    "changed_files": [
+      "docs/agents.md",
+      "docs/backlog.md",
+      "internal/agents/acp_transport.go",
+      "internal/agents/runner.go",
+      "internal/agents/types.go",
+      "internal/app/agent_attempt.go",
+      "internal/app/agent_attempt_timeout_test.go",
+      "internal/app/agent_attempt_transport_test.go",
+      "internal/app/clarify_loop.go",
+      "internal/app/clarify_round.go",
+      "internal/app/config.go",
+      "internal/app/config_test.go",
+      "internal/app/contract_draft.go",
+      "internal/app/contract_review.go",
+      "internal/app/execute.go",
+      "internal/app/process.go",
+      "internal/app/review_fix.go",
+      "internal/app/review_loop.go"
+    ],
+    "new_files": [
+      "internal/agents/acp_transport_wallclock_test.go",
+      "internal/agents/acp_transport_wallclock_unix_test.go"
+    ],
+    "missing_files": [],
+    "reasons": [
+      "changed file: docs/agents.md",
+      "changed file: docs/backlog.md",
+      "changed file: internal/agents/acp_transport.go",
+      "changed file: internal/agents/runner.go",
+      "changed file: internal/agents/types.go",
+      "changed file: internal/app/agent_attempt.go",
+      "changed file: internal/app/agent_attempt_timeout_test.go",
+      "changed file: internal/app/agent_attempt_transport_test.go",
+      "changed file: internal/app/clarify_loop.go",
+      "changed file: internal/app/clarify_round.go",
+      "changed file: internal/app/config.go",
+      "changed file: internal/app/config_test.go",
+      "changed file: internal/app/contract_draft.go",
+      "changed file: internal/app/contract_review.go",
+      "changed file: internal/app/execute.go",
+      "changed file: internal/app/process.go",
+      "changed file: internal/app/review_fix.go",
+      "changed file: internal/app/review_loop.go",
+      "new file: internal/agents/acp_transport_wallclock_test.go",
+      "new file: internal/agents/acp_transport_wallclock_unix_test.go"
+    ]
+  },
+  "validation": {
+    "commands_allowed": true,
+    "commands": [
+      {
+        "id": "command_001",
+        "command": "go test ./internal/agents ./internal/app",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_001/stdout.log",
+        "stderr": "gate/validation/command_001/stderr.log",
+        "result": "gate/validation/command_001/result.json"
+      },
+      {
+        "id": "command_002",
+        "command": "go test ./...",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_002/stdout.log",
+        "stderr": "gate/validation/command_002/stderr.log",
+        "result": "gate/validation/command_002/result.json"
+      },
+      {
+        "id": "command_003",
+        "command": "go build ./...",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_003/stdout.log",
+        "stderr": "gate/validation/command_003/stderr.log",
+        "result": "gate/validation/command_003/result.json"
+      },
+      {
+        "id": "command_004",
+        "command": "make check",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_004/stdout.log",
+        "stderr": "gate/validation/command_004/stderr.log",
+        "result": "gate/validation/command_004/result.json"
+      }
+    ]
+  },
+  "summary": {
+    "execution_passed": true,
+    "validation_passed": true,
+    "changes_need_review": true,
+    "scope_blocked": false
+  }
+}

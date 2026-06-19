@@ -20,6 +20,10 @@ pipeline:
     by:
       - opus
       - codex-xhigh
+    loop:
+      max: 4
+      patience: 2
+      settle: 1
   code_review:
     by:
       - codex-xhigh

@@ -1,0 +1,344 @@
+{
+  "schema": "pactum.memory_candidate.v1alpha1",
+  "run_id": "run_20260619_155159",
+  "created_at": "2026-06-19T17:26:58Z",
+  "source": "deterministic",
+  "status": "proposed",
+  "freshness_pin": {
+    "schema": "pactum.memory_freshness_pin.v1alpha1",
+    "review_state_sha256": "a13b2c311475a5714d02bf3e16772e679d5afb4bd2b5437687a95c1dc64b43cb"
+  },
+  "contract": {
+    "goal": "Add an absolute per-attempt WALL-CLOCK CAP to the ACP agent transport so an agent attempt can never hang indefinitely, even when it trickles output. Today the only bound is an IDLE watchdog (internal/agents/acp_transport.go: startIdleTimeout) that resets on every streamed token and every inbound protocol callback, so an agent that trickles 1-3 KB then stalls keeps resetting the idle timer forever. Observed live (2026-06-19, slice-4b code-review): all five codex-xhigh reviewer attempts stuck mid-generation on a large diff for ~5 hours, the 25-minute idle timeout never fired, the loop sat on round 1, and ~17 codex-acp child processes leaked because the kill path (which reaps the whole process group) was never triggered.\n\nThe fix is a hard total-duration ceiling that fires regardless of output activity. The process-group kill machinery already exists (setProcessGroup + killProcessGroup via Setpgid); it just needs to be triggered by a wall-clock timer, not only the idle watchdog.\n\nIn scope:\n1. Add a wall-clock cap timer in the ACP transport (acp_transport.go) that starts at attempt start and fires after a fixed total duration measured from `started`, INDEPENDENT of the idle activity channel — it must NOT reset on streamed output or inbound callbacks. When it fires, it cancels the run context (same cancel the idle path uses) so the existing killProcessGroup path reaps the whole adapter+agent process tree.\n2. Make the wall-clock cap timeout a DISTINCT, loud outcome, separate from the idle timeout: a wall-clock-capped attempt must be distinguishable in the RunResult / attempt record from (a) a normal completion, (b) an idle timeout, and (c) a transport error. Record a distinct reason/flag (e.g. wall_clock_timeout) so run-records and callers can tell \"hung past the hard ceiling\" from \"went idle\". Keep the existing idle `timed_out` semantics unchanged.\n3. Resolve the cap value the same shape as the idle timeout is resolved today (a built-in default, overridable): pick a generous built-in default that comfortably exceeds a legitimate long attempt but bounds a true hang (the idle default is 25m; the wall-clock cap should be a larger total ceiling). Do not change the idle-timeout default or its resolution. Plumb the cap through the attempt request the same way Timeout is plumbed.\n4. Apply at the transport layer so the cap protects ALL attempt types that go through ACP — reviewer, executor, fixer, drafter — not only reviewers.\n5. Surface a wall-clock-capped reviewer lens loudly through the EXISTING skipped-lens mechanism in the review round (a wall-clock-capped lens attempt is recorded as skipped with a reason that names the wall-clock cap, and the round continues with the lenses/reviewers that succeeded); do not let a single hung lens silently disappear.\n\nOut of scope (do NOT do these here):\n- The automatic fallback/retry to a reliable emitter (claude/opus) when a reviewer attempt is capped — that is a separate follow-on slice. This slice only bounds and loudly reports the hang.\n- Any change to idle-timeout semantics, the idle default, or the activity/reset behavior.\n- Reviewer panel composition, lens selection, or reviewer-findings capture/parse (the shipped #196 behavior).\n- Graceful reviewer degradation for death/rate-limit (a separate backlog item).\n- Reintroducing any plan-DAG concept (removed).\n\nTests (helper-process fixtures; do NOT invoke real agents):\n- A helper attempt that trickles output past the idle window but exceeds the wall-clock cap is killed at the cap and recorded with the distinct wall_clock_timeout reason — proving the idle watchdog alone would not have fired.\n- An attempt that completes within the wall-clock cap is unaffected and records a normal completion.\n- The existing idle-timeout behavior is unchanged (an attempt that goes idle still records the idle timeout, not wall_clock_timeout) — lock it with a test.\n- The process tree is reaped on a wall-clock cap (no leaked child).\n- A reviewer round with one lens that hits the wall-clock cap records that lens as skipped with the cap reason and still converges on the remaining successful lenses.\n\nValidation: go test ./internal/agents ./internal/app, go test ./..., go build ./..., make check.",
+    "in_scope": [
+      "Add a separate ACP wall-clock cap duration alongside the existing idle Timeout plumbing, with a built-in default larger than the 25m idle default and an explicit override path that does not reinterpret the existing idle --timeout.",
+      "Start the ACP wall-clock cap once per attempt from the recorded start time; it must not reset on streamed output, protocol callbacks, tool activity, or any idle-watchdog activity tick.",
+      "When the wall-clock cap fires, cancel the ACP run context so the existing process-group kill/reap path handles the adapter and child agent process tree.",
+      "Propagate a distinct wall-clock timeout outcome through agents.RunResult, app processResult, per-stage attempt result JSON, and last-result JSON so callers can distinguish it from normal completion, idle timeout, and transport errors.",
+      "Apply the cap through the shared ACP transport/lifecycle path so executor, reviewer, review fixer, clarifier, contract drafter, and contract reviewer attempts are protected.",
+      "Surface a wall-clock-capped review lens through the existing skipped_lenses mechanism with a reason that names the wall-clock cap, while continuing the round when at least one lens succeeds.",
+      "Add deterministic helper/fake-process tests for the transport and review-loop behavior; do not invoke live external agents."
+    ],
+    "out_of_scope": [
+      "Do not add automatic fallback or retry to claude/opus or any other reliable emitter after a wall-clock cap.",
+      "Do not change idle-timeout duration defaults, idle activity/reset behavior, or completed_despite_timeout semantics.",
+      "Do not change reviewer panel composition, lens selection, reviewer output parsing, or reviewer findings capture behavior.",
+      "Do not add graceful degradation behavior for death, rate-limit, network, or provider errors beyond the wall-clock capped lens handling requested here.",
+      "Do not reintroduce any plan-DAG behavior.",
+      "Do not add tests that run real ACP agents or require external agent authentication."
+    ],
+    "acceptance_criteria": [
+      "A helper ACP attempt that emits periodic output or protocol activity past the idle window is killed at the wall-clock cap and records a distinct wall_clock_timeout-style outcome without relying on stderr text parsing.",
+      "A helper ACP attempt that completes before the wall-clock cap records normal completion and does not set the wall-clock timeout outcome.",
+      "An attempt that goes idle before the wall-clock cap still records the existing idle timed_out outcome and does not record the wall-clock timeout outcome.",
+      "Wall-clock cap expiry uses the existing process-group kill/reap machinery so a helper adapter that spawns a child process leaves no live child process after the attempt finishes.",
+      "All ACP-backed attempt request paths carry the resolved wall-clock cap to agents.RunRequest without removing or changing the existing idle Timeout field.",
+      "Reviewer loop output and summary JSON record a wall-clock-capped lens in skipped_lenses with a reason naming the wall-clock cap, and the round still processes remaining successful lenses.",
+      "If every reviewer lens in a round fails or is capped, the existing all-failed hard-error behavior remains loud rather than silently converging.",
+      "Human and JSON result surfaces distinguish wall-clock cap from generic ACP context cancellation or transport error.",
+      "When no wall-clock cap override is configured, all ACP attempt requests carry a wall-clock cap equal to the built-in default duration; a unit or helper test directly checks that the resolved RunRequest wall-clock cap field equals the built-in default when no override is present.",
+      "When an explicit wall-clock cap override is configured, ACP attempt requests carry the overridden duration rather than the built-in default; a unit or helper test directly checks that the resolved RunRequest wall-clock cap field matches the configured override value.",
+      "The wall-clock cap override path enforces a positive non-zero floor: supplying a zero or negative duration is rejected at configuration load or clamped to the built-in default, so an operator misconfiguration cannot silently disable the absolute ceiling and reintroduce indefinite hangs; this behavior is verified by a unit test."
+    ],
+    "validation_commands": [
+      "go test ./internal/agents ./internal/app",
+      "go test ./...",
+      "go build ./...",
+      "make check"
+    ]
+  },
+  "outcome": {
+    "gate_status": "needs_review",
+    "review_status": "approved",
+    "execution_exit_code": 0,
+    "validation_passed": true,
+    "changes_need_review": true
+  },
+  "changes": {
+    "changed_files": [
+      "docs/agents.md",
+      "docs/backlog.md",
+      "internal/agents/acp_transport.go",
+      "internal/agents/runner.go",
+      "internal/agents/types.go",
+      "internal/app/agent_attempt.go",
+      "internal/app/agent_attempt_timeout_test.go",
+      "internal/app/agent_attempt_transport_test.go",
+      "internal/app/clarify_loop.go",
+      "internal/app/clarify_round.go",
+      "internal/app/config.go",
+      "internal/app/config_test.go",
+      "internal/app/contract_draft.go",
+      "internal/app/contract_review.go",
+      "internal/app/execute.go",
+      "internal/app/process.go",
+      "internal/app/review_fix.go",
+      "internal/app/review_loop.go"
+    ],
+    "new_files": [
+      "internal/agents/acp_transport_wallclock_test.go",
+      "internal/agents/acp_transport_wallclock_unix_test.go"
+    ],
+    "missing_files": []
+  },
+  "clarifications": [],
+  "review": {
+    "findings": [
+      {
+        "id": "f_001",
+        "message": "The wall-clock timer is armed before the ACP adapter has actually started, so a valid positive cap can expire before the recorded attempt start and be reported as a generic transport start failure instead of wall_clock_timeout.",
+        "severity": "medium",
+        "category": "correctness",
+        "file": "internal/agents/acp_transport.go",
+        "line": 82,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "Moved `startWallClockTimeout` to after `cmd.Start()` in `acp_transport.go`. The wall-clock timer is now armed only after the adapter process is running, so the ceiling cannot fire before the process exists and be reported as a transport start failure."
+      },
+      {
+        "id": "f_002",
+        "message": "The wall-clock timer is armed before the recorded attempt start and before the adapter process is started, so it is not measured from the `started` timestamp as required. With a very small positive configured cap, the context can be canceled before `cmd.Start`; the early return path then bypasses result construction and loses the distinct `wall_clock_timeout` outcome.",
+        "severity": "medium",
+        "category": "correctness",
+        "file": "internal/agents/acp_transport.go",
+        "line": 82,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "Same move as f_001 fix. The timer arm is now after `started := time.Now().UTC()` and after `cmd.Start()` succeeds. If `cmd.Start()` fails (early return `RunResult{}`), the timer was never armed so there is no risk of a cancelled context producing a misleading wall_clock_timeout outcome on the start-error path."
+      },
+      {
+        "id": "f_003",
+        "message": "The required ACP helper tests are incomplete: the new wall-clock transport test only covers a silent non-responsive helper and idle distinction, but does not cover periodic output/protocol activity past the idle window, normal ACP completion within the cap, or process-tree reaping of a spawned child.",
+        "severity": "medium",
+        "category": "validation",
+        "file": "internal/agents/acp_transport_wallclock_test.go",
+        "line": 73,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "Added three tests to `acp_transport_wallclock_test.go` and `acp_transport_wallclock_unix_test.go`: (1) `TestWallClockCapFiresWhileIdleTimerKeptAlive` — goroutine ticks the idle-activity channel at 20ms intervals keeping the 500ms idle timer alive while the 100ms wall-clock cap fires; (2) `TestACPTransportFastExitNoWallClockFlag` — `exit_fast` helper exits immediately, proving no wall-clock or idle timeout flag is set; (3) `TestACPTransportWallClockCapReapsChildProcess` (Unix) — `spawn_child` helper forks a sleeping grandchild and writes its PID to a temp file; the test verifies the PID is dead after `killProcessGroup` fires."
+      },
+      {
+        "id": "f_004",
+        "message": "The wall-clock cap positive-floor acceptance criterion is not verified by a unit test. The suite has request-plumbing checks for default and override values, but no test for `resolveWallClockCap` or config loading with zero/negative `wall_clock_cap`.",
+        "severity": "medium",
+        "category": "validation",
+        "file": "internal/app/config.go",
+        "line": 399,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "Added `TestResolveWallClockCap` in `config_test.go` covering: explicit override used, zero maps to `defaultWallClockCap`, and negative is rejected. Also added `TestReadConfigRejectsNegativeWallClockCap` that loads a config with `wall_clock_cap: -1h` and verifies `readConfig` returns an error naming `wall_clock_cap`."
+      },
+      {
+        "id": "f_005",
+        "message": "The wall-clock transport tests do not exercise the contract's core helper-process scenarios: the helper only sleeps silently, so there is no trickled output/protocol activity keeping the idle watchdog alive, no successful ACP transport attempt that completes before the cap, and no spawned child process checked for reaping.",
+        "severity": "high",
+        "category": "quality",
+        "file": "internal/agents/acp_transport_wallclock_test.go",
+        "line": 16,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "Same fix as f_003. `TestWallClockCapFiresWhileIdleTimerKeptAlive` directly proves the trickled-activity/wall-clock independence. `TestACPTransportFastExitNoWallClockFlag` covers the normal-exit-before-cap scenario. `TestACPTransportWallClockCapReapsChildProcess` covers the spawned-child reaping scenario."
+      },
+      {
+        "id": "f_006",
+        "message": "The reviewer wall-clock skipped-lens test ignores the review command exit code, so it does not prove the round continues or converges on the remaining successful lens.",
+        "severity": "medium",
+        "category": "quality",
+        "file": "internal/app/agent_attempt_timeout_test.go",
+        "line": 228,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "In `TestReviewRunWallClockKilledLensIsSkippedNotParseMiss`, captured the return value of `app.Run` and added `if code != 0 { t.Fatalf(...) }`. With one successful lens returning empty findings and the rest wall-clock-killed (skipped), the round produces zero proposals and the loop must converge with exit 0, proving the round continued past the killed lenses."
+      },
+      {
+        "id": "f_007",
+        "message": "The wall-clock cap resolver's zero/default and negative-rejection behavior is not unit-tested.",
+        "severity": "medium",
+        "category": "quality",
+        "file": "internal/app/config.go",
+        "line": 399,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "Same fix as f_004. `TestResolveWallClockCap` tests zero→default and negative→error for `resolveWallClockCap`. `TestReadConfigRejectsNegativeWallClockCap` tests the config-load rejection path."
+      },
+      {
+        "id": "f_008",
+        "message": "The request-propagation tests do not directly cover all ACP-backed attempt paths carrying WallClockCap.",
+        "severity": "medium",
+        "category": "quality",
+        "file": "internal/app/agent_attempt_transport_test.go",
+        "line": 312,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "Added `TestClarifyRunPassesDefaultWallClockCap` (clarify stage) and `TestReviewFixRunPassesDefaultWallClockCap` (review fixer stage) in `agent_attempt_transport_test.go`. Combined with the existing execute and review-run tests, all major ACP-backed attempt paths are now verified to carry the built-in `defaultWallClockCap`."
+      },
+      {
+        "id": "f_009",
+        "message": "Public agent docs omit the new wall-clock cap configuration and result semantics.",
+        "severity": "medium",
+        "category": "quality",
+        "file": "docs/agents.md",
+        "line": 324,
+        "blocking": true,
+        "status": "resolved",
+        "resolution": "Added a paragraph in `docs/agents.md` after the idle-timeout section (before the output-channels paragraph) documenting: the absolute wall-clock ceiling applies to all ACP-backed attempt types (executor, reviewer, fixer, clarifier, drafter), the default (2h), the `wall_clock_cap` config key, zero/negative rejection, the distinct `wall_clock_timeout: true` result flag, and the skipped-lens behavior for capped reviewers."
+      }
+    ],
+    "proposal_summary": {
+      "pending": 0,
+      "accepted": 9,
+      "rejected": 0
+    }
+  },
+  "decisions": [
+    {
+      "kind": "scope",
+      "text": "in scope: Add a separate ACP wall-clock cap duration alongside the existing idle Timeout plumbing, with a built-in default larger than the 25m idle default and an explicit override path that does not reinterpret the existing idle --timeout."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Start the ACP wall-clock cap once per attempt from the recorded start time; it must not reset on streamed output, protocol callbacks, tool activity, or any idle-watchdog activity tick."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: When the wall-clock cap fires, cancel the ACP run context so the existing process-group kill/reap path handles the adapter and child agent process tree."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Propagate a distinct wall-clock timeout outcome through agents.RunResult, app processResult, per-stage attempt result JSON, and last-result JSON so callers can distinguish it from normal completion, idle timeout, and transport errors."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Apply the cap through the shared ACP transport/lifecycle path so executor, reviewer, review fixer, clarifier, contract drafter, and contract reviewer attempts are protected."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Surface a wall-clock-capped review lens through the existing skipped_lenses mechanism with a reason that names the wall-clock cap, while continuing the round when at least one lens succeeds."
+    },
+    {
+      "kind": "scope",
+      "text": "in scope: Add deterministic helper/fake-process tests for the transport and review-loop behavior; do not invoke live external agents."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not add automatic fallback or retry to claude/opus or any other reliable emitter after a wall-clock cap."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not change idle-timeout duration defaults, idle activity/reset behavior, or completed_despite_timeout semantics."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not change reviewer panel composition, lens selection, reviewer output parsing, or reviewer findings capture behavior."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not add graceful degradation behavior for death, rate-limit, network, or provider errors beyond the wall-clock capped lens handling requested here."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not reintroduce any plan-DAG behavior."
+    },
+    {
+      "kind": "scope",
+      "text": "out of scope: Do not add tests that run real ACP agents or require external agent authentication."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_001 resolved: The wall-clock timer is armed before the ACP adapter has actually started, so a valid positive cap can expire before the recorded attempt start and be reported as a generic transport start failure instead of wall_clock_timeout.; resolution: Moved `startWallClockTimeout` to after `cmd.Start()` in `acp_transport.go`. The wall-clock timer is now armed only after the adapter process is running, so the ceiling cannot fire before the process exists and be reported as a transport start failure."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_002 resolved: The wall-clock timer is armed before the recorded attempt start and before the adapter process is started, so it is not measured from the `started` timestamp as required. With a very small positive configured cap, the context can be canceled before `cmd.Start`; the early return path then bypasses result construction and loses the distinct `wall_clock_timeout` outcome.; resolution: Same move as f_001 fix. The timer arm is now after `started := time.Now().UTC()` and after `cmd.Start()` succeeds. If `cmd.Start()` fails (early return `RunResult{}`), the timer was never armed so there is no risk of a cancelled context producing a misleading wall_clock_timeout outcome on the start-error path."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_003 resolved: The required ACP helper tests are incomplete: the new wall-clock transport test only covers a silent non-responsive helper and idle distinction, but does not cover periodic output/protocol activity past the idle window, normal ACP completion within the cap, or process-tree reaping of a spawned child.; resolution: Added three tests to `acp_transport_wallclock_test.go` and `acp_transport_wallclock_unix_test.go`: (1) `TestWallClockCapFiresWhileIdleTimerKeptAlive` — goroutine ticks the idle-activity channel at 20ms intervals keeping the 500ms idle timer alive while the 100ms wall-clock cap fires; (2) `TestACPTransportFastExitNoWallClockFlag` — `exit_fast` helper exits immediately, proving no wall-clock or idle timeout flag is set; (3) `TestACPTransportWallClockCapReapsChildProcess` (Unix) — `spawn_child` helper forks a sleeping grandchild and writes its PID to a temp file; the test verifies the PID is dead after `killProcessGroup` fires."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_004 resolved: The wall-clock cap positive-floor acceptance criterion is not verified by a unit test. The suite has request-plumbing checks for default and override values, but no test for `resolveWallClockCap` or config loading with zero/negative `wall_clock_cap`.; resolution: Added `TestResolveWallClockCap` in `config_test.go` covering: explicit override used, zero maps to `defaultWallClockCap`, and negative is rejected. Also added `TestReadConfigRejectsNegativeWallClockCap` that loads a config with `wall_clock_cap: -1h` and verifies `readConfig` returns an error naming `wall_clock_cap`."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_005 resolved: The wall-clock transport tests do not exercise the contract's core helper-process scenarios: the helper only sleeps silently, so there is no trickled output/protocol activity keeping the idle watchdog alive, no successful ACP transport attempt that completes before the cap, and no spawned child process checked for reaping.; resolution: Same fix as f_003. `TestWallClockCapFiresWhileIdleTimerKeptAlive` directly proves the trickled-activity/wall-clock independence. `TestACPTransportFastExitNoWallClockFlag` covers the normal-exit-before-cap scenario. `TestACPTransportWallClockCapReapsChildProcess` covers the spawned-child reaping scenario."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_006 resolved: The reviewer wall-clock skipped-lens test ignores the review command exit code, so it does not prove the round continues or converges on the remaining successful lens.; resolution: In `TestReviewRunWallClockKilledLensIsSkippedNotParseMiss`, captured the return value of `app.Run` and added `if code != 0 { t.Fatalf(...) }`. With one successful lens returning empty findings and the rest wall-clock-killed (skipped), the round produces zero proposals and the loop must converge with exit 0, proving the round continued past the killed lenses."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_007 resolved: The wall-clock cap resolver's zero/default and negative-rejection behavior is not unit-tested.; resolution: Same fix as f_004. `TestResolveWallClockCap` tests zero→default and negative→error for `resolveWallClockCap`. `TestReadConfigRejectsNegativeWallClockCap` tests the config-load rejection path."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_008 resolved: The request-propagation tests do not directly cover all ACP-backed attempt paths carrying WallClockCap.; resolution: Added `TestClarifyRunPassesDefaultWallClockCap` (clarify stage) and `TestReviewFixRunPassesDefaultWallClockCap` (review fixer stage) in `agent_attempt_transport_test.go`. Combined with the existing execute and review-run tests, all major ACP-backed attempt paths are now verified to carry the built-in `defaultWallClockCap`."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "f_009 resolved: Public agent docs omit the new wall-clock cap configuration and result semantics.; resolution: Added a paragraph in `docs/agents.md` after the idle-timeout section (before the output-channels paragraph) documenting: the absolute wall-clock ceiling applies to all ACP-backed attempt types (executor, reviewer, fixer, clarifier, drafter), the default (2h), the `wall_clock_cap` config key, zero/negative rejection, the distinct `wall_clock_timeout: true` result flag, and the skipped-lens behavior for capped reviewers."
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_001 accepted as f_001"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_002 accepted as f_002"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_003 accepted as f_003"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_004 accepted as f_004"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_005 accepted as f_005"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_006 accepted as f_006"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_007 accepted as f_007"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_008 accepted as f_008"
+    },
+    {
+      "kind": "review_resolution",
+      "text": "proposal p_009 accepted as f_009"
+    },
+    {
+      "kind": "validation",
+      "text": "go test ./internal/agents ./internal/app passed"
+    },
+    {
+      "kind": "validation",
+      "text": "go test ./... passed"
+    },
+    {
+      "kind": "validation",
+      "text": "go build ./... passed"
+    },
+    {
+      "kind": "validation",
+      "text": "make check passed"
+    }
+  ],
+  "artifacts": {
+    "contract": "contract/contract.json",
+    "gate_report": "gate/gate-report.json",
+    "review": "review/review.json",
+    "findings": "review/findings.jsonl",
+    "resolutions": "review/resolutions.jsonl",
+    "proposals": "review/proposals.jsonl",
+    "proposal_decisions": "review/proposal-decisions.jsonl"
+  }
+}

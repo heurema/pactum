@@ -1,0 +1,48 @@
+# Contract Draft Proposal
+
+## Status
+- Run id: run_20260619_123215
+- Status: accepted
+- Source: drafter_attempt
+- Drafter attempt: drafter_attempt_001
+- Drafter: codex
+- Accepted by: manual
+- Accepted at: 2026-06-19T12:37:41Z
+
+## In scope
+- Update contract_review and code_review loop termination so stalemate or max_rounds with at least one open blocking finding is reported as a distinct non-approvable terminal_reason, using blockers_open.
+- Add fixer no-progress detection for open blocking findings with K=2 consecutive no-change fixer rounds, ending early with terminal_reason fixer_no_progress and recording the reason/streak in loop output.
+- Surface open blocking finding counts prominently in JSON responses, durable summaries where present, and human-readable output for blockers_open and fixer_no_progress terminals.
+- Ensure contract approve and review approve refuse while blocking findings for their phase remain open, and next commands point to inspection or rerun/fix commands instead of suggesting approval.
+- Add helper-process tests for both contract_review and code_review/review_loop paths; tests must not invoke real agents.
+
+## Out of scope
+- Changing the default max_rounds value from 10.
+- Changing reviewer panel composition or lens selection.
+- Changing reviewer finding capture/parsing behavior.
+- Adding reviewer-attempt timeout behavior.
+- Reintroducing plan-DAG concepts.
+- Running real agent execution in tests.
+
+## Acceptance criteria
+- A contract_review loop that reaches stalemate or max rounds while the final round has blocking findings returns terminal_reason blockers_open, not stalemate or max_rounds, and its JSON and human output include the blocking count.
+- A code_review review loop that reaches stalemate or max rounds while open_blocking_findings is greater than zero returns terminal_reason blockers_open, not stalemate or max_rounds, and its JSON response, summary artifact, and human output include the open blocking count.
+- When the fixer leaves the open blocking finding set/status unchanged for 2 consecutive fixer rounds, the loop stops before consuming remaining max_rounds and returns terminal_reason fixer_no_progress with the no-progress reason recorded.
+- Advisory-only findings do not prevent convergence: contract_review resolves when all blocking findings are gone, and code_review resolves or reaches clean_round according to existing clean-round behavior while advisory findings may remain recorded.
+- Existing successful convergence remains unchanged: loops still return resolved or clean_round when all blocking findings are cleared.
+- review approve exits nonzero and does not mark the review approved while any blocking review finding is open.
+- contract approve exits nonzero and does not mark the contract approved when the latest contract review state has unresolved blocking findings.
+- Next-command output for blockers_open and fixer_no_progress terminals directs the operator to show/review/fix the run and does not present approval as the safe next action.
+
+## Validation commands
+- go test ./internal/app -run 'Review|Loop|Contract'
+- go test ./...
+- go build ./...
+- make check
+
+## Assumptions
+- K for fixer no-progress escalation is 2.
+- blockers_open is the distinct terminal_reason for open blocking findings at stalemate or max_rounds.
+- fixer_no_progress is the distinct terminal_reason for repeated fixer no-progress on open blocking findings.
+- Contract-review blocking findings can be persisted or derived durably enough for contract approve and next-command logic to enforce the approval guard.
+

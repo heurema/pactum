@@ -1,0 +1,49 @@
+{
+  "schema": "pactum.contract_draft_proposal.v1alpha1",
+  "run_id": "run_20260619_155159",
+  "status": "accepted",
+  "created_at": "2026-06-19T15:52:07Z",
+  "source": "drafter_attempt",
+  "drafter_attempt_id": "drafter_attempt_001",
+  "drafter": "codex",
+  "in_scope": [
+    "Add a separate ACP wall-clock cap duration alongside the existing idle Timeout plumbing, with a built-in default larger than the 25m idle default and an explicit override path that does not reinterpret the existing idle --timeout.",
+    "Start the ACP wall-clock cap once per attempt from the recorded start time; it must not reset on streamed output, protocol callbacks, tool activity, or any idle-watchdog activity tick.",
+    "When the wall-clock cap fires, cancel the ACP run context so the existing process-group kill/reap path handles the adapter and child agent process tree.",
+    "Propagate a distinct wall-clock timeout outcome through agents.RunResult, app processResult, per-stage attempt result JSON, and last-result JSON so callers can distinguish it from normal completion, idle timeout, and transport errors.",
+    "Apply the cap through the shared ACP transport/lifecycle path so executor, reviewer, review fixer, clarifier, contract drafter, and contract reviewer attempts are protected.",
+    "Surface a wall-clock-capped review lens through the existing skipped_lenses mechanism with a reason that names the wall-clock cap, while continuing the round when at least one lens succeeds.",
+    "Add deterministic helper/fake-process tests for the transport and review-loop behavior; do not invoke live external agents."
+  ],
+  "out_of_scope": [
+    "Do not add automatic fallback or retry to claude/opus or any other reliable emitter after a wall-clock cap.",
+    "Do not change idle-timeout duration defaults, idle activity/reset behavior, or completed_despite_timeout semantics.",
+    "Do not change reviewer panel composition, lens selection, reviewer output parsing, or reviewer findings capture behavior.",
+    "Do not add graceful degradation behavior for death, rate-limit, network, or provider errors beyond the wall-clock capped lens handling requested here.",
+    "Do not reintroduce any plan-DAG behavior.",
+    "Do not add tests that run real ACP agents or require external agent authentication."
+  ],
+  "acceptance": [
+    "A helper ACP attempt that emits periodic output or protocol activity past the idle window is killed at the wall-clock cap and records a distinct wall_clock_timeout-style outcome without relying on stderr text parsing.",
+    "A helper ACP attempt that completes before the wall-clock cap records normal completion and does not set the wall-clock timeout outcome.",
+    "An attempt that goes idle before the wall-clock cap still records the existing idle timed_out outcome and does not record the wall-clock timeout outcome.",
+    "Wall-clock cap expiry uses the existing process-group kill/reap machinery so a helper adapter that spawns a child process leaves no live child process after the attempt finishes.",
+    "All ACP-backed attempt request paths carry the resolved wall-clock cap to agents.RunRequest without removing or changing the existing idle Timeout field.",
+    "Reviewer loop output and summary JSON record a wall-clock-capped lens in skipped_lenses with a reason naming the wall-clock cap, and the round still processes remaining successful lenses.",
+    "If every reviewer lens in a round fails or is capped, the existing all-failed hard-error behavior remains loud rather than silently converging.",
+    "Human and JSON result surfaces distinguish wall-clock cap from generic ACP context cancellation or transport error."
+  ],
+  "validation": [
+    "go test ./internal/agents ./internal/app",
+    "go test ./...",
+    "go build ./...",
+    "make check"
+  ],
+  "assumptions": [
+    "A generous fixed wall-clock default materially larger than 25m, such as around 2h, is acceptable if the implementation keeps it overridable.",
+    "The concrete JSON field or reason name may follow repository naming conventions, but it must clearly encode wall_clock_timeout or an equivalent distinct wall-clock cap outcome.",
+    "The wall-clock override should mirror the repository's actual current idle-timeout resolution path while keeping --timeout as the idle timeout."
+  ],
+  "accepted_at": "2026-06-19T15:55:49Z",
+  "accepted_by": "manual"
+}
