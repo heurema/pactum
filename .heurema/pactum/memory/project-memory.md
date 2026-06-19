@@ -169,3 +169,17 @@
 - Files: docs/agents.md, docs/flow.md, internal/app/execute_dag.go, internal/app/execute_dag_test.go
 - Summary: Reviewed run run_20260618_124220 with gate status passed and review status approved. Goal: Plan-DAG slice 4b: the minimal topological execute loop — run a contract's plan.tasks[] DAG node-by-node, sequentially, unattended. This is slice ...
 - Candidate: runs/run_20260618_124220/memory/memory-candidate.json
+
+### mem_025 - Make the review loop (both contract_review and code_review, which share inter...
+- Run: run_20260619_123215
+- Freshness: fresh
+- Files: docs/flow.md, internal/app/contract.go, internal/app/contract_review.go, internal/app/contract_review_test.go, internal/app/resolve.go, internal/app/review.go, internal/app/review_loop.go, internal/app/review_loop_test.go, internal/app/review_test.go, internal/app/run.go
+- Summary: Reviewed run run_20260619_123215 with gate status needs_review and review status approved. Goal: Make the review loop (both contract_review and code_review, which share internal/app/review_loop.go) never silently terminate with an OPEN B...
+- Candidate: runs/run_20260619_123215/memory/memory-candidate.json
+
+### mem_026 - Add an absolute per-attempt WALL-CLOCK CAP to the ACP agent transport so an a...
+- Run: run_20260619_155159
+- Freshness: fresh
+- Files: docs/agents.md, docs/backlog.md, internal/agents/acp_transport.go, internal/agents/acp_transport_wallclock_test.go, internal/agents/acp_transport_wallclock_unix_test.go, internal/agents/runner.go, internal/agents/types.go, internal/app/agent_attempt.go, internal/app/agent_attempt_timeout_test.go, internal/app/agent_attempt_transport_test.go, internal/app/clarify_loop.go, internal/app/clarify_round.go, internal/app/config.go, internal/app/config_test.go, internal/app/contract_draft.go, internal/app/contract_review.go, internal/app/execute.go, internal/app/process.go, internal/app/review_fix.go, internal/app/review_loop.go
+- Summary: Reviewed run run_20260619_155159 with gate status needs_review and review status approved. Goal: Add an absolute per-attempt WALL-CLOCK CAP to the ACP agent transport so an agent attempt can never hang indefinitely, even when it trickles...
+- Candidate: runs/run_20260619_155159/memory/memory-candidate.json

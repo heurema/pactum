@@ -96,6 +96,37 @@ reviews across M8–M10. Rough priority in parentheses.
   now blocks a question we actively care about (map/search adoption by the
   executor and reviewer), so it is a prerequisite for measuring whether the map
   we generate is exercised at all — strong candidate to pull forward in priority.
+- **Publish the codex-acp fork to npm under `@heurema` (keep it until upstream
+  ships per-turn usage)** (med — distribution; decided 2026-06-19, Option C).
+  Codex token-count capture needs the breakdown (`input`/`output`/`cached`/
+  `reasoning`), which pactum reads from `PromptResponse.Usage`. Upstream codex-acp
+  0.16.0 does NOT populate that yet (proven live: a `contract draft` via upstream
+  `npx @zed-industries/codex-acp@latest` → `pactum usage` `captured_records: 0`);
+  its `usage_update` session notification (`SessionUsageUpdate`) carries only a
+  **context-window gauge** (`used`/`size`), NOT the per-turn breakdown — so
+  reading `usage_update` does NOT replace the fork for cost. The
+  `heurema/codex-acp` fork (`feat/acp-prompt-usage`, "Forward Codex token usage in
+  ACP prompt responses") forward-ports the populate-`PromptResponse.Usage` patch
+  (upstream PR #210 / issue #165), which pactum already reads. **Decision:** keep
+  the fork and **publish it to npm under `@heurema`** so alpha users install it as
+  easily as upstream (`npx -y @heurema/codex-acp`). The fork already carries the
+  full upstream npm toolchain — `release.yml` (8-target Rust cross-compile matrix
+  + npm publish, manual `workflow_dispatch`), the `bin/codex-acp.js` platform
+  shim, `npm/template/package.json`, and `npm/publish/*.sh`. Publish work (in the
+  fork repo, not pactum): (1) rebrand `@zed-industries` → `@heurema` across
+  `npm/package.json` (name + 6 platform `optionalDependencies`), the shim, the
+  template, the publish scripts, and `release.yml`; (2) create the `@heurema` npm
+  scope + an automation `NPM_TOKEN` GitHub secret; (3) for alpha, **skip the
+  Apple/Azure code-signing steps** (upstream's certs we don't have) — unsigned
+  binaries are acceptable for the trusted dev circle (note the macOS Gatekeeper
+  prompt); (4) `workflow_dispatch` → builds the platform binaries + publishes the
+  7 packages. Then wire pactum: document/default `PACTUM_CODEX_ACP_COMMAND="npx
+  -y @heurema/codex-acp"`. **Retire trigger:** when upstream ships
+  `PromptResponse.Usage` in a published release, drop the fork by bumping the
+  codex adapter back to upstream — zero pactum code (pactum already reads it);
+  update [[codex-usage-fork-adapter]] then. Separately, reading `usage_update`
+  as a context-window/budget gauge is its own optional feature (not fork-related;
+  see `cost-budget-design.md`).
 - **Workspace config leaks across runs/branches** — structurally resolved by the
   M16.0 config redesign: model pins became per-agent entries, so a pin can no
   longer reach a different agent (the M10.2 failure mode — a leaked claude pin

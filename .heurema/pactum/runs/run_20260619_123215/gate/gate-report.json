@@ -1,0 +1,86 @@
+{
+  "schema": "pactum.gate_report.v1alpha1",
+  "run_id": "run_20260619_123215",
+  "created_at": "2026-06-19T14:55:41Z",
+  "status": "needs_review",
+  "execution": {
+    "attempt_id": "attempt_001",
+    "exit_code": 0,
+    "timed_out": false,
+    "result": "execute/last-result.json"
+  },
+  "changes": {
+    "status": "changed",
+    "changed_files": [
+      "internal/app/contract.go",
+      "internal/app/contract_review.go",
+      "internal/app/contract_review_test.go",
+      "internal/app/resolve.go",
+      "internal/app/review.go",
+      "internal/app/review_loop.go",
+      "internal/app/review_loop_test.go",
+      "internal/app/review_test.go",
+      "internal/app/run.go"
+    ],
+    "new_files": [],
+    "missing_files": [],
+    "reasons": [
+      "changed file: internal/app/contract.go",
+      "changed file: internal/app/contract_review.go",
+      "changed file: internal/app/contract_review_test.go",
+      "changed file: internal/app/resolve.go",
+      "changed file: internal/app/review.go",
+      "changed file: internal/app/review_loop.go",
+      "changed file: internal/app/review_loop_test.go",
+      "changed file: internal/app/review_test.go",
+      "changed file: internal/app/run.go"
+    ]
+  },
+  "validation": {
+    "commands_allowed": true,
+    "commands": [
+      {
+        "id": "command_001",
+        "command": "go test ./internal/app",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_001/stdout.log",
+        "stderr": "gate/validation/command_001/stderr.log",
+        "result": "gate/validation/command_001/result.json"
+      },
+      {
+        "id": "command_002",
+        "command": "go test ./...",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_002/stdout.log",
+        "stderr": "gate/validation/command_002/stderr.log",
+        "result": "gate/validation/command_002/result.json"
+      },
+      {
+        "id": "command_003",
+        "command": "go build ./...",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_003/stdout.log",
+        "stderr": "gate/validation/command_003/stderr.log",
+        "result": "gate/validation/command_003/result.json"
+      },
+      {
+        "id": "command_004",
+        "command": "make check",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_004/stdout.log",
+        "stderr": "gate/validation/command_004/stderr.log",
+        "result": "gate/validation/command_004/result.json"
+      }
+    ]
+  },
+  "summary": {
+    "execution_passed": true,
+    "validation_passed": true,
+    "changes_need_review": true,
+    "scope_blocked": false
+  }
+}
