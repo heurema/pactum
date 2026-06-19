@@ -307,6 +307,18 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 		return blockingClarificationsOpenError("approve contract", runID)
 	}
 
+	// Contract-review blocking findings guard. Enforced when reviewers are currently
+	// configured OR when a prior review run already produced findings.jsonl — so that
+	// removing reviewers from the config after a blocking run cannot bypass the guard.
+	// Fail-closed if the artifact is absent, unreadable, or malformed.
+	if configured, cfgErr := contractReviewersConfigured(context.Paths.Config); cfgErr != nil {
+		return fmt.Errorf("cannot approve contract: cannot read reviewer config: %w", cfgErr)
+	} else if configured || isRegularFile(context.RunPaths.ContractReviewFindingsJSONL) {
+		if blockErr := checkContractReviewFindingsApprovalGuard(context.RunPaths); blockErr != nil {
+			return blockErr
+		}
+	}
+
 	now := a.nowUTC()
 	contract := context.Contract
 	applyClarificationStatusToContract(&contract, status)

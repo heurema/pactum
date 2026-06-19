@@ -694,11 +694,14 @@ func TestContractReviewLoopMaxRounds(t *testing.T) {
 	if response.Schema != contractReviewLoopSchema {
 		t.Fatalf("unexpected schema: %q", response.Schema)
 	}
-	if response.TerminalReason != "max_rounds" {
-		t.Fatalf("expected terminal_reason=max_rounds, got %q\nfull response: %s", response.TerminalReason, stdout.String())
+	if response.TerminalReason != "blockers_open" {
+		t.Fatalf("expected terminal_reason=blockers_open, got %q\nfull response: %s", response.TerminalReason, stdout.String())
 	}
 	if len(response.Rounds) != 2 {
 		t.Fatalf("expected 2 rounds (max_rounds=2), got %d", len(response.Rounds))
+	}
+	if response.OpenBlockingCount == 0 {
+		t.Fatalf("blockers_open must report open_blocking_count > 0: %#v", response)
 	}
 	for i, r := range response.Rounds {
 		if r.BlockingFindings == 0 {
@@ -743,8 +746,8 @@ func TestContractReviewLoopVersionGuard(t *testing.T) {
 	if response.Schema != contractReviewLoopSchema {
 		t.Fatalf("unexpected schema: %q", response.Schema)
 	}
-	if response.TerminalReason != "stalemate" {
-		t.Fatalf("expected terminal_reason=stalemate, got %q\nfull response: %s", response.TerminalReason, stdout.String())
+	if response.TerminalReason != "blockers_open" {
+		t.Fatalf("expected terminal_reason=blockers_open, got %q\nfull response: %s", response.TerminalReason, stdout.String())
 	}
 	if len(response.Rounds) == 0 {
 		t.Fatalf("expected at least one round")
@@ -833,6 +836,294 @@ func TestContractReviewLoopFinishedOnError(t *testing.T) {
 	if fileExists(t, summaryPath) {
 		t.Fatalf("loop-summary.json must not be written on error, but found at %s", summaryPath)
 	}
+}
+
+// TestContractReviewBlockersOpen checks that when blocking findings persist
+// through stalemate, the loop exits as blockers_open (not stalemate) and the
+// response includes a non-zero open_blocking_count.
+func TestContractReviewBlockersOpen(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	app = configureHelperContractReviewers(t, app, paths, "helper")
+	app = configureHelperContractFixer(t, app, paths)
+	setContractReviewPatienceConfig(t, paths, 1)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING", "1")
+	// Fixer emits no revise block → version unchanged → stalemate after patience=1 round.
+	t.Setenv("PACTUM_CONTRACT_FIXER_HELPER_PROCESS", "1")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var response contractReviewLoopResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.TerminalReason != "blockers_open" {
+		t.Fatalf("expected terminal_reason=blockers_open, got %q\nfull response: %s", response.TerminalReason, stdout.String())
+	}
+	if response.OpenBlockingCount == 0 {
+		t.Fatalf("blockers_open must report open_blocking_count > 0: %#v", response)
+	}
+	// Next commands must include an inspection command, not approve.
+	hasInspect := false
+	for _, cmd := range response.Next {
+		if strings.Contains(cmd, "show") || strings.Contains(cmd, "list") || strings.Contains(cmd, "inspect") {
+			hasInspect = true
+		}
+		if strings.Contains(cmd, "approve") {
+			t.Fatalf("blockers_open next commands must not include approve: %v", response.Next)
+		}
+	}
+	if !hasInspect {
+		t.Fatalf("blockers_open next commands must include an inspection command: %v", response.Next)
+	}
+}
+
+// TestContractReviewFixerNoProgress checks that when the fixer leaves the
+// canonical key set of blocking findings unchanged for K=2 consecutive rounds,
+// the loop exits as fixer_no_progress rather than burning all rounds.
+func TestContractReviewFixerNoProgress(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	app = configureHelperContractReviewers(t, app, paths, "helper")
+	app = configureHelperContractFixer(t, app, paths)
+	setContractReviewMaxRoundsConfig(t, paths, 5)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING", "1")
+	// Fixer emits no revise block → version unchanged → same blocker key set each round.
+	t.Setenv("PACTUM_CONTRACT_FIXER_HELPER_PROCESS", "1")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var response contractReviewLoopResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.TerminalReason != "fixer_no_progress" {
+		t.Fatalf("expected terminal_reason=fixer_no_progress, got %q\nfull response: %s", response.TerminalReason, stdout.String())
+	}
+	// K=2: prevKeys set after round 1, streak=1 after round 2, streak=2 after round 3 → exit.
+	if len(response.Rounds) != 3 {
+		t.Fatalf("fixer_no_progress should exit after 3 rounds (K=2), got %d: %#v", len(response.Rounds), response.Rounds)
+	}
+	if response.OpenBlockingCount == 0 {
+		t.Fatalf("fixer_no_progress must report open_blocking_count > 0: %#v", response)
+	}
+	if response.NoProgressStreak != 2 {
+		t.Fatalf("fixer_no_progress must have no_progress_streak == 2 (K=2), got %d: %#v", response.NoProgressStreak, response)
+	}
+	if response.NoProgressReason == "" {
+		t.Fatalf("fixer_no_progress must have non-empty no_progress_reason: %#v", response)
+	}
+	// Next commands must include an inspection command, not approve.
+	hasInspect := false
+	for _, cmd := range response.Next {
+		if strings.Contains(cmd, "show") || strings.Contains(cmd, "list") || strings.Contains(cmd, "inspect") {
+			hasInspect = true
+		}
+		if strings.Contains(cmd, "approve") {
+			t.Fatalf("fixer_no_progress next commands must not include approve: %v", response.Next)
+		}
+	}
+	if !hasInspect {
+		t.Fatalf("fixer_no_progress next commands must include an inspection command: %v", response.Next)
+	}
+}
+
+// TestContractReviewNonApprovableTerminalHumanOutput verifies that the
+// human-readable output for blockers_open and fixer_no_progress terminals
+// puts the open blocking count BEFORE the word "blocking" (e.g. "2 open
+// blocking findings remain") rather than after.
+func TestContractReviewNonApprovableTerminalHumanOutput(t *testing.T) {
+	t.Run("blockers_open", func(t *testing.T) {
+		root := t.TempDir()
+		app, paths, runID := setupContractRun(t, root)
+		app = configureHelperContractReviewers(t, app, paths, "helper")
+		app = configureHelperContractFixer(t, app, paths)
+		setContractReviewPatienceConfig(t, paths, 1)
+		t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+		t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+		t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS", "1")
+		t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING", "1")
+		t.Setenv("PACTUM_CONTRACT_FIXER_HELPER_PROCESS", "1")
+
+		var stdout, stderr bytes.Buffer
+		code := app.Run([]string{"contract", "review", runID}, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+		}
+		got := stdout.String()
+		if !strings.Contains(got, "blockers_open") {
+			t.Fatalf("human output missing terminal reason:\n%s", got)
+		}
+		// Count must appear immediately before the word "blocking".
+		if !strings.Contains(got, "open blocking findings remain") {
+			t.Fatalf("human output must contain '<N> open blocking findings remain':\n%s", got)
+		}
+	})
+
+	t.Run("fixer_no_progress", func(t *testing.T) {
+		root := t.TempDir()
+		app, paths, runID := setupContractRun(t, root)
+		app = configureHelperContractReviewers(t, app, paths, "helper")
+		app = configureHelperContractFixer(t, app, paths)
+		setContractReviewMaxRoundsConfig(t, paths, 5)
+		t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+		t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+		t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS", "1")
+		t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING", "1")
+		t.Setenv("PACTUM_CONTRACT_FIXER_HELPER_PROCESS", "1")
+
+		var stdout, stderr bytes.Buffer
+		code := app.Run([]string{"contract", "review", runID}, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+		}
+		got := stdout.String()
+		if !strings.Contains(got, "fixer_no_progress") {
+			t.Fatalf("human output missing terminal reason:\n%s", got)
+		}
+		if !strings.Contains(got, "open blocking findings remain") {
+			t.Fatalf("human output must contain '<N> open blocking findings remain':\n%s", got)
+		}
+	})
+}
+
+// TestContractReviewFindingsJSONLWrittenAtLoopEnd checks that a successful
+// contract review loop run writes findings.jsonl under contract/reviewer/.
+func TestContractReviewFindingsJSONLWrittenAtLoopEnd(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	app = configureHelperContractReviewers(t, app, paths, "helper")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS", "1")
+	// blocking=false (default) → loop exits resolved.
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	// findings.jsonl must exist and contain entries from the last round.
+	assertFile(t, runPaths.ContractReviewFindingsJSONL)
+	lines, err := readJSONLines[contractReviewFindingLine](runPaths.ContractReviewFindingsJSONL)
+	if err != nil {
+		t.Fatalf("cannot read findings.jsonl: %v", err)
+	}
+	if len(lines) == 0 {
+		t.Fatalf("findings.jsonl must have at least one entry when reviewer emits findings")
+	}
+	for _, l := range lines {
+		if l.Message == "" {
+			t.Fatalf("findings.jsonl entry has empty message: %#v", l)
+		}
+		if l.Category == "" {
+			t.Fatalf("findings.jsonl entry has empty category: %#v", l)
+		}
+		// blocking=false because EMIT_BLOCKING is not set in this test.
+		if l.Blocking {
+			t.Fatalf("findings.jsonl entry has unexpected blocking=true (no EMIT_BLOCKING set): %#v", l)
+		}
+	}
+}
+
+// TestContractApproveGuardBlockingFindings checks that contract approve refuses
+// when findings.jsonl contains blocking=true entries.
+func TestContractApproveGuardBlockingFindings(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	// Configure a reviewer so the guard is enforced.
+	setContractReviewersConfig(t, paths, "helper")
+	registerTestAgents(t, paths, "helper")
+
+	// Write a findings.jsonl with one blocking entry.
+	blocking := contractReviewFindingLine{Category: "completeness", Message: "missing acceptance criteria", Blocking: true}
+	blockingJSON, _ := json.Marshal(blocking)
+	assertNoError(t, activeStore.WriteBytes(runPaths.ContractReviewFindingsJSONL, append(blockingJSON, '\n'), 0o644))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("contract approve should fail when blocking contract-review findings remain; got exit 0\nstdout: %s", stdout.String())
+	}
+	if got := stderr.String(); !strings.Contains(got, "blocking") {
+		t.Fatalf("error message should mention blocking findings:\n%s", got)
+	}
+}
+
+// TestContractApproveGuardFailClosed checks that contract approve refuses when
+// the findings.jsonl artifact is absent or malformed (fail-closed).
+func TestContractApproveGuardFailClosed(t *testing.T) {
+	t.Run("absent", func(t *testing.T) {
+		root := t.TempDir()
+		app, paths, runID := setupContractRun(t, root)
+		// Configure a reviewer so the guard is enforced.
+		setContractReviewersConfig(t, paths, "helper")
+		registerTestAgents(t, paths, "helper")
+		// Do NOT write any findings.jsonl → absent → fail-closed.
+
+		var stdout, stderr bytes.Buffer
+		code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr)
+		if code == 0 {
+			t.Fatalf("contract approve must refuse when findings.jsonl is absent; got exit 0\nstdout: %s", stdout.String())
+		}
+	})
+
+	t.Run("malformed", func(t *testing.T) {
+		root := t.TempDir()
+		app, paths, runID := setupContractRun(t, root)
+		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+		// Configure a reviewer so the guard is enforced.
+		setContractReviewersConfig(t, paths, "helper")
+		registerTestAgents(t, paths, "helper")
+		// Write a malformed (non-JSON) findings.jsonl → parse error → fail-closed.
+		assertNoError(t, activeStore.WriteBytes(runPaths.ContractReviewFindingsJSONL, []byte("not-json\n"), 0o644))
+
+		var stdout, stderr bytes.Buffer
+		code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr)
+		if code == 0 {
+			t.Fatalf("contract approve must refuse when findings.jsonl is malformed; got exit 0\nstdout: %s", stdout.String())
+		}
+		if got := stderr.String(); !strings.Contains(got, "malformed") {
+			t.Fatalf("error message should mention malformed: %s", got)
+		}
+	})
+
+	// Guard fires via the isRegularFile branch even when reviewers are no longer
+	// configured — removing reviewers after a blocking run cannot bypass the guard.
+	t.Run("blocking_findings_reviewers_removed", func(t *testing.T) {
+		root := t.TempDir()
+		app, paths, runID := setupContractRun(t, root)
+		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+		// Do NOT configure any reviewers — the guard must still fire because the
+		// findings artifact exists with a blocking entry.
+		_ = paths
+		blocking := contractReviewFindingLine{Category: "correctness", Message: "missing acceptance criteria", Blocking: true}
+		blockingJSON, err := json.Marshal(blocking)
+		assertNoError(t, err)
+		assertNoError(t, activeStore.WriteBytes(runPaths.ContractReviewFindingsJSONL, append(blockingJSON, '\n'), 0o644))
+
+		var stdout, stderr bytes.Buffer
+		code := app.Run([]string{"contract", "approve", runID}, &stdout, &stderr)
+		if code == 0 {
+			t.Fatalf("contract approve must refuse when findings.jsonl has blocking=true and reviewers are removed; got exit 0\nstdout: %s", stdout.String())
+		}
+		if got := stderr.String(); !strings.Contains(got, "blocking") {
+			t.Fatalf("error message should mention blocking: %s", got)
+		}
+	})
 }
 
 func fileExists(t *testing.T, path string) bool {

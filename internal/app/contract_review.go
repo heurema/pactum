@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
 	stdctx "context"
 	"encoding/json"
@@ -105,6 +106,7 @@ var contractReviewLenses = []contractReviewLens{
 type contractReviewFinding struct {
 	Reviewer string `json:"reviewer"`
 	Lens     string `json:"lens"`
+	Category string `json:"category,omitempty"`
 	Severity string `json:"severity"`
 	Blocking bool   `json:"blocking"`
 	Message  string `json:"message"`
@@ -187,8 +189,19 @@ type contractReviewLoopResponse struct {
 	StalematePatience   int                              `json:"stalemate_patience"`
 	CleanRoundsRequired int                              `json:"clean_rounds_required"`
 	TerminalReason      string                           `json:"terminal_reason"`
+	OpenBlockingCount   int                              `json:"open_blocking_count,omitempty"`
+	NoProgressStreak    int                              `json:"no_progress_streak,omitempty"`
+	NoProgressReason    string                           `json:"no_progress_reason,omitempty"`
 	Rounds              []contractReviewLoopRoundSummary `json:"rounds"`
 	Next                []string                         `json:"next"`
+}
+
+// contractReviewFindingLine is one entry in the contract/reviewer/findings.jsonl
+// artifact written at the end of a contract review loop run.
+type contractReviewFindingLine struct {
+	Category string `json:"category"`
+	Message  string `json:"message"`
+	Blocking bool   `json:"blocking"`
 }
 
 type contractReviewFixerArtifacts struct {
@@ -317,6 +330,8 @@ func (a App) runContractReviewLoop(
 	rounds := make([]contractReviewLoopRoundSummary, 0)
 	cleanStreak := 0
 	unchangedVersionStreak := 0
+	noProgressStreak := 0
+	var prevBlockerKeys map[string]bool
 
 	step := func(_ stdctx.Context, rc loop.RoundContext) (loop.RoundResult, error) {
 		round := rc.Round
@@ -387,7 +402,21 @@ func (a App) runContractReviewLoop(
 			unchangedVersionStreak++
 		}
 		roundSummary.UnchangedVersionStreak = unchangedVersionStreak
+
+		// Fixer no-progress escalation: if the canonical key set of blocking
+		// findings from the reviewer is unchanged for K=2 consecutive rounds,
+		// exit early so the fixer cannot burn all rounds on the same blockers.
+		currBlockerKeys := contractBlockingFindingKeySet(roundResult.Findings)
+		if prevBlockerKeys != nil && sameStringSet(currBlockerKeys, prevBlockerKeys) {
+			noProgressStreak++
+		} else {
+			noProgressStreak = 0
+		}
+		prevBlockerKeys = currBlockerKeys
 		rounds = append(rounds, roundSummary)
+		if noProgressStreak >= 2 {
+			return loop.RoundResult{}, errFixerNoProgress
+		}
 
 		return loop.RoundResult{Clean: false, Progress: progress}, nil
 	}
@@ -401,25 +430,55 @@ func (a App) runContractReviewLoop(
 	outcome, loopErr := loop.Run(stdctx.Background(), loopLimits, step)
 
 	terminalReason := ""
-	if loopErr == nil {
+	openBlockingCount := 0
+	loopNoProgressStreak := 0
+	loopNoProgressReason := ""
+	switch {
+	case errors.Is(loopErr, errFixerNoProgress):
+		terminalReason = "fixer_no_progress"
+		openBlockingCount = lastRoundBlockingCount(rounds)
+		loopNoProgressStreak = noProgressStreak
+		loopNoProgressReason = "open blocking finding key set unchanged for 2 consecutive fixer rounds"
+		loopErr = nil
+	case loopErr != nil:
+		terminalReason = "error"
+	default:
 		switch outcome.Reason {
 		case "settled":
 			terminalReason = "resolved"
-		case "stalemate":
-			terminalReason = "stalemate"
-		case "max":
-			terminalReason = "max_rounds"
+		case "stalemate", "max":
+			// Blocking findings open at loop end → override to blockers_open so
+			// callers are never left with a silently non-approvable terminal reason.
+			if n := lastRoundBlockingCount(rounds); n > 0 {
+				terminalReason = "blockers_open"
+				openBlockingCount = n
+			} else if outcome.Reason == "stalemate" {
+				terminalReason = "stalemate"
+			} else {
+				terminalReason = "max_rounds"
+			}
 		case "human":
 			terminalReason = "human"
 		}
-	} else {
-		terminalReason = "error"
+	}
+
+	// Write the durable findings artifact so contract approve can enforce the guard.
+	if loopErr == nil && terminalReason != "error" {
+		if writeErr := writeContractReviewFindingsJSONL(runCtx.RunPaths, rounds); writeErr != nil && loopErr == nil {
+			loopErr = writeErr
+		}
 	}
 
 	// Always emit the finished event so no run leaves a dangling started event.
 	finishedAt := a.nowUTC()
 	if appendErr := ledger.Append(activeStore, runCtx.Paths.EventsJSONL, ledger.Event{Type: "contract_review_loop_finished", Timestamp: finishedAt, RunID: runID}); appendErr != nil && loopErr == nil {
 		loopErr = appendErr
+	}
+
+	// For non-approvable terminals, point the operator at inspection rather than approve.
+	nextCmds := nextCommandsForRun(runCtx.Paths, runID)
+	if terminalReason == "blockers_open" || terminalReason == "fixer_no_progress" {
+		nextCmds = []string{"pactum contract show " + runID}
 	}
 
 	response := contractReviewLoopResponse{
@@ -431,8 +490,11 @@ func (a App) runContractReviewLoop(
 		StalematePatience:   limits.Patience,
 		CleanRoundsRequired: limits.CleanRounds,
 		TerminalReason:      terminalReason,
+		OpenBlockingCount:   openBlockingCount,
+		NoProgressStreak:    loopNoProgressStreak,
+		NoProgressReason:    loopNoProgressReason,
 		Rounds:              rounds,
-		Next:                nextCommandsForRun(runCtx.Paths, runID),
+		Next:                nextCmds,
 	}
 
 	if loopErr != nil {
@@ -806,6 +868,104 @@ func countContractReviewBlockingFindings(findings []contractReviewFinding) int {
 	return count
 }
 
+// contractBlockingFindingKeySet returns canonical keys for all blocking findings
+// in a round, used ONLY for fixer-no-progress streak detection.
+func contractBlockingFindingKeySet(findings []contractReviewFinding) map[string]bool {
+	keys := map[string]bool{}
+	for _, f := range findings {
+		if !f.Blocking {
+			continue
+		}
+		category := f.Category
+		if category == "" {
+			category = f.Lens
+		}
+		keys[canonicalBlockerKey(category, f.Message)] = true
+	}
+	return keys
+}
+
+// lastRoundBlockingCount returns the BlockingFindings count from the final
+// round summary, or 0 if rounds is empty.
+func lastRoundBlockingCount(rounds []contractReviewLoopRoundSummary) int {
+	if len(rounds) == 0 {
+		return 0
+	}
+	return rounds[len(rounds)-1].BlockingFindings
+}
+
+// writeContractReviewFindingsJSONL persists the last round's findings to the
+// durable findings artifact so contract approve can enforce the blocking guard.
+func writeContractReviewFindingsJSONL(runPaths contractRunPathSet, rounds []contractReviewLoopRoundSummary) error {
+	var findings []contractReviewFinding
+	if len(rounds) > 0 {
+		findings = rounds[len(rounds)-1].Findings
+	}
+	if findings == nil {
+		findings = []contractReviewFinding{}
+	}
+	lines := make([]contractReviewFindingLine, len(findings))
+	for i, f := range findings {
+		category := f.Category
+		if category == "" {
+			category = f.Lens
+		}
+		lines[i] = contractReviewFindingLine{
+			Category: category,
+			Message:  f.Message,
+			Blocking: f.Blocking,
+		}
+	}
+	var buf []byte
+	for _, line := range lines {
+		b, err := json.Marshal(line)
+		if err != nil {
+			return err
+		}
+		buf = append(buf, b...)
+		buf = append(buf, '\n')
+	}
+	if buf == nil {
+		buf = []byte{}
+	}
+	return activeStore.WriteBytes(runPaths.ContractReviewFindingsJSONL, buf, 0o644)
+}
+
+// checkContractReviewFindingsApprovalGuard reads the durable findings artifact
+// and refuses approval if any entry has blocking=true. Fail-closed: if the file
+// is absent, unreadable, or malformed → refuse so that approval never silently
+// skips a contract review run.
+func checkContractReviewFindingsApprovalGuard(runPaths contractRunPathSet) error {
+	file, err := activeStore.Open(runPaths.ContractReviewFindingsJSONL)
+	if err != nil {
+		return fmt.Errorf("cannot approve contract: contract review findings unavailable (run contract review first): %w", err)
+	}
+	defer file.Close()
+
+	var blockingCount int
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var entry contractReviewFindingLine
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			return fmt.Errorf("cannot approve contract: contract review findings artifact is malformed: %w", err)
+		}
+		if entry.Blocking {
+			blockingCount++
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("cannot approve contract: contract review findings unreadable: %w", err)
+	}
+	if blockingCount > 0 {
+		return fmt.Errorf("cannot approve contract: %d open blocking contract-review finding(s) remain", blockingCount)
+	}
+	return nil
+}
+
 func contractReviewBlockingFindings(findings []contractReviewFinding) []contractReviewFinding {
 	var blocking []contractReviewFinding
 	for _, f := range findings {
@@ -824,6 +984,7 @@ func contractFindingFromInput(reviewerName string, lensKey string, input reviewe
 	return contractReviewFinding{
 		Reviewer: reviewerName,
 		Lens:     lensKey,
+		Category: strings.TrimSpace(input.Category),
 		Severity: strings.TrimSpace(input.Severity),
 		Blocking: blocking,
 		Message:  strings.TrimSpace(input.Message),
@@ -1186,6 +1347,9 @@ func writeContractReviewLoopOutput(stdout io.Writer, response contractReviewLoop
 	fmt.Fprintf(stdout, "Reviewers: %s\n", strings.Join(response.Reviewers, ", "))
 	fmt.Fprintf(stdout, "Lenses: %s\n", strings.Join(response.Lenses, ", "))
 	fmt.Fprintf(stdout, "Terminal reason: %s\n", response.TerminalReason)
+	if response.TerminalReason == "blockers_open" || response.TerminalReason == "fixer_no_progress" {
+		fmt.Fprintf(stdout, "%d open blocking findings remain\n", response.OpenBlockingCount)
+	}
 	fmt.Fprintf(stdout, "Rounds: %d/%d\n", len(response.Rounds), response.MaxRounds)
 	if len(response.Rounds) > 0 {
 		fmt.Fprintln(stdout)

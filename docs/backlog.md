@@ -3,6 +3,20 @@
 Deferred work and known follow-ups, consolidated from dogfood reports and PR
 reviews across M8–M10. Rough priority in parentheses.
 
+> **Plan-DAG reverted (2026-06-19).** The plan-DAG arc (a contract carrying
+> `plan.tasks[]`, executed node-by-node in a topological loop) was built (slices
+> #194/#198/#200/#203/#205) then **removed in full (#207)** after deep research +
+> the GO/NO-GO run showed the cold per-task fresh-context loop is a documented
+> anti-pattern (it *manufactures* cross-task incoherence; caching already solved
+> cost; single-shot built every slice). **Execution is now single-shot: one
+> contract = one coherent session.** Wherever an item below proposes or relies on
+> the plan-DAG as a cure (notably the token-efficiency "#3 plan-DAG" lever and the
+> contract-review convergence item), treat that framing as obsolete — the
+> decomposition lever now lives at the **contract level** (the drafter emitting
+> sequential contracts for oversized work, a future separately-designed
+> capability). See `docs/contract-plan-dag-design.md` (REVERTED header) and the
+> deep-research synthesis. The reviewer-findings-capture fix (#196) was kept.
+
 ## Execution / review UX
 
 - **Agent registry in the config** (M18.0, shipped; simplified in M19.3). The
@@ -737,7 +751,10 @@ re-exploration the map could have served vs genuinely-needed file content.
     deterministic failure, not noise — fix the tests, don't paper over with retries.
 
 - **codex reviewers inconsistently emit the structured findings envelope → the
-  review loop captures 0 findings while real ones exist** (medium — reliability).
+  review loop captures 0 findings while real ones exist** (RESOLVED #196 —
+  force-the-format: the reviewer block is mandatory + always emitted, a missing
+  block triggers a corrective retry then a loud `reviewer_findings_unparsed` stop,
+  per-lens; kept after the plan-DAG revert as it's independent of the DAG).
   Observed live in plan-DAG slice 1's code-review (`run_20260617_182429`): all five
   codex lenses (correctness, implementation, tests, docs, over_engineering)
   reasoned out **real, confirmed** findings in their stdout — a validation-gating
@@ -821,6 +838,21 @@ re-exploration the map could have served vs genuinely-needed file content.
   be re-run with fable removed from the panel. Skip/retry the failed lens with a
   recorded warning and converge on the available reviewers instead of failing
   the run.
+- **Reviewer attempt can HANG indefinitely on a large diff (codex), no idle
+  timeout fires, no fallback** (med — reliability; new pain 2026-06-19). During
+  the (since-reverted) plan-DAG slice-4b code-review, all five `codex-xhigh`
+  reviewer attempts **stuck mid-generation on the large diff for ~5 hours** — they
+  trickled 1–3 KB then stalled, so the 25-min idle timeout never fired, the loop
+  sat on round 1, and ~17 codex-acp child processes leaked. Distinct from graceful
+  degradation above (that's death/rate-limit; this is a live-but-stuck session
+  the idle watchdog misses). Workaround that worked: kill it and switch
+  `code_review.by` to **opus** (a reliable emitter that routes cleanly through ACP
+  and completed the review). Fixes: (a) a real **idle/total cap on a reviewer
+  attempt** that fires even when output trickles; (b) on hang/timeout after a
+  bounded retry, **fall back to a reliable emitter (claude/opus)** — the design's
+  "default the reviewer role to the reliable emitter where a cross-model reviewer
+  exists"; (c) reap leaked adapter child processes on attempt kill. codex-over-ACP
+  is the weak emitter on big diffs; opus/sonnet reviewers don't exhibit this.
 - **Contract-review: bound rounds + halt on unresolved blockers, separate
   blocking from advisory** (med). Observed live in run_20260617_060708 (the
   `review_loop` port): on a long contract (15 enumerated sub-tests) the
@@ -848,16 +880,16 @@ re-exploration the map could have served vs genuinely-needed file content.
   criteria) converges fast. So the real fix is **right-sizing the contract** — keep
   each contract small enough that draft + review converges quickly. *Open how to
   enforce it:* a soft size budget on the contract, a "too big → decompose" signal at
-  draft time, or splitting the work before drafting. **The plan-DAG is the likely
-  structural answer** (see the *Contract plan DAG* arc /
-  `contract-plan-dag-design.md`): if a contract is split into a DAG of self-contained
-  tasks, the heavy detail moves *into* small per-task specs — each tiny enough to
-  draft and converge quickly — while the top-level contract stays a lean
-  constitution. That reframes the DAG as the cure for **contract-review convergence
-  and contract size**, not only execution decomposition — another argument for the
-  arc. Net: the recursion correctly *finds* blockers; it must not *pretend to have
-  resolved* them — and the deeper fix is to never hand it an oversized contract in
-  the first place.
+  draft time, or splitting the work before drafting. **(Updated 2026-06-19: the
+  plan-DAG — once proposed as the structural cure here — was reverted (#207). The
+  size cure now lives at the *contract level*: keep contracts small, and for
+  oversized work have the drafter emit sequential contracts. So the (a)/(b)/(c)
+  fixes above are now the PRIMARY defense, more important than before since no
+  structural DAG cure is coming.)** Live mitigation that works today: temporarily
+  cap `contract_review.loop.max` (e.g. 4) for a known-large contract, or kill a
+  grinding run and operator-approve from the heavily-fixed state. Net: the
+  recursion correctly *finds* blockers; it must not *pretend to have resolved*
+  them — and the deeper fix is to never hand it an oversized contract.
 - **Codex usage needs the forked codex-acp adapter** (small). *(Reframed — the old
   "non-fork CLI path" framing is stale: the `codex exec --json` CLI path was removed
   by the ACP-only change; everything is ACP now.)* Codex usage is read from the

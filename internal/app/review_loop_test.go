@@ -48,15 +48,16 @@ func TestReviewLoopFindingsThenCleanUsesConfigMaxRounds(t *testing.T) {
 	if strings.Contains(stdout.String(), "total_open_findings") {
 		t.Fatalf("loop summary JSON should not include total_open_findings:\n%s", stdout.String())
 	}
-	if summary.Schema != reviewLoopSummarySchema || summary.RunID != runID || summary.MaxRounds != 2 || summary.TerminalReason != "clean_round" {
+	// Round 2 has a no-new-proposals reviewer pass but the blocking finding from
+	// round 1 is still open, so it is NOT a clean round (f_001 fix). The fixer
+	// runs again in round 2, cannot fix the blocker, and max_rounds is reached →
+	// blockers_open terminal (not clean_round as in the pre-fix behavior).
+	if summary.Schema != reviewLoopSummarySchema || summary.RunID != runID || summary.MaxRounds != 2 || summary.TerminalReason != "blockers_open" {
 		t.Fatalf("unexpected loop summary: %#v", summary)
 	}
 	if summary.CleanRoundsRequired != 1 || summary.StalematePatience != 2 {
 		t.Fatalf("default loop limits mismatch: %#v", summary)
 	}
-	// The reviewer is recorded by registry name; the fixer agent comes from the
-	// fix result document, which records the engine inferred from the entry's
-	// model.
 	if summary.Reviewer != reviewLoopReviewerName || summary.Agent != testAgentEngine(reviewLoopFixerName) {
 		t.Fatalf("summary should record resolved agents: %#v", summary)
 	}
@@ -66,8 +67,9 @@ func TestReviewLoopFindingsThenCleanUsesConfigMaxRounds(t *testing.T) {
 	if got := summary.Rounds[0]; got.OpenFindings != 1 || got.ProposalsCreated != 1 || got.ProposalsAccepted != 1 || got.FixerAttemptID != "attempt_001" || got.GateStatus != "passed" {
 		t.Fatalf("round 1 summary mismatch: %#v", got)
 	}
-	if got := summary.Rounds[1]; got.OpenFindings != 1 || got.ProposalsCreated != 0 || got.ProposalsAccepted != 0 || got.FixerAttemptID != "" || got.GateStatus != "" {
-		t.Fatalf("round 2 summary mismatch: %#v", got)
+	// Round 2: reviewer emits nothing, but the open blocker forces the fixer again.
+	if got := summary.Rounds[1]; got.OpenFindings != 1 || got.ProposalsCreated != 0 || got.ProposalsAccepted != 0 || got.FixerAttemptID != "attempt_002" {
+		t.Fatalf("round 2 summary mismatch (open blocker must drive fixer): %#v", got)
 	}
 
 	artifact := readReviewLoopSummary(t, runPaths.ReviewLoopSummaryJSON)
@@ -77,7 +79,8 @@ func TestReviewLoopFindingsThenCleanUsesConfigMaxRounds(t *testing.T) {
 	assertFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(1)).ResultJSON)
 	assertFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(2)).ResultJSON)
 	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
-	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_002").ResultJSON)
+	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_002").ResultJSON)
+	assertNoFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(3)).ResultJSON)
 
 	findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL)
 	if len(findings) != 1 || findings[0].Source != "reviewer_proposal" || findings[0].Status != "open" {
@@ -274,12 +277,12 @@ func TestReviewLoopStopsAtMaxRounds(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("review run exited %d, stdout: %s stderr: %s", code, stdout.String(), stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "terminal reason: max_rounds") || !strings.Contains(got, "rounds: 1/1") {
-		t.Fatalf("human loop output mismatch:\n%s", got)
+	if got := stdout.String(); !strings.Contains(got, "terminal reason: blockers_open") || !strings.Contains(got, "rounds: 1/1") || !strings.Contains(got, "blocking findings remain") {
+		t.Fatalf("human loop output mismatch (want terminal reason, rounds, and open blocking count):\n%s", got)
 	}
 	summary := readReviewLoopSummary(t, runPaths.ReviewLoopSummaryJSON)
-	if summary.TerminalReason != "max_rounds" || len(summary.Rounds) != 1 || summary.Rounds[0].OpenFindings != 1 {
-		t.Fatalf("max rounds summary mismatch: %#v", summary)
+	if summary.TerminalReason != "blockers_open" || len(summary.Rounds) != 1 || summary.Rounds[0].OpenFindings != 1 {
+		t.Fatalf("blockers_open summary mismatch: %#v", summary)
 	}
 	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 	assertNoFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(2)).ResultJSON)
@@ -302,8 +305,8 @@ func TestReviewLoopDedupsReproposedOpenFindingAcrossRounds(t *testing.T) {
 
 	var summary reviewLoopSummaryDocument
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
-	if summary.TerminalReason != "stalemate" || summary.MaxRounds != 4 || summary.StalematePatience != 2 {
-		t.Fatalf("stalemate summary mismatch: %#v", summary)
+	if summary.TerminalReason != "blockers_open" || summary.MaxRounds != 4 || summary.StalematePatience != 2 {
+		t.Fatalf("blockers_open summary mismatch: %#v", summary)
 	}
 	if len(summary.Rounds) != 2 {
 		t.Fatalf("rounds = %d, want 2: %#v", len(summary.Rounds), summary.Rounds)
@@ -349,7 +352,7 @@ func TestReviewLoopAcceptsNewFindingInLaterRound(t *testing.T) {
 
 	var summary reviewLoopSummaryDocument
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
-	if summary.TerminalReason != "max_rounds" || len(summary.Rounds) != 2 {
+	if summary.TerminalReason != "blockers_open" || len(summary.Rounds) != 2 {
 		t.Fatalf("new later finding summary mismatch: %#v", summary)
 	}
 	if got := summary.Rounds[0]; got.ProposalsCreated != 1 || got.ProposalsAccepted != 1 || got.OpenFindings != 1 {
@@ -398,7 +401,7 @@ func TestReviewLoopDedupsIdenticalProposalsWithinRound(t *testing.T) {
 
 	var summary reviewLoopSummaryDocument
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
-	if summary.TerminalReason != "max_rounds" || len(summary.Rounds) != 1 {
+	if summary.TerminalReason != "blockers_open" || len(summary.Rounds) != 1 {
 		t.Fatalf("same-round duplicate summary mismatch: %#v", summary)
 	}
 	if got := summary.Rounds[0]; got.ProposalsCreated != 2 || got.ProposalsAccepted != 1 || got.OpenFindings != 1 {
@@ -697,8 +700,8 @@ func TestReviewLoopResetsStalemateStreakWhenFixerChangesWorkingTree(t *testing.T
 
 	var summary reviewLoopSummaryDocument
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
-	if summary.TerminalReason != "max_rounds" {
-		t.Fatalf("changing fixer should avoid premature stalemate: %#v", summary)
+	if summary.TerminalReason != "blockers_open" {
+		t.Fatalf("always-appending fixer exits blockers_open at max: %#v", summary)
 	}
 	if len(summary.Rounds) != 3 {
 		t.Fatalf("rounds = %d, want 3: %#v", len(summary.Rounds), summary.Rounds)
@@ -729,7 +732,10 @@ func TestReviewLoopRequiresConsecutiveCleanRounds(t *testing.T) {
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	runReviewCommand(t, app, "gate", "run", runID)
 	app = configureReviewLoopHelpers(t, app, paths)
-	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "clean_findings_clean_clean")
+	// clean_warnings_clean_clean: round 2 emits a malformed finding (empty message →
+	// warning, no accepted proposal, no open blocker) which resets the clean streak
+	// without leaving an open blocking finding. Rounds 3-4 are genuine clean rounds.
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "clean_warnings_clean_clean")
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "4", "--clean-rounds", "2", "--json"}, &stdout, &stderr)
@@ -751,19 +757,19 @@ func TestReviewLoopRequiresConsecutiveCleanRounds(t *testing.T) {
 			t.Fatalf("round %d clean streak = %d, want %d: %#v", index+1, got, want, summary.Rounds[index])
 		}
 	}
-	wantOpenFindings := []int{0, 1, 1, 1}
-	for index, want := range wantOpenFindings {
-		if got := summary.Rounds[index].OpenFindings; got != want {
-			t.Fatalf("round %d open findings = %d, want %d: %#v", index+1, got, want, summary.Rounds[index])
+	// Round 2 has warnings (malformed entry) but no accepted proposals and no open
+	// blocking findings; the remaining rounds are genuinely clean (0 open findings).
+	for index := range 4 {
+		if got := summary.Rounds[index].OpenFindings; got != 0 {
+			t.Fatalf("round %d open findings = %d, want 0: %#v", index+1, got, summary.Rounds[index])
 		}
 	}
-	if got := summary.Rounds[1]; got.ProposalsAccepted != 1 || got.FixerAttemptID != "attempt_001" || got.UnchangedFingerprintStreak != 1 {
-		t.Fatalf("non-clean round should reset clean streak and run one fixer: %#v", got)
+	if got := summary.Rounds[1]; got.ProposalsAccepted != 0 || got.FixerAttemptID != "" || len(got.Warnings) == 0 {
+		t.Fatalf("warning-only round should reset clean streak, have warnings, and skip fixer: %#v", got)
 	}
 	assertFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(4)).ResultJSON)
 	assertNoFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(5)).ResultJSON)
-	assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
-	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_002").ResultJSON)
+	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 }
 
 func TestReviewLoopUnparsedFindingsIsNotCleanRound(t *testing.T) {
@@ -936,7 +942,10 @@ func TestReviewLoopStreamsSubRunOutputToStderrWithCleanStdout(t *testing.T) {
 	// JSON the loop parses internally must not leak onto it.
 	var summary reviewLoopSummaryDocument
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
-	if summary.TerminalReason != "clean_round" {
+	// Round 2 has no new proposals but the blocking finding from round 1 is still
+	// open, so it is not a clean round — the fixer runs again and max_rounds is
+	// reached with an open blocker → blockers_open (not clean_round).
+	if summary.TerminalReason != "blockers_open" {
 		t.Fatalf("unexpected loop summary: %#v", summary)
 	}
 	if out := stdout.String(); strings.Contains(out, "stdin_has_reviewer_prompt=") || strings.Contains(out, "stdin_has_review_fix_prompt=") {
@@ -1397,8 +1406,8 @@ func TestReviewLoop(t *testing.T) {
 		}
 		var summary reviewLoopSummaryDocument
 		assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
-		if summary.TerminalReason != "max_rounds" || len(summary.Rounds) != 1 {
-			t.Fatalf("valid+malformed should run fixer and reach max_rounds: %#v", summary)
+		if summary.TerminalReason != "blockers_open" || len(summary.Rounds) != 1 {
+			t.Fatalf("valid+malformed should run fixer and reach blockers_open: %#v", summary)
 		}
 		got := summary.Rounds[0]
 		if got.ProposalsAccepted != 1 || len(got.Warnings) == 0 || got.FixerAttemptID == "" {
@@ -1442,8 +1451,8 @@ func TestReviewLoop(t *testing.T) {
 		assertNoFile(t, reviewerAttemptPaths(runPaths, reviewLoopRoundFirstAttemptID(2)).ResultJSON)
 	})
 
-	// (i) When blocking findings persist and max_rounds is reached the loop stops as
-	// max_rounds.
+	// (i) When blocking findings persist and max_rounds is reached the loop stops
+	// as blockers_open (not max_rounds) to surface the non-approvable state.
 	t.Run("max_rounds_reached_when_blocking_persist", func(t *testing.T) {
 		root := t.TempDir()
 		stateDir := t.TempDir()
@@ -1459,16 +1468,19 @@ func TestReviewLoop(t *testing.T) {
 		}
 		var summary reviewLoopSummaryDocument
 		assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
-		if summary.TerminalReason != "max_rounds" || len(summary.Rounds) != 1 {
-			t.Fatalf("single-round blocking run should reach max_rounds: %#v", summary)
+		if summary.TerminalReason != "blockers_open" || len(summary.Rounds) != 1 {
+			t.Fatalf("single-round blocking run should reach blockers_open: %#v", summary)
+		}
+		if summary.OpenBlockingCount == 0 {
+			t.Fatalf("blockers_open must report open_blocking_count > 0: %#v", summary)
 		}
 		if got := summary.Rounds[0]; got.OpenBlockingFindings == 0 || got.FixerAttemptID == "" {
-			t.Fatalf("max_rounds round should still have open blocking findings: %#v", got)
+			t.Fatalf("blockers_open round should still have open blocking findings: %#v", got)
 		}
 	})
 
-	// (j) When the fixer never changes the working tree, the stale streak hits patience
-	// and the loop exits as stalemate.
+	// (j) When the fixer never changes the working tree and patience is exhausted,
+	// the loop exits as blockers_open (not stalemate) since blocking findings remain.
 	t.Run("stalemate_when_fixer_never_changes_tree", func(t *testing.T) {
 		root := t.TempDir()
 		stateDir := t.TempDir()
@@ -1484,8 +1496,11 @@ func TestReviewLoop(t *testing.T) {
 		}
 		var summary reviewLoopSummaryDocument
 		assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
-		if summary.TerminalReason != "stalemate" || len(summary.Rounds) != 2 {
-			t.Fatalf("fixer with no tree changes should stalemate after patience=2 rounds: %#v", summary)
+		if summary.TerminalReason != "blockers_open" || len(summary.Rounds) != 2 {
+			t.Fatalf("fixer with no tree changes should exit blockers_open after patience=2 rounds: %#v", summary)
+		}
+		if summary.OpenBlockingCount == 0 {
+			t.Fatalf("blockers_open must report open_blocking_count > 0: %#v", summary)
 		}
 		if summary.Rounds[0].UnchangedFingerprintStreak != 1 || summary.Rounds[1].UnchangedFingerprintStreak != 2 {
 			t.Fatalf("unchanged fingerprint streak should increment: %#v", summary.Rounds)
@@ -1510,8 +1525,8 @@ func TestReviewLoop(t *testing.T) {
 		}
 		var summary reviewLoopSummaryDocument
 		assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
-		if summary.TerminalReason != "max_rounds" || len(summary.Rounds) != 2 {
-			t.Fatalf("two rounds expected: %#v", summary)
+		if summary.TerminalReason != "blockers_open" || len(summary.Rounds) != 2 {
+			t.Fatalf("two rounds expected with blockers_open: %#v", summary)
 		}
 		if got := summary.Rounds[0]; got.ProposalsCreated != 1 || got.ProposalsAccepted != 1 {
 			t.Fatalf("round 1 should accept first proposal: %#v", got)
@@ -1557,15 +1572,17 @@ func TestReviewLoop(t *testing.T) {
 		}
 	})
 
-	// (m) The clean streak resets when a dirty round (with findings) interrupts a prior
-	// streak; it must restart from zero before the loop can settle.
+	// (m) The clean streak resets when a dirty round (with warnings) interrupts a
+	// prior streak; it must restart from zero before the loop can settle.
+	// Uses warning-only round (not a blocking-finding round) because a no-proposals
+	// round with an open blocker is no longer a clean round (f_001 fix).
 	t.Run("clean_streak_resets_on_dirty_round", func(t *testing.T) {
 		root := t.TempDir()
 		stateDir := t.TempDir()
 		app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 		runReviewCommand(t, app, "gate", "run", runID)
 		app = configureReviewLoopHelpers(t, app, paths)
-		setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "clean_findings_clean_clean")
+		setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "clean_warnings_clean_clean")
 
 		var stdout, stderr bytes.Buffer
 		code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "4", "--clean-rounds", "2", "--json"}, &stdout, &stderr)
@@ -1585,8 +1602,9 @@ func TestReviewLoop(t *testing.T) {
 		}
 	})
 
-	// (n) A fixer that makes progress (changes the working tree) resets the stale streak,
-	// preventing a premature stalemate that would otherwise fire at round 2.
+	// (n) A fixer that makes fingerprint progress at round 2 resets the stale streak,
+	// so stalemate does not fire at round 2. The blocker key set is unchanged across
+	// all rounds (same finding), so fixer_no_progress fires at round 3 instead.
 	t.Run("progress_prevents_premature_stalemate", func(t *testing.T) {
 		root := t.TempDir()
 		stateDir := t.TempDir()
@@ -1598,18 +1616,20 @@ func TestReviewLoop(t *testing.T) {
 		t.Setenv("PACTUM_REVIEW_LOOP_FIXER_MODE", "change_on_second_attempt")
 
 		var stdout, stderr bytes.Buffer
-		// patience=2: without the round-2 tree change, stalemate would fire at round 2.
-		// With it the stale streak resets to 0 after round 2 and stalemate is delayed to round 4.
+		// patience=2: without the round-2 tree change, blockers_open fires at round 2
+		// (stalemate from patience exhaustion). With the change, fingerprint streak
+		// resets but blocker key set is still unchanged, so fixer_no_progress fires at
+		// round 3 (noProgressStreak=2 after rounds 2 and 3 both leave the same blocker).
 		code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "4", "--patience", "2", "--json"}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
 		}
 		var summary reviewLoopSummaryDocument
 		assertNoError(t, json.Unmarshal(stdout.Bytes(), &summary))
-		if summary.TerminalReason != "stalemate" || len(summary.Rounds) != 4 {
-			t.Fatalf("progress should delay stalemate to round 4: terminal=%q rounds=%d", summary.TerminalReason, len(summary.Rounds))
+		if summary.TerminalReason != "fixer_no_progress" || len(summary.Rounds) != 3 {
+			t.Fatalf("progress delays blockers_open but fixer_no_progress fires at round 3: terminal=%q rounds=%d", summary.TerminalReason, len(summary.Rounds))
 		}
-		wantStreaks := []int{1, 0, 1, 2}
+		wantStreaks := []int{1, 0, 1}
 		for i, want := range wantStreaks {
 			if got := summary.Rounds[i].UnchangedFingerprintStreak; got != want {
 				t.Fatalf("round %d unchanged fingerprint streak = %d, want %d: %#v", i+1, got, want, summary.Rounds[i])
@@ -1648,6 +1668,7 @@ func TestReviewLoop(t *testing.T) {
 			"max_rounds": true, "stalemate_patience": true, "clean_rounds_required": true,
 			"terminal_reason": true, "rounds": true, "artifacts": true, "next": true,
 			"reviewer": true, "reviewers": true, "agent": true,
+			"open_blocking_count": true, "no_progress_streak": true, "no_progress_reason": true,
 		}
 		// Always-present per-round fields.
 		requiredRound := []string{
@@ -1810,13 +1831,14 @@ func TestReviewLoop(t *testing.T) {
 	// correct round numbers and the fields terminal_reason, open_findings,
 	// open_blocking_findings, and round verifiable from the raw JSON (not just
 	// struct unmarshaling, which silently absorbs missing or renamed fields).
+	// Patience=2 with always_findings exits blockers_open after 2 rounds (stalemate
+	// engine fires while blocking findings are open → overridden to blockers_open).
 	t.Run("named_terminal_stdout_field_round_numbers", func(t *testing.T) {
 		root := t.TempDir()
 		stateDir := t.TempDir()
 		app, paths, runID := setupGatePreparedRun(t, root, nil, true)
 		runReviewCommand(t, app, "gate", "run", runID)
 		app = configureReviewLoopHelpers(t, app, paths)
-		// stalemate with patience=2: 2 rounds, each with round=1 and round=2
 		setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
 
 		var stdout, stderr bytes.Buffer
@@ -1835,8 +1857,8 @@ func TestReviewLoop(t *testing.T) {
 		}
 		var terminalReason string
 		assertNoError(t, json.Unmarshal(rawResp["terminal_reason"], &terminalReason))
-		if terminalReason != "stalemate" {
-			t.Fatalf("expected stalemate terminal, got %q", terminalReason)
+		if terminalReason != "blockers_open" {
+			t.Fatalf("expected blockers_open terminal, got %q", terminalReason)
 		}
 
 		var roundsRaw []map[string]json.RawMessage
@@ -1906,6 +1928,147 @@ func TestReviewLoop(t *testing.T) {
 		}
 		assertFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 	})
+}
+
+// TestReviewLoopBlockersOpenSetsOpenBlockingCount checks that a run exiting as
+// blockers_open includes a non-zero open_blocking_count in both the JSON
+// response and the durable summary artifact.
+func TestReviewLoopBlockersOpenSetsOpenBlockingCount(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	app = configureReviewLoopHelpers(t, app, paths)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "1", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
+	}
+	var resp reviewLoopResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &resp))
+	if resp.TerminalReason != "blockers_open" {
+		t.Fatalf("expected blockers_open, got %q", resp.TerminalReason)
+	}
+	if resp.OpenBlockingCount == 0 {
+		t.Fatalf("blockers_open must have open_blocking_count > 0: %#v", resp.reviewLoopSummaryDocument)
+	}
+	// Next commands for blockers_open must include an inspection command and must not include approve.
+	hasInspect := false
+	for _, cmd := range resp.Next {
+		if strings.Contains(cmd, "show") || strings.Contains(cmd, "list") || strings.Contains(cmd, "inspect") {
+			hasInspect = true
+		}
+		if strings.Contains(cmd, "approve") {
+			t.Fatalf("blockers_open next commands must not include approve: %v", resp.Next)
+		}
+	}
+	if !hasInspect {
+		t.Fatalf("blockers_open next commands must include a show/list/inspect command: %v", resp.Next)
+	}
+	// Durable artifact must also carry the count.
+	artifact := readReviewLoopSummary(t, runPaths.ReviewLoopSummaryJSON)
+	if artifact.TerminalReason != "blockers_open" || artifact.OpenBlockingCount == 0 {
+		t.Fatalf("summary artifact blockers_open mismatch: %#v", artifact)
+	}
+}
+
+// TestReviewLoopFixerNoProgressExitsEarly checks that when the fixer leaves the
+// canonical key set of open blocking findings unchanged for K=2 consecutive
+// rounds, the loop exits early as fixer_no_progress rather than burning all
+// remaining rounds.
+func TestReviewLoopFixerNoProgressExitsEarly(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	app = configureReviewLoopHelpers(t, app, paths)
+	// always_findings: same blocking finding every round; default fixer does nothing.
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "always_findings")
+
+	var stdout, stderr bytes.Buffer
+	// max-rounds=5 and patience=10: without fixer_no_progress the loop would run
+	// all 5 rounds. With K=2 it should exit after 3 rounds (streak reaches 2 on
+	// round 3: prevKeys set after round 1, streak=1 after round 2, streak=2 after
+	// round 3 → exit).
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "5", "--patience", "10", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
+	}
+	var resp reviewLoopResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &resp))
+	if resp.TerminalReason != "fixer_no_progress" {
+		t.Fatalf("expected fixer_no_progress, got %q: %s", resp.TerminalReason, stdout.String())
+	}
+	if len(resp.Rounds) != 3 {
+		t.Fatalf("fixer_no_progress should exit after 3 rounds (K=2), got %d: %#v", len(resp.Rounds), resp.Rounds)
+	}
+	if resp.OpenBlockingCount == 0 {
+		t.Fatalf("fixer_no_progress must report open_blocking_count > 0: %#v", resp.reviewLoopSummaryDocument)
+	}
+	if resp.NoProgressStreak != 2 {
+		t.Fatalf("fixer_no_progress must have no_progress_streak == 2 (K=2), got %d: %#v", resp.NoProgressStreak, resp.reviewLoopSummaryDocument)
+	}
+	if resp.NoProgressReason == "" {
+		t.Fatalf("fixer_no_progress must have non-empty no_progress_reason: %#v", resp.reviewLoopSummaryDocument)
+	}
+	// Next commands for fixer_no_progress must include an inspection command and must not include approve.
+	hasInspect := false
+	for _, cmd := range resp.Next {
+		if strings.Contains(cmd, "show") || strings.Contains(cmd, "list") || strings.Contains(cmd, "inspect") {
+			hasInspect = true
+		}
+		if strings.Contains(cmd, "approve") {
+			t.Fatalf("fixer_no_progress next commands must not include approve: %v", resp.Next)
+		}
+	}
+	if !hasInspect {
+		t.Fatalf("fixer_no_progress next commands must include a show/list/inspect command: %v", resp.Next)
+	}
+	// Durable artifact carries the streak info.
+	artifact := readReviewLoopSummary(t, runPaths.ReviewLoopSummaryJSON)
+	if artifact.TerminalReason != "fixer_no_progress" || artifact.NoProgressStreak != 2 {
+		t.Fatalf("summary artifact fixer_no_progress mismatch: %#v", artifact)
+	}
+}
+
+// TestReviewLoopAdvisoryFindingsDoNotBlockConvergence locks the behavior that
+// advisory (non-blocking) findings do NOT prevent the loop from converging:
+// the loop exits as resolved without invoking the fixer.
+func TestReviewLoopAdvisoryFindingsDoNotBlockConvergence(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	runReviewCommand(t, app, "gate", "run", runID)
+	app = configureReviewLoopHelpers(t, app, paths)
+	setReviewLoopHelperEnv(t, root, filepath.Join(stateDir, "reviewer-sequence"), "non_blocking_finding")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", reviewLoopReviewerName, "--agent", reviewLoopFixerName, "--max-rounds", "5", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review run with advisory findings exited %d, stderr: %s", code, stderr.String())
+	}
+	var resp reviewLoopResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &resp))
+	if resp.TerminalReason != "resolved" {
+		t.Fatalf("advisory-only findings must not block convergence; terminal=%q: %s", resp.TerminalReason, stdout.String())
+	}
+	if len(resp.Rounds) != 1 {
+		t.Fatalf("advisory-only findings should resolve in one round, got %d rounds", len(resp.Rounds))
+	}
+	r := resp.Rounds[0]
+	if r.OpenBlockingFindings != 0 {
+		t.Fatalf("advisory round must have open_blocking_findings=0, got %d", r.OpenBlockingFindings)
+	}
+	if r.FixerAttemptID != "" {
+		t.Fatalf("advisory-only round must not invoke fixer, got fixer_attempt_id=%q", r.FixerAttemptID)
+	}
+	// No fixer attempt files should exist.
+	assertNoFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)
 }
 
 // registerReviewLoopAgents adds the loop helper agents to the config registry
@@ -2116,6 +2279,17 @@ func TestReviewLoopReviewerHelperProcess(t *testing.T) {
 	case mode == "clean_findings_clean_clean":
 		if attempt == 2 {
 			fmt.Print(reviewerStructuredOutput(validFinding))
+		} else {
+			fmt.Print(reviewerStructuredOutput([]map[string]any{}))
+		}
+	case mode == "clean_warnings_clean_clean":
+		// Round 2 emits only a malformed finding (empty message) which becomes a
+		// warning and resets the clean streak without creating an open blocking finding.
+		// All other rounds are genuinely clean.
+		if attempt == 2 {
+			fmt.Print(reviewerStructuredOutput([]map[string]any{
+				{"message": "", "severity": "medium", "category": "quality"},
+			}))
 		} else {
 			fmt.Print(reviewerStructuredOutput([]map[string]any{}))
 		}

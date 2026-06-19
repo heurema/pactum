@@ -530,6 +530,16 @@ func (a App) ReviewApprove(stdout io.Writer, runID string, approvedBy string, js
 	if err != nil || !ok {
 		return err
 	}
+	// Gate report must be present before any other approval precondition check.
+	if !isRegularFile(context.RunPaths.GateReportJSON) {
+		return gateReportMissingError("approve review", context.State.RunID)
+	}
+	// Fail-closed: ensureReviewRecord below would create an empty findings file and
+	// let zero-finding approval appear legitimate. Require findings.jsonl to already
+	// exist (written by review run or review finding add) before we scaffold or approve.
+	if !isRegularFile(context.RunPaths.ReviewFindingsJSONL) {
+		return fmt.Errorf("cannot approve review: review findings not found (run 'pactum review run %s' first)", runID)
+	}
 	review, err := a.ensureReviewRecord(context, "approve review")
 	if err != nil {
 		return err
@@ -548,6 +558,18 @@ func (a App) ReviewApprove(stdout io.Writer, runID string, approvedBy string, js
 	summary := summarizeReview(findings, resolutions)
 	if summary.BlockingOpen > 0 {
 		return fmt.Errorf("cannot approve review: blocking review findings remain")
+	}
+	// Conservative guard: if the review loop summary exists and records open
+	// blockers, refuse even when the live finding counts now differ (e.g. after
+	// manual edits). Fail-closed on malformed or unreadable summary.
+	if isRegularFile(context.RunPaths.ReviewLoopSummaryJSON) {
+		var loopSummary reviewLoopSummaryDocument
+		if err := readJSON(context.RunPaths.ReviewLoopSummaryJSON, &loopSummary); err != nil {
+			return fmt.Errorf("cannot approve review: review loop summary is malformed or unreadable: %w", err)
+		}
+		if loopSummary.OpenBlockingCount > 0 {
+			return fmt.Errorf("cannot approve review: review loop reports %d open blocking finding(s) remain (terminal_reason=%s)", loopSummary.OpenBlockingCount, loopSummary.TerminalReason)
+		}
 	}
 
 	now := a.nowUTC()

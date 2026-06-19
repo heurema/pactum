@@ -11,6 +11,7 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,8 @@ var (
 	errReviewerUnparsed = errors.New("reviewer_findings_unparsed")
 	errGateFailed       = errors.New("gate_failed")
 	errResolved         = errors.New("resolved")
+	errBlockersOpen     = errors.New("blockers_open")
+	errFixerNoProgress  = errors.New("fixer_no_progress")
 )
 
 type reviewRunOptions struct {
@@ -65,6 +68,9 @@ type reviewLoopSummaryDocument struct {
 	StalematePatience   int                      `json:"stalemate_patience"`
 	CleanRoundsRequired int                      `json:"clean_rounds_required"`
 	TerminalReason      string                   `json:"terminal_reason"`
+	OpenBlockingCount   int                      `json:"open_blocking_count,omitempty"`
+	NoProgressStreak    int                      `json:"no_progress_streak,omitempty"`
+	NoProgressReason    string                   `json:"no_progress_reason,omitempty"`
 	Rounds              []reviewLoopRoundSummary `json:"rounds"`
 	Artifacts           reviewLoopArtifacts      `json:"artifacts"`
 }
@@ -196,6 +202,8 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 
 	cleanStreak := 0
 	unchangedFingerprintStreak := 0
+	noProgressStreak := 0
+	var prevBlockerKeys map[string]bool
 
 	step := func(_ stdctx.Context, rc loop.RoundContext) (loop.RoundResult, error) {
 		round := rc.Round
@@ -301,8 +309,9 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 
 		// Path (3) and (4): proposals.Created == 0 (accepted == 0 && duplicates == 0 by invariant)
 		if accepted == 0 && duplicates == 0 {
-			if len(proposals.Warnings) == 0 {
-				// Path (4): clean round — no proposals, no warnings, no parse-miss.
+			if len(proposals.Warnings) == 0 && reviewSummaryAfterAccept.BlockingOpen == 0 {
+				// Path (4): clean round — no proposals, no warnings, no parse-miss, and no
+				// open blocking findings from prior rounds.
 				cleanStreak++
 				roundSummary.CleanStreak = cleanStreak
 				roundSummary.UnchangedFingerprintStreak = unchangedFingerprintStreak
@@ -315,7 +324,7 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 				summary.Rounds = append(summary.Rounds, roundSummary)
 				return loop.RoundResult{Clean: true}, nil
 			}
-			// Path (3b): field-level warnings only — not clean, not a parse-miss.
+			// Path (3b): warnings only, or no warnings but open blocking findings remain.
 			// No blocking findings: no-progress round; let the loop engine handle patience.
 			// Blocking findings from a prior round still open: fall through to fixer.
 			cleanStreak = 0
@@ -409,6 +418,32 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 		}
 		roundSummary.UnchangedFingerprintStreak = unchangedFingerprintStreak
 
+		// Fixer no-progress escalation: if the canonical key set of open blocking
+		// findings is unchanged for K=2 consecutive rounds, exit early.
+		if reviewSummaryAfterFix.BlockingOpen > 0 {
+			currBlockerKeys, keyErr := openBlockingFindingKeySet(context.RunPaths)
+			if keyErr != nil {
+				summary.Rounds = append(summary.Rounds, roundSummary)
+				return loop.RoundResult{}, keyErr
+			}
+			if prevBlockerKeys != nil && sameStringSet(currBlockerKeys, prevBlockerKeys) {
+				noProgressStreak++
+			} else {
+				noProgressStreak = 0
+			}
+			prevBlockerKeys = currBlockerKeys
+			if noProgressStreak >= 2 {
+				summary.NoProgressStreak = noProgressStreak
+				summary.NoProgressReason = formatStalledBlockerReason(currBlockerKeys)
+				summary.OpenBlockingCount = reviewSummaryAfterFix.BlockingOpen
+				summary.Rounds = append(summary.Rounds, roundSummary)
+				return loop.RoundResult{}, errFixerNoProgress
+			}
+		} else {
+			noProgressStreak = 0
+			prevBlockerKeys = nil
+		}
+
 		gateReport, err := a.runReviewLoopGate(runID)
 		if err != nil {
 			var gateErr gateProcessError
@@ -452,14 +487,29 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 	case errors.Is(loopErr, errResolved):
 		summary.TerminalReason = "resolved"
 		loopErr = nil
+	case errors.Is(loopErr, errFixerNoProgress):
+		summary.TerminalReason = "fixer_no_progress"
+		loopErr = nil
 	case loopErr == nil:
 		switch outcome.Reason {
 		case "settled":
 			summary.TerminalReason = "clean_round"
-		case "stalemate":
-			summary.TerminalReason = "stalemate"
-		case "max":
-			summary.TerminalReason = "max_rounds"
+		case "stalemate", "max":
+			// If blocking findings are still open, report blockers_open so callers
+			// are never left with a silently non-approvable terminal reason.
+			rs, rsErr := reviewLoopReviewSummary(context.RunPaths)
+			if rsErr != nil {
+				loopErr = rsErr
+				break
+			}
+			if rs.BlockingOpen > 0 {
+				summary.TerminalReason = "blockers_open"
+				summary.OpenBlockingCount = rs.BlockingOpen
+			} else if outcome.Reason == "stalemate" {
+				summary.TerminalReason = "stalemate"
+			} else {
+				summary.TerminalReason = "max_rounds"
+			}
 		}
 	}
 
@@ -1272,6 +1322,9 @@ func writeReviewLoopSummary(stdout io.Writer, summary reviewLoopSummaryDocument)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", summary.RunID)
 	fmt.Fprintf(stdout, "  terminal reason: %s\n", summary.TerminalReason)
+	if summary.TerminalReason == "blockers_open" || summary.TerminalReason == "fixer_no_progress" {
+		fmt.Fprintf(stdout, "  %d open blocking findings remain\n", summary.OpenBlockingCount)
+	}
 	fmt.Fprintf(stdout, "  rounds: %d/%d\n", len(summary.Rounds), summary.MaxRounds)
 	fmt.Fprintf(stdout, "  clean rounds: %d\n", summary.CleanRoundsRequired)
 	fmt.Fprintf(stdout, "  stalemate patience: %d\n", summary.StalematePatience)
@@ -1316,9 +1369,62 @@ func writeReviewLoopSummary(stdout io.Writer, summary reviewLoopSummaryDocument)
 	}
 }
 
+// canonicalBlockerKey normalises a finding's category and message into a
+// stable key used ONLY for fixer-no-progress streak detection. The key is
+// never stored or sent to agents.
+func canonicalBlockerKey(category, message string) string {
+	normalized := strings.ToLower(strings.TrimSpace(strings.Join(strings.Fields(message), " ")))
+	return category + ":" + normalized
+}
+
+// openBlockingFindingKeySet returns the set of canonical keys for all
+// currently open blocking findings (unresolved and blocking=true).
+func openBlockingFindingKeySet(runPaths contractRunPathSet) (map[string]bool, error) {
+	findings, resolutions, err := readReviewRecords(runPaths)
+	if err != nil {
+		return nil, err
+	}
+	resolved := latestReviewResolutions(resolutions)
+	keys := map[string]bool{}
+	for _, f := range findings {
+		if _, ok := resolved[f.ID]; ok {
+			continue
+		}
+		if !f.Blocking {
+			continue
+		}
+		keys[canonicalBlockerKey(f.Category, f.Message)] = true
+	}
+	return keys, nil
+}
+
+// sameStringSet reports whether two string sets contain exactly the same keys.
+func sameStringSet(a, b map[string]bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k := range a {
+		if !b[k] {
+			return false
+		}
+	}
+	return true
+}
+
 func firstString(values []string) string {
 	if len(values) == 0 {
 		return ""
 	}
 	return values[0]
+}
+
+// formatStalledBlockerReason returns a human-readable reason string that
+// identifies the stalled canonical blocker key set for fixer_no_progress.
+func formatStalledBlockerReason(keys map[string]bool) string {
+	sorted := make([]string, 0, len(keys))
+	for k := range keys {
+		sorted = append(sorted, k)
+	}
+	sort.Strings(sorted)
+	return "stalled canonical blocker key set: " + strings.Join(sorted, "; ")
 }
