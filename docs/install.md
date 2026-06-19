@@ -18,7 +18,7 @@ Pactum can drive two built-in agents, but only when you ask it to *execute*
 (`pactum execute run`). The packaging and smoke steps below never launch an
 agent, so the adapter packages are optional for installation:
 
-- `@zed-industries/codex-acp@latest` — ACP adapter for the `codex` built-in agent.
+- `@heurema/codex-acp@latest` — ACP adapter for the `codex` built-in agent.
 - `@agentclientprotocol/claude-agent-acp@latest` — ACP adapter for the `claude` built-in agent.
 
 Pactum downloads and runs these via `npx` on demand. Set

@@ -80,7 +80,7 @@ func TestExecutePlanSucceedsAfterPromptBuild(t *testing.T) {
 		"Execution plan prepared",
 		"Resolved:",
 		"Would run:",
-		`npx -y @zed-industries/codex-acp@latest -c model="gpt-5"`,
+		`npx -y @heurema/codex-acp@latest -c model="gpt-5"`,
 		".heurema/pactum/runs/" + runID + "/execute/dry-run.json",
 	} {
 		if !strings.Contains(got, want) {
@@ -94,7 +94,7 @@ func TestExecutePlanSucceedsAfterPromptBuild(t *testing.T) {
 		t.Fatalf("unexpected dry-run plan: %#v", plan)
 	}
 	wantPrompt := executionPromptRepoPath(runID)
-	if plan.WouldRun.Command != "npx" || strings.Join(plan.WouldRun.Args, " ") != `-y @zed-industries/codex-acp@latest -c model="gpt-5"` || plan.WouldRun.Stdin != "" {
+	if plan.WouldRun.Command != "npx" || strings.Join(plan.WouldRun.Args, " ") != `-y @heurema/codex-acp@latest -c model="gpt-5"` || plan.WouldRun.Stdin != "" {
 		t.Fatalf("unexpected would_run command: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", wantPrompt)
@@ -114,7 +114,7 @@ func TestExecutePlanJSONOutput(t *testing.T) {
 	if plan.Agent.Name != "codex" || !plan.Checks.PromptManifestReady || plan.Artifacts.Prompt != "contract/prompt.md" {
 		t.Fatalf("unexpected dry-run json: %#v", plan)
 	}
-	if plan.WouldRun.Command != "npx" || strings.Join(plan.WouldRun.Args, " ") != `-y @zed-industries/codex-acp@latest -c model="gpt-5"` {
+	if plan.WouldRun.Command != "npx" || strings.Join(plan.WouldRun.Args, " ") != `-y @heurema/codex-acp@latest -c model="gpt-5"` {
 		t.Fatalf("missing would_run json: %#v", plan.WouldRun)
 	}
 	if strings.Contains(stdout.String(), "Execution plan prepared") {
@@ -169,7 +169,7 @@ func TestExecutePlanExplicitCodex(t *testing.T) {
 	if plan.Agent.Name != "codex" || plan.Agent.Command != "" {
 		t.Fatalf("codex agent mismatch: %#v", plan.Agent)
 	}
-	if plan.WouldRun.Command != "npx" || strings.Join(plan.WouldRun.Args, " ") != `-y @zed-industries/codex-acp@latest -c model="gpt-5"` {
+	if plan.WouldRun.Command != "npx" || strings.Join(plan.WouldRun.Args, " ") != `-y @heurema/codex-acp@latest -c model="gpt-5"` {
 		t.Fatalf("codex would_run mismatch: %#v", plan.WouldRun)
 	}
 	assertCommandArgsDoNotContain(t, plan.WouldRun.Args, "contract/prompt.md", executionPromptRepoPath(runID))
@@ -207,7 +207,7 @@ func TestExecutePlanAppliesExecutorModelConfigToCodex(t *testing.T) {
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
-	wantArgs := []string{"-y", "@zed-industries/codex-acp@latest", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"}
+	wantArgs := []string{"-y", "@heurema/codex-acp@latest", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"}
 	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
 		t.Fatalf("codex would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
 	}
@@ -259,7 +259,7 @@ func TestExecutePlanPinAppliesOnlyToMatchingAgent(t *testing.T) {
 	}
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	plan := readDryRunPlan(t, runPaths.DryRunJSON)
-	wantArgs := []string{"-y", "@zed-industries/codex-acp@latest", "-c", "model=\"gpt-5\""}
+	wantArgs := []string{"-y", "@heurema/codex-acp@latest", "-c", "model=\"gpt-5\""}
 	if !sameStringSlice(plan.WouldRun.Args, wantArgs) {
 		t.Fatalf("codex would_run args = %#v, want %#v", plan.WouldRun.Args, wantArgs)
 	}

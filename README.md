@@ -48,7 +48,10 @@ deterministic checks around the agent — not a security boundary.
 
 Pactum ships two built-in agents:
 
-- `codex` — launches the ACP adapter `npx -y @zed-industries/codex-acp@latest`.
+- `codex` — launches the ACP adapter `npx -y @heurema/codex-acp@latest`, a fork
+  of `@zed-industries/codex-acp` that forwards Codex token usage in the ACP prompt
+  response so Pactum can capture it. Override with `PACTUM_CODEX_ACP_COMMAND`
+  (e.g. to pin upstream `@zed-industries/codex-acp`).
 - `claude` — launches the ACP adapter
   `npx -y @agentclientprotocol/claude-agent-acp@latest`.
 

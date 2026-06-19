@@ -48,7 +48,7 @@ func TestACPAdapterCommandThreadsModelPin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codex adapter: %v", err)
 	}
-	want := []string{"-y", "@zed-industries/codex-acp@latest", "-c", `model="gpt-5"`, "-c", "model_reasoning_effort=high"}
+	want := []string{"-y", "@heurema/codex-acp@latest", "-c", `model="gpt-5"`, "-c", "model_reasoning_effort=high"}
 	if len(args) != len(want) {
 		t.Fatalf("codex args = %v, want %v", args, want)
 	}
@@ -113,7 +113,7 @@ func TestACPAdapterCommandReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codex read-only+model: %v", err)
 	}
-	want := []string{"-y", "@zed-industries/codex-acp@latest", "-c", `sandbox_mode="read-only"`, "-c", `model="gpt-5"`}
+	want := []string{"-y", "@heurema/codex-acp@latest", "-c", `sandbox_mode="read-only"`, "-c", `model="gpt-5"`}
 	if len(args) != len(want) {
 		t.Fatalf("codex read-only+model args = %v, want %v", args, want)
 	}
@@ -204,7 +204,7 @@ func TestACPAdapterCommandOverrideIgnoresEmptyAndWhitespace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codex empty override: %v", err)
 	}
-	if cmd != "npx" || !reflect.DeepEqual(args, []string{"-y", "@zed-industries/codex-acp@latest"}) {
+	if cmd != "npx" || !reflect.DeepEqual(args, []string{"-y", "@heurema/codex-acp@latest"}) {
 		t.Fatalf("codex empty override should use default: cmd=%q args=%v", cmd, args)
 	}
 }

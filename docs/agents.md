@@ -10,7 +10,7 @@ Two agents are built in. There are **no custom agents in the MVP**.
 
 | Name | Adapter command | Role |
 | --- | --- | --- |
-| `codex` | `npx -y @zed-industries/codex-acp@latest` | executor / reviewer |
+| `codex` | `npx -y @heurema/codex-acp@latest` | executor / reviewer |
 | `claude` | `npx -y @agentclientprotocol/claude-agent-acp@latest` | executor / reviewer |
 
 Both agents run over ACP. Read-only enforcement for the reviewer role is applied
@@ -188,7 +188,7 @@ The ACP adapters are external npm packages and inherit the agent's auth from the
 environment. By default pactum launches them as:
 
 - **claude** — `npx -y @agentclientprotocol/claude-agent-acp@latest`
-- **codex** — `npx -y @zed-industries/codex-acp@latest`
+- **codex** — `npx -y @heurema/codex-acp@latest`
 
 For supply-chain pinning, `PACTUM_CLAUDE_ACP_COMMAND` and
 `PACTUM_CODEX_ACP_COMMAND` can replace only that default `npx` executable/package

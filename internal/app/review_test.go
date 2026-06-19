@@ -735,7 +735,7 @@ func TestReviewPlanExplicitReviewers(t *testing.T) {
 	codexPromptArtifact := reviewerLensPromptArtifact("codex", reviewLenses[0])
 	wouldRun := plan.Attempts[0].WouldRun
 	// Codex reviewer runs over ACP with read-only sandbox mode; model from config.
-	if wouldRun.Command != "npx" || strings.Join(wouldRun.Args, " ") != `-y @zed-industries/codex-acp@latest -c sandbox_mode="read-only" -c model="gpt-5"` {
+	if wouldRun.Command != "npx" || strings.Join(wouldRun.Args, " ") != `-y @heurema/codex-acp@latest -c sandbox_mode="read-only" -c model="gpt-5"` {
 		t.Fatalf("codex would_run mismatch: %#v", wouldRun)
 	}
 	assertCommandArgsDoNotContain(t, wouldRun.Args, codexPromptArtifact, runArtifactRepoRel(runID, codexPromptArtifact))
@@ -767,7 +767,7 @@ func TestReviewPlanAppliesPanelEntryPinToCodex(t *testing.T) {
 		t.Fatalf("review plan codex exited %d, stderr: %s", code, stderr.String())
 	}
 	plan := readReviewerDryRunPlan(t, runPaths.ReviewDryRunJSON)
-	wantArgs := []string{"-y", "@zed-industries/codex-acp@latest", "-c", "sandbox_mode=\"read-only\"", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"}
+	wantArgs := []string{"-y", "@heurema/codex-acp@latest", "-c", "sandbox_mode=\"read-only\"", "-c", "model=\"gpt-5\"", "-c", "model_reasoning_effort=high"}
 	if !sameStringSlice(plan.Attempts[0].WouldRun.Args, wantArgs) {
 		t.Fatalf("codex reviewer would_run args = %#v, want %#v", plan.Attempts[0].WouldRun.Args, wantArgs)
 	}
@@ -1386,7 +1386,7 @@ func TestReviewFixDryRunArtifactsUseWriteEnabledExecutorAndPrompt(t *testing.T) 
 	}{
 		{
 			agent:    "codex",
-			wantArgs: `-y @zed-industries/codex-acp@latest -c model="gpt-5" -c model_reasoning_effort=high`,
+			wantArgs: `-y @heurema/codex-acp@latest -c model="gpt-5" -c model_reasoning_effort=high`,
 			forbid:   `sandbox_mode="read-only"`,
 		},
 		{
@@ -1632,7 +1632,7 @@ func TestReviewFixResolvedBlockShowsExecutorModel(t *testing.T) {
 	var request reviewFixRequestDocument
 	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").RequestJSON)), &request))
 	args := strings.Join(request.WouldRun.Args, " ")
-	for _, want := range []string{"@zed-industries/codex-acp@latest", `model="gpt-5"`, "model_reasoning_effort=high"} {
+	for _, want := range []string{"@heurema/codex-acp@latest", `model="gpt-5"`, "model_reasoning_effort=high"} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("review fix would_run args missing %q: %#v", want, request.WouldRun.Args)
 		}
