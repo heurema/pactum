@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -78,16 +77,6 @@ type draftContract struct {
 	OpenQuestions      []string           `json:"open_questions"`
 	Clarifications     contractClarifySet `json:"clarifications,omitempty"`
 	MemoryContext      draftMemoryContext `json:"memory_context"`
-	Plan               *contractPlan      `json:"plan,omitempty"`
-}
-
-// normalizeDraftContractPlan sets Plan to nil when Tasks is empty so a plan
-// with zero tasks serializes identically to a plan-less contract (no "plan"
-// key in the JSON, same SHA-256 hash).
-func normalizeDraftContractPlan(contract *draftContract) {
-	if contract.Plan != nil && len(contract.Plan.Tasks) == 0 {
-		contract.Plan = nil
-	}
 }
 
 type draftContractScope struct {
@@ -101,29 +90,6 @@ type draftValidation struct {
 
 type draftMemoryContext struct {
 	UsedItems []string `json:"used_items"`
-}
-
-type contractPlan struct {
-	Tasks []planTask `json:"tasks"`
-}
-
-type planTask struct {
-	ID              string                `json:"id"`
-	Title           string                `json:"title,omitempty"`
-	DependsOn       []string              `json:"depends_on,omitempty"`
-	Context         []planContextSelector `json:"context,omitempty"`
-	ExpectedFiles   []string              `json:"expected_files,omitempty"`
-	Acceptance      []string              `json:"acceptance"`
-	Validation      []string              `json:"validation"`
-	PathsInScope    []string              `json:"paths_in_scope,omitempty"`
-	PathsOutOfScope []string              `json:"paths_out_of_scope,omitempty"`
-}
-
-type planContextSelector struct {
-	Path   string `json:"path,omitempty"`
-	Lines  string `json:"lines,omitempty"`
-	Symbol string `json:"symbol,omitempty"`
-	Why    string `json:"why,omitempty"`
 }
 
 type approvalState struct {
@@ -302,12 +268,7 @@ type contractRunPathSet struct {
 	ReviewFixAttemptsDir         string
 	ReviewFixLastResultJSON      string
 
-	PlanReviewDir          string
-	PlanReviewFindingsJSON string
-
-	TasksStateJSON  string
-	LoopSummaryJSON string
-	TasksDir        string
+	TasksDir string
 }
 
 func contractRunPaths(runDir string) contractRunPathSet {
@@ -384,10 +345,6 @@ func contractRunPaths(runDir string) contractRunPathSet {
 		ReviewFixDryRunJSON:           filepath.Join(reviewDir, "fix", "fixer-dry-run.json"),
 		ReviewFixAttemptsDir:          filepath.Join(reviewDir, "fix", "attempts"),
 		ReviewFixLastResultJSON:       filepath.Join(reviewDir, "fix", "last-result.json"),
-		PlanReviewDir:                 filepath.Join(runDir, "plan-review"),
-		PlanReviewFindingsJSON:        filepath.Join(runDir, "plan-review", "findings.json"),
-		TasksStateJSON:                filepath.Join(executeDir, "tasks-state.json"),
-		LoopSummaryJSON:               filepath.Join(executeDir, "loop-summary.json"),
 		TasksDir:                      filepath.Join(executeDir, "tasks"),
 	}
 }
@@ -809,65 +766,7 @@ func renderContractMDFromDraft(contract draftContract, mapRunID string, searchRe
 			fmt.Fprintf(&buffer, "- %s\n", question)
 		}
 	}
-	if contract.Plan != nil && len(contract.Plan.Tasks) > 0 {
-		fmt.Fprintln(&buffer)
-		writePlanSection(&buffer, contract.Plan)
-	}
 	return buffer.Bytes()
-}
-
-// writePlanSection renders the plan.tasks[] to w as a "## Plan (N tasks)" markdown
-// section. It is a no-op when plan is nil or has no tasks.
-func writePlanSection(w io.Writer, plan *contractPlan) {
-	if plan == nil || len(plan.Tasks) == 0 {
-		return
-	}
-	fmt.Fprintf(w, "## Plan (%d tasks)\n", len(plan.Tasks))
-	for _, task := range plan.Tasks {
-		fmt.Fprintln(w)
-		if task.Title != "" {
-			fmt.Fprintf(w, "### %s: %s\n", task.ID, task.Title)
-		} else {
-			fmt.Fprintf(w, "### %s\n", task.ID)
-		}
-		if len(task.DependsOn) > 0 {
-			fmt.Fprintf(w, "Depends on: %s\n", strings.Join(task.DependsOn, ", "))
-		}
-		if len(task.Context) > 0 {
-			fmt.Fprintln(w, "Context:")
-			for _, ctx := range task.Context {
-				fmt.Fprint(w, "-")
-				if ctx.Symbol != "" {
-					fmt.Fprintf(w, " symbol %s", ctx.Symbol)
-				}
-				if ctx.Path != "" {
-					fmt.Fprintf(w, " %s", ctx.Path)
-					if ctx.Lines != "" {
-						fmt.Fprintf(w, " lines %s", ctx.Lines)
-					}
-				}
-				if ctx.Why != "" {
-					fmt.Fprintf(w, " — %s", ctx.Why)
-				}
-				fmt.Fprintln(w)
-			}
-		}
-		if len(task.ExpectedFiles) > 0 {
-			fmt.Fprintf(w, "Expected files: %s\n", strings.Join(task.ExpectedFiles, ", "))
-		}
-		if len(task.Acceptance) > 0 {
-			fmt.Fprintln(w, "Acceptance:")
-			for _, a := range task.Acceptance {
-				fmt.Fprintf(w, "- %s\n", a)
-			}
-		}
-		if len(task.Validation) > 0 {
-			fmt.Fprintln(w, "Validation:")
-			for _, v := range task.Validation {
-				fmt.Fprintf(w, "- %s\n", v)
-			}
-		}
-	}
 }
 
 func renderPromptMDFromDraft(contract draftContract) []byte {

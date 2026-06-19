@@ -49,7 +49,6 @@ type pipelineConfig struct {
 	Execute        pipelineStage `yaml:"execute,omitempty"`
 	CodeReview     pipelineStage `yaml:"code_review,omitempty"`
 	Memory         pipelineStage `yaml:"memory,omitempty"`
-	PlanReview     pipelineStage `yaml:"plan_review,omitempty"`
 }
 
 // pipelineStage is the performer + optional loop knobs for one pipeline stage.
@@ -218,15 +217,12 @@ var (
 		"clarify":         true,
 		"contract_review": true,
 		"code_review":     true,
-		// execute supports loop.max only; patience and settle are rejected below.
-		"execute": true,
 	}
 	// stageMultiAgentAllowed is the closed set of stages that may name more than
 	// one agent in by (the panel stages).
 	stageMultiAgentAllowed = map[string]bool{
 		"contract_review": true,
 		"code_review":     true,
-		"plan_review":     true,
 	}
 )
 
@@ -242,7 +238,6 @@ func validatePipeline(pipeline pipelineConfig, registry []agentRegistryEntry) er
 		{"execute", pipeline.Execute},
 		{"code_review", pipeline.CodeReview},
 		{"memory", pipeline.Memory},
-		{"plan_review", pipeline.PlanReview},
 	}
 	registered := make(map[string]bool, len(registry))
 	for _, entry := range registry {
@@ -251,16 +246,6 @@ func validatePipeline(pipeline pipelineConfig, registry []agentRegistryEntry) er
 	for _, ns := range stages {
 		if ns.stage.Loop != nil && !stageLoopAllowed[ns.name] {
 			return fmt.Errorf("config pipeline.%s: loop is not valid for this stage", ns.name)
-		}
-		// execute.loop only exposes max; patience and settle have no defined
-		// semantics for a binary per-node runner and are rejected at load time.
-		if ns.name == "execute" && ns.stage.Loop != nil {
-			if ns.stage.Loop.Patience != 0 {
-				return fmt.Errorf("config pipeline.execute.loop: patience is not configurable (only max is valid for execute)")
-			}
-			if ns.stage.Loop.Settle > 1 {
-				return fmt.Errorf("config pipeline.execute.loop: settle is not configurable (only max is valid for execute)")
-			}
 		}
 		// Count and validate non-empty by entries only; empty strings are treated
 		// as absent and normalized out after this validation step.
@@ -292,7 +277,6 @@ func normalizePipelineBy(p *pipelineConfig) {
 	p.Execute.By = filterEmptyBy(p.Execute.By)
 	p.CodeReview.By = filterEmptyBy(p.CodeReview.By)
 	p.Memory.By = filterEmptyBy(p.Memory.By)
-	p.PlanReview.By = filterEmptyBy(p.PlanReview.By)
 }
 
 func filterEmptyBy(by stageBy) stageBy {
