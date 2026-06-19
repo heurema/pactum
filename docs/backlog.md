@@ -88,7 +88,14 @@ reviews across M8–M10. Rough priority in parentheses.
   frozen" gap). Trace counts are honest lower bounds (adapter event coverage
   is per-type and has had gaps). Follow-up rides the navigation arc: an
   adoption report over traces (ranged-read share, repo-CLI usage) replaces
-  narration-grep as evidence.
+  narration-grep as evidence. **Reproduced live 2026-06-19:** asked whether the
+  executor actually uses the provided map / `pactum search`, the only per-attempt
+  artifact was the agent's PROSE narration in `stdout.log` ("read X, read Y") —
+  no structured record of which files it read, whether it ranged-read, or whether
+  it ever invoked `pactum search`. Narration-grep could not answer it. This gap
+  now blocks a question we actively care about (map/search adoption by the
+  executor and reviewer), so it is a prerequisite for measuring whether the map
+  we generate is exercised at all — strong candidate to pull forward in priority.
 - **Workspace config leaks across runs/branches** — structurally resolved by the
   M16.0 config redesign: model pins became per-agent entries, so a pin can no
   longer reach a different agent (the M10.2 failure mode — a leaked claude pin
@@ -1066,6 +1073,26 @@ re-exploration the map could have served vs genuinely-needed file content.
   verification weight, and how this composes with the ACP shell-gating gap
   (the same mechanism that would gate agent shell commands on write stages
   could enforce a command allowlist).
+
+- **Add Gemini as a third ACP engine (native `gemini --acp`)** (candidate;
+  researched 2026-06-19). Gemini CLI ships **native** Agent Client Protocol
+  support — it is the reference implementation of ACP (Google + Zed), launched
+  with `gemini --acp` (JSON-RPC over stdio, `--acp --debug` for diagnostics), so
+  **no fork/adapter is needed** (unlike codex, which requires `codex-acp` — see
+  the usage-fork note in the contract-review/agents lessons). Pactum's ACP-only
+  transport already spawns an arbitrary adapter command and infers the engine
+  from the model id, so wiring a `gemini-*` agent is mostly: register the agent
+  in the `agents:` registry, infer the engine, and spawn `gemini --acp` as the
+  adapter. Payoff: a third cross-model voice for the contract-review/code-review
+  panels, and a candidate **reliable fallback emitter** for the reviewer-hang
+  fallback work (the reliable-emitter half of "Reviewer attempt can HANG
+  indefinitely"). **Verify before committing to it:** (a) does native
+  `gemini --acp` emit token/usage data over ACP, or will usage capture need a
+  fork the way codex did; (b) is Gemini-over-ACP a reliable streaming/structured
+  emitter on large diffs (codex-over-ACP is the weak emitter that stalls — a
+  reviewer/fallback role needs clean ACP routing); (c) auth model in a headless
+  dogfood run (standard Gemini CLI auth). Sources: geminicli.com/docs/cli/acp-mode,
+  zed.dev/acp.
 
 ## Resolved (for reference)
 

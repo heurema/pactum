@@ -169,6 +169,14 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 	if err != nil {
 		return err
 	}
+	reviewConfig, err := readConfig(context.Paths.Config)
+	if err != nil {
+		return err
+	}
+	wallClockCap, err := resolveWallClockCap(reviewConfig.WallClockCap.Duration())
+	if err != nil {
+		return err
+	}
 	limits, err := a.resolveReviewLoopLimits(context, options)
 	if err != nil {
 		return err
@@ -208,7 +216,7 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 	step := func(_ stdctx.Context, rc loop.RoundContext) (loop.RoundResult, error) {
 		round := rc.Round
 
-		reviewerResult, err := a.runReviewLoopReviewRound(context, liveOutput, runID, reviewers, options.Timeout)
+		reviewerResult, err := a.runReviewLoopReviewRound(context, liveOutput, runID, reviewers, options.Timeout, wallClockCap)
 		if err != nil {
 			return loop.RoundResult{}, err
 		}
@@ -645,7 +653,7 @@ func reviewLoopReviewerNames(reviewers []reviewLoopReviewer) []string {
 	return names
 }
 
-func (a App) runReviewLoopReviewRound(context reviewContext, liveOutput io.Writer, runID string, reviewers []reviewLoopReviewer, timeout time.Duration) (reviewLoopReviewRoundResult, error) {
+func (a App) runReviewLoopReviewRound(context reviewContext, liveOutput io.Writer, runID string, reviewers []reviewLoopReviewer, timeout time.Duration, wallClockCap time.Duration) (reviewLoopReviewRoundResult, error) {
 	if len(reviewers) == 0 {
 		return reviewLoopReviewRoundResult{}, fmt.Errorf("review run requires at least one reviewer")
 	}
@@ -668,7 +676,7 @@ func (a App) runReviewLoopReviewRound(context reviewContext, liveOutput io.Write
 		sharedLive = &synchronizedWriter{w: liveOutput}
 	}
 
-	a.runReviewerLensFanOut(sharedLive, runID, prep, reviewers, timeout, memberResults, errs)
+	a.runReviewerLensFanOut(sharedLive, runID, prep, reviewers, timeout, wallClockCap, memberResults, errs)
 
 	// Collect failed lens attempts. If all fail, surface the first error. If some
 	// fail, record them as skipped so the round continues with what succeeded.
@@ -708,6 +716,14 @@ func (a App) runReviewLoopReviewRound(context reviewContext, liveOutput io.Write
 		for lensIndex, result := range memberResults[index] {
 			lens := reviewLenses[lensIndex]
 			if errs[index][lensIndex] != nil {
+				// Wall-clock-capped lens: already recorded in skipped_lenses above;
+				// the attempt was killed before it could produce output so there is
+				// nothing to parse — but it is NOT a parse miss (the transport made a
+				// best-effort attempt and was hard-killed by the ceiling, not by a
+				// protocol or format failure).
+				if memberResults[index][lensIndex].WallClockTimeout {
+					continue
+				}
 				// Hard failure: transport error. Not eligible for corrective retry.
 				batch.ParseMiss = true
 				batch.Warnings = append(batch.Warnings, fmt.Sprintf("lens=%s attempt=1: transport error — hard failure (parse miss): %v", lens.Key, errs[index][lensIndex]))
@@ -740,7 +756,7 @@ func (a App) runReviewLoopReviewRound(context reviewContext, liveOutput io.Write
 				// Soft failure: non-empty stdout with no valid block — one corrective retry.
 				batch.Warnings = append(batch.Warnings, fmt.Sprintf("lens=%s attempt=1: no valid findings block — corrective retry", lens.Key))
 				batch.Warnings = append(batch.Warnings, blockWarnings...)
-				corrResult, corrOK, corrWarnings := a.runReviewerCorrectiveAttempt(liveOutput, runID, prep, reviewer, lens, timeout)
+				corrResult, corrOK, corrWarnings := a.runReviewerCorrectiveAttempt(liveOutput, runID, prep, reviewer, lens, timeout, wallClockCap)
 				for _, w := range corrWarnings {
 					batch.Warnings = append(batch.Warnings, fmt.Sprintf("lens=%s attempt=2: %s", lens.Key, w))
 				}
@@ -866,14 +882,14 @@ func groupReviewerLensTasks(reviewers []reviewLoopReviewer) []reviewerLensGroup 
 // others; a staggered Claude group launches one lead first and holds the rest
 // (see runReviewerLensGroup). Results and errors land in the caller's
 // per-reviewer, per-lens grids, so the round's collection order is unchanged.
-func (a App) runReviewerLensFanOut(sharedLive io.Writer, runID string, prep reviewerDryRunPreparation, reviewers []reviewLoopReviewer, timeout time.Duration, memberResults [][]reviewerResultDocument, errs [][]error) {
+func (a App) runReviewerLensFanOut(sharedLive io.Writer, runID string, prep reviewerDryRunPreparation, reviewers []reviewLoopReviewer, timeout time.Duration, wallClockCap time.Duration, memberResults [][]reviewerResultDocument, errs [][]error) {
 	groups := groupReviewerLensTasks(reviewers)
 	var wg sync.WaitGroup
 	for _, group := range groups {
 		wg.Add(1)
 		go func(group reviewerLensGroup) {
 			defer wg.Done()
-			a.runReviewerLensGroup(sharedLive, runID, prep, group, timeout, memberResults, errs)
+			a.runReviewerLensGroup(sharedLive, runID, prep, group, timeout, wallClockCap, memberResults, errs)
 		}(group)
 	}
 	wg.Wait()
@@ -885,9 +901,9 @@ func (a App) runReviewerLensFanOut(sharedLive io.Writer, runID string, prep revi
 // streams its first output, finishes before producing any, or a hold timeout
 // elapses — so the held attempts read the warmed prompt cache (0.1x) instead of
 // each paying the 1.25x cold-write premium on the shared prefix.
-func (a App) runReviewerLensGroup(sharedLive io.Writer, runID string, prep reviewerDryRunPreparation, group reviewerLensGroup, timeout time.Duration, memberResults [][]reviewerResultDocument, errs [][]error) {
+func (a App) runReviewerLensGroup(sharedLive io.Writer, runID string, prep reviewerDryRunPreparation, group reviewerLensGroup, timeout time.Duration, wallClockCap time.Duration, memberResults [][]reviewerResultDocument, errs [][]error) {
 	runTask := func(task reviewerLensTask, onFirstOutput func()) {
-		result, err := a.runReviewLoopReviewerWithAgent(sharedLive, runID, prep, task.reviewer, task.lens, timeout, onFirstOutput)
+		result, err := a.runReviewLoopReviewerWithAgent(sharedLive, runID, prep, task.reviewer, task.lens, timeout, wallClockCap, onFirstOutput)
 		memberResults[task.reviewerIndex][task.lensIndex] = result
 		errs[task.reviewerIndex][task.lensIndex] = err
 	}
@@ -963,14 +979,14 @@ func reviewerStaggerModelLabel(key reviewerStaggerKey) string {
 	return key.model
 }
 
-func (a App) runReviewLoopReviewerWithAgent(liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration, onFirstOutput func()) (reviewerResultDocument, error) {
+func (a App) runReviewLoopReviewerWithAgent(liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration, wallClockCap time.Duration, onFirstOutput func()) (reviewerResultDocument, error) {
 	promptRepoPath := runArtifactRepoRel(runID, reviewerLensPromptArtifact(reviewer.Name, lens))
-	return a.runReviewLoopReviewerWithPrompt(liveOutput, runID, prep, reviewer, lens, timeout, onFirstOutput, promptRepoPath)
+	return a.runReviewLoopReviewerWithPrompt(liveOutput, runID, prep, reviewer, lens, timeout, wallClockCap, onFirstOutput, promptRepoPath)
 }
 
-func (a App) runReviewLoopReviewerWithPrompt(liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration, onFirstOutput func(), promptRepoPath string) (reviewerResultDocument, error) {
+func (a App) runReviewLoopReviewerWithPrompt(liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration, wallClockCap time.Duration, onFirstOutput func(), promptRepoPath string) (reviewerResultDocument, error) {
 	var stdout bytes.Buffer
-	runErr := a.runReviewerAttempt(&stdout, liveOutput, runID, prep, reviewer, lens, timeout, onFirstOutput, promptRepoPath)
+	runErr := a.runReviewerAttempt(&stdout, liveOutput, runID, prep, reviewer, lens, timeout, wallClockCap, onFirstOutput, promptRepoPath)
 	var result reviewerResultDocument
 	if stdout.Len() > 0 {
 		if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
@@ -983,7 +999,7 @@ func (a App) runReviewLoopReviewerWithPrompt(liveOutput io.Writer, runID string,
 	return result, runErr
 }
 
-func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration, onFirstOutput func(), promptRepoPath string) error {
+func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration, wallClockCap time.Duration, onFirstOutput func(), promptRepoPath string) error {
 	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[reviewerLensAttemptPlan, reviewerRequestDocument, reviewerResultDocument, struct{}]{
 		Stdout:          stdout,
 		LiveOutput:      liveOutput,
@@ -1002,6 +1018,7 @@ func (a App) runReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID st
 		PromptRepoPath:  promptRepoPath,
 		ArtifactDir:     reviewerAttemptsArtifact,
 		Timeout:         timeout,
+		WallClockCap:    wallClockCap,
 		ReadOnly:        true,
 		StartedEvent:    "reviewer_attempt_started",
 		FinishedEvent:   "reviewer_attempt_finished",
@@ -1063,14 +1080,14 @@ func (a App) runReviewLoopProposeFindings(runID string, reviewerAttemptID string
 // attempt emitted a valid block with at least one finding. Returns
 // (result, false, warnings) for every failure mode: transport error, empty
 // stdout, no valid block, or `"findings": []` (unverifiable clean).
-func (a App) runReviewerCorrectiveAttempt(liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration) (reviewerResultDocument, bool, []string) {
+func (a App) runReviewerCorrectiveAttempt(liveOutput io.Writer, runID string, prep reviewerDryRunPreparation, reviewer reviewLoopReviewer, lens reviewLens, timeout time.Duration, wallClockCap time.Duration) (reviewerResultDocument, bool, []string) {
 	corrPath := filepath.Join(prep.Context.RunPaths.ReviewDir, fmt.Sprintf("reviewer-prompt-%s-%s-corrective.md", reviewer.Name, lens.Key))
 	if err := activeStore.WriteBytes(corrPath, []byte(renderReviewerCorrectivePrompt(runID, lens)), 0o644); err != nil {
 		return reviewerResultDocument{}, false, []string{fmt.Sprintf("corrective prompt write failed: %v", err)}
 	}
 	corrRepoPath := runArtifactRepoRel(runID, reviewerLensCorrectivePromptArtifact(reviewer.Name, lens))
 
-	result, err := a.runReviewLoopReviewerWithPrompt(liveOutput, runID, prep, reviewer, lens, timeout, nil, corrRepoPath)
+	result, err := a.runReviewLoopReviewerWithPrompt(liveOutput, runID, prep, reviewer, lens, timeout, wallClockCap, nil, corrRepoPath)
 	if err != nil {
 		return reviewerResultDocument{}, false, []string{fmt.Sprintf("corrective attempt failed: %v", err)}
 	}

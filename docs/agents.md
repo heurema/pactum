@@ -342,6 +342,25 @@ happens — completion awareness finalizes honestly, it does not extend the
 deadline. This applies to every stage that honors `--timeout`, not just
 `execute run`.
 
+Every ACP-backed attempt (executor, reviewer, fixer, clarifier, contract drafter,
+contract reviewer) is also protected by an **absolute wall-clock ceiling** configured
+via `wall_clock_cap` in the workspace config (default **2 hours**). Unlike the idle
+timeout, the wall-clock cap never resets: it fires after the configured total
+duration regardless of whether the agent is producing output or responding to tool
+calls. When it fires the attempt is killed and the result records
+`wall_clock_timeout: true`, which is distinct from idle timeout (`timed_out: true`)
+and normal completion. The wall-clock cap prevents an agent that trickles output
+indefinitely from hanging the pipeline permanently.
+
+```yaml
+wall_clock_cap: 3h   # absolute per-attempt ceiling for all ACP stages (default 2h)
+```
+
+A zero or negative `wall_clock_cap` is rejected at config load. A wall-clock-capped
+reviewer lens is surfaced loudly through the `skipped_lenses` field in the review
+round summary — the round continues with any surviving lenses rather than silently
+discarding the hung lens.
+
 The two built-in executors use different output channels: codex streams its
 reasoning/progress to **stderr** (with the final result on stdout), while claude
 writes to **stdout** (stderr is often empty). Both streams are captured under

@@ -74,6 +74,8 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 		}
 		stopIdle = startIdleTimeout(request.Timeout, activity, cancel, &idleTimedOut)
 	}
+	var wallClockTimedOut atomic.Bool
+	stopWallClock := func() {}
 	defer cancel()
 
 	// The adapter speaks ACP (JSON-RPC) on its stdin/stdout; its own diagnostics
@@ -99,6 +101,12 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 	if err := cmd.Start(); err != nil {
 		return RunResult{}, err
 	}
+	// Arm the wall-clock cap after the adapter process is running. The ceiling
+	// is measured from started, so startup overhead counts against the budget
+	// but the timer cannot fire before the process exists.
+	if request.WallClockCap > 0 {
+		stopWallClock = startWallClockTimeout(request.WallClockCap, cancel, &wallClockTimedOut)
+	}
 
 	client := &acpClient{out: stdoutWriter, activity: clientActivity, onFirstOutput: request.OnFirstOutput, repoRoot: request.RepoRoot, writePathAllowed: request.WritePathAllowed, readOnly: request.ReadOnly}
 	conn := acp.NewClientSideConnection(client, adapterIn, adapterOut)
@@ -106,19 +114,32 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 
 	finished := time.Now().UTC()
 	stopIdle()
+	stopWallClock()
 	cancel()
 	killProcessGroup(cmd)
 
 	exitCode := 0
 	timedOut := idleTimedOut.Load()
+	wallClock := wallClockTimedOut.Load()
 	if runErr != nil {
 		exitCode = -1
-		fmt.Fprintln(stderrFile, runErr.Error())
+		if wallClock {
+			// Wall-clock cap fired: the context-cancelled error from driveACPSession
+			// is expected; log the cap event instead of the raw context error.
+			fmt.Fprintln(stderrFile, "attempt killed: wall-clock cap exceeded")
+			if request.LiveOutput != nil {
+				fmt.Fprintln(request.LiveOutput, "attempt killed: wall-clock cap exceeded")
+			}
+		} else {
+			fmt.Fprintln(stderrFile, runErr.Error())
+		}
 	} else if client.stopReasonValue() == acp.StopReasonRefusal {
 		exitCode = 1
 	}
 	completedDespiteTimeout := false
-	if timedOut {
+	// Wall-clock cap takes precedence over idle timeout in outcome reporting;
+	// only run finalizeTimedOutAttempt when idle fired and wall-clock did not.
+	if timedOut && !wallClock {
 		// A recorded prompt response means the turn finished before the kill —
 		// the protocol-level completion signal the text-only stdout log cannot
 		// carry; the stdout detector still covers any captured terminal marker.
@@ -135,6 +156,7 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 		DurationMillis:          finished.Sub(started).Milliseconds(),
 		TimedOut:                timedOut,
 		CompletedDespiteTimeout: completedDespiteTimeout,
+		WallClockTimeout:        wallClock,
 		StdoutPath:              layout.stdoutArtifact,
 		StderrPath:              layout.stderrArtifact,
 		Usage:                   usage,

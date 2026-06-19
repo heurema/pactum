@@ -294,6 +294,10 @@ func (a App) ContractReview(stdout io.Writer, liveOutput io.Writer, runID string
 	if err != nil {
 		return err
 	}
+	wallClockCap, err := resolveWallClockCap(config.WallClockCap.Duration())
+	if err != nil {
+		return err
+	}
 
 	reviewers, err := a.resolveContractReviewers(config)
 	if err != nil {
@@ -305,7 +309,7 @@ func (a App) ContractReview(stdout io.Writer, liveOutput io.Writer, runID string
 		return err
 	}
 
-	return a.runContractReviewLoop(stdout, liveOutput, runID, context, reviewers, limits, lensKeys, timeout, jsonOutput)
+	return a.runContractReviewLoop(stdout, liveOutput, runID, context, reviewers, limits, lensKeys, timeout, wallClockCap, jsonOutput)
 }
 
 // runContractReviewLoop drives the reviewer/fixer convergence loop for contract
@@ -320,6 +324,7 @@ func (a App) runContractReviewLoop(
 	limits reviewLimits,
 	lensKeys []string,
 	timeout time.Duration,
+	wallClockCap time.Duration,
 	jsonOutput bool,
 ) error {
 	startedAt := a.nowUTC()
@@ -349,7 +354,7 @@ func (a App) runContractReviewLoop(
 			return loop.RoundResult{}, err
 		}
 
-		roundResult, err := a.runContractReviewRound(liveOutput, runID, roundCtx, reviewers, timeout)
+		roundResult, err := a.runContractReviewRound(liveOutput, runID, roundCtx, reviewers, timeout, wallClockCap)
 		if err != nil {
 			return loop.RoundResult{}, err
 		}
@@ -381,7 +386,7 @@ func (a App) runContractReviewLoop(
 			return loop.RoundResult{}, err
 		}
 
-		fixerAttemptID, fixesApplied, fixesSkipped, fixerWarnings, err := a.runContractReviewFixRound(liveOutput, runID, roundCtx, roundResult.Findings, versionBefore, timeout)
+		fixerAttemptID, fixesApplied, fixesSkipped, fixerWarnings, err := a.runContractReviewFixRound(liveOutput, runID, roundCtx, roundResult.Findings, versionBefore, timeout, wallClockCap)
 		if err != nil {
 			return loop.RoundResult{}, err
 		}
@@ -519,8 +524,9 @@ func (a App) runContractReviewRound(
 	context runContext,
 	reviewers []reviewLoopReviewer,
 	timeout time.Duration,
+	wallClockCap time.Duration,
 ) (contractReviewRoundResult, error) {
-	memberResults, errs := a.runContractReviewFanOut(liveOutput, runID, context, reviewers, timeout)
+	memberResults, errs := a.runContractReviewFanOut(liveOutput, runID, context, reviewers, timeout, wallClockCap)
 
 	var skipped []reviewLoopSkippedLens
 	var skipWarnings []string
@@ -605,6 +611,7 @@ func (a App) runContractReviewFixRound(
 	findings []contractReviewFinding,
 	currentVersion string,
 	timeout time.Duration,
+	wallClockCap time.Duration,
 ) (attemptID string, applied int, skipped int, warnings []string, err error) {
 	config, err := readConfig(context.Paths.Config)
 	if err != nil {
@@ -631,7 +638,7 @@ func (a App) runContractReviewFixRound(
 	}
 
 	var fixerOut bytes.Buffer
-	runErr := a.runContractReviewFixerAttempt(&fixerOut, liveOutput, runID, context, resolved, timeout)
+	runErr := a.runContractReviewFixerAttempt(&fixerOut, liveOutput, runID, context, resolved, timeout, wallClockCap)
 
 	var result contractReviewFixerResultDocument
 	if fixerOut.Len() > 0 {
@@ -706,7 +713,7 @@ func (a App) runContractReviewFixRound(
 	return resultAttemptID, 1, 0, nil, nil
 }
 
-func (a App) runContractReviewFixerAttempt(stdout io.Writer, liveOutput io.Writer, runID string, context runContext, resolved resolvedAgent, timeout time.Duration) error {
+func (a App) runContractReviewFixerAttempt(stdout io.Writer, liveOutput io.Writer, runID string, context runContext, resolved resolvedAgent, timeout time.Duration, wallClockCap time.Duration) error {
 	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[contractReviewFixerAttemptPlan, contractReviewFixerRequestDocument, contractReviewFixerResultDocument, struct{}]{
 		Stdout:          stdout,
 		LiveOutput:      liveOutput,
@@ -724,6 +731,7 @@ func (a App) runContractReviewFixerAttempt(stdout io.Writer, liveOutput io.Write
 		PromptRepoPath:  runArtifactRepoRel(runID, contractReviewFixerPromptArtifact),
 		ArtifactDir:     contractReviewFixerAttemptsArtifact,
 		Timeout:         timeout,
+		WallClockCap:    wallClockCap,
 		ReadOnly:        true,
 		StartedEvent:    "contract_fixer_attempt_started",
 		FinishedEvent:   "contract_fixer_attempt_finished",
@@ -1141,7 +1149,7 @@ func buildContractReviewerLensPlan(runID string, member string, lens contractRev
 	}, nil
 }
 
-func (a App) runContractReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID string, context runContext, reviewer reviewLoopReviewer, lens contractReviewLens, timeout time.Duration, onFirstOutput func()) error {
+func (a App) runContractReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID string, context runContext, reviewer reviewLoopReviewer, lens contractReviewLens, timeout time.Duration, wallClockCap time.Duration, onFirstOutput func()) error {
 	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[contractReviewerAttemptPlan, contractReviewerRequestDocument, contractReviewerResultDocument, struct{}]{
 		Stdout:          stdout,
 		LiveOutput:      liveOutput,
@@ -1160,6 +1168,7 @@ func (a App) runContractReviewerAttempt(stdout io.Writer, liveOutput io.Writer, 
 		PromptRepoPath:  runArtifactRepoRel(runID, contractReviewerLensPromptArtifact(reviewer.Name, lens)),
 		ArtifactDir:     contractReviewerAttemptsArtifact,
 		Timeout:         timeout,
+		WallClockCap:    wallClockCap,
 		ReadOnly:        true,
 		StartedEvent:    "contract_reviewer_attempt_started",
 		FinishedEvent:   "contract_reviewer_attempt_finished",
@@ -1201,9 +1210,9 @@ func (a App) runContractReviewerAttempt(stdout io.Writer, liveOutput io.Writer, 
 	})
 }
 
-func (a App) runContractReviewerWithAgent(liveOutput io.Writer, runID string, context runContext, reviewer reviewLoopReviewer, lens contractReviewLens, timeout time.Duration, onFirstOutput func()) (contractReviewerResultDocument, error) {
+func (a App) runContractReviewerWithAgent(liveOutput io.Writer, runID string, context runContext, reviewer reviewLoopReviewer, lens contractReviewLens, timeout time.Duration, wallClockCap time.Duration, onFirstOutput func()) (contractReviewerResultDocument, error) {
 	var stdout bytes.Buffer
-	runErr := a.runContractReviewerAttempt(&stdout, liveOutput, runID, context, reviewer, lens, timeout, onFirstOutput)
+	runErr := a.runContractReviewerAttempt(&stdout, liveOutput, runID, context, reviewer, lens, timeout, wallClockCap, onFirstOutput)
 	var result contractReviewerResultDocument
 	if stdout.Len() > 0 {
 		if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
@@ -1250,7 +1259,7 @@ func groupContractReviewerLensTasks(reviewers []reviewLoopReviewer) []contractRe
 	return groups
 }
 
-func (a App) runContractReviewFanOut(liveOutput io.Writer, runID string, context runContext, reviewers []reviewLoopReviewer, timeout time.Duration) ([][]contractReviewerResultDocument, [][]error) {
+func (a App) runContractReviewFanOut(liveOutput io.Writer, runID string, context runContext, reviewers []reviewLoopReviewer, timeout time.Duration, wallClockCap time.Duration) ([][]contractReviewerResultDocument, [][]error) {
 	memberResults := make([][]contractReviewerResultDocument, len(reviewers))
 	errs := make([][]error, len(reviewers))
 	for i := range reviewers {
@@ -1269,16 +1278,16 @@ func (a App) runContractReviewFanOut(liveOutput io.Writer, runID string, context
 		wg.Add(1)
 		go func(g contractReviewerLensGroup) {
 			defer wg.Done()
-			a.runContractReviewerLensGroup(sharedLive, runID, context, g, timeout, memberResults, errs)
+			a.runContractReviewerLensGroup(sharedLive, runID, context, g, timeout, wallClockCap, memberResults, errs)
 		}(group)
 	}
 	wg.Wait()
 	return memberResults, errs
 }
 
-func (a App) runContractReviewerLensGroup(sharedLive io.Writer, runID string, context runContext, group contractReviewerLensGroup, timeout time.Duration, memberResults [][]contractReviewerResultDocument, errs [][]error) {
+func (a App) runContractReviewerLensGroup(sharedLive io.Writer, runID string, context runContext, group contractReviewerLensGroup, timeout time.Duration, wallClockCap time.Duration, memberResults [][]contractReviewerResultDocument, errs [][]error) {
 	runTask := func(task contractReviewerLensTask, onFirstOutput func()) {
-		result, err := a.runContractReviewerWithAgent(sharedLive, runID, context, task.reviewer, task.lens, timeout, onFirstOutput)
+		result, err := a.runContractReviewerWithAgent(sharedLive, runID, context, task.reviewer, task.lens, timeout, wallClockCap, onFirstOutput)
 		memberResults[task.reviewerIndex][task.lensIndex] = result
 		errs[task.reviewerIndex][task.lensIndex] = err
 	}

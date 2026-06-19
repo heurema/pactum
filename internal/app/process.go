@@ -20,9 +20,12 @@ type processResult struct {
 	// CompletedDespiteTimeout records the completed-with-warning finalize: the
 	// idle watchdog fired (TimedOut stays true), but the agent's output carried
 	// a successful terminal marker, so the attempt counts as a success.
-	CompletedDespiteTimeout bool   `json:"completed_despite_timeout,omitempty"`
-	Stdout                  string `json:"stdout"`
-	Stderr                  string `json:"stderr"`
+	CompletedDespiteTimeout bool `json:"completed_despite_timeout,omitempty"`
+	// WallClockTimeout records an attempt killed by the absolute wall-clock cap
+	// rather than the idle watchdog.
+	WallClockTimeout bool   `json:"wall_clock_timeout,omitempty"`
+	Stdout           string `json:"stdout"`
+	Stderr           string `json:"stderr"`
 }
 
 func processResultFromRunResult(result agents.RunResult) processResult {
@@ -33,6 +36,7 @@ func processResultFromRunResult(result agents.RunResult) processResult {
 		ExitCode:                result.ExitCode,
 		TimedOut:                result.TimedOut,
 		CompletedDespiteTimeout: result.CompletedDespiteTimeout,
+		WallClockTimeout:        result.WallClockTimeout,
 		Stdout:                  result.StdoutPath,
 		Stderr:                  result.StderrPath,
 	}

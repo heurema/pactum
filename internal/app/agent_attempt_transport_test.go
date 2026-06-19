@@ -309,6 +309,105 @@ func TestExecuteRunNegativeTimeoutIsRejected(t *testing.T) {
 	}
 }
 
+func TestExecuteRunPassesDefaultWallClockCap(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
+	transport := &recordingAgentTransport{}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "run", runID, "--agent", "codex"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
+	}
+
+	request := singleTransportRequest(t, transport)
+	if request.WallClockCap != defaultWallClockCap {
+		t.Fatalf("omitted wall_clock_cap should use the built-in default: want %s, got %s", defaultWallClockCap, request.WallClockCap)
+	}
+}
+
+func TestExecuteRunPassesConfigWallClockCapOverride(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
+	transport := &recordingAgentTransport{}
+	app.AgentTransport = transport
+
+	config := readConfigForTest(t, paths.Config)
+	config.WallClockCap = yamlDuration(30 * time.Minute)
+	assertNoError(t, writeYAML(paths.Config, config))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "run", runID, "--agent", "codex"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
+	}
+
+	request := singleTransportRequest(t, transport)
+	if request.WallClockCap != 30*time.Minute {
+		t.Fatalf("wall_clock_cap config override should reach the transport: want 30m, got %s", request.WallClockCap)
+	}
+}
+
+func TestReviewRunPassesDefaultWallClockCap(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
+	transport := &recordingAgentTransport{}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "codex"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
+	}
+
+	for _, request := range transport.requests {
+		if request.WallClockCap != defaultWallClockCap {
+			t.Fatalf("reviewer transport request should carry the built-in wall-clock default: want %s, got %s", defaultWallClockCap, request.WallClockCap)
+		}
+	}
+}
+
+func TestClarifyRunPassesDefaultWallClockCap(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-sonnet-4"})
+	transport := &recordingAgentTransport{stdout: clarifierStructuredOutput([]map[string]any{})}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"clarify", "run", runID, "--no-auto", "--max-rounds", "1", "--reviewer", "claude"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clarify run exited %d, stderr: %s", code, stderr.String())
+	}
+
+	request := singleTransportRequest(t, transport)
+	if request.WallClockCap != defaultWallClockCap {
+		t.Fatalf("clarify run should carry the built-in wall-clock default: want %s, got %s", defaultWallClockCap, request.WallClockCap)
+	}
+}
+
+func TestReviewFixRunPassesDefaultWallClockCap(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
+	runReviewCommand(t, app, "review", "finding", "add", runID, "transport cap test")
+	transport := &recordingAgentTransport{}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "codex"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review fix run exited %d, stderr: %s", code, stderr.String())
+	}
+
+	request := singleTransportRequest(t, transport)
+	if request.WallClockCap != defaultWallClockCap {
+		t.Fatalf("review fix should carry the built-in wall-clock default: want %s, got %s", defaultWallClockCap, request.WallClockCap)
+	}
+}
+
 func TestContractDraftMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)

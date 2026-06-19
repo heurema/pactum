@@ -27,11 +27,38 @@ type workspaceManifest struct {
 }
 
 type configFile struct {
-	Version    string               `yaml:"version"`
-	Agents     []agentRegistryEntry `yaml:"agents"`
-	Map        mapConfig            `yaml:"map"`
-	OutOfScope string               `yaml:"out_of_scope"`
-	Pipeline   pipelineConfig       `yaml:"pipeline"`
+	Version      string               `yaml:"version"`
+	Agents       []agentRegistryEntry `yaml:"agents"`
+	Map          mapConfig            `yaml:"map"`
+	OutOfScope   string               `yaml:"out_of_scope"`
+	Pipeline     pipelineConfig       `yaml:"pipeline"`
+	WallClockCap yamlDuration         `yaml:"wall_clock_cap,omitempty"`
+}
+
+// yamlDuration is a time.Duration that decodes from a Go duration string (e.g.
+// "2h", "25m") in YAML and encodes back to one. yaml.v3 does not auto-handle
+// duration strings so the custom unmarshaler is required.
+type yamlDuration time.Duration
+
+func (d *yamlDuration) UnmarshalYAML(value *yaml.Node) error {
+	var s string
+	if err := value.Decode(&s); err != nil {
+		return err
+	}
+	dur, err := time.ParseDuration(s)
+	if err != nil {
+		return fmt.Errorf("invalid duration %q: %w", s, err)
+	}
+	*d = yamlDuration(dur)
+	return nil
+}
+
+func (d yamlDuration) MarshalYAML() (interface{}, error) {
+	return time.Duration(d).String(), nil
+}
+
+func (d yamlDuration) Duration() time.Duration {
+	return time.Duration(d)
 }
 
 type mapConfig struct {
@@ -195,6 +222,9 @@ func readConfig(path string) (configFile, error) {
 		return configFile{}, err
 	}
 	normalizePipelineBy(&config.Pipeline)
+	if config.WallClockCap.Duration() < 0 {
+		return configFile{}, errors.New("config wall_clock_cap: must be positive")
+	}
 	return config, nil
 }
 
@@ -345,6 +375,10 @@ func validateAgentRegistry(entries []agentRegistryEntry) error {
 // commands when --timeout is not given.
 const defaultIdleTimeout = 25 * time.Minute
 
+// defaultWallClockCap is the built-in absolute ceiling on any single agent
+// attempt when wall_clock_cap is absent from config.
+const defaultWallClockCap = 2 * time.Hour
+
 // resolveIdleTimeout resolves the idle window for an agent-running command: an
 // explicit --timeout wins, otherwise the built-in default. Like the loop
 // limits, 0 means the flag was not given; a negative flag value is rejected.
@@ -356,4 +390,18 @@ func resolveIdleTimeout(override time.Duration) (time.Duration, error) {
 		return override, nil
 	}
 	return defaultIdleTimeout, nil
+}
+
+// resolveWallClockCap resolves the absolute per-attempt ceiling: a positive
+// config value wins, zero (absent) applies the built-in default, and a
+// negative value is rejected (already blocked by readConfig validation, but
+// callers that pass a duration directly also hit the check here).
+func resolveWallClockCap(override time.Duration) (time.Duration, error) {
+	if override < 0 {
+		return 0, errors.New("config wall_clock_cap: must be positive")
+	}
+	if override > 0 {
+		return override, nil
+	}
+	return defaultWallClockCap, nil
 }

@@ -130,6 +130,14 @@ func (a App) ContractDraft(stdout io.Writer, liveOutput io.Writer, runID string,
 	if err != nil {
 		return err
 	}
+	draftConfig, err := readConfig(context.Paths.Config)
+	if err != nil {
+		return err
+	}
+	wallClockCap, err := resolveWallClockCap(draftConfig.WallClockCap.Duration())
+	if err != nil {
+		return err
+	}
 	prep, err := a.prepareContractDrafter(context, reviewerName)
 	if err != nil {
 		return err
@@ -152,6 +160,7 @@ func (a App) ContractDraft(stdout io.Writer, liveOutput io.Writer, runID string,
 		PromptRepoPath:  contractDrafterPromptRepoPath(runID),
 		ArtifactDir:     contractDrafterAttemptsArtifact,
 		Timeout:         timeout,
+		WallClockCap:    wallClockCap,
 		ReadOnly:        true,
 		StartedEvent:    "contract_drafter_attempt_started",
 		FinishedEvent:   "contract_drafter_attempt_finished",
