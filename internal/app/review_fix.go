@@ -95,6 +95,14 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 	if err != nil {
 		return err
 	}
+	fixConfig, err := readConfig(context.Paths.Config)
+	if err != nil {
+		return err
+	}
+	wallClockCap, err := resolveWallClockCap(fixConfig.WallClockCap.Duration())
+	if err != nil {
+		return err
+	}
 	prep, err := a.prepareReviewFixer(context, agentName)
 	if err != nil {
 		return err
@@ -117,6 +125,7 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 		PromptRepoPath:   reviewFixPromptRepoPath(runID),
 		ArtifactDir:      reviewFixAttemptsArtifact,
 		Timeout:          timeout,
+		WallClockCap:     wallClockCap,
 		WritePathAllowed: contractWritePathAllowed(prep.Contract),
 		StartedEvent:     "review_fix_attempt_started",
 		FinishedEvent:    "review_fix_attempt_finished",

@@ -104,7 +104,7 @@ type clarifierRoundResponse struct {
 // runClarifierRound launches one read-only clarifier attempt and records its
 // proposed questions. It is the clarify loop's round primitive and always
 // writes the round response as JSON to stdout.
-func (a App) runClarifierRound(stdout io.Writer, liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration) error {
+func (a App) runClarifierRound(stdout io.Writer, liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration, wallClockCap time.Duration) error {
 	context, ok, err := a.loadClarifyContext(stdout, runID, true)
 	if err != nil || !ok {
 		return err
@@ -135,6 +135,7 @@ func (a App) runClarifierRound(stdout io.Writer, liveOutput io.Writer, runID str
 		PromptRepoPath:  clarifierPromptRepoPath(runID),
 		ArtifactDir:     clarifierAttemptsArtifact,
 		Timeout:         timeout,
+		WallClockCap:    wallClockCap,
 		ReadOnly:        true,
 		StartedEvent:    "clarifier_attempt_started",
 		FinishedEvent:   "clarifier_attempt_finished",

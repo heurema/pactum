@@ -84,6 +84,14 @@ func (a App) ClarifyLoop(stdout io.Writer, liveOutput io.Writer, runID string, o
 	if err != nil {
 		return err
 	}
+	clarifyConfig, err := readConfig(context.Paths.Config)
+	if err != nil {
+		return err
+	}
+	wallClockCap, err := resolveWallClockCap(clarifyConfig.WallClockCap.Duration())
+	if err != nil {
+		return err
+	}
 
 	startedAt := a.nowUTC()
 	summary := clarifyLoopSummaryDocument{
@@ -104,7 +112,7 @@ func (a App) ClarifyLoop(stdout io.Writer, liveOutput io.Writer, runID string, o
 
 	var loopErr error
 	for round := 1; round <= maxRounds; round++ {
-		suggest, err := a.runClarifyLoopSuggestRound(liveOutput, runID, options.Reviewer, options.Timeout)
+		suggest, err := a.runClarifyLoopSuggestRound(liveOutput, runID, options.Reviewer, options.Timeout, wallClockCap)
 		if err != nil {
 			loopErr = err
 			break
@@ -243,9 +251,9 @@ func (a App) resolveClarifyLoopMaxRounds(configPath string, override int) (int, 
 // runClarifyLoopSuggestRound runs one clarifier round (same prompt, artifacts,
 // recording, and prompt-level dedupe via the existing-questions context) and
 // parses its JSON response.
-func (a App) runClarifyLoopSuggestRound(liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration) (clarifierRoundResponse, error) {
+func (a App) runClarifyLoopSuggestRound(liveOutput io.Writer, runID string, reviewerName string, timeout time.Duration, wallClockCap time.Duration) (clarifierRoundResponse, error) {
 	var stdout bytes.Buffer
-	if err := a.runClarifierRound(&stdout, liveOutput, runID, reviewerName, timeout); err != nil {
+	if err := a.runClarifierRound(&stdout, liveOutput, runID, reviewerName, timeout, wallClockCap); err != nil {
 		return clarifierRoundResponse{}, err
 	}
 	var response clarifierRoundResponse

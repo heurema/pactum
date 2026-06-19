@@ -73,6 +73,14 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 	if err != nil {
 		return err
 	}
+	execConfig, err := readConfig(prep.Paths.Config)
+	if err != nil {
+		return err
+	}
+	wallClockCap, err := resolveWallClockCap(execConfig.WallClockCap.Duration())
+	if err != nil {
+		return err
+	}
 
 	promptRepoPath := executionPromptRepoPath(runID)
 	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[agents.DryRunPlan, executionRequestDocument, executionResultDocument, struct{}]{
@@ -91,6 +99,7 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 		Model:            prep.ModelSpec,
 		PromptRepoPath:   promptRepoPath,
 		Timeout:          timeout,
+		WallClockCap:     wallClockCap,
 		WritePathAllowed: contractWritePathAllowed(prep.Contract),
 		StartedEvent:     "execution_attempt_started",
 		FinishedEvent:    "execution_attempt_finished",

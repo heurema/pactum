@@ -41,6 +41,7 @@ type agentAttemptLifecycle[Prepared any, Request any, Result any, Response any] 
 	PromptRepoPath string
 	ArtifactDir    string
 	Timeout        time.Duration
+	WallClockCap   time.Duration
 
 	// WritePathAllowed, when non-nil, is passed through to the RunRequest so the
 	// ACP transport can enforce the contract path-scope at the file-write
@@ -134,6 +135,7 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 		PromptRepoPath:   cfg.PromptRepoPath,
 		ArtifactDir:      cfg.ArtifactDir,
 		Timeout:          cfg.Timeout,
+		WallClockCap:     cfg.WallClockCap,
 		LiveOutput:       cfg.LiveOutput,
 		WritePathAllowed: cfg.WritePathAllowed,
 		Model:            cfg.Model,
@@ -169,6 +171,9 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 		// report): the typed error tells the --json path not to append a
 		// second JSON document (the error envelope) to the same stdout.
 		process := cfg.ProcessResult(result)
+		if process.WallClockTimeout {
+			return agentAttemptFailedError{msg: fmt.Sprintf("%s process killed after wall-clock cap", cfg.ExitKind)}
+		}
 		if process.TimedOut {
 			return agentAttemptFailedError{msg: cfg.TimeoutMessage(cfg.Timeout)}
 		}

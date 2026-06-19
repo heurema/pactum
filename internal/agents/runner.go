@@ -81,6 +81,20 @@ func writeUsageWarning(usage TokenUsage, stderr io.Writer, live io.Writer) {
 	}
 }
 
+// startWallClockTimeout starts a hard total-duration ceiling that fires after
+// cap regardless of any output or protocol activity. Unlike startIdleTimeout
+// there is no activity channel: the timer never resets. When it fires it sets
+// the flag and calls cancel so the existing killProcessGroup path handles reap.
+// The returned stop function must be called to release the timer when the
+// attempt finishes before the cap.
+func startWallClockTimeout(cap time.Duration, cancel context.CancelFunc, timedOut *atomic.Bool) func() {
+	timer := time.AfterFunc(cap, func() {
+		timedOut.Store(true)
+		cancel()
+	})
+	return func() { timer.Stop() }
+}
+
 func startIdleTimeout(timeout time.Duration, activity <-chan struct{}, cancel context.CancelFunc, timedOut *atomic.Bool) func() {
 	done := make(chan struct{})
 	stopped := make(chan struct{})

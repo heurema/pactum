@@ -64,6 +64,12 @@ type RunRequest struct {
 	// Timeout is an idle safety timeout: the process is cancelled only after
 	// this duration passes without stdout or stderr output.
 	Timeout time.Duration
+	// WallClockCap, when positive, is the absolute maximum duration for the
+	// attempt from start to finish regardless of output activity. When it fires
+	// the run context is cancelled so the existing process-group kill/reap path
+	// handles cleanup. Unlike Timeout it never resets on streamed output or
+	// inbound protocol callbacks.
+	WallClockCap time.Duration
 	// LiveOutput, when set, receives a copy of the agent's stdout and stderr as
 	// the process runs, in addition to the per-attempt log files. Callers pass
 	// the operator's stderr so multi-minute runs are not a silent black box.
@@ -105,10 +111,15 @@ type RunResult struct {
 	// carries the agent's successful terminal marker: the watchdog did fire
 	// (TimedOut stays true for the record), but the agent had already finished,
 	// so the attempt is finalized as completed with a warning (ExitCode 0).
-	CompletedDespiteTimeout bool       `json:"completed_despite_timeout,omitempty"`
-	StdoutPath              string     `json:"stdout"`
-	StderrPath              string     `json:"stderr"`
-	Usage                   TokenUsage `json:"usage"`
+	CompletedDespiteTimeout bool `json:"completed_despite_timeout,omitempty"`
+	// WallClockTimeout marks an attempt killed by the absolute wall-clock cap
+	// rather than the idle watchdog (TimedOut). Distinct from a generic
+	// transport error: the process hung past the hard ceiling and was reaped by
+	// the cap timer, not by an ACP protocol failure or idle silence.
+	WallClockTimeout bool       `json:"wall_clock_timeout,omitempty"`
+	StdoutPath       string     `json:"stdout"`
+	StderrPath       string     `json:"stderr"`
+	Usage            TokenUsage `json:"usage"`
 }
 
 // TokenUsage is a provider-normalized view of one agent subprocess call's
