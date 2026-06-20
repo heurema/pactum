@@ -108,8 +108,9 @@ Then tell your coding agent: **"use pactum for this task."** The skill package
 (`assets/agent-skills/pactum`) is what teaches the agent the safe workflow — see
 [docs/skill-install.md](docs/skill-install.md) and [docs/agent-skill.md](docs/agent-skill.md).
 
-Supported: **macOS (arm64/x64)** and **Linux (amd64/arm64, glibc)**. Windows and
-Alpine/musl are not yet supported. Prebuilt binaries are on
+Supported: **macOS (arm64/x64)**, **Linux (amd64/arm64, glibc)**, and **Windows
+(amd64)**. Windows on ARM and Alpine/musl Linux are not yet supported. Prebuilt
+binaries are on
 [Releases](https://github.com/heurema/pactum/releases); from source needs Go 1.26+
 and a C toolchain (tree-sitter via CGO). Details: [docs/install.md](docs/install.md).
 
