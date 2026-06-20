@@ -26,6 +26,7 @@ jobs:
           - { runner: macos-latest, goos: darwin, goarch: amd64 }
           - { runner: ubuntu-latest, goos: linux, goarch: amd64 }
           - { runner: ubuntu-24.04-arm, goos: linux, goarch: arm64 }
+          - { runner: windows-latest, goos: windows, goarch: amd64 }
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
@@ -39,6 +40,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Build (native CGO)
+        if: runner.os != 'Windows'
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -47,19 +49,39 @@ jobs:
           VER="${GITHUB_REF_NAME#v}"
           make build VERSION="$VER"
 
-      - name: Package
+      # Windows has no GNU make on the runner; build go directly with the same
+      # ldflags. CGO uses the runner's bundled mingw-w64 gcc to link tree-sitter.
+      - name: Build (native CGO, Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "1"
         run: |
           VER="${GITHUB_REF_NAME#v}"
+          PKG=github.com/heurema/pactum/internal/version
+          LDFLAGS="-X $PKG.Version=$VER -X $PKG.Commit=$(git rev-parse --short HEAD) -X $PKG.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          go build -ldflags "$LDFLAGS" -o bin/pactum.exe ./cmd/pactum
+
+      - name: Package
+        shell: bash
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          EXT=""; [ "${{ matrix.goos }}" = "windows" ] && EXT=".exe"
           DIST="pactum_${VER}_${{ matrix.goos }}_${{ matrix.goarch }}"
           mkdir -p "staging/${DIST}"
-          cp bin/pactum "staging/${DIST}/"
+          cp "bin/pactum${EXT}" "staging/${DIST}/"
           cp README.md SECURITY.md "staging/${DIST}/"
           cp -R docs "staging/${DIST}/docs"
           cp -R assets/agent-skills "staging/${DIST}/agent-skills"
           tar -C staging -czf "${DIST}.tar.gz" "${DIST}"
 
       - name: Bare binary (npm launcher download target)
-        run: cp bin/pactum "pactum-${{ matrix.goos }}-${{ matrix.goarch }}"
+        shell: bash
+        run: |
+          EXT=""; [ "${{ matrix.goos }}" = "windows" ] && EXT=".exe"
+          cp "bin/pactum${EXT}" "pactum-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -67,7 +89,7 @@ jobs:
           name: pactum_${{ matrix.goos }}_${{ matrix.goarch }}
           path: |
             *.tar.gz
-            pactum-${{ matrix.goos }}-${{ matrix.goarch }}
+            pactum-${{ matrix.goos }}-${{ matrix.goarch }}*
           retention-days: 1
 
   release:

@@ -10,6 +10,7 @@ const PLATFORM_MAP = {
   'darwin/x64':   'pactum-darwin-amd64',
   'linux/arm64':  'pactum-linux-arm64',
   'linux/x64':    'pactum-linux-amd64',
+  'win32/x64':    'pactum-windows-amd64.exe',
 };
 
 // Returns the release asset name for the current platform, or null if unsupported.
@@ -37,9 +38,6 @@ export function detectMusl() {
 // work, or null if supported. Accepts overrides for testability.
 export function platformError(platform, arch, isMusl) {
   if (isMusl === undefined) isMusl = platform === 'linux' ? detectMusl() : false;
-  if (platform === 'win32') {
-    return 'pactum: Windows binaries are not published yet; use WSL2 (Ubuntu/Debian) or build from source: https://github.com/heurema/pactum';
-  }
   if (platform === 'linux' && isMusl) {
     return 'pactum: only glibc Linux binaries are published; Alpine/musl is not yet supported — use a glibc image (Ubuntu/Debian) or build from source: https://github.com/heurema/pactum';
   }
@@ -52,6 +50,9 @@ export function platformError(platform, arch, isMusl) {
 // Returns the cache base directory, respecting env overrides.
 export function cacheBase() {
   if (process.env.PACTUM_NPM_CACHE) return process.env.PACTUM_NPM_CACHE;
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    return join(process.env.LOCALAPPDATA, 'pactum', 'cache');
+  }
   if (process.env.XDG_CACHE_HOME) return join(process.env.XDG_CACHE_HOME, 'pactum');
   return join(homedir(), '.cache', 'pactum');
 }

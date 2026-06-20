@@ -22,24 +22,23 @@ describe('assetName', () => {
   it('maps darwin/x64 -> amd64', () => assert.equal(assetName('darwin', 'x64'), 'pactum-darwin-amd64'));
   it('maps linux/arm64', () => assert.equal(assetName('linux', 'arm64'), 'pactum-linux-arm64'));
   it('maps linux/x64 -> amd64', () => assert.equal(assetName('linux', 'x64'), 'pactum-linux-amd64'));
-  it('returns null for unsupported', () => assert.equal(assetName('win32', 'x64'), null));
+  it('maps win32/x64 -> windows amd64 .exe', () => assert.equal(assetName('win32', 'x64'), 'pactum-windows-amd64.exe'));
+  it('returns null for win32/arm64', () => assert.equal(assetName('win32', 'arm64'), null));
   it('returns null for ia32', () => assert.equal(assetName('linux', 'ia32'), null));
 });
 
 // ── Platform gate ───────────────────────────────────────────────────────────
 
 describe('platformError', () => {
-  it('rejects win32 with a non-empty message', () => {
-    const msg = platformError('win32', 'x64', false);
-    assert.ok(msg && msg.length > 0, 'expected non-empty message for win32');
-    assert.match(msg, /Windows/i);
-    // single line: no newlines
-    assert.ok(!msg.includes('\n'), 'must be single-line');
+  it('accepts win32/x64', () => {
+    assert.equal(platformError('win32', 'x64', false), null);
   });
 
-  it('rejects win32 arm64', () => {
+  it('rejects win32/arm64 as unsupported', () => {
     const msg = platformError('win32', 'arm64', false);
-    assert.ok(msg && /Windows/i.test(msg));
+    assert.ok(msg && msg.length > 0, 'expected non-empty message for win32/arm64');
+    assert.match(msg, /unsupported platform/i);
+    assert.ok(!msg.includes('\n'), 'must be single-line');
   });
 
   it('rejects musl Linux', () => {
@@ -72,13 +71,12 @@ describe('platformError', () => {
     assert.equal(platformError('linux', 'arm64', false), null);
   });
 
-  it('gate returns error before cache-path or download would be called (win32)', () => {
+  it('gate returns error before cache-path or download would be called (win32/arm64)', () => {
     // If platformError returns non-null, a real launcher would exit before calling cachePath.
-    // Verify this by confirming platformError('win32', ...) is non-null so the caller can gate.
-    const err = platformError('win32', 'x64', false);
+    const err = platformError('win32', 'arm64', false);
     assert.ok(err !== null);
-    // assetName returns null for win32, so cachePath would fail — gate must run first.
-    assert.equal(assetName('win32', 'x64'), null);
+    // assetName returns null for win32/arm64, so cachePath would fail — gate must run first.
+    assert.equal(assetName('win32', 'arm64'), null);
   });
 
   it('gate returns error before cache-path or download would be called (musl)', () => {
@@ -128,6 +126,21 @@ describe('cacheBase / cachePath', () => {
     delete process.env.PACTUM_NPM_CACHE;
     delete process.env.XDG_CACHE_HOME;
     assert.equal(cacheBase(), join(homedir(), '.cache', 'pactum'));
+  });
+
+  it('uses %LOCALAPPDATA% on win32', () => {
+    delete process.env.PACTUM_NPM_CACHE;
+    const origPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+    const origLA = process.env.LOCALAPPDATA;
+    try {
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+      process.env.LOCALAPPDATA = 'C:\\Users\\me\\AppData\\Local';
+      assert.equal(cacheBase(), join('C:\\Users\\me\\AppData\\Local', 'pactum', 'cache'));
+    } finally {
+      Object.defineProperty(process, 'platform', origPlatform);
+      if (origLA === undefined) delete process.env.LOCALAPPDATA;
+      else process.env.LOCALAPPDATA = origLA;
+    }
   });
 
   it('cachePath is version-scoped', () => {
