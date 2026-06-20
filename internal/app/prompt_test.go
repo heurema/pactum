@@ -196,7 +196,7 @@ func TestPromptBuildSucceedsForApprovedContract(t *testing.T) {
 		".heurema/pactum/runs/" + runID + "/context/executor-context.md",
 		".heurema/pactum/runs/" + runID + "/contract/prompt-manifest.json",
 		"Next:",
-		"pactum execute plan " + runID + " --agent codex",
+		"pactum execute plan " + runID,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("prompt build output missing %q:\n%s", want, got)
