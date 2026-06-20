@@ -30,6 +30,8 @@ func TestNewCommandSpellingsParse(t *testing.T) {
 		{"review", "proposal", "reject"},
 		{"review", "fix", "run"},
 		{"review", "fix", "apply"},
+		{"contract", "review", "run"},
+		{"contract", "review", "finding", "resolve"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -118,6 +120,8 @@ func TestHelpAdvertisesOnlyNewCommandNames(t *testing.T) {
 		{"review", "fix", "--help"},
 		{"review", "proposal", "--help"},
 		{"task", "--help"},
+		{"contract", "review", "--help"},
+		{"contract", "review", "finding", "--help"},
 	} {
 		var stdout, stderr bytes.Buffer
 		if code := testApp(root).Run(helpArgs, &stdout, &stderr); code != 0 {

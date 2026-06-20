@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	contractReviewSchema          = "pactum.contract_review.v1alpha1"
-	contractReviewerRequestSchema = "pactum.contract_reviewer_request.v1alpha1"
-	contractReviewerResultSchema  = "pactum.contract_reviewer_result.v1alpha1"
+	contractReviewSchema           = "pactum.contract_review.v1alpha1"
+	contractReviewerRequestSchema  = "pactum.contract_reviewer_request.v1alpha1"
+	contractReviewerResultSchema   = "pactum.contract_reviewer_result.v1alpha1"
+	contractReviewResolutionSchema = "pactum.contract_review_resolution.v1alpha1"
 
 	contractReviewLoopSchema         = "pactum.contract_review_loop.v1alpha1"
 	contractReviewFixerReviseSchema  = "pactum.contract_revise.v1alpha1"
@@ -199,9 +200,40 @@ type contractReviewLoopResponse struct {
 // contractReviewFindingLine is one entry in the contract/reviewer/findings.jsonl
 // artifact written at the end of a contract review loop run.
 type contractReviewFindingLine struct {
-	Category string `json:"category"`
-	Message  string `json:"message"`
-	Blocking bool   `json:"blocking"`
+	ID          string `json:"id"`
+	Fingerprint string `json:"fingerprint"`
+	Category    string `json:"category"`
+	Message     string `json:"message"`
+	Blocking    bool   `json:"blocking"`
+}
+
+// contractReviewResolutionRecord is one entry in contract/reviewer/resolutions.jsonl.
+type contractReviewResolutionRecord struct {
+	Schema       string `json:"schema"`
+	ID           string `json:"id"`
+	FindingID    string `json:"finding_id"`
+	Fingerprint  string `json:"fingerprint"`
+	ContractHash string `json:"contract_hash"`
+	Reason       string `json:"reason"`
+	By           string `json:"by"`
+	Timestamp    string `json:"timestamp"`
+	Source       string `json:"source"`
+}
+
+// contractReviewWaivedFinding is one entry in the waiver summary printed when
+// contract approve succeeds despite operator-resolved blocking findings.
+type contractReviewWaivedFinding struct {
+	FindingID   string `json:"finding_id"`
+	Fingerprint string `json:"fingerprint"`
+	Reason      string `json:"reason"`
+	By          string `json:"by"`
+}
+
+// contractReviewFindingResolveResponse is the JSON response for
+// pactum contract review finding resolve.
+type contractReviewFindingResolveResponse struct {
+	Resolution contractReviewResolutionRecord `json:"resolution"`
+	Next       []string                       `json:"next"`
 }
 
 type contractReviewFixerArtifacts struct {
@@ -919,9 +951,11 @@ func writeContractReviewFindingsJSONL(runPaths contractRunPathSet, rounds []cont
 			category = f.Lens
 		}
 		lines[i] = contractReviewFindingLine{
-			Category: category,
-			Message:  f.Message,
-			Blocking: f.Blocking,
+			ID:          nextContractReviewFindingID(i + 1),
+			Fingerprint: canonicalBlockerKey(category, f.Message),
+			Category:    category,
+			Message:     f.Message,
+			Blocking:    f.Blocking,
 		}
 	}
 	var buf []byte
@@ -939,18 +973,24 @@ func writeContractReviewFindingsJSONL(runPaths contractRunPathSet, rounds []cont
 	return activeStore.WriteBytes(runPaths.ContractReviewFindingsJSONL, buf, 0o644)
 }
 
-// checkContractReviewFindingsApprovalGuard reads the durable findings artifact
-// and refuses approval if any entry has blocking=true. Fail-closed: if the file
-// is absent, unreadable, or malformed → refuse so that approval never silently
-// skips a contract review run.
-func checkContractReviewFindingsApprovalGuard(runPaths contractRunPathSet) error {
+func nextContractReviewFindingID(index int) string {
+	return fmt.Sprintf("crf_%03d", index)
+}
+
+func nextContractReviewResolutionID(index int) string {
+	return fmt.Sprintf("cres_%03d", index)
+}
+
+// readContractReviewFindingLines opens findings.jsonl via the activeStore.
+// Fail-closed: absent or unreadable file → error (use readJSONLines for lenient reads).
+func readContractReviewFindingLines(runPaths contractRunPathSet) ([]contractReviewFindingLine, error) {
 	file, err := activeStore.Open(runPaths.ContractReviewFindingsJSONL)
 	if err != nil {
-		return fmt.Errorf("cannot approve contract: contract review findings unavailable (run contract review first): %w", err)
+		return nil, err
 	}
 	defer file.Close()
 
-	var blockingCount int
+	var findings []contractReviewFindingLine
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -959,19 +999,162 @@ func checkContractReviewFindingsApprovalGuard(runPaths contractRunPathSet) error
 		}
 		var entry contractReviewFindingLine
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			return fmt.Errorf("cannot approve contract: contract review findings artifact is malformed: %w", err)
+			return nil, fmt.Errorf("contract review findings artifact is malformed: %w", err)
 		}
-		if entry.Blocking {
-			blockingCount++
-		}
+		findings = append(findings, entry)
 	}
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("cannot approve contract: contract review findings unreadable: %w", err)
+		return nil, fmt.Errorf("contract review findings unreadable: %w", err)
+	}
+	return findings, nil
+}
+
+// readContractReviewResolutions reads resolutions.jsonl. Returns empty slice if
+// the file is absent (no resolutions recorded yet); errors on malformed content.
+func readContractReviewResolutions(runPaths contractRunPathSet) ([]contractReviewResolutionRecord, error) {
+	return readJSONLines[contractReviewResolutionRecord](runPaths.ContractReviewResolutionsJSONL)
+}
+
+// checkContractReviewFindingsApprovalGuard reads the durable findings artifact
+// and refuses approval if any blocking finding lacks an active manual resolution.
+// Fail-closed: findings absent, unreadable, or malformed → refuse. Resolutions
+// absent → OK (treated as empty). A resolution is active when its ContractHash
+// matches the current contract's SHA-256 and its Fingerprint matches the finding.
+func checkContractReviewFindingsApprovalGuard(runPaths contractRunPathSet) ([]contractReviewWaivedFinding, error) {
+	findings, err := readContractReviewFindingLines(runPaths)
+	if err != nil {
+		return nil, fmt.Errorf("cannot approve contract: contract review findings unavailable (run contract review first): %w", err)
+	}
+
+	resolutions, err := readContractReviewResolutions(runPaths)
+	if err != nil {
+		return nil, fmt.Errorf("cannot approve contract: contract review resolutions artifact is malformed: %w", err)
+	}
+
+	contractHash, err := storeFileSHA256(runPaths.ContractJSON)
+	if err != nil {
+		return nil, fmt.Errorf("cannot approve contract: cannot read contract hash: %w", err)
+	}
+
+	activeByFingerprint := make(map[string]contractReviewResolutionRecord)
+	for _, r := range resolutions {
+		if r.ContractHash == contractHash && r.Fingerprint != "" {
+			activeByFingerprint[r.Fingerprint] = r
+		}
+	}
+
+	var waivers []contractReviewWaivedFinding
+	var blockingCount int
+	seenWaiver := map[string]bool{}
+	for _, f := range findings {
+		if !f.Blocking {
+			continue
+		}
+		r, ok := activeByFingerprint[f.Fingerprint]
+		if !ok || f.Fingerprint == "" {
+			blockingCount++
+			continue
+		}
+		if !seenWaiver[f.Fingerprint] {
+			seenWaiver[f.Fingerprint] = true
+			waivers = append(waivers, contractReviewWaivedFinding{
+				FindingID:   f.ID,
+				Fingerprint: f.Fingerprint,
+				Reason:      r.Reason,
+				By:          r.By,
+			})
+		}
 	}
 	if blockingCount > 0 {
-		return fmt.Errorf("cannot approve contract: %d open blocking contract-review finding(s) remain", blockingCount)
+		return nil, fmt.Errorf("cannot approve contract: %d open blocking contract-review finding(s) remain", blockingCount)
 	}
+	return waivers, nil
+}
+
+// ContractReviewFindingResolve records a manual operator resolution for a
+// blocking contract-review finding, enabling contract approve to proceed.
+func (a App) ContractReviewFindingResolve(stdout io.Writer, runID, findingID, reason, by string, jsonOutput bool) error {
+	root, paths, ok, err := a.requireWorkspace(stdout, jsonOutput)
+	if err != nil || !ok {
+		return err
+	}
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	findings, err := readContractReviewFindingLines(runPaths)
+	if err != nil {
+		return fmt.Errorf("contract review findings unavailable (run 'pactum contract review run %s' first): %w", runID, err)
+	}
+
+	var target *contractReviewFindingLine
+	for i := range findings {
+		if findings[i].ID == findingID {
+			target = &findings[i]
+			break
+		}
+	}
+	if target == nil {
+		return fmt.Errorf("contract review finding not found: %s", findingID)
+	}
+	if !target.Blocking {
+		return fmt.Errorf("finding %s is not a blocking finding; only blocking findings can be resolved", findingID)
+	}
+
+	existingResolutions, err := readContractReviewResolutions(runPaths)
+	if err != nil {
+		return fmt.Errorf("contract review resolutions artifact is malformed: %w", err)
+	}
+
+	contractHash, err := storeFileSHA256(runPaths.ContractJSON)
+	if err != nil {
+		return fmt.Errorf("cannot read contract hash: %w", err)
+	}
+
+	now := a.nowUTC()
+	resolution := contractReviewResolutionRecord{
+		Schema:       contractReviewResolutionSchema,
+		ID:           nextContractReviewResolutionID(len(existingResolutions) + 1),
+		FindingID:    findingID,
+		Fingerprint:  target.Fingerprint,
+		ContractHash: contractHash,
+		Reason:       reason,
+		By:           normalizePrincipal(root, by),
+		Timestamp:    now.Format(time.RFC3339),
+		Source:       "manual",
+	}
+	if err := appendJSONLine(runPaths.ContractReviewResolutionsJSONL, resolution); err != nil {
+		return err
+	}
+	if ledgerErr := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "contract_review_finding_resolved", Timestamp: now, RunID: runID}); ledgerErr != nil {
+		return fmt.Errorf("resolution recorded but ledger append failed: %w", ledgerErr)
+	}
+
+	response := contractReviewFindingResolveResponse{
+		Resolution: resolution,
+		Next:       nextCommandsForRun(paths, runID),
+	}
+	if jsonOutput {
+		return writeJSONResponse(stdout, response)
+	}
+	writeContractReviewFindingResolved(stdout, response)
 	return nil
+}
+
+func writeContractReviewFindingResolved(stdout io.Writer, response contractReviewFindingResolveResponse) {
+	fmt.Fprintln(stdout, "Contract review finding resolved")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Resolution:")
+	fmt.Fprintf(stdout, "  id: %s\n", response.Resolution.ID)
+	fmt.Fprintf(stdout, "  finding: %s\n", response.Resolution.FindingID)
+	fmt.Fprintf(stdout, "  by: %s\n", response.Resolution.By)
+	fmt.Fprintf(stdout, "  reason: %s\n", response.Resolution.Reason)
+	fmt.Fprintf(stdout, "  contract sha256: %s\n", response.Resolution.ContractHash)
+	if len(response.Next) > 0 {
+		fmt.Fprintln(stdout)
+		fmt.Fprintln(stdout, "Next:")
+		for _, cmd := range response.Next {
+			fmt.Fprintf(stdout, "  %s\n", cmd)
+		}
+	}
 }
 
 func contractReviewBlockingFindings(findings []contractReviewFinding) []contractReviewFinding {

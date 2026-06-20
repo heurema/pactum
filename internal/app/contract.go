@@ -107,10 +107,11 @@ type contractReviseResponse struct {
 }
 
 type contractApproveResponse struct {
-	RunID     string        `json:"run_id"`
-	RunStatus string        `json:"run_status"`
-	Approval  approvalState `json:"approval"`
-	Next      []string      `json:"next"`
+	RunID     string                        `json:"run_id"`
+	RunStatus string                        `json:"run_status"`
+	Approval  approvalState                 `json:"approval"`
+	Waivers   []contractReviewWaivedFinding `json:"waivers,omitempty"`
+	Next      []string                      `json:"next"`
 }
 
 func (a App) ContractShow(stdout io.Writer, runID string, jsonOutput bool) error {
@@ -311,11 +312,14 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 	// configured OR when a prior review run already produced findings.jsonl — so that
 	// removing reviewers from the config after a blocking run cannot bypass the guard.
 	// Fail-closed if the artifact is absent, unreadable, or malformed.
+	var waivers []contractReviewWaivedFinding
 	if configured, cfgErr := contractReviewersConfigured(context.Paths.Config); cfgErr != nil {
 		return fmt.Errorf("cannot approve contract: cannot read reviewer config: %w", cfgErr)
 	} else if configured || isRegularFile(context.RunPaths.ContractReviewFindingsJSONL) {
-		if blockErr := checkContractReviewFindingsApprovalGuard(context.RunPaths); blockErr != nil {
-			return blockErr
+		var guardErr error
+		waivers, guardErr = checkContractReviewFindingsApprovalGuard(context.RunPaths)
+		if guardErr != nil {
+			return guardErr
 		}
 	}
 
@@ -348,7 +352,7 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 		return err
 	}
 
-	response := contractApproveResponse{RunID: runID, RunStatus: state.Status, Approval: approval, Next: nextCommandsForRun(context.Paths, runID)}
+	response := contractApproveResponse{RunID: runID, RunStatus: state.Status, Approval: approval, Waivers: waivers, Next: nextCommandsForRun(context.Paths, runID)}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
@@ -967,6 +971,13 @@ func writeContractApprove(stdout io.Writer, response contractApproveResponse) {
 	fmt.Fprintf(stdout, "  status: %s\n", response.RunStatus)
 	fmt.Fprintln(stdout)
 	writeApprovalSummary(stdout, response.Approval)
+	if len(response.Waivers) > 0 {
+		fmt.Fprintln(stdout)
+		fmt.Fprintf(stdout, "WARNING: %d operator-resolved blocking finding(s) accepted:\n", len(response.Waivers))
+		for _, w := range response.Waivers {
+			fmt.Fprintf(stdout, "  - %s (%s): %s (by: %s)\n", w.FindingID, w.Fingerprint, w.Reason, w.By)
+		}
+	}
 }
 
 func writeApprovalSummary(stdout io.Writer, approval approvalState) {

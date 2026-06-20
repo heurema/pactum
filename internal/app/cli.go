@@ -69,7 +69,7 @@ type contractCmd struct {
 	Draft   contractDraftCmd   `cmd:"" help:"Run a read-only agent to propose contract fields."`
 	Accept  contractAcceptCmd  `cmd:"" help:"Accept the latest contract draft proposal."`
 	Revise  contractReviseCmd  `cmd:"" help:"Revise deterministic contract fields."`
-	Review  contractReviewCmd  `cmd:"" help:"Run the configured contract reviewer panel against the contract."`
+	Review  contractReviewCmd  `cmd:"" help:"Run contract reviewer panel or manage contract-review findings."`
 	Approve contractApproveCmd `cmd:"" help:"Approve a run contract."`
 }
 
@@ -158,9 +158,25 @@ type contractApproveCmd struct {
 }
 
 type contractReviewCmd struct {
+	Run     contractReviewRunCmd     `cmd:"run" help:"Run the configured contract reviewer panel against the contract."`
+	Finding contractReviewFindingCmd `cmd:"" help:"Manage contract-review findings."`
+}
+
+type contractReviewRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id whose contract to review."`
 	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without reviewer output. Defaults to 25m when not given."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type contractReviewFindingCmd struct {
+	Resolve contractReviewFindingResolveCmd `cmd:"" help:"Resolve a blocking contract-review finding."`
+}
+
+type contractReviewFindingResolveCmd struct {
+	Args       []string `arg:"" optional:"" name:"args" help:"[run_id] <finding_id>"`
+	Reason     string   `name:"reason" required:"" help:"Reason for resolving the finding (required)."`
+	By         string   `name:"by" required:"" help:"Principal resolving the finding (required)."`
+	JSONOutput bool     `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type promptBuildCmd struct {

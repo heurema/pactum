@@ -73,15 +73,35 @@ clobbering a concurrent change. No bespoke mutation path.
 
 ## First slice (minimal cut)
 
-`contract review <run>` runs the configured `contract.reviewers` panel on the
-contract with the lenses above and emits **structured findings** (human-readable
-+ `--json`), surfaced before `approve`. Off by default. **No auto-fixer in slice
-1** — the human reads the findings and revises (now easy via `revise --from`),
-then approves. Reuse the reviewer fan-out + lens machinery from the code review
-loop; review the contract document, not a diff.
+`pactum contract review run <run>` runs the configured `contract.reviewers` panel
+on the contract with the lenses above and emits **structured findings**
+(human-readable + `--json`), surfaced before `approve`. Off by default. **No
+auto-fixer in slice 1** — the human reads the findings and revises (now easy via
+`revise --from`), then approves. Reuse the reviewer fan-out + lens machinery from
+the code review loop; review the contract document, not a diff.
 
 Deferred to slice 2: the fixer-applies-via-revise convergence loop, and the full
 multi-round rounds/patience convergence.
+
+## Operator finding resolution
+
+When `contract review run` ends with blocking findings (`blockers_open`) the human
+can unblock approval by resolving individual findings with a recorded, auditable
+reason instead of re-running the reviewer:
+
+```
+pactum contract review finding resolve <run> <id> --reason "..." --by <who>
+```
+
+`--reason` and `--by` are required. The resolution is appended to
+`contract/reviewer/resolutions.jsonl` (append-only, never rewritten) and a ledger
+event is written. A resolution is **active only while the contract hash is
+unchanged** — editing the contract via `contract revise` invalidates prior
+resolutions and requires re-resolving before `contract approve` will pass.
+
+`contract approve` accepts the resolved findings and prints a loud waiver summary
+listing each waived finding id, reason, and by. Unresolved blocking findings still
+block approval.
 
 ## Honest scope
 

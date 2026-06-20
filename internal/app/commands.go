@@ -182,12 +182,28 @@ func (c *contractApproveCmd) Run(r *runner) error {
 	return r.App.ContractApprove(r.Stdout, runID, c.By, c.JSONOutput)
 }
 
-func (c *contractReviewCmd) Run(r *runner) error {
+func (c *contractReviewRunCmd) Run(r *runner) error {
 	runID, err := r.App.resolveRunArgMutating(c.RunID, false)
 	if err != nil {
 		return err
 	}
 	return r.App.ContractReview(r.Stdout, r.Stderr, runID, c.Timeout, c.JSONOutput)
+}
+
+func (c *contractReviewFindingResolveCmd) Run(r *runner) error {
+	explicitRun, rest := splitLeadingRunID(c.Args)
+	if len(rest) != 1 {
+		return errors.New("usage: pactum contract review finding resolve [run_id] <finding_id>")
+	}
+	findingID := rest[0]
+	if !strings.HasPrefix(findingID, "crf_") {
+		return fmt.Errorf("expected a contract-review finding id (crf_...), got %q", findingID)
+	}
+	runID, err := r.App.resolveRunArgMutating(explicitRun, false)
+	if err != nil {
+		return err
+	}
+	return r.App.ContractReviewFindingResolve(r.Stdout, runID, findingID, c.Reason, c.By, c.JSONOutput)
 }
 
 func (c *promptBuildCmd) Run(r *runner) error {
