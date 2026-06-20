@@ -312,11 +312,13 @@ There is also **no Docker support yet**.
 
 ## Execute: plan vs run
 
-- `pactum execute plan <run_id> --agent codex` prepares and records the
+- `pactum execute plan <run_id> --agent <agent>` prepares and records the
   execution plan (`execute/dry-run.json`, including the resolved ACP adapter
   command and arguments) but does **not** start any process. Use it to confirm
-  the boundaries pass.
-- `pactum execute run <run_id> --agent codex` launches the agent subprocess and
+  the boundaries pass. `--agent` defaults to the configured executor
+  (`pipeline.execute.by`) when omitted, so a non-Codex setup is not steered to
+  Codex.
+- `pactum execute run <run_id> --agent <agent>` launches the agent subprocess and
   captures the attempt — request, result (exit code, timing, timeout flag), and
   stdout/stderr logs — under `execute/attempts/`. This is real agent execution
   and runs **unsandboxed**: the agent runs directly in your repository with no

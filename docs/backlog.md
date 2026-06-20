@@ -977,16 +977,25 @@ re-exploration the map could have served vs genuinely-needed file content.
     `contract review <id>` in the skill is an alpha bug (the agent runs a command
     that hard-errors). Grep the repo for the bare form.
   - **De-hardcode `--agent codex` from the lifecycle `next` affordance + human
-    output** (small, P1 — cross-agent honesty). Surfaced by skill-slice #214's
-    two non-blocking advisory findings (f_005/f_007): the SKILL.md was correctly
-    de-hardcoded to `<agent>`, but pactum's own machine/human surfaces still
-    emit `pactum execute plan <run> --agent codex` literally — `errors.go:87`,
-    `resolve.go:282` (the `next` arrays) and `prompt.go:563` (human output). So a
-    next-driven CLAUDE workflow is still steered to `--agent codex`, contradicting
-    the cross-agent guidance. Fix: have these surfaces use the configured executor
-    (first `pipeline.execute.by` entry / resolved default) instead of a hardcoded
-    `codex`, or a neutral `<agent>` placeholder in human text. Pre-existing, not a
-    #214 regression — out of scope there, filed here.
+    output** (**code DONE #217**; doc prose this PR; reference/narrative tail
+    REMAINS). Surfaced by skill-slice #214's advisory findings (f_005/f_007): the
+    SKILL.md was de-hardcoded to `<agent>`, but pactum's machine/human surfaces
+    still emitted `pactum execute plan <run> --agent codex` literally, steering a
+    next-driven CLAUDE workflow to codex. **#217** dropped `--agent codex` from
+    the three sites (`resolve.go`/`errors.go` `next` arrays + `prompt.go` human
+    output) so they emit the bare `pactum execute plan <run>` (omitted `--agent`
+    resolves `pipeline.execute.by`). The follow-up doc PR de-hardcoded the
+    user-facing workflow prose (`docs/agent-skill.md` step 10, `docs/agents.md`
+    execute plan/run lines → `--agent <agent>`). **Still remaining (low):**
+    (1) `docs/agents.md` REVIEW-command examples still use `codex` concretely
+    (`review fix run ... --agent codex` ~L581, `review run ... --reviewer codex
+    --agent codex` ~L602) — concrete-example-in-reference-doc, defensible but
+    inconsistent; (2) the stale dogfood narratives
+    `docs/real-agent-execution-dogfood.md` and `docs/dogfood-second-repo.md`
+    reference the REMOVED `execute dry-run` + `--yes` (not just codex) and need a
+    broader staleness pass, not a codex-only edit. Keep `docs/skill-install.md`'s
+    `skill install --agent codex` (legit install target) and SKILL.md's
+    "do not hardcode `--agent codex`" guidance as-is.
   - **Transient contract-review codex post-round stall** (small — resilience
     observation). Twice now the contract-review/code-review loop has hung AFTER a
     reviewer round finished (`reviewer_attempt_finished` emitted, then no progress
