@@ -1,0 +1,45 @@
+{
+  "schema": "pactum.contract_draft_proposal.v1alpha1",
+  "run_id": "run_20260620_114301",
+  "status": "accepted",
+  "created_at": "2026-06-20T11:43:56Z",
+  "source": "drafter_attempt",
+  "drafter_attempt_id": "drafter_attempt_001",
+  "drafter": "codex",
+  "in_scope": [
+    "Change internal/app/resolve.go so the prompt_built lifecycle next affordance emits pactum execute plan \u003crunID\u003e without --agent codex.",
+    "Change internal/app/errors.go so noExecutionAttemptError emits pactum execute plan \u003crunID\u003e without --agent codex.",
+    "Change internal/app/prompt.go so the human Next: line after prompt build prints pactum execute plan \u003crunID\u003e without --agent codex.",
+    "Update internal/app/prompt_test.go and internal/app/affordances_test.go assertions for these lifecycle affordance and human-output surfaces to expect the bare execute-plan command."
+  ],
+  "out_of_scope": [
+    "Changing execute-plan default agent resolution, including prepareExecution or ExecutePlan behavior.",
+    "Changing CLI schema, flags, prompt manifest structure, or adding a placeholder agent token to machine next arrays.",
+    "Changing internal/app/skill.go install-target help text or unrelated skill-install tests that legitimately mention --agent codex.",
+    "Changing docs, SKILL.md guidance, or contract-review calibration behavior."
+  ],
+  "acceptance": [
+    "All lifecycle next arrays for the prompt-built execute-plan step emit exactly pactum execute plan \u003crunID\u003e with no --agent codex suffix.",
+    "The no-execution-attempt error next array emits exactly pactum execute plan \u003crunID\u003e with no --agent codex suffix.",
+    "The human prompt-build Next: output emits exactly pactum execute plan \u003crunID\u003e with no --agent codex suffix.",
+    "Tests covering the affected affordance and prompt output paths assert the bare execute-plan command.",
+    "No affected lifecycle affordance test or production affordance string still asserts or emits pactum execute plan \u003crunID\u003e --agent codex.",
+    "Existing execute-plan default-executor behavior remains unchanged and covered by the existing execute tests."
+  ],
+  "validation": [
+    "go build ./...",
+    "go vet ./...",
+    "go test ./internal/...",
+    "go test ./...",
+    "sh -c 'if rg -n \"pactum execute plan .*--agent codex\" internal/app/resolve.go internal/app/errors.go internal/app/prompt.go internal/app/prompt_test.go internal/app/affordances_test.go; then exit 1; fi'",
+    "make check"
+  ],
+  "assumptions": [
+    "Omitting --agent from pactum execute plan already resolves to the configured executor through existing prepareExecution behavior.",
+    "pipeline.execute.by remains the source of the configured executor for default execute-plan resolution.",
+    "The --agent codex mentions in internal/app/skill.go and related skill-install tests are not lifecycle affordances and should remain unchanged.",
+    "The existing SKILL.md guidance is already correct and does not need documentation changes for this slice."
+  ],
+  "accepted_at": "2026-06-20T11:46:44Z",
+  "accepted_by": "manual"
+}
