@@ -40,7 +40,11 @@ func (tr *staggerTransport) Run(req agents.RunRequest) (agents.RunResult, error)
 	if err := os.MkdirAll(attemptDir, 0o755); err != nil {
 		return agents.RunResult{}, err
 	}
-	if err := os.WriteFile(filepath.Join(attemptDir, "stdout.log"), []byte(tr.stdout), 0o644); err != nil {
+	stdout := tr.stdout
+	if stdout == "" {
+		stdout = reviewerStructuredOutput([]map[string]any{})
+	}
+	if err := os.WriteFile(filepath.Join(attemptDir, "stdout.log"), []byte(stdout), 0o644); err != nil {
 		return agents.RunResult{}, err
 	}
 	if err := os.WriteFile(filepath.Join(attemptDir, "stderr.log"), nil, 0o644); err != nil {
