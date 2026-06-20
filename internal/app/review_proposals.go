@@ -67,14 +67,19 @@ type reviewerFindingBlock struct {
 }
 
 type reviewerFindingProposalInput struct {
-	Message    string `json:"message"`
-	Severity   string `json:"severity"`
-	Category   string `json:"category"`
-	File       string `json:"file"`
-	Line       *int   `json:"line"`
-	Blocking   *bool  `json:"blocking"`
-	Confidence string `json:"confidence"`
-	Evidence   string `json:"evidence"`
+	Message         string `json:"message"`
+	Severity        string `json:"severity"`
+	Category        string `json:"category"`
+	File            string `json:"file"`
+	Line            *int   `json:"line"`
+	Blocking        *bool  `json:"blocking"`
+	Confidence      string `json:"confidence"`
+	Evidence        string `json:"evidence"`
+	State           string `json:"state"`
+	Trigger         string `json:"trigger"`
+	FixDirection    string `json:"fix_direction"`
+	Uncertainty     string `json:"uncertainty"`
+	CurrentCodeOnly *bool  `json:"current_code_only"`
 }
 
 type reviewProposeFindingsResponse struct {
@@ -557,6 +562,30 @@ func proposalRecordFromReviewerInput(root string, runID string, attemptID string
 	if !validReviewConfidence(confidence) {
 		return reviewProposalRecord{}, "proposal skipped: confidence must be one of high, medium, low"
 	}
+	state := strings.TrimSpace(input.State)
+	if !validReviewState(state) {
+		return reviewProposalRecord{}, "proposal skipped: state must be candidate or confirmed"
+	}
+	trigger := strings.TrimSpace(input.Trigger)
+	if trigger == "" {
+		return reviewProposalRecord{}, "proposal skipped: trigger is required"
+	}
+	evidence := strings.TrimSpace(input.Evidence)
+	if evidence == "" {
+		return reviewProposalRecord{}, "proposal skipped: evidence is required"
+	}
+	fixDirection := strings.TrimSpace(input.FixDirection)
+	if fixDirection == "" {
+		return reviewProposalRecord{}, "proposal skipped: fix_direction is required"
+	}
+	currentCodeOnly := false
+	if input.CurrentCodeOnly != nil {
+		currentCodeOnly = *input.CurrentCodeOnly
+	}
+	if blocking && !currentCodeOnly {
+		return reviewProposalRecord{}, "proposal skipped: blocking finding must have current_code_only=true"
+	}
+	uncertainty := strings.TrimSpace(input.Uncertainty)
 	return reviewProposalRecord{
 		Schema:            reviewProposalSchema,
 		ID:                nextReviewID("p", index),
@@ -564,28 +593,34 @@ func proposalRecordFromReviewerInput(root string, runID string, attemptID string
 		Source:            "reviewer_attempt",
 		ReviewerAttemptID: attemptID,
 		findingCore: findingCore{
-			Message:    sanitizeRepoRootInText(root, message),
-			Severity:   severity,
-			Category:   category,
-			File:       filepath.ToSlash(file),
-			Line:       line,
-			Blocking:   blocking,
-			Confidence: confidence,
+			Message:         sanitizeRepoRootInText(root, message),
+			Severity:        severity,
+			Category:        category,
+			File:            filepath.ToSlash(file),
+			Line:            line,
+			Blocking:        blocking,
+			Confidence:      confidence,
+			State:           state,
+			Trigger:         sanitizeRepoRootInText(root, trigger),
+			FixDirection:    sanitizeRepoRootInText(root, fixDirection),
+			Uncertainty:     sanitizeRepoRootInText(root, uncertainty),
+			CurrentCodeOnly: currentCodeOnly,
 		},
-		Evidence:  sanitizeRepoRootInText(root, strings.TrimSpace(input.Evidence)),
+		Evidence:  sanitizeRepoRootInText(root, evidence),
 		Status:    "pending",
 		CreatedAt: now.Format(time.RFC3339),
 	}, ""
 }
 
-// reviewSeverities, reviewCategories, and reviewConfidences are the canonical
-// enum value sets for review findings, shared by the proposal validators and
-// the reviewer prompt.
+// reviewSeverities, reviewCategories, reviewConfidences, and reviewStates are
+// the canonical enum value sets for review findings, shared by the proposal
+// validators and the reviewer prompt.
 // (The CLI kong `enum:` tags in app.go must stay literal struct tags.)
 var (
 	reviewSeverities  = []string{"low", "medium", "high", "critical"}
 	reviewCategories  = []string{"correctness", "scope", "quality", "validation", "process", "other"}
 	reviewConfidences = []string{"high", "medium", "low"}
+	reviewStates      = []string{"candidate", "confirmed"}
 )
 
 func validReviewSeverity(value string) bool {
@@ -598,6 +633,10 @@ func validReviewCategory(value string) bool {
 
 func validReviewConfidence(value string) bool {
 	return slices.Contains(reviewConfidences, value)
+}
+
+func validReviewState(value string) bool {
+	return slices.Contains(reviewStates, value)
 }
 
 func isRepoRelativeReviewFile(file string) bool {

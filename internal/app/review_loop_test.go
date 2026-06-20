@@ -2178,13 +2178,17 @@ func reviewLoopFixtureFindingCore(message string, line int) findingCore {
 func reviewLoopFixtureFinding(message string, line int) map[string]any {
 	core := reviewLoopFixtureFindingCore(message, line)
 	return map[string]any{
-		"message":  core.Message,
-		"severity": core.Severity,
-		"category": core.Category,
-		"file":     core.File,
-		"line":     core.Line,
-		"blocking": core.Blocking,
-		"evidence": "fixture reviewer sequence",
+		"message":           core.Message,
+		"severity":          core.Severity,
+		"category":          core.Category,
+		"file":              core.File,
+		"line":              core.Line,
+		"blocking":          core.Blocking,
+		"evidence":          "fixture reviewer sequence",
+		"state":             "confirmed",
+		"trigger":           "always",
+		"fix_direction":     "fixture fix direction",
+		"current_code_only": true,
 	}
 }
 
@@ -2198,6 +2202,7 @@ func reviewLoopFixtureNonBlockingFinding(message string, line int) map[string]an
 	finding := reviewLoopFixtureFinding(message, line)
 	finding["blocking"] = false
 	finding["severity"] = "low"
+	finding["current_code_only"] = false
 	return finding
 }
 
