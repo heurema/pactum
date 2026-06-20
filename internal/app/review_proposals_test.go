@@ -180,7 +180,7 @@ func TestProposalRecordBlockingCurrentCodeOnlyConstraint(t *testing.T) {
 // output that omits the new anti-FP fields — it must not require state,
 // trigger, fix_direction, uncertainty, or current_code_only.
 func TestContractFindingFromInputToleratesAbsentAntiFPFields(t *testing.T) {
-	input := reviewerFindingProposalInput{
+	input := contractReviewerFindingInput{
 		Message:  "potential deadlock",
 		Severity: "high",
 		Category: "correctness",
