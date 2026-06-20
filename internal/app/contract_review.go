@@ -105,13 +105,32 @@ var contractReviewLenses = []contractReviewLens{
 
 // contractReviewFinding is one structured finding from a contract review attempt.
 type contractReviewFinding struct {
-	Reviewer string `json:"reviewer"`
-	Lens     string `json:"lens"`
-	Category string `json:"category,omitempty"`
-	Severity string `json:"severity"`
-	Blocking bool   `json:"blocking"`
-	Message  string `json:"message"`
-	Evidence string `json:"evidence,omitempty"`
+	Reviewer       string `json:"reviewer"`
+	Lens           string `json:"lens"`
+	Category       string `json:"category,omitempty"`
+	Severity       string `json:"severity"`
+	Blocking       bool   `json:"blocking"`
+	Message        string `json:"message"`
+	Evidence       string `json:"evidence,omitempty"`
+	MaterialImpact string `json:"material_impact,omitempty"`
+	FixDirection   string `json:"fix_direction,omitempty"`
+	Uncertainty    string `json:"uncertainty,omitempty"`
+	State          string `json:"state,omitempty"`
+}
+
+// contractReviewerFindingInput is the contract-local parse-input struct for
+// reviewer findings emitted under contractReviewerResultSchema. It carries the
+// new precision fields in addition to the shared core fields.
+type contractReviewerFindingInput struct {
+	Message        string `json:"message"`
+	Severity       string `json:"severity"`
+	Category       string `json:"category"`
+	Blocking       *bool  `json:"blocking"`
+	Evidence       string `json:"evidence"`
+	MaterialImpact string `json:"material_impact"`
+	FixDirection   string `json:"fix_direction"`
+	Uncertainty    string `json:"uncertainty"`
+	State          string `json:"state"`
 }
 
 type contractReviewerAttemptArtifacts struct {
@@ -200,11 +219,15 @@ type contractReviewLoopResponse struct {
 // contractReviewFindingLine is one entry in the contract/reviewer/findings.jsonl
 // artifact written at the end of a contract review loop run.
 type contractReviewFindingLine struct {
-	ID          string `json:"id"`
-	Fingerprint string `json:"fingerprint"`
-	Category    string `json:"category"`
-	Message     string `json:"message"`
-	Blocking    bool   `json:"blocking"`
+	ID             string `json:"id"`
+	Fingerprint    string `json:"fingerprint"`
+	Category       string `json:"category"`
+	Message        string `json:"message"`
+	Blocking       bool   `json:"blocking"`
+	MaterialImpact string `json:"material_impact,omitempty"`
+	FixDirection   string `json:"fix_direction,omitempty"`
+	Uncertainty    string `json:"uncertainty,omitempty"`
+	State          string `json:"state,omitempty"`
 }
 
 // contractReviewResolutionRecord is one entry in contract/reviewer/resolutions.jsonl.
@@ -604,13 +627,13 @@ func (a App) runContractReviewRound(
 				continue
 			}
 			lensKey := contractReviewLenses[lensIndex].Key
-			blocks, blockWarnings := parseReviewerFindingBlocks(string(stdoutBytes))
+			blocks, blockWarnings := parseContractReviewerFindingBlocks(string(stdoutBytes))
 			for _, w := range blockWarnings {
 				parseWarnings = append(parseWarnings, fmt.Sprintf("%s/%s: %s", reviewer.Name, lensKey, w))
 			}
 			for _, block := range blocks {
 				for _, rawFinding := range *block.Findings {
-					var input reviewerFindingProposalInput
+					var input contractReviewerFindingInput
 					if err := json.Unmarshal(rawFinding, &input); err != nil {
 						parseWarnings = append(parseWarnings, fmt.Sprintf("%s/%s: finding skipped: invalid JSON", reviewer.Name, lensKey))
 						continue
@@ -618,7 +641,12 @@ func (a App) runContractReviewRound(
 					if strings.TrimSpace(input.Message) == "" {
 						continue
 					}
-					findings = append(findings, contractFindingFromInput(reviewer.Name, lensKey, input))
+					f := contractFindingFromInput(reviewer.Name, lensKey, input)
+					if f.Blocking && f.MaterialImpact == "" {
+						f.Blocking = false
+						parseWarnings = append(parseWarnings, fmt.Sprintf("%s/%s: finding downgraded to advisory: blocking=true requires non-empty material_impact", reviewer.Name, lensKey))
+					}
+					findings = append(findings, f)
 				}
 			}
 		}
@@ -951,11 +979,15 @@ func writeContractReviewFindingsJSONL(runPaths contractRunPathSet, rounds []cont
 			category = f.Lens
 		}
 		lines[i] = contractReviewFindingLine{
-			ID:          nextContractReviewFindingID(i + 1),
-			Fingerprint: canonicalBlockerKey(category, f.Message),
-			Category:    category,
-			Message:     f.Message,
-			Blocking:    f.Blocking,
+			ID:             nextContractReviewFindingID(i + 1),
+			Fingerprint:    canonicalBlockerKey(category, f.Message),
+			Category:       category,
+			Message:        f.Message,
+			Blocking:       f.Blocking,
+			MaterialImpact: f.MaterialImpact,
+			FixDirection:   f.FixDirection,
+			Uncertainty:    f.Uncertainty,
+			State:          f.State,
 		}
 	}
 	var buf []byte
@@ -1167,20 +1199,69 @@ func contractReviewBlockingFindings(findings []contractReviewFinding) []contract
 	return blocking
 }
 
-func contractFindingFromInput(reviewerName string, lensKey string, input reviewerFindingProposalInput) contractReviewFinding {
+func contractFindingFromInput(reviewerName string, lensKey string, input contractReviewerFindingInput) contractReviewFinding {
 	blocking := false
 	if input.Blocking != nil {
 		blocking = *input.Blocking
 	}
-	return contractReviewFinding{
-		Reviewer: reviewerName,
-		Lens:     lensKey,
-		Category: strings.TrimSpace(input.Category),
-		Severity: strings.TrimSpace(input.Severity),
-		Blocking: blocking,
-		Message:  strings.TrimSpace(input.Message),
-		Evidence: strings.TrimSpace(input.Evidence),
+	state := strings.TrimSpace(input.State)
+	if state != "candidate" && state != "confirmed" {
+		state = "candidate"
 	}
+	return contractReviewFinding{
+		Reviewer:       reviewerName,
+		Lens:           lensKey,
+		Category:       strings.TrimSpace(input.Category),
+		Severity:       strings.TrimSpace(input.Severity),
+		Blocking:       blocking,
+		Message:        strings.TrimSpace(input.Message),
+		Evidence:       strings.TrimSpace(input.Evidence),
+		MaterialImpact: strings.TrimSpace(input.MaterialImpact),
+		FixDirection:   strings.TrimSpace(input.FixDirection),
+		Uncertainty:    strings.TrimSpace(input.Uncertainty),
+		State:          state,
+	}
+}
+
+// parseContractReviewerFindingBlocks extracts structured finding blocks from
+// contract reviewer output. Accepts only blocks whose schema matches
+// contractReviewerResultSchema; mirrors parseReviewerFindingBlocks but is
+// contract-local so the contract and code-review schemas remain independent.
+func parseContractReviewerFindingBlocks(output string) ([]reviewerFindingBlock, []string) {
+	text := agentMessageText([]byte(output))
+	jsonBlocks := extractFencedJSONBlocks(text)
+	blocks := make([]reviewerFindingBlock, 0, len(jsonBlocks))
+	warnings := []string{}
+	schemaBlockCount := 0
+	for _, raw := range jsonBlocks {
+		var block reviewerFindingBlock
+		if err := json.Unmarshal([]byte(raw), &block); err != nil {
+			if strings.Contains(raw, contractReviewerResultSchema) {
+				schemaBlockCount++
+				warnings = append(warnings, "contract reviewer findings block has invalid JSON — parse miss (inspect attempt stdout)")
+			} else {
+				warnings = append(warnings, "structured block skipped: invalid JSON")
+			}
+			continue
+		}
+		if block.Schema != contractReviewerResultSchema {
+			continue
+		}
+		schemaBlockCount++
+		if block.Findings == nil {
+			warnings = append(warnings, "contract reviewer findings block has null or absent findings key — parse miss (inspect attempt stdout)")
+			continue
+		}
+		blocks = append(blocks, block)
+	}
+	if schemaBlockCount > 1 {
+		warnings = append(warnings, fmt.Sprintf("multiple contract reviewer findings blocks found (%d) — parse miss (inspect attempt stdout)", schemaBlockCount))
+		return nil, warnings
+	}
+	if len(blocks) == 0 && strings.TrimSpace(text) != "" {
+		warnings = append(warnings, "no valid contract reviewer findings block parsed — parse miss (inspect attempt stdout)")
+	}
+	return blocks, warnings
 }
 
 func writeContractReviewerPrompts(runPaths contractRunPathSet, contract draftContract, reviewers []reviewLoopReviewer) error {
@@ -1236,18 +1317,25 @@ func renderContractReviewerPrompt(contract draftContract, lens contractReviewLen
 func writeContractReviewerOutputFormat(b *strings.Builder) {
 	fmt.Fprintln(b, "## Output")
 	fmt.Fprintln(b)
+	fmt.Fprintln(b, "Report likely-real defects (recall-first), then gate on precision before marking blocking.")
+	fmt.Fprintln(b, "Use state=candidate with explicit uncertainty when you believe a finding is real but have not fully confirmed it.")
+	fmt.Fprintln(b)
 	fmt.Fprintln(b, "State your analysis in prose. If you find issues, also include a structured block:")
 	fmt.Fprintln(b)
 	fmt.Fprintln(b, "```json")
 	fmt.Fprintln(b, "{")
-	fmt.Fprintf(b, "  \"schema\": %q,\n", reviewerFindingsSchema)
+	fmt.Fprintf(b, "  \"schema\": %q,\n", contractReviewerResultSchema)
 	fmt.Fprintln(b, `  "findings": [`)
 	fmt.Fprintln(b, "    {")
 	fmt.Fprintln(b, `      "message": "Describe the contract issue clearly.",`)
 	fmt.Fprintln(b, `      "severity": "medium",`)
 	fmt.Fprintln(b, `      "category": "quality",`)
 	fmt.Fprintln(b, `      "blocking": true,`)
-	fmt.Fprintln(b, `      "evidence": "Quote or cite the contract field that shows the issue."`)
+	fmt.Fprintln(b, `      "evidence": "Quote or cite the contract field that shows the issue.",`)
+	fmt.Fprintln(b, `      "material_impact": "Concrete way this spec defect would make the implementation wrong, ambiguous, or stuck.",`)
+	fmt.Fprintln(b, `      "fix_direction": "What the contract author should change to resolve this.",`)
+	fmt.Fprintln(b, `      "uncertainty": "Any doubt about this finding — omit if confident.",`)
+	fmt.Fprintln(b, `      "state": "candidate"`)
 	fmt.Fprintln(b, "    }")
 	fmt.Fprintln(b, "  ]")
 	fmt.Fprintln(b, "}")
@@ -1257,7 +1345,11 @@ func writeContractReviewerOutputFormat(b *strings.Builder) {
 	fmt.Fprintf(b, "- Use severity: %s.\n", strings.Join(reviewSeverities, ", "))
 	fmt.Fprintf(b, "- Use category: %s.\n", strings.Join(reviewCategories, ", "))
 	fmt.Fprintln(b, "- Omit file and line (not applicable for contract review).")
-	fmt.Fprintln(b, "- Set blocking=true for defects that should block approval: gaps that make the contract unexecutable or ungatable.")
+	fmt.Fprintln(b, "- Set state=candidate when likely real but not fully confirmed; set state=confirmed when certain.")
+	fmt.Fprintln(b, "- HARD RULE: blocking=true is allowed ONLY for a material spec defect that would make the implementation wrong, ambiguous, or stuck.")
+	fmt.Fprintln(b, "- Wording, style, naming, redundancy, and completeness/thoroughness preferences MUST be blocking=false (advisory).")
+	fmt.Fprintln(b, "- Every blocking finding MUST include a concrete material_impact explaining the implementation consequence.")
+	fmt.Fprintln(b, "- If you cannot state a concrete material_impact, mark the finding blocking=false (advisory).")
 	fmt.Fprintln(b, "- Set blocking=false for advisory issues.")
 	fmt.Fprintln(b, "- If no issues, say so clearly. Do not include an empty findings block.")
 }
