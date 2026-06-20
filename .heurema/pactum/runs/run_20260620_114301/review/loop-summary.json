@@ -1,0 +1,61 @@
+{
+  "schema": "pactum.review_loop.v1alpha1",
+  "run_id": "run_20260620_114301",
+  "started_at": "2026-06-20T11:56:17Z",
+  "finished_at": "2026-06-20T11:58:56Z",
+  "reviewer": "codex-xhigh",
+  "max_rounds": 10,
+  "stalemate_patience": 2,
+  "clean_rounds_required": 1,
+  "terminal_reason": "resolved",
+  "rounds": [
+    {
+      "round": 1,
+      "reviewer_attempt_id": "reviewer_attempt_004",
+      "reviewer_attempt_ids": [
+        "reviewer_attempt_004",
+        "reviewer_attempt_002",
+        "reviewer_attempt_005",
+        "reviewer_attempt_003",
+        "reviewer_attempt_001"
+      ],
+      "reviewer_attempts": [
+        {
+          "attempt_id": "reviewer_attempt_004",
+          "reviewer": "codex-xhigh",
+          "lens": "correctness"
+        },
+        {
+          "attempt_id": "reviewer_attempt_002",
+          "reviewer": "codex-xhigh",
+          "lens": "implementation"
+        },
+        {
+          "attempt_id": "reviewer_attempt_005",
+          "reviewer": "codex-xhigh",
+          "lens": "tests"
+        },
+        {
+          "attempt_id": "reviewer_attempt_003",
+          "reviewer": "codex-xhigh",
+          "lens": "over_engineering"
+        },
+        {
+          "attempt_id": "reviewer_attempt_001",
+          "reviewer": "codex-xhigh",
+          "lens": "docs"
+        }
+      ],
+      "proposals_created": 1,
+      "proposals_accepted": 1,
+      "open_findings": 1,
+      "open_blocking_findings": 0,
+      "clean_streak": 0,
+      "unchanged_fingerprint_streak": 0,
+      "working_tree_fingerprint": "899e57d8d0823333a2ba48d15e1bd2b02ac37011db668b783e184575508ef178"
+    }
+  ],
+  "artifacts": {
+    "summary": "review/loop-summary.json"
+  }
+}

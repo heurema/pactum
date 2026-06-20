@@ -1,0 +1,29 @@
+{
+  "schema": "pactum.review.v1alpha1",
+  "run_id": "run_20260620_114301",
+  "status": "approved",
+  "created_at": "2026-06-20T11:56:17Z",
+  "updated_at": "2026-06-20T11:59:56Z",
+  "gate": {
+    "status": "needs_review",
+    "report": "gate/gate-report.json"
+  },
+  "summary": {
+    "findings": 1,
+    "open": 1,
+    "resolved": 0,
+    "blocking_open": 0
+  },
+  "approval": {
+    "approved_at": "2026-06-20T11:59:56Z",
+    "approved_by": "manual"
+  },
+  "artifacts": {
+    "review": "review/review.json",
+    "findings": "review/findings.jsonl",
+    "resolutions": "review/resolutions.jsonl",
+    "proposals": "review/proposals.jsonl",
+    "proposal_decisions": "review/proposal-decisions.jsonl",
+    "gate_report": "gate/gate-report.json"
+  }
+}

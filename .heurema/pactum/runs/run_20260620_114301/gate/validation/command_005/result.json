@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1alpha1",
+  "id": "command_005",
+  "command": "sh -c 'if rg -n \"pactum execute plan .*--agent codex\" internal/app/resolve.go internal/app/errors.go internal/app/prompt.go internal/app/prompt_test.go internal/app/affordances_test.go; then exit 1; fi'",
+  "started_at": "2026-06-20T11:55:42.087774Z",
+  "finished_at": "2026-06-20T11:55:42.10577Z",
+  "duration_ms": 17,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "gate/validation/command_005/stdout.log",
+  "stderr": "gate/validation/command_005/stderr.log"
+}

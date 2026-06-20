@@ -197,3 +197,10 @@
 - Files: assets/agent-skills/pactum/SKILL.md, assets/agent-skills/pactum/references/install.md, assets/agent-skills/pactum/references/safety.md, assets/agent-skills/pactum/references/workflow.md, assets/embed.go, docs/agent-skill.md, docs/skill-install.md, internal/app/cli.go, internal/app/commands.go, internal/app/resolve.go, internal/app/skill.go, internal/app/skill_test.go, internal/docs/skill_test.go
 - Summary: Reviewed run run_20260620_063231 with gate status needs_review and review status approved. Goal: Make the pactum agent skill self-sufficient and one-command installable, so a stranger driving pactum through their coding agent (Claude Cod...
 - Candidate: runs/run_20260620_063231/memory/memory-candidate.json
+
+### mem_029 - De-hardcode `--agent codex` from pactum's lifecycle `next` affordances and hu...
+- Run: run_20260620_114301
+- Freshness: fresh
+- Files: docs/agent-skill.md, internal/app/affordances_test.go, internal/app/errors.go, internal/app/prompt.go, internal/app/prompt_test.go, internal/app/resolve.go
+- Summary: Reviewed run run_20260620_114301 with gate status needs_review and review status approved. Goal: De-hardcode `--agent codex` from pactum's lifecycle `next` affordances and human "Next:" output so the suggested execute-plan command respec...
+- Candidate: runs/run_20260620_114301/memory/memory-candidate.json

@@ -1,0 +1,96 @@
+{
+  "schema": "pactum.gate_report.v1alpha1",
+  "run_id": "run_20260620_114301",
+  "created_at": "2026-06-20T11:55:47Z",
+  "status": "needs_review",
+  "execution": {
+    "attempt_id": "attempt_001",
+    "exit_code": 0,
+    "timed_out": false,
+    "result": "execute/last-result.json"
+  },
+  "changes": {
+    "status": "changed",
+    "changed_files": [
+      "internal/app/affordances_test.go",
+      "internal/app/errors.go",
+      "internal/app/prompt.go",
+      "internal/app/prompt_test.go",
+      "internal/app/resolve.go"
+    ],
+    "new_files": [],
+    "missing_files": [],
+    "reasons": [
+      "changed file: internal/app/affordances_test.go",
+      "changed file: internal/app/errors.go",
+      "changed file: internal/app/prompt.go",
+      "changed file: internal/app/prompt_test.go",
+      "changed file: internal/app/resolve.go"
+    ]
+  },
+  "validation": {
+    "commands_allowed": true,
+    "commands": [
+      {
+        "id": "command_001",
+        "command": "go build ./...",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_001/stdout.log",
+        "stderr": "gate/validation/command_001/stderr.log",
+        "result": "gate/validation/command_001/result.json"
+      },
+      {
+        "id": "command_002",
+        "command": "go vet ./...",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_002/stdout.log",
+        "stderr": "gate/validation/command_002/stderr.log",
+        "result": "gate/validation/command_002/result.json"
+      },
+      {
+        "id": "command_003",
+        "command": "go test ./internal/...",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_003/stdout.log",
+        "stderr": "gate/validation/command_003/stderr.log",
+        "result": "gate/validation/command_003/result.json"
+      },
+      {
+        "id": "command_004",
+        "command": "go test ./...",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_004/stdout.log",
+        "stderr": "gate/validation/command_004/stderr.log",
+        "result": "gate/validation/command_004/result.json"
+      },
+      {
+        "id": "command_005",
+        "command": "sh -c 'if rg -n \"pactum execute plan .*--agent codex\" internal/app/resolve.go internal/app/errors.go internal/app/prompt.go internal/app/prompt_test.go internal/app/affordances_test.go; then exit 1; fi'",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_005/stdout.log",
+        "stderr": "gate/validation/command_005/stderr.log",
+        "result": "gate/validation/command_005/result.json"
+      },
+      {
+        "id": "command_006",
+        "command": "make check",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_006/stdout.log",
+        "stderr": "gate/validation/command_006/stderr.log",
+        "result": "gate/validation/command_006/result.json"
+      }
+    ]
+  },
+  "summary": {
+    "execution_passed": true,
+    "validation_passed": true,
+    "changes_need_review": true,
+    "scope_blocked": false
+  }
+}
