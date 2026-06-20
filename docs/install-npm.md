@@ -19,23 +19,20 @@ npx @heurema/pactum --help
 
 ## Supported platforms
 
-| OS    | Architecture | Notes                     |
-|-------|--------------|---------------------------|
-| macOS | arm64        | Apple Silicon             |
-| macOS | x64          | Intel                     |
-| Linux | amd64        | glibc (Ubuntu, Debian, …) |
-| Linux | arm64        | glibc (Ubuntu, Debian, …) |
+| OS      | Architecture | Notes                     |
+|---------|--------------|---------------------------|
+| macOS   | arm64        | Apple Silicon             |
+| macOS   | x64          | Intel                     |
+| Linux   | amd64        | glibc (Ubuntu, Debian, …) |
+| Linux   | arm64        | glibc (Ubuntu, Debian, …) |
+| Windows | amd64        | x64                       |
 
 ### Windows
 
-Windows binaries are not published yet. The launcher exits immediately with a
-clear message:
-
-```
-pactum: Windows binaries are not published yet; use WSL2 (Ubuntu/Debian) or build from source: https://github.com/heurema/pactum
-```
-
-Use WSL2 with an Ubuntu or Debian image, or [build from source](install.md).
+Windows (amd64) is supported; the launcher downloads `pactum-windows-amd64.exe`
+and caches it under `%LOCALAPPDATA%\pactum\cache\<version>\`. Windows on ARM
+(`arm64`) is not published yet — use the amd64 build under emulation, or
+[build from source](install.md).
 
 ### Alpine / musl Linux
 
@@ -53,7 +50,8 @@ Use a glibc image (Ubuntu/Debian) or [build from source](install.md).
 The downloaded binary is cached at:
 
 ```
-~/.cache/pactum/<version>/<asset-name>
+~/.cache/pactum/<version>/<asset-name>            # macOS / Linux ($XDG_CACHE_HOME honored)
+%LOCALAPPDATA%\pactum\cache\<version>\<asset-name>  # Windows
 ```
 
 Override the cache root with the `PACTUM_NPM_CACHE` environment variable:
