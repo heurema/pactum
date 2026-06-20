@@ -1,0 +1,53 @@
+# Contract Draft Proposal
+
+## Status
+- Run id: run_20260620_063231
+- Status: accepted
+- Source: drafter_attempt
+- Drafter attempt: drafter_attempt_002
+- Drafter: codex
+- Accepted by: manual
+- Accepted at: 2026-06-20T06:41:21Z
+
+## In scope
+- Rewrite `assets/agent-skills/pactum/SKILL.md` as a self-contained safe-path agent card with only `name` and `description` frontmatter, the full safe workflow, `--json` on Pactum workflow commands, `next`/`error.fix` loop rules, Pactum map/search context discovery, executor selection via `<agent>`, and the execute-plan stop/report boundary.
+- Update `assets/agent-skills/pactum/references/workflow.md`, `install.md`, `safety.md`, and related skill docs so references are optional enrichment/detail, not required pre-reading, and so `.heurema/pactum` guidance matches the durable run-record policy.
+- Add a top-level `pactum skill` CLI surface with install and discovery-check functionality, including command grammar, app handling, help text, human output, JSON output, and tests.
+- Add a go:embedded copy of `assets/agent-skills/pactum/` used by `pactum skill install`, plus an anti-drift test proving the embedded package is byte-identical to the on-disk package.
+- Implement `pactum skill install --agent <claude|codex|auto|all> --scope <user|repo>` with default scope `repo`, Codex and Claude target path resolution, auto/all behavior, idempotent overwrite, installed path output, binary version output, and reload/restart guidance.
+- Implement and document one discovery check interface, either `pactum skill doctor` or `pactum skill install --check`, that verifies expected skill files and parses `SKILL.md` frontmatter for the selected agent/scope.
+- Update `docs/skill-install.md` to lead with `pactum skill install` as the one-command path while preserving manual copy instructions as fallback.
+
+## Out of scope
+- Marketplace, plugin, or external distribution packaging.
+- Binary release workflow or package-manager publishing.
+- Gemini, Antigravity, or other agent-specific install targets beyond a brief alpha-scope note.
+- Changing Pactum lifecycle stage semantics or the execute/review safety boundary except where needed for the new skill commands and their JSON affordances.
+- Invoking real coding agents from implementation or tests.
+
+## Acceptance criteria
+- `assets/agent-skills/pactum/SKILL.md` frontmatter parses and contains only portable `name` and `description` keys, with no Claude-only or Codex-only fields.
+- `SKILL.md` can be followed without opening reference files: it lists the safe path from CLI check/init/status/map/task/search/read/clarify/contract/prompt through `pactum execute plan`, uses `--json` on Pactum commands where supported or added, and instructs agents to run only commands from `next`, stop on empty `next`, and use `error.fix` on failures.
+- `SKILL.md` and optional references state that `pactum execute run` and `pactum review run` are never default actions, `pactum execute plan` is the default stop point, and source edits must not be made by hand after `execute plan` unless the user exits Pactum or explicitly approves unsandboxed execution.
+- The safe-path skill instructions no longer hardcode `--agent codex`; they require detecting, using, or asking for the configured `<agent>` executor.
+- The final report format is documented as run id, contract status, plan command, likely touched files, and an explicit stopped-at-execute-plan statement.
+- The `.heurema/pactum` guidance says durable run records must not be deleted or reverted, must not be mixed into feature commits, and should be reported separately unless the user asks for an audit-record commit.
+- `pactum skill install` writes the embedded package to `.agents/skills/pactum/`, `$HOME/.agents/skills/pactum/`, `.claude/skills/pactum/`, and `$HOME/.claude/skills/pactum/` for the corresponding agent/scope combinations; omitting `--scope` uses repo scope.
+- `--agent auto` uses detected Codex/Claude targets without launching agents and reports a clear no-target result when nothing is detected; `--agent all` targets every known alpha target.
+- Re-running install over an existing Pactum skill directory succeeds and leaves the installed files matching the embedded package.
+- Human output prints installed or checked path(s), the Pactum binary version, and reload/restart guidance; JSON output includes a top-level `next` field and failures use the existing `pactum.error.v1alpha1` envelope style with stable `error.code` and `error.fix` where applicable.
+- The discovery check reports present, missing, and invalid-frontmatter cases without invoking real agents.
+- Tests cover embedded-package anti-drift, install paths for each agent/scope using temp HOME/repo directories, idempotent reinstall, discovery check present/absent behavior, `SKILL.md` frontmatter parsing, and existing skill sync/doc expectations.
+
+## Validation commands
+- go test ./internal/...
+- go test ./...
+- go build ./...
+- make check
+
+## Assumptions
+- Repo scope resolves relative to the current repository/work directory and user scope resolves through HOME, with tests overriding both using temporary directories.
+- The skill version printed by install/check is the Pactum binary version from the existing version package.
+- The discovery check spelling may be either `pactum skill doctor` or `pactum skill install --check` if the chosen command is documented, tested, and has JSON output.
+- Auto-detection may use known skill directories and/or agent CLI presence, but must not start Claude, Codex, or any real agent process.
+

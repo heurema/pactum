@@ -183,3 +183,17 @@
 - Files: docs/agents.md, docs/backlog.md, internal/agents/acp_transport.go, internal/agents/acp_transport_wallclock_test.go, internal/agents/acp_transport_wallclock_unix_test.go, internal/agents/runner.go, internal/agents/types.go, internal/app/agent_attempt.go, internal/app/agent_attempt_timeout_test.go, internal/app/agent_attempt_transport_test.go, internal/app/clarify_loop.go, internal/app/clarify_round.go, internal/app/config.go, internal/app/config_test.go, internal/app/contract_draft.go, internal/app/contract_review.go, internal/app/execute.go, internal/app/process.go, internal/app/review_fix.go, internal/app/review_loop.go
 - Summary: Reviewed run run_20260619_155159 with gate status needs_review and review status approved. Goal: Add an absolute per-attempt WALL-CLOCK CAP to the ACP agent transport so an agent attempt can never hang indefinitely, even when it trickles...
 - Candidate: runs/run_20260619_155159/memory/memory-candidate.json
+
+### mem_027 - Give the CONTRACT-REVIEW loop the same operator finding-resolution that CODE-...
+- Run: run_20260620_072128
+- Freshness: fresh
+- Files: docs/contract-review-design.md, internal/app/cli.go, internal/app/cli_grammar_test.go, internal/app/commands.go, internal/app/contract.go, internal/app/contract_review.go, internal/app/contract_review_resolve_test.go, internal/app/contract_review_test.go, internal/app/resolve.go, internal/app/run.go
+- Summary: Reviewed run run_20260620_072128 with gate status needs_review and review status approved. Goal: Give the CONTRACT-REVIEW loop the same operator finding-resolution that CODE-REVIEW already has, so a contract that ends `blockers_open` but...
+- Candidate: runs/run_20260620_072128/memory/memory-candidate.json
+
+### mem_028 - Make the pactum agent skill self-sufficient and one-command installable, so a...
+- Run: run_20260620_063231
+- Freshness: fresh
+- Files: assets/agent-skills/pactum/SKILL.md, assets/agent-skills/pactum/references/install.md, assets/agent-skills/pactum/references/safety.md, assets/agent-skills/pactum/references/workflow.md, assets/embed.go, docs/agent-skill.md, docs/skill-install.md, internal/app/cli.go, internal/app/commands.go, internal/app/resolve.go, internal/app/skill.go, internal/app/skill_test.go, internal/docs/skill_test.go
+- Summary: Reviewed run run_20260620_063231 with gate status needs_review and review status approved. Goal: Make the pactum agent skill self-sufficient and one-command installable, so a stranger driving pactum through their coding agent (Claude Cod...
+- Candidate: runs/run_20260620_063231/memory/memory-candidate.json
