@@ -1,223 +1,128 @@
-# Pactum
+<div align="center">
 
-Pactum is a contract-first CLI for agentic software work.
+<pre>
+██████╗  █████╗  ██████╗████████╗██╗   ██╗███╗   ███╗
+██╔══██╗██╔══██╗██╔════╝╚══██╔══╝██║   ██║████╗ ████║
+██████╔╝███████║██║        ██║   ██║   ██║██╔████╔██║
+██╔═══╝ ██╔══██║██║        ██║   ██║   ██║██║╚██╔╝██║
+██║     ██║  ██║╚██████╗   ██║   ╚██████╔╝██║ ╚═╝ ██║
+╚═╝     ╚═╝  ╚═╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝
+</pre>
 
-Instead of handing a task straight to a coding agent, Pactum turns the task into
-an explicit, reviewable **contract** and drives the work through deterministic,
-auditable stages. Every stage writes durable artifacts under a workspace
-directory, so you can see exactly what an agent was asked to do, what it did, and
-how it was checked — before any change is trusted.
+<p>
+  <a href="https://github.com/heurema/pactum/actions/workflows/ci.yml"><img src="https://github.com/heurema/pactum/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://www.npmjs.com/package/@heurema/pactum"><img src="https://img.shields.io/npm/v/@heurema/pactum" alt="npm"></a>
+  <a href="https://goreportcard.com/report/github.com/heurema/pactum"><img src="https://goreportcard.com/badge/github.com/heurema/pactum" alt="Go Report Card"></a>
+</p>
 
-Pactum invokes agents (`codex`, `claude`) through each agent's Agent Client
-Protocol (ACP) adapter, which streams output live and lets Pactum guard file
-writes in real time. It does **not** sandbox or isolate execution: an agent runs
-with your shell environment and your repository, just as if you launched it
-yourself. Pactum's value is the contract, the boundaries it records, and the
-deterministic checks around the agent — not a security boundary.
+<h3>Contract-first orchestration for coding agents</h3>
 
-## What Pactum does
+<img src="assets/demo.gif" alt="pactum demo" width="760">
 
-- Creates a workspace at `.heurema/pactum/` inside your repository.
-- Builds a **deterministic, wiki-first project map and search index** (a
-  generated map wiki, file inventory, repo map, and a SQLite full-text search
-  index). The map wiki is generated from deterministic facts (file inventory and
-  manifests); tree-sitter code items are kept only as best-effort symbol hints
-  and are incomplete by design — source files remain the source of truth.
-  Unsupported languages and framework files may have no code items but still
-  appear in the wiki and file inventory. No embeddings or vector search are
-  involved — search is lexical and reproducible.
-- Creates **contract-first runs**: each task becomes a run with a draft contract
-  (goal, in/out of scope, acceptance criteria, validation commands, assumptions).
-- Supports the full staged workflow:
-  - **Clarification** — record blocking/non-blocking questions and answers.
-  - **Contract approval** — revise and approve the contract; approval is pinned
-    to a contract hash.
-  - **Prompt boundary** — build a deterministic executor prompt from the
-    approved contract, project map, and accepted memory, recorded in a manifest.
-  - **Execution** — run a built-in agent against the prepared prompt and capture
-    its attempt artifacts.
-  - **Gate** — deterministically detect repository changes and, with explicit
-    opt-in, run the contract's validation commands.
-  - **Review** — prepare a manual review, add/resolve findings, and approve.
-  - **Reviewer proposals** — optionally run a reviewer agent and parse its
-    structured output into *pending* proposals that a human accepts or rejects.
-  - **Memory** — propose, inspect, and accept deterministic project memory from
-    reviewed runs, with lexical search and file-hash freshness tracking.
+</div>
 
-## Built-in agents
+**Pactum turns a Claude Code or Codex run into an approved contract, a recorded
+prompt boundary, and a review loop with explicit terminal states.** You drive the
+agent through deterministic, auditable stages — each writes durable artifacts you
+can inspect — so you always know what the agent was asked, what it changed, and how
+it was checked.
 
-Pactum ships two built-in agents:
+## The problem
 
-- `codex` — launches the ACP adapter `npx -y @heurema/codex-acp@latest`, a fork
-  of `@zed-industries/codex-acp` that forwards Codex token usage in the ACP prompt
-  response so Pactum can capture it. Override with `PACTUM_CODEX_ACP_COMMAND`
-  (e.g. to pin upstream `@zed-industries/codex-acp`).
-- `claude` — launches the ACP adapter
-  `npx -y @agentclientprotocol/claude-agent-acp@latest`.
+A normal agent run leaves too much implicit. You give Claude Code or Codex a
+sentence, it edits your code, and you're left trusting three things you can't
+actually see.
 
-Agents are invoked through the required `agents` registry in
-`.heurema/pactum/config.yaml`: each entry is `{name, model, effort}` — the
-engine is inferred from the required model — and `--agent`/`--reviewer`
-accept those registry names. The generated default registers a single
-`claude` entry pinned to a current model, and an omitted `--agent` runs the
-first registry entry. See [docs/agents.md](docs/agents.md) for the registry
-and selection rules.
+- **Did it do what you meant?** The task lived in one prose sentence; the agent's
+  real interpretation of scope, edge cases, and "done" lives nowhere. Drift and
+  silent scope-creep stay invisible until you read the diff.
+- **Was it actually checked?** "I reviewed it, looks good" is not an auditable
+  verification — and automated review is often worse: it tends to either
+  **rubber-stamp** (a confident green that proves nothing) or **grind forever**
+  (re-litigating findings until it burns your budget), and the two are
+  indistinguishable until you inspect the artifacts.
+- **Will it hold up at scale?** On a large task the agent's context fills, quality
+  can degrade, and earlier decisions get forgotten — so the back half of a big
+  change quietly contradicts the front half.
 
-Both built-ins read their prompt from a prompt file that Pactum prepares. Check
-that the agent CLIs are installed and visible on your `PATH` with
-`pactum doctor`.
+That's tolerable for a quick edit. It's hard to trust for anything that needs
+review history, repeatability, or handoff.
 
-Pactum runs these adapters as **direct subprocesses in your repository**. There
-is no Pactum-managed isolation, container, or virtual machine around them. The
-ACP adapters are external tooling with direct access to your repository, your
-runtime, and your inherited environment variables — real agent execution is
-**unsandboxed** and appropriate only for a repository and task context you trust
-with that access. See [SECURITY.md](SECURITY.md) for the threat model and safe
-usage.
+## How pactum works
 
-## Not in the MVP
+Pactum puts a **contract** and a chain of deterministic stages between you and the
+agent.
 
-The following are intentionally **not** part of the current MVP:
+- **Contract first.** Before any code is written, the task becomes an explicit
+  contract — goal, in/out of scope, acceptance criteria, validation commands,
+  assumptions — that you approve. Approval is pinned to a hash of the contract, so
+  the spec the agent is held to cannot silently change underneath it.
+- **Deterministic context.** A wiki-first project map and a SQLite full-text index
+  (lexical, no embeddings) give reproducible context; the executor prompt is
+  assembled from the contract, map, and accepted memory and recorded in a
+  manifest — a prompt boundary that is itself part of the audit trail.
+- **Auditable stages.** Every stage writes durable artifacts under
+  `.heurema/pactum/` — the prompt the agent saw, the plan, the diff, the checks,
+  the findings — so a run is inspectable and diffable after the fact.
+- **Review with explicit terminal states.** The review loop ends `resolved`, or
+  stops loud at `blockers_open` / `fixer_no_progress` — never a silent pass or an
+  endless grind. A blocking finding clears only by a real fix or a recorded,
+  attributable operator decision.
+- **A safe stop.** `execute plan` (a dry run) is the default; real execution is a
+  separate, explicit step. Pactum drives Claude Code and Codex over the Agent
+  Client Protocol and installs as an Agent Skill, so the agent follows the
+  workflow — every `--json` command carries a `next` array of legal moves and an
+  `error.fix` remedy on failure.
+- **Project memory.** Accepted, deterministic memory from reviewed runs feeds
+  future prompts, with lexical search and file-hash freshness.
 
-- Docker / container execution.
-- A web UI.
-- Embeddings or vector search (search and memory are lexical and deterministic).
-- LLM summarization of artifacts or memory.
-- Semantic trust of reviewer output (reviewer findings are always proposals a
-  human must accept).
-- Custom agent adapters (only the built-in `codex` and `claude` agents exist).
+The point isn't that the agent is perfect — it's that an opaque run becomes
+something you can read, review, and reproduce.
+
+## The workflow
+
+```
+map → task → clarify → contract → prompt → execute(plan) → gate → review → memory
+```
+
+1. **Map** — build a deterministic project map + search index from the repo.
+2. **Task** — turn a request into a contract-first run.
+3. **Clarify** — surface and answer blocking questions before committing to a spec.
+4. **Contract** — draft → revise → approve; approval is hash-pinned.
+5. **Prompt** — assemble the deterministic executor prompt (the boundary).
+6. **Execute** — `plan` is the safe stop; `run` is real, explicit execution.
+7. **Gate** — detect changes and run the contract's validation commands.
+8. **Review** — the loud loop (or a manual review); findings are fixed or resolved.
+9. **Memory** — capture reusable, deterministic memory from the reviewed run.
+
+Full detail in [docs/flow.md](docs/flow.md).
 
 ## Install
 
-Pactum is a Go module (`github.com/heurema/pactum`, Go 1.26+). There is no
-packaged release yet; build, run, or install it from source. See
-[docs/install.md](docs/install.md) for the full guide.
-
-**1. Run from source** (no binary):
-
 ```sh
-go run ./cmd/pactum --help
+npm i -g @heurema/pactum              # macOS / Linux   (or: npx @heurema/pactum)
+pactum skill install --agent claude   # or: --agent codex — drive pactum through your agent
 ```
 
-**2. Build a local binary** with the Makefile:
+Then tell your coding agent: **"use pactum for this task."** The skill package
+(`assets/agent-skills/pactum`) is what teaches the agent the safe workflow — see
+[docs/skill-install.md](docs/skill-install.md) and [docs/agent-skill.md](docs/agent-skill.md).
 
-```sh
-make build
-./bin/pactum --help
-```
+Supported: **macOS (arm64/x64)** and **Linux (amd64/arm64, glibc)**. Windows and
+Alpine/musl are not yet supported. Prebuilt binaries are on
+[Releases](https://github.com/heurema/pactum/releases); from source needs Go 1.26+
+and a C toolchain (tree-sitter via CGO). Details: [docs/install.md](docs/install.md).
 
-**3. Install into your Go bin:**
+## Safety & limits
 
-```sh
-go install ./cmd/pactum
-pactum --help
-```
+Real execution is **unsandboxed**: pactum runs the agent through its ACP adapter —
+`@heurema/codex-acp` for Codex, `@agentclientprotocol/claude-agent-acp` for
+Claude — as a direct subprocess in your repository, with your environment and your
+files. There is no container or isolation; pactum's value is the contract and the
+boundaries it records, not a security boundary. Run it on a repository and task you
+trust, and nothing launches an agent until you explicitly leave the `execute plan`
+stop. Search and memory are lexical, not semantic. See [SECURITY.md](SECURITY.md).
 
-This installs `pactum` into `go env GOBIN` (or `$(go env GOPATH)/bin`); make
-sure that directory is on your `PATH`. Once releases are tagged, you will also
-be able to `go install github.com/heurema/pactum/cmd/pactum@latest`.
+---
 
-**Smoke test** the safe command surface in a throwaway repo:
-
-```sh
-scripts/smoke.sh
-```
-
-The examples below use `pactum <command>`; substitute `go run ./cmd/pactum
-<command>` if you have not built or installed a binary.
-
-## Quick start
-
-Pactum tracks a **current run**, so after `pactum task new` you can omit the run
-id from the staged commands below — they default to the current run (override
-with an explicit id or `pactum task use <run_id>`).
-
-```sh
-# 1. Initialize the workspace and build the project map.
-pactum init
-pactum status
-
-# 2. Create a contract-first run for a task (this becomes the current run).
-pactum task new "add feature X"
-
-# Inspect runs at any time (the current run is marked with *):
-pactum task list
-
-# 3. Clarify open questions before approving the contract.
-pactum clarify add "Question?" --blocking
-pactum clarify answer q_001 "Answer"
-
-# 4. Shape and approve the contract.
-pactum contract show --json > contract.json
-# edit contract.json, then:
-pactum contract revise --from contract.json
-pactum contract approve
-
-# 5. Build the deterministic executor prompt boundary.
-pactum prompt build
-
-# 6. Inspect the planned execution, then run the agent. `execute run` runs the
-#    agent directly in your repository. An omitted --agent runs the first
-#    entry of the config agents registry; --agent <name> picks another entry.
-pactum execute plan
-pactum execute run
-
-# 7. Gate the result: it runs the contract's validation commands.
-pactum gate run
-
-# 8. Review the run. `review run`, `review finding add`, and `review approve`
-#    self-scaffold the review record once the gate report exists;
-#    `pactum review run` would instead drive autonomous reviewer/fixer rounds.
-pactum review finding add "..." --blocking --severity medium --category quality
-pactum review finding resolve f_001 --note "Fixed"
-pactum review approve
-
-# 9. Capture reusable project memory from the reviewed run.
-pactum memory propose
-pactum memory accept
-
-# At any point, see where you are and what to run next:
-pactum status
-
-# Print the version:
-pactum version
-```
-
-> Every staged command still accepts an explicit run id (for example
-> `pactum contract approve run_20260603_120000`) and the secondary-id commands
-> accept either form, e.g. `pactum review finding resolve f_001` or
-> `pactum review finding resolve <run_id> f_001`.
-
-## Documentation
-
-- [docs/install.md](docs/install.md) — prerequisites, building, installing, and
-  smoke-testing Pactum from source.
-- [docs/flow.md](docs/flow.md) — the workflow stage by stage, with the artifacts
-  each stage produces and whether it mutates state.
-- [docs/workspace.md](docs/workspace.md) — the `.heurema/pactum/` layout, which
-  parts are generated vs durable, and what to commit.
-- [docs/agents.md](docs/agents.md) — the built-in agents, `pactum doctor`,
-  plan vs run, and the direct-subprocess execution model.
-- [SECURITY.md](SECURITY.md) — the threat model, the agent-launching commands,
-  safe usage, and private vulnerability reporting.
-- [docs/memory.md](docs/memory.md) — deterministic project memory: propose,
-  accept, search, refresh/stale, and the prompt boundary.
-- [docs/agent-skill.md](docs/agent-skill.md) — the repo-local, cross-agent
-  Pactum skill package (`assets/agent-skills/pactum/`) for Codex and Claude
-  Code, and its safe default workflow.
-- [docs/skill-install.md](docs/skill-install.md) — installing the CLI and the
-  skill package today (marketplace packaging is deferred).
-- [CHANGELOG.md](CHANGELOG.md) — notable changes (everything is currently
-  **Unreleased**; there are no packaged releases yet).
-- [docs/dogfood-second-repo.md](docs/dogfood-second-repo.md) — findings from
-  running Pactum's safe surface on a second, non-Go repository.
-
-## Continuous integration
-
-Every pull request and push to `main` runs GitHub Actions
-([`.github/workflows/ci.yml`](.github/workflows/ci.yml)), which executes the same
-local checks shipped in this repo: `make check` (tests, vet, deadcode, and
-`git diff --check`), `make heurema-hygiene` (the committed run-record leak
-gate), `make build`, and `scripts/smoke.sh`, plus separate `make test-race`
-and `make vuln` (govulncheck) jobs. CI does not require `codex`/`claude` to be
-installed and never runs a real agent.
+[Workflow](docs/flow.md) · [Install](docs/install.md) · [Agents](docs/agents.md) · [Skill](docs/agent-skill.md) · [Memory](docs/memory.md) · [Security](SECURITY.md)

@@ -1,9 +1,34 @@
 # Installing Pactum
 
-Pactum is a Go module (`github.com/heurema/pactum`). There are no packaged
-releases or prebuilt binaries yet — you build and install it from source. This
-page covers the prerequisites, the local build/install paths, and a first-repo
-smoke check.
+Pactum ships as an npm package, as prebuilt binaries on GitHub Releases, and as
+a Go module you can build from source. Most users want npm.
+
+## npm (recommended)
+
+```sh
+npm i -g @heurema/pactum     # then: pactum --help
+# or run ad-hoc, no install:
+npx @heurema/pactum --help
+```
+
+Supported: macOS (arm64/x64) and Linux (amd64/arm64, glibc). On first run the
+launcher downloads the prebuilt binary for your platform from the matching GitHub
+Release, verifies its checksum against the manifest baked into the package, caches
+it under `~/.cache/pactum/<version>/`, and runs it — no build toolchain required.
+See [docs/install-npm.md](install-npm.md). Windows and Alpine/musl are not yet
+supported (the launcher exits with a clear message).
+
+## Prebuilt binary
+
+Download the archive for your platform from
+[Releases](https://github.com/heurema/pactum/releases), verify it against
+`checksums.txt`, and put `pactum` on your `PATH`. Each archive also bundles the
+docs and the agent skill.
+
+## Build from source
+
+The rest of this page covers building from source (Go 1.26+ and a C toolchain —
+pactum links tree-sitter via CGO), plus a first-repo smoke check.
 
 ## Prerequisites
 
