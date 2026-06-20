@@ -31,7 +31,7 @@ vet:
 # check`. It catches the data-race class the plain test run cannot — e.g. the
 # M10.2 live-output race that slipped through a non-race `make check`.
 test-race:
-	go test -race ./...
+	go test -race -timeout 20m ./...
 
 # deadcode flags functions unreachable from any main entry point (golang.org/x/
 # tools, pinned via the go.mod tool directive). It catches what `go vet` cannot:

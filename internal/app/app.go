@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"strings"
 	"time"
@@ -25,6 +26,13 @@ type App struct {
 	Now            func() time.Time
 	AgentRegistry  agents.Registry
 	AgentTransport agents.Transport
+	// Sleep is called between transport retry attempts. Nil uses time.Sleep.
+	// Tests set this to a no-op so retries complete instantly.
+	Sleep func(time.Duration)
+	// Jitter, when non-nil, returns the backoff jitter multiplier applied to each
+	// retry delay. Nil uses a uniform random factor in [0.5, 1.5]. Tests set this
+	// to a fixed value (e.g. 1.0) so delay_ms records are deterministic.
+	Jitter func() float64
 	// reviewStaggerHold overrides the same-model Claude review hold timeout.
 	// Zero means the production default (reviewStaggerHoldTimeoutDefault); tests
 	// shrink it so a silent lead does not actually serialize the panel for a
@@ -167,6 +175,21 @@ func (a App) nowUTC() time.Time {
 		return time.Now().UTC()
 	}
 	return a.Now().UTC()
+}
+
+func (a App) sleep(d time.Duration) {
+	if a.Sleep != nil {
+		a.Sleep(d)
+		return
+	}
+	time.Sleep(d)
+}
+
+func (a App) jitter() float64 {
+	if a.Jitter != nil {
+		return a.Jitter()
+	}
+	return 0.5 + rand.Float64() // uniform multiplier in [0.5, 1.5]
 }
 
 func writeWorkspaceStatus(stdout io.Writer, report statusResponse) {

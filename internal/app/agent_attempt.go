@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -85,6 +86,20 @@ type agentAttemptContext[Prepared any] struct {
 	AttemptPaths attemptPathSet
 }
 
+// maxTransportCalls is the total number of transport calls allowed per lifecycle
+// attempt (initial call + at most maxTransportCalls-1 retries). Only read-only
+// stages are retried; write-enabled stages use one call only.
+const maxTransportCalls = 3
+
+// transportRetryDelay returns the delay before the next transport call.
+// callNum is the one-based number of the call that just failed.
+// jitter is a multiplicative factor for the exponential base (1s, 2s, …);
+// pass 1.0 for deterministic delays (used by tests to lock delay_ms values).
+func transportRetryDelay(callNum int, jitter float64) time.Duration {
+	base := time.Duration(1<<uint(callNum-1)) * time.Second
+	return time.Duration(float64(base) * jitter)
+}
+
 func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response any](a App, cfg agentAttemptLifecycle[Prepared, Request, Result, Response]) error {
 	now := a.nowUTC()
 	createdAt := now.Format(time.RFC3339)
@@ -127,7 +142,7 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 		return err
 	}
 
-	runResult, runErr := a.agentTransport().Run(agents.RunRequest{
+	runReq := agents.RunRequest{
 		RepoRoot:         cfg.Root,
 		RunID:            cfg.RunID,
 		AttemptID:        attemptID,
@@ -141,7 +156,78 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 		Model:            cfg.Model,
 		ReadOnly:         cfg.ReadOnly,
 		OnFirstOutput:    cfg.OnFirstOutput,
-	})
+	}
+	retryDecisionsPath := filepath.Join(attemptPaths.Dir, "retry-decisions.jsonl")
+
+	var runResult agents.RunResult
+	var runErr error
+	var retryArtifactErr error
+	for callNum := 1; callNum <= maxTransportCalls; callNum++ {
+		runResult, runErr = a.agentTransport().Run(runReq)
+
+		// Pre-start failure: the transport could not launch the process at all.
+		// Preserve the existing early-return behavior so no partial artifacts are
+		// written. Retries are not attempted for pre-start failures.
+		if runErr != nil && runResult.StartedAt == "" {
+			break
+		}
+
+		// Wall-clock cap or completed-despite-timeout suppress retries: the result
+		// is conclusive and must be returned as-is on any stage.
+		if runResult.WallClockTimeout || runResult.CompletedDespiteTimeout {
+			break
+		}
+
+		isLastCall := callNum >= maxTransportCalls
+		// Write stages (ReadOnly=false) are never retried: retrying after a
+		// possible write risks duplicate writes. No retry-decision artifact is
+		// written for write stages.
+		if !cfg.ReadOnly {
+			break
+		}
+		// Last call on a read-only stage: no more retries are available.
+		if isLastCall {
+			if runErr != nil || isTransportOutputEmpty(attemptPaths.StdoutLog) {
+				retryArtifactErr = appendRetryDecision(retryDecisionsPath, cfg.Stage, attemptID, runErr, runResult, cfg.ReadOnly, callNum, 0)
+			}
+			break
+		}
+
+		// Determine whether this failure/empty output is retryable.
+		var cls agents.TransportErrorClass
+		if runErr != nil {
+			cls = agents.ClassifyTransportError(runErr)
+			// An idle timeout sets RunResult.TimedOut and cancels the context; the
+			// resulting context.Canceled is retryable as an idle timeout regardless of
+			// what the classifier returns for context.Canceled alone.
+			if runResult.TimedOut && !runResult.WallClockTimeout {
+				cls.Retryable = true
+				cls.Kind = "idle_timeout"
+				cls.Reason = "idle timeout: agent process killed after period of no output"
+			}
+		} else if isTransportOutputEmpty(attemptPaths.StdoutLog) {
+			cls = agents.TransportErrorClass{Retryable: true, Kind: "empty_output", Reason: "transport returned no output"}
+		} else {
+			break // success
+		}
+
+		delay := transportRetryDelay(callNum, a.jitter())
+		if !cls.Retryable {
+			delay = 0
+		}
+		if retryArtifactErr = appendRetryDecision(retryDecisionsPath, cfg.Stage, attemptID, runErr, runResult, cfg.ReadOnly, callNum, delay); retryArtifactErr != nil {
+			break
+		}
+		if !cls.Retryable {
+			break
+		}
+		a.sleep(delay)
+	}
+
+	if retryArtifactErr != nil {
+		return retryArtifactErr
+	}
+
 	if runErr != nil && runResult.StartedAt == "" {
 		return runErr
 	}
@@ -192,6 +278,66 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 	}
 	cfg.RenderSuccess(cfg.Stdout, response, request)
 	return nil
+}
+
+// isTransportOutputEmpty reports whether the transport's stdout artifact is
+// absent or contains only whitespace. A nil-error transport result with no
+// non-whitespace output is eligible for retry on read-only stages.
+func isTransportOutputEmpty(stdoutPath string) bool {
+	data, err := os.ReadFile(stdoutPath)
+	if err != nil {
+		return true // file absent → treat as empty
+	}
+	return len(strings.TrimSpace(string(data))) == 0
+}
+
+// retryDecisionRecord is the JSONL schema for a single transport retry decision.
+type retryDecisionRecord struct {
+	Schema        string `json:"schema"`
+	Stage         string `json:"stage"`
+	AttemptID     string `json:"attempt_id"`
+	Kind          string `json:"kind"`
+	Reason        string `json:"reason"`
+	Retryable     bool   `json:"retryable"`
+	ReadOnly      bool   `json:"read_only"`
+	AttemptNumber int    `json:"attempt_number"`
+	DelayMS       int64  `json:"delay_ms"`
+}
+
+// appendRetryDecision appends a single retry-decision record to the JSONL
+// artifact file and returns any write error. The caller must propagate write
+// failures: a durable record is required before scheduling or skipping a retry.
+func appendRetryDecision(path string, stage string, attemptID string, runErr error, runResult agents.RunResult, readOnly bool, callNum int, delay time.Duration) error {
+	var cls agents.TransportErrorClass
+	if runErr != nil {
+		cls = agents.ClassifyTransportError(runErr)
+		// Idle timeout: context.Canceled from the watchdog kill is retryable
+		// regardless of what the classifier returns for context.Canceled alone.
+		if runResult.TimedOut && !runResult.WallClockTimeout {
+			cls.Retryable = true
+			cls.Kind = "idle_timeout"
+			cls.Reason = "idle timeout: agent process killed after period of no output"
+		}
+	} else {
+		cls = agents.TransportErrorClass{Retryable: true, Kind: "empty_output", Reason: "transport returned no output"}
+	}
+	rec := retryDecisionRecord{
+		Schema:        "pactum.agent_retry_decision.v1alpha1",
+		Stage:         stage,
+		AttemptID:     attemptID,
+		Kind:          cls.Kind,
+		Reason:        cls.Reason,
+		Retryable:     cls.Retryable,
+		ReadOnly:      readOnly,
+		AttemptNumber: callNum,
+		DelayMS:       delay.Milliseconds(),
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return activeStore.AppendBytes(path, data)
 }
 
 // agentAttemptFailedError marks a failed agent attempt whose run-only result
