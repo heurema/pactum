@@ -265,13 +265,13 @@ func nextCommandsForRun(paths artifacts.Paths, runID string) []string {
 		// silently advertising approve.
 		configured, err := contractReviewersConfigured(paths.Config)
 		if err != nil || configured {
-			return []string{"pactum contract review " + runID}
+			return []string{"pactum contract review run " + runID}
 		}
 		// Even without configured reviewers, a prior contract-review run may have
 		// left persisted blocking findings — approve would refuse them too. Route to
 		// inspection so the guard error surfaces there rather than here.
 		if isRegularFile(runPaths.ContractReviewFindingsJSONL) {
-			if err := checkContractReviewFindingsApprovalGuard(runPaths); err != nil {
+			if _, err := checkContractReviewFindingsApprovalGuard(runPaths); err != nil {
 				return []string{"pactum contract show " + runID}
 			}
 		}

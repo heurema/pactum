@@ -229,7 +229,7 @@ func TestContractReviewNoReviewersIsNoOp(t *testing.T) {
 	app, paths, runID := setupContractRun(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "review", runID}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "review", "run", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract review exited %d, stderr: %s", code, stderr.String())
 	}
@@ -264,7 +264,7 @@ func TestContractReviewPanelRunsAndEmitsFindings(t *testing.T) {
 	// blocking=false (default) → no fixer invoked → single round → "resolved"
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "review", "run", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract review exited %d, stderr: %s", code, stderr.String())
 	}
@@ -415,7 +415,7 @@ func TestContractReviewFailedLensSkipped(t *testing.T) {
 	// blocking=false (default): round stays clean, no fixer invoked.
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "review", "run", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract review with one failed lens should exit 0, got %d, stderr: %s", code, stderr.String())
 	}
@@ -508,7 +508,7 @@ func TestContractReviewMultipleReviewers(t *testing.T) {
 	// blocking=false (default) → no fixer → resolved after round 1
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "review", "run", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract review exited %d, stderr: %s", code, stderr.String())
 	}
@@ -565,7 +565,7 @@ func TestContractReviewHumanReadableFindings(t *testing.T) {
 	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS", "1")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "review", runID}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "review", "run", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract review exited %d, stderr: %s", code, stderr.String())
 	}
@@ -613,7 +613,7 @@ func TestContractReviewLoopCleanConvergence(t *testing.T) {
 	t.Setenv("PACTUM_CONTRACT_FIXER_EMIT_REVISE", "1")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "review", "run", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
 	}
@@ -684,7 +684,7 @@ func TestContractReviewLoopMaxRounds(t *testing.T) {
 	t.Setenv("PACTUM_CONTRACT_FIXER_HELPER_PROCESS", "1")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "review", "run", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
 	}
@@ -736,7 +736,7 @@ func TestContractReviewLoopVersionGuard(t *testing.T) {
 	t.Setenv("PACTUM_CONTRACT_FIXER_EMIT_STALE_VERSION", "1")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "review", "run", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
 	}
@@ -804,7 +804,7 @@ func TestContractReviewLoopFinishedOnError(t *testing.T) {
 	// Run WITHOUT --json to avoid double-writing (the error path always writes
 	// JSON to stdout; --json would cause a second write on the non-error path).
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "review", runID}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "review", "run", runID}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("expected non-zero exit code, got 0\nstdout: %s\nstderr: %s", stdout.String(), stderr.String())
 	}
@@ -855,7 +855,7 @@ func TestContractReviewBlockersOpen(t *testing.T) {
 	t.Setenv("PACTUM_CONTRACT_FIXER_HELPER_PROCESS", "1")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "review", "run", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
 	}
@@ -900,7 +900,7 @@ func TestContractReviewFixerNoProgress(t *testing.T) {
 	t.Setenv("PACTUM_CONTRACT_FIXER_HELPER_PROCESS", "1")
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "review", "run", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
 	}
@@ -956,7 +956,7 @@ func TestContractReviewNonApprovableTerminalHumanOutput(t *testing.T) {
 		t.Setenv("PACTUM_CONTRACT_FIXER_HELPER_PROCESS", "1")
 
 		var stdout, stderr bytes.Buffer
-		code := app.Run([]string{"contract", "review", runID}, &stdout, &stderr)
+		code := app.Run([]string{"contract", "review", "run", runID}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
 		}
@@ -983,7 +983,7 @@ func TestContractReviewNonApprovableTerminalHumanOutput(t *testing.T) {
 		t.Setenv("PACTUM_CONTRACT_FIXER_HELPER_PROCESS", "1")
 
 		var stdout, stderr bytes.Buffer
-		code := app.Run([]string{"contract", "review", runID}, &stdout, &stderr)
+		code := app.Run([]string{"contract", "review", "run", runID}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
 		}
@@ -1010,7 +1010,7 @@ func TestContractReviewFindingsJSONLWrittenAtLoopEnd(t *testing.T) {
 	// blocking=false (default) → loop exits resolved.
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"contract", "review", runID, "--json"}, &stdout, &stderr)
+	code := app.Run([]string{"contract", "review", "run", runID, "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
 	}
