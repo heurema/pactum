@@ -34,11 +34,37 @@ pactum version
 `npm`/`npx` and `uvx` install paths are planned/being considered. They are
 **not implemented yet** — do not assume they exist.
 
-## Install this skill (repo-local, manual)
+## Install this skill (one command)
 
-The skill package currently lives inside the Pactum repository at
-`assets/agent-skills/pactum/`. To make an agent discover it, copy the package
-into the agent's skills directory:
+Once the CLI is installed, install the skill package with:
+
+```sh
+# repo-scoped (default) — installs to .<agent>/skills/pactum/ in the working dir
+pactum skill install --agent <claude|codex|auto|all>
+
+# user-scoped — installs to $HOME/.<agent>/skills/pactum/
+pactum skill install --agent <claude|codex|auto|all> --scope user
+```
+
+- `auto` detects which agents are present (CLI on PATH or known dot-directories)
+  and installs to all detected targets.
+- `all` installs to every known alpha target regardless of detection.
+- Default scope is `repo` so a global skill does not trigger on every repository
+  you open.
+
+Verify after install:
+
+```sh
+pactum skill install --check --agent <claude|codex|auto|all>
+```
+
+Reload or restart your coding agent if the skill does not appear immediately.
+
+## Install this skill (manual fallback)
+
+The skill package lives inside the Pactum repository at
+`assets/agent-skills/pactum/`. To install manually, copy it into the agent's
+skills directory:
 
 - **Codex:** copy `assets/agent-skills/pactum/` to `.agents/skills/pactum/`
   (repo-scoped) or `$HOME/.agents/skills/pactum/` (user-scoped).
@@ -50,6 +76,5 @@ Both ecosystems load a skill from its `SKILL.md`; the `references/` files are
 read on demand by the skill.
 
 Marketplace and plugin packaging (a Claude plugin and a Codex plugin) are
-deferred to a later milestone. There is no marketplace-based install and no CLI
-self-install command yet — install the CLI and copy the skill manually, as
-above.
+deferred to a later milestone. The `pactum skill install` command is the
+supported one-command install path.

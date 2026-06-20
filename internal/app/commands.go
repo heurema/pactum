@@ -53,6 +53,13 @@ func (c *versionCmd) Run(r *runner) error {
 	return nil
 }
 
+func (c *skillInstallCmd) Run(r *runner) error {
+	if c.Check {
+		return r.App.SkillCheck(r.Stdout, r.Stderr, c.Agent, c.Scope, c.JSONOutput)
+	}
+	return r.App.SkillInstall(r.Stdout, r.Stderr, c.Agent, c.Scope, c.JSONOutput)
+}
+
 func (c *clarifyAddCmd) Run(r *runner) error {
 	explicitRun, rest := splitLeadingRunID(c.Args)
 	if len(rest) != 1 {

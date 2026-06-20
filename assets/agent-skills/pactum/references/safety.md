@@ -15,6 +15,9 @@ repository); the skill must be too.
 
 - The default stop point is `pactum execute plan --agent <name>`. Stop there
   and report.
+- Do NOT implement the plan yourself after `pactum execute plan`. That bypasses
+  the Pactum safety boundary. Only proceed to source edits if the user
+  explicitly exits Pactum or approves unsandboxed execution.
 - Run `pactum execute run` **only after** the user has explicitly approved
   unsandboxed, direct agent execution for this task. The same applies to
   `pactum review run` (reviewer rounds plus, by default, the write-enabled
@@ -23,7 +26,9 @@ repository); the skill must be too.
   the decision, so do not run them without that explicit approval.
 - Never hide a non-zero exit code. If a command fails, report it with its
   output rather than continuing.
-- Do not commit `.heurema/`. It is generated, machine-specific workspace state.
+- **`.heurema/pactum/` is durable audit state** — do not delete or revert it.
+  Do not mix `.heurema/pactum/` churn into feature commits; report it separately
+  unless the user asks for an audit-record commit.
 - When working inside the Pactum repository itself, run `make check` before
   reporting that code changed, and report failures honestly.
 - Do not claim code changed unless it actually changed. Source files remain the

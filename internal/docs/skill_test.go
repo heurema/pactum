@@ -1,10 +1,13 @@
 package docs
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/heurema/pactum/assets"
 )
 
 // skillPackageDir is the repo-local agent skill package. readRepoFile and
@@ -69,7 +72,7 @@ func TestSkillInlinesSafetyAndStop(t *testing.T) {
 		"pactum task new",
 		"pactum execute plan",
 		"pactum execute run",     // mentioned as the thing NOT to run by default
-		"references/workflow.md", // explicitly tells the agent to read references
+		"references/workflow.md", // points agents to optional enrichment
 		".heurema",
 		"source of truth",
 		// Agents read the affordances instead of memorizing stage order.
@@ -113,6 +116,7 @@ func TestSkillInstallReference(t *testing.T) {
 		".claude/skills/pactum/",
 		"go install ./cmd/pactum",
 		"make build",
+		"pactum skill install",
 	} {
 		if !strings.Contains(install, want) {
 			t.Fatalf("install.md missing %q", want)
@@ -191,11 +195,10 @@ func TestSkillDocsAvoidStaleAndPrematureClaims(t *testing.T) {
 		"agents.adapters",
 		"map v2",
 		"pactum.map.v2",
-		// deferred features must not be presented as available
+		// deferred marketplace features must not be presented as available
 		"/plugin marketplace add heurema/pactum",
 		"/plugin install pactum@pactum",
 		"pactum install",
-		"pactum skill install",
 		// M23.1 removed the confirmation layer.
 		"--yes",
 		"--allow-commands",
@@ -233,11 +236,14 @@ func TestSkillDocsAvoidStaleAndPrematureClaims(t *testing.T) {
 }
 
 // TestSkillPackagingDeferred asserts marketplace/auto-discovery artifacts are
-// not introduced yet.
+// not committed to the Pactum source repository. Installed-skill artifacts
+// (produced by pactum skill install) belong in the user's HOME or their working
+// repo, never in this source tree.
 func TestSkillPackagingDeferred(t *testing.T) {
 	for _, rel := range []string{
 		".claude-plugin/plugin.json",
 		".claude-plugin/marketplace.json",
+		// Installed skill artifacts must not be committed to the source repo.
 		".agents/skills/pactum/SKILL.md",
 		".claude/skills/pactum/SKILL.md",
 		skillPackageDir + "/codex/AGENTS.md",
@@ -252,6 +258,77 @@ func TestSkillDocsMentionBothAgents(t *testing.T) {
 	for _, want := range []string{"Codex", "Claude"} {
 		if !strings.Contains(doc, want) {
 			t.Fatalf("docs/agent-skill.md should mention %q", want)
+		}
+	}
+}
+
+// TestEmbeddedSkillPackageMatchesDisk verifies that the embedded skill FS
+// (used by pactum skill install) is byte-identical to the on-disk package at
+// assets/agent-skills/pactum/. This is an anti-drift test: if someone edits the
+// on-disk files without the binary being rebuilt, or vice versa, this test
+// fails.
+func TestEmbeddedSkillPackageMatchesDisk(t *testing.T) {
+	root := repoRoot(t)
+	const embFSRoot = "agent-skills/pactum"
+	diskRoot := filepath.Join(root, "assets", "agent-skills", "pactum")
+
+	// Collect disk files.
+	diskFiles := map[string][]byte{}
+	err := filepath.WalkDir(diskRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(diskRoot, path)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		diskFiles[filepath.ToSlash(rel)] = data
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk disk skill package: %v", err)
+	}
+
+	// Collect embedded files.
+	embFiles := map[string][]byte{}
+	err = fs.WalkDir(assets.SkillFS, embFSRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel := strings.TrimPrefix(path, embFSRoot+"/")
+		data, err := assets.SkillFS.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		embFiles[rel] = data
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk embedded skill package: %v", err)
+	}
+
+	// Check that every disk file is in the embedded FS with identical content.
+	for rel, diskData := range diskFiles {
+		embData, ok := embFiles[rel]
+		if !ok {
+			t.Errorf("embedded FS missing file: %s", rel)
+			continue
+		}
+		if string(diskData) != string(embData) {
+			t.Errorf("embedded file %s differs from disk copy", rel)
+		}
+	}
+	// Check that the embedded FS has no extra files.
+	for rel := range embFiles {
+		if _, ok := diskFiles[rel]; !ok {
+			t.Errorf("embedded FS has extra file not on disk: %s", rel)
 		}
 	}
 }
