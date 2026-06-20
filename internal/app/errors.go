@@ -84,7 +84,7 @@ func noExecutionAttemptError(msg string, runID string) error {
 	return &preconditionError{
 		msg:  msg,
 		code: "no_execution_attempt",
-		next: []string{"pactum execute plan " + runID + " --agent codex"},
+		next: []string{"pactum execute plan " + runID},
 	}
 }
 

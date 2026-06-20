@@ -560,7 +560,7 @@ func writePromptBuild(stdout io.Writer, response promptBuildResponse) {
 	fmt.Fprintf(stdout, "  prompt manifest: %s\n", runArtifactRepoRel(response.RunID, "contract/prompt-manifest.json"))
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Next:")
-	fmt.Fprintf(stdout, "  pactum execute plan %s --agent codex\n", response.RunID)
+	fmt.Fprintf(stdout, "  pactum execute plan %s\n", response.RunID)
 }
 
 func writePromptShow(stdout io.Writer, response promptShowResponse) {

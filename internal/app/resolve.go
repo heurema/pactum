@@ -279,7 +279,7 @@ func nextCommandsForRun(paths artifacts.Paths, runID string) []string {
 	case "contract_approved":
 		return []string{"pactum prompt build " + runID}
 	case "prompt_built":
-		return []string{"pactum execute plan " + runID + " --agent codex"}
+		return []string{"pactum execute plan " + runID}
 	case "executed":
 		return []string{"pactum gate run " + runID}
 	case "gated", "review_prepared":

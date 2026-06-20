@@ -109,7 +109,7 @@ func TestJSONErrorEnvelopePinnedPreconditions(t *testing.T) {
 			},
 			wantCode:    "no_execution_attempt",
 			wantMessage: func(string) string { return "cannot run gate: no completed execution attempts found" },
-			wantNext:    func(runID string) []string { return []string{"pactum execute plan " + runID + " --agent codex"} },
+			wantNext:    func(runID string) []string { return []string{"pactum execute plan " + runID} },
 		},
 		{
 			name: "gate_report_missing",
@@ -228,13 +228,13 @@ func TestNextArraysMirrorStageAffordances(t *testing.T) {
 
 	// Prompt build mirrors its human Next: hint with the run id filled.
 	next = decodeNext(t, app, "prompt", "build", runID, "--json")
-	assertNext(t, next, "pactum execute plan "+runID+" --agent codex")
+	assertNext(t, next, "pactum execute plan "+runID)
 
 	var human, stderr bytes.Buffer
 	if code := app.Run([]string{"prompt", "build", runID}, &human, &stderr); code != 0 {
 		t.Fatalf("prompt build exited %d, stderr: %s", code, stderr.String())
 	}
-	if !strings.Contains(human.String(), "Next:\n  pactum execute plan "+runID+" --agent codex\n") {
+	if !strings.Contains(human.String(), "Next:\n  pactum execute plan "+runID+"\n") {
 		t.Fatalf("human prompt build Next: hint changed:\n%s", human.String())
 	}
 
@@ -258,7 +258,7 @@ func TestNextArraysMirrorStageAffordances(t *testing.T) {
 	if status.Runs.NextCommand != "pactum execute plan" {
 		t.Fatalf("status runs.next_command = %q, want unchanged bare command", status.Runs.NextCommand)
 	}
-	if status.Next == nil || !equalStrings(*status.Next, []string{"pactum execute plan " + runID + " --agent codex"}) {
+	if status.Next == nil || !equalStrings(*status.Next, []string{"pactum execute plan " + runID}) {
 		t.Fatalf("status next = %v", status.Next)
 	}
 
@@ -274,7 +274,7 @@ func TestNextArraysMirrorStageAffordances(t *testing.T) {
 	if show.NextCommand != "pactum execute plan" {
 		t.Fatalf("task show next_command = %q, want unchanged bare command", show.NextCommand)
 	}
-	if show.Next == nil || !equalStrings(*show.Next, []string{"pactum execute plan " + runID + " --agent codex"}) {
+	if show.Next == nil || !equalStrings(*show.Next, []string{"pactum execute plan " + runID}) {
 		t.Fatalf("task show next = %v", show.Next)
 	}
 
@@ -352,7 +352,7 @@ func TestNextAffordancesAcrossLifecycleStages(t *testing.T) {
 	assertNext(t, next)
 
 	next = decodeNext(t, app, "prompt", "build", runID, "--json")
-	assertNext(t, next, "pactum execute plan "+runID+" --agent codex")
+	assertNext(t, next, "pactum execute plan "+runID)
 
 	app = configureHelperAgent(app, "helper")
 	t.Setenv("PACTUM_HELPER_PROCESS", "1")
