@@ -134,6 +134,17 @@ CI does not need ACP adapter packages installed and never runs a real agent.
 See [CHANGELOG.md](../CHANGELOG.md) for notable changes. Everything is currently
 **Unreleased** — there are no packaged releases yet.
 
+## npm / prebuilt binary
+
+Once releases are tagged, you can also install the prebuilt binary via npm:
+
+```sh
+npm i -g @heurema/pactum
+```
+
+See [docs/install-npm.md](install-npm.md) for the full npm install guide,
+supported platforms, and the binary cache location.
+
 ## What is not included yet
 
 - No packaged releases or prebuilt binaries.

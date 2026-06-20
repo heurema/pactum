@@ -1,0 +1,7 @@
+{
+  "_note": "SHA-256 values are overwritten by the release job when binaries are published. Empty strings here mean this build was not released.",
+  "pactum-darwin-arm64": "",
+  "pactum-darwin-amd64": "",
+  "pactum-linux-amd64": "",
+  "pactum-linux-arm64": ""
+}
