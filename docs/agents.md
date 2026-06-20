@@ -555,10 +555,12 @@ dedup, keeping the maximum severity.
   whole — the completed lenses' output stays on disk in their attempt artifacts.
 
 Beyond the lens checklist, every lens prompt shares the same hardened review
-methodology: findings must be certain-or-silent (with an explicit NOT-to-flag
-list), a verify-then-report pass that emits only
-CONFIRMED candidates, findings-first output with honest empties, pre-existing
-issues as non-blocking advisories, and a per-finding `confidence`
+methodology: recall-first reporting — reviewers flag every issue they believe
+is likely real, using `state=candidate` for uncertain findings and
+`state=confirmed` for verified ones; a finding is dropped only when `trigger`,
+`evidence`, and `fix_direction` cannot be filled concretely. The methodology
+also includes findings-first output with honest empties, pre-existing issues as
+non-blocking advisories, and a per-finding `confidence`
 (high/medium/low — recorded and displayed, not yet gating anything). The
 design sources are condensed in
 [`review-prompt-design.md`](review-prompt-design.md).

@@ -169,14 +169,22 @@ type reviewFindingInput struct {
 // proposals, so accepting a proposal must not carry it into a review finding.
 // Confidence is empty on manual findings; reviewer proposals always carry one
 // (a missing value defaults to medium at parse time).
+// The anti-FP fields (State, Trigger, FixDirection, Uncertainty,
+// CurrentCodeOnly) are populated only by reviewer proposals; manual findings
+// leave them empty/false.
 type findingCore struct {
-	Message    string `json:"message"`
-	Severity   string `json:"severity"`
-	Category   string `json:"category"`
-	File       string `json:"file,omitempty"`
-	Line       int    `json:"line,omitempty"`
-	Blocking   bool   `json:"blocking"`
-	Confidence string `json:"confidence,omitempty"`
+	Message         string `json:"message"`
+	Severity        string `json:"severity"`
+	Category        string `json:"category"`
+	File            string `json:"file,omitempty"`
+	Line            int    `json:"line,omitempty"`
+	Blocking        bool   `json:"blocking"`
+	Confidence      string `json:"confidence,omitempty"`
+	State           string `json:"state,omitempty"`
+	Trigger         string `json:"trigger,omitempty"`
+	FixDirection    string `json:"fix_direction,omitempty"`
+	Uncertainty     string `json:"uncertainty,omitempty"`
+	CurrentCodeOnly bool   `json:"current_code_only,omitempty"`
 }
 
 type reviewFindingFingerprint struct {
@@ -1162,7 +1170,7 @@ func renderReviewerContext(prep reviewerDryRunPreparation) string {
 	fmt.Fprintln(&b, "- Use `pactum search \"<term>\"` and inspect files before proposing findings.")
 	fmt.Fprintln(&b, "- Do not invent changes.")
 	fmt.Fprintln(&b, "- Do not approve automatically.")
-	fmt.Fprintln(&b, "- If you are not certain an issue is real after verification, do not flag it.")
+	fmt.Fprintln(&b, "- Report every issue you believe is likely real: use state=candidate for uncertain findings and drop only when trigger, evidence, and fix_direction cannot be filled concretely.")
 	return b.String()
 }
 
@@ -1201,8 +1209,8 @@ func renderReviewerPrompt(runID string, lens reviewLens) string {
 	fmt.Fprintln(&b, "- Check whether the issue is already mitigated or already represented in existing findings/proposals.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## High-signal contract")
-	fmt.Fprintln(&b, "- Report a finding only when you are certain it is real after verification.")
-	fmt.Fprintln(&b, "- If you are not certain an issue is real, do not flag it. False positives erode trust and waste reviewer time.")
+	fmt.Fprintln(&b, "- Report every issue you believe is likely real: use state=candidate for uncertain findings, state=confirmed for issues you are certain about after verification.")
+	fmt.Fprintln(&b, "- Do not drop a finding solely because you are uncertain — candidate state exists for that; drop only when you cannot fill trigger, evidence, and fix_direction concretely.")
 	fmt.Fprintln(&b, "- Report problems only. No positive observations, no praise.")
 	fmt.Fprintln(&b, "- Do NOT flag:")
 	fmt.Fprintln(&b, "  - Style or formatting preferences.")
@@ -1224,8 +1232,9 @@ func renderReviewerPrompt(runID string, lens reviewLens) string {
 	fmt.Fprintln(&b, "- Read the actual code at the file and line, plus 20-30 surrounding lines.")
 	fmt.Fprintln(&b, "- Check whether the issue is already mitigated elsewhere.")
 	fmt.Fprintln(&b, "- Check for duplicates among existing findings and proposals.")
-	fmt.Fprintln(&b, "- Classify the candidate CONFIRMED or FALSE POSITIVE.")
-	fmt.Fprintln(&b, "- Report only CONFIRMED findings. Discard FALSE POSITIVE candidates.")
+	fmt.Fprintln(&b, "- Set state=\"confirmed\" only when you are certain the issue is real after verification.")
+	fmt.Fprintln(&b, "- Set state=\"candidate\" when you believe the issue is likely real but cannot fully verify from the available context; state uncertainty explicitly in the uncertainty field.")
+	fmt.Fprintln(&b, "- Drop a finding entirely only when you cannot fill trigger, evidence, and fix_direction with concrete content — do not drop findings solely because you are uncertain.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Pre-existing issues")
 	fmt.Fprintln(&b, "- Issues that were present before this change are advisory: report them as non-blocking findings.")
@@ -1266,7 +1275,12 @@ func renderReviewerPrompt(runID string, lens reviewLens) string {
 	fmt.Fprintln(&b, `      "line": 42,`)
 	fmt.Fprintln(&b, `      "blocking": true,`)
 	fmt.Fprintln(&b, `      "confidence": "high",`)
-	fmt.Fprintln(&b, `      "evidence": "Short evidence from reviewed artifacts."`)
+	fmt.Fprintln(&b, `      "evidence": "Short evidence from reviewed artifacts.",`)
+	fmt.Fprintln(&b, `      "state": "confirmed",`)
+	fmt.Fprintln(&b, `      "trigger": "always",`)
+	fmt.Fprintln(&b, `      "fix_direction": "Describe what change would fix the issue.",`)
+	fmt.Fprintln(&b, `      "uncertainty": "",`)
+	fmt.Fprintln(&b, `      "current_code_only": true`)
 	fmt.Fprintln(&b, "    }")
 	fmt.Fprintln(&b, "  ]")
 	fmt.Fprintln(&b, "}")
@@ -1282,6 +1296,12 @@ func renderReviewerPrompt(runID string, lens reviewLens) string {
 	fmt.Fprintln(&b, "- If unsure whether a confirmed finding should block, set blocking=true and explain why in evidence.")
 	fmt.Fprintf(&b, "- Use confidence: %s. Confidence reflects how certain you are the finding is real after verification.\n", strings.Join(reviewConfidences, ", "))
 	fmt.Fprintln(&b, "- A missing confidence defaults to medium.")
+	fmt.Fprintf(&b, "- Use state: %s. Set state=confirmed when certain; set state=candidate when likely real but not fully verified.\n", strings.Join(reviewStates, ", "))
+	fmt.Fprintln(&b, "- trigger: the concrete runtime condition that causes this issue, or \"always\" if it occurs unconditionally. Required and non-empty.")
+	fmt.Fprintln(&b, "- fix_direction: a brief description of what change would address the issue. Required and non-empty.")
+	fmt.Fprintln(&b, "- uncertainty: state what you are unsure about for candidate findings; leave empty for confirmed findings.")
+	fmt.Fprintln(&b, "- current_code_only: set true if the issue was introduced by this change; set false if it pre-existed. A finding with blocking=true must have current_code_only=true.")
+	fmt.Fprintln(&b, "- Findings missing trigger, evidence, or fix_direction are dropped by the collector; fill these fields concretely or omit the finding entirely.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "Important: Pactum does not trust this output automatically. A human must accept proposals.")
 	return b.String()

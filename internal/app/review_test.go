@@ -1836,18 +1836,26 @@ func TestReviewProposeFindingsParsesValidStructuredBlock(t *testing.T) {
 	app, paths, runID, runPaths := setupPreparedReview(t, root, "passed")
 	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", reviewerStructuredOutput([]map[string]any{
 		{
-			"message":  "review output should stay behind proposal boundary",
-			"severity": "medium",
-			"category": "quality",
-			"file":     "internal/app/review.go",
-			"line":     42,
-			"blocking": true,
-			"evidence": "stdout proposal block",
+			"message":           "review output should stay behind proposal boundary",
+			"severity":          "medium",
+			"category":          "quality",
+			"file":              "internal/app/review.go",
+			"line":              42,
+			"blocking":          true,
+			"evidence":          "stdout proposal block",
+			"state":             "confirmed",
+			"trigger":           "always",
+			"fix_direction":     "remove the offending call",
+			"current_code_only": true,
 		},
 		{
-			"message":  "nonblocking process concern",
-			"severity": "low",
-			"category": "process",
+			"message":       "nonblocking process concern",
+			"severity":      "low",
+			"category":      "process",
+			"evidence":      "process pattern observed",
+			"state":         "candidate",
+			"trigger":       "always",
+			"fix_direction": "update the process docs",
 		},
 	}), true)
 
@@ -1874,10 +1882,16 @@ func TestReviewProposeFindingsSkipsInvalidProposals(t *testing.T) {
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
 	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", "```json\n{malformed\n```\n"+reviewerStructuredOutput([]map[string]any{
 		{
-			"message":  "valid proposal",
-			"severity": "high",
-			"category": "correctness",
-			"file":     "internal/app/review.go",
+			"message":           "valid proposal",
+			"severity":          "high",
+			"category":          "correctness",
+			"file":              "internal/app/review.go",
+			"evidence":          "concrete evidence",
+			"state":             "confirmed",
+			"trigger":           "always",
+			"fix_direction":     "remove the call",
+			"current_code_only": true,
+			"blocking":          true,
 		},
 		{
 			"message":  "invalid severity",
@@ -1911,40 +1925,66 @@ func TestReviewProposeFindingsSkipsInvalidProposals(t *testing.T) {
 }
 
 // TestReviewProposeFindingsRequiredFieldContract pins the required-field
-// rejection contract: message, severity, and category are required; absence
-// of any one rejects the finding with a warning. The optional fields (file,
-// line, blocking, confidence, evidence) are not required.
+// rejection contract: message, severity, category, state, trigger, evidence,
+// and fix_direction are all required. file, line, confidence, uncertainty,
+// and current_code_only are optional. blocking=true additionally requires
+// current_code_only=true.
 func TestReviewProposeFindingsRequiredFieldContract(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
 
-	// (a) All required fields present → accepted.
-	// (b) Missing message → rejected with warning.
-	// (c) Missing severity → rejected with warning.
-	// (d) Missing category → rejected with warning.
-	// (e) Optional fields absent → still accepted (only required fields matter).
+	// Minimal set of required fields shared by all accepted findings.
+	validBase := map[string]any{
+		"message":       "placeholder",
+		"severity":      "medium",
+		"category":      "quality",
+		"evidence":      "fixture evidence",
+		"state":         "confirmed",
+		"trigger":       "always",
+		"fix_direction": "describe the fix",
+	}
+	merge := func(base map[string]any, overrides map[string]any) map[string]any {
+		out := make(map[string]any, len(base)+len(overrides))
+		for k, v := range base {
+			out[k] = v
+		}
+		for k, v := range overrides {
+			out[k] = v
+		}
+		return out
+	}
+
 	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", reviewerStructuredOutput([]map[string]any{
 		// (a) valid — all required fields
-		{"message": "valid finding", "severity": "medium", "category": "quality"},
+		merge(validBase, map[string]any{"message": "valid finding"}),
 		// (b) missing message
-		{"severity": "medium", "category": "quality"},
+		{"severity": "medium", "category": "quality", "evidence": "e", "state": "confirmed", "trigger": "always", "fix_direction": "fix it"},
 		// (c) missing severity
-		{"message": "missing severity", "category": "quality"},
+		{"message": "missing severity", "category": "quality", "evidence": "e", "state": "confirmed", "trigger": "always", "fix_direction": "fix it"},
 		// (d) missing category
-		{"message": "missing category", "severity": "medium"},
-		// (e) optional fields absent — must still be accepted
-		{"message": "no optional fields", "severity": "low", "category": "correctness"},
-		// (e) optional fields present — also accepted
-		{
-			"message":    "all optional fields",
-			"severity":   "high",
-			"category":   "correctness",
-			"file":       "internal/app/review.go",
-			"line":       10,
-			"blocking":   true,
-			"confidence": "high",
-			"evidence":   "some evidence",
-		},
+		{"message": "missing category", "severity": "medium", "evidence": "e", "state": "confirmed", "trigger": "always", "fix_direction": "fix it"},
+		// (e) missing state → rejected
+		{"message": "missing state", "severity": "medium", "category": "quality", "evidence": "e", "trigger": "always", "fix_direction": "fix it"},
+		// (f) missing trigger → rejected
+		{"message": "missing trigger", "severity": "medium", "category": "quality", "evidence": "e", "state": "confirmed", "fix_direction": "fix it"},
+		// (g) missing evidence → rejected
+		{"message": "missing evidence", "severity": "medium", "category": "quality", "state": "confirmed", "trigger": "always", "fix_direction": "fix it"},
+		// (h) missing fix_direction → rejected
+		{"message": "missing fix_direction", "severity": "medium", "category": "quality", "evidence": "e", "state": "confirmed", "trigger": "always"},
+		// (i) optional fields absent → accepted (file, line, confidence, uncertainty, current_code_only)
+		merge(validBase, map[string]any{"message": "no optional fields", "severity": "low"}),
+		// (j) all optional fields present → also accepted (blocking=false so current_code_only need not be true)
+		merge(validBase, map[string]any{
+			"message":           "all optional fields",
+			"severity":          "high",
+			"category":          "correctness",
+			"file":              "internal/app/review.go",
+			"line":              10,
+			"blocking":          false,
+			"confidence":        "high",
+			"uncertainty":       "might miss edge case X",
+			"current_code_only": false,
+		}),
 	}), true)
 
 	var stdout, stderr bytes.Buffer
@@ -1955,9 +1995,9 @@ func TestReviewProposeFindingsRequiredFieldContract(t *testing.T) {
 	var response reviewProposeFindingsResponse
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
 
-	// Three findings accepted: (a), (e-no-optional), (e-all-optional).
+	// Three findings accepted: (a), (i), (j).
 	if len(response.Created) != 3 {
-		t.Fatalf("expected 3 accepted proposals (valid + 2 optional-field variants), got %d: %#v", len(response.Created), response.Created)
+		t.Fatalf("expected 3 accepted proposals, got %d: %#v", len(response.Created), response.Created)
 	}
 	messages := make([]string, len(response.Created))
 	for i, p := range response.Created {
@@ -1976,9 +2016,17 @@ func TestReviewProposeFindingsRequiredFieldContract(t *testing.T) {
 		}
 	}
 
-	// Three findings rejected (b, c, d) — each must produce a warning.
+	// Seven findings rejected — each produces a field-specific warning.
 	warnings := strings.Join(response.Warnings, "\n")
-	for _, want := range []string{"message is required", "severity must be", "category must be"} {
+	for _, want := range []string{
+		"message is required",
+		"severity must be",
+		"category must be",
+		"state must be candidate or confirmed",
+		"trigger is required",
+		"evidence is required",
+		"fix_direction is required",
+	} {
 		if !strings.Contains(warnings, want) {
 			t.Fatalf("warnings missing %q:\n%v", want, response.Warnings)
 		}
@@ -1989,10 +2037,10 @@ func TestReviewProposeFindingsUsesExplicitAttemptID(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
 	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", reviewerStructuredOutput([]map[string]any{
-		{"message": "first attempt", "severity": "medium", "category": "quality"},
+		{"message": "first attempt", "severity": "medium", "category": "quality", "evidence": "e", "state": "confirmed", "trigger": "always", "fix_direction": "fix it"},
 	}), true)
 	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_002", reviewerStructuredOutput([]map[string]any{
-		{"message": "second attempt", "severity": "medium", "category": "quality"},
+		{"message": "second attempt", "severity": "medium", "category": "quality", "evidence": "e", "state": "confirmed", "trigger": "always", "fix_direction": "fix it"},
 	}), true)
 
 	runReviewCommand(t, app, "review", "proposal", "collect", runID, "reviewer_attempt_001")
@@ -2006,10 +2054,10 @@ func TestReviewProposeFindingsUsesLatestCompletedAttempt(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
 	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", reviewerStructuredOutput([]map[string]any{
-		{"message": "completed attempt", "severity": "medium", "category": "quality"},
+		{"message": "completed attempt", "severity": "medium", "category": "quality", "evidence": "e", "state": "confirmed", "trigger": "always", "fix_direction": "fix it"},
 	}), true)
 	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_002", reviewerStructuredOutput([]map[string]any{
-		{"message": "incomplete attempt", "severity": "medium", "category": "quality"},
+		{"message": "incomplete attempt", "severity": "medium", "category": "quality", "evidence": "e", "state": "confirmed", "trigger": "always", "fix_direction": "fix it"},
 	}), false)
 
 	runReviewCommand(t, app, "review", "proposal", "collect", runID)
@@ -2273,11 +2321,14 @@ func TestReviewProposalArtifactsArePortable(t *testing.T) {
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
 	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", reviewerStructuredOutput([]map[string]any{
 		{
-			"message":  "path should be sanitized from " + root,
-			"severity": "medium",
-			"category": "quality",
-			"file":     "internal/app/review.go",
-			"evidence": "observed in " + root,
+			"message":       "path should be sanitized from " + root,
+			"severity":      "medium",
+			"category":      "quality",
+			"file":          "internal/app/review.go",
+			"evidence":      "observed in " + root,
+			"state":         "confirmed",
+			"trigger":       "file at " + root + "/internal/app/review.go",
+			"fix_direction": "fix at " + root,
 		},
 	}), true)
 
@@ -2338,7 +2389,8 @@ func TestReviewerPromptIncludesReviewMethodology(t *testing.T) {
 		prompt := renderReviewerPrompt("run_x", lens)
 		for _, want := range []string{
 			"## High-signal contract",
-			"If you are not certain an issue is real, do not flag it. False positives erode trust and waste reviewer time.",
+			"Report every issue you believe is likely real: use state=candidate for uncertain findings, state=confirmed for issues you are certain about after verification.",
+			"Do not drop a finding solely because you are uncertain — candidate state exists for that; drop only when you cannot fill trigger, evidence, and fix_direction concretely.",
 			"Report problems only. No positive observations, no praise.",
 			"- Do NOT flag:",
 			"Style or formatting preferences.",
@@ -2348,8 +2400,9 @@ func TestReviewerPromptIncludesReviewMethodology(t *testing.T) {
 			"## Review lens",
 			"## Verify before reporting",
 			"Read the actual code at the file and line, plus 20-30 surrounding lines.",
-			"Classify the candidate CONFIRMED or FALSE POSITIVE.",
-			"Report only CONFIRMED findings. Discard FALSE POSITIVE candidates.",
+			"Set state=\"confirmed\" only when you are certain the issue is real after verification.",
+			"Set state=\"candidate\" when you believe the issue is likely real but cannot fully verify from the available context; state uncertainty explicitly in the uncertainty field.",
+			"Drop a finding entirely only when you cannot fill trigger, evidence, and fix_direction with concrete content — do not drop findings solely because you are uncertain.",
 			"## Pre-existing issues",
 			"report them as non-blocking findings",
 			"Never mark a pre-existing issue blocking.",
@@ -2369,9 +2422,12 @@ func TestReviewerPromptIncludesReviewMethodology(t *testing.T) {
 			"If uncertain, recommend a blocking manual finding.",
 			"If uncertain, set blocking=true and explain uncertainty in evidence.",
 			"If uncertain, propose a blocking finding that asks for clarification.",
+			"Classify the candidate CONFIRMED or FALSE POSITIVE.",
+			"Report only CONFIRMED findings. Discard FALSE POSITIVE candidates.",
+			"If you are not certain an issue is real, do not flag it.",
 		} {
 			if strings.Contains(prompt, gone) {
-				t.Fatalf("reviewer prompt (%s) still contains %q, which contradicts certain-or-silent:\n%s", lens.Key, gone, prompt)
+				t.Fatalf("reviewer prompt (%s) still contains %q, which contradicts recall-first candidate reporting:\n%s", lens.Key, gone, prompt)
 			}
 		}
 	}
@@ -2411,18 +2467,21 @@ func TestReviewerPromptIsLensFocused(t *testing.T) {
 	}
 }
 
-// TestReviewerContextAlignsWithCertainOrSilent pins that the reviewer context
-// artifact (the prompt's first input) carries the same uncertainty rule as the
-// prompt — an "if uncertain, escalate" leftover there would contradict the
-// high-signal contract on every reviewer invocation.
-func TestReviewerContextAlignsWithCertainOrSilent(t *testing.T) {
+// TestReviewerContextAlignsWithRecallFirst pins that the reviewer context
+// artifact carries recall-first guidance consistent with the reviewer prompt —
+// a certain-or-silent leftover there would contradict the candidate-state model
+// on every reviewer invocation.
+func TestReviewerContextAlignsWithRecallFirst(t *testing.T) {
 	prep := reviewerDryRunPreparation{}
 	context := renderReviewerContext(prep)
 	if strings.Contains(context, "If uncertain, propose a blocking finding") {
-		t.Fatalf("reviewer context still escalates uncertainty, contradicting certain-or-silent:\n%s", context)
+		t.Fatalf("reviewer context still escalates uncertainty, contradicting recall-first:\n%s", context)
 	}
-	if !strings.Contains(context, "If you are not certain an issue is real after verification, do not flag it.") {
-		t.Fatalf("reviewer context missing the certain-or-silent rule:\n%s", context)
+	if strings.Contains(context, "If you are not certain an issue is real after verification, do not flag it.") {
+		t.Fatalf("reviewer context still has certain-or-silent rule, contradicting recall-first candidate reporting:\n%s", context)
+	}
+	if !strings.Contains(context, "state=candidate for uncertain findings") {
+		t.Fatalf("reviewer context missing recall-first candidate guidance:\n%s", context)
 	}
 }
 
@@ -2431,21 +2490,33 @@ func TestReviewProposeFindingsConfidenceDefaultsAndValidation(t *testing.T) {
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
 	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", reviewerStructuredOutput([]map[string]any{
 		{
-			"message":  "missing confidence defaults to medium",
-			"severity": "medium",
-			"category": "quality",
+			"message":       "missing confidence defaults to medium",
+			"severity":      "medium",
+			"category":      "quality",
+			"evidence":      "fixture evidence",
+			"state":         "confirmed",
+			"trigger":       "always",
+			"fix_direction": "fix it",
 		},
 		{
-			"message":    "valid confidence is recorded",
-			"severity":   "high",
-			"category":   "correctness",
-			"confidence": "low",
+			"message":       "valid confidence is recorded",
+			"severity":      "high",
+			"category":      "correctness",
+			"confidence":    "low",
+			"evidence":      "fixture evidence",
+			"state":         "confirmed",
+			"trigger":       "always",
+			"fix_direction": "fix it",
 		},
 		{
-			"message":    "invalid confidence is skipped",
-			"severity":   "medium",
-			"category":   "quality",
-			"confidence": "certain",
+			"message":       "invalid confidence is skipped",
+			"severity":      "medium",
+			"category":      "quality",
+			"confidence":    "certain",
+			"evidence":      "fixture evidence",
+			"state":         "confirmed",
+			"trigger":       "always",
+			"fix_direction": "fix it",
 		},
 	}), true)
 
@@ -2476,11 +2547,15 @@ func TestReviewShowDisplaysFindingConfidence(t *testing.T) {
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
 	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", reviewerStructuredOutput([]map[string]any{
 		{
-			"message":    "confidence travels to the finding",
-			"severity":   "medium",
-			"category":   "quality",
-			"file":       "internal/app/review.go",
-			"confidence": "high",
+			"message":       "confidence travels to the finding",
+			"severity":      "medium",
+			"category":      "quality",
+			"file":          "internal/app/review.go",
+			"confidence":    "high",
+			"evidence":      "fixture evidence",
+			"state":         "confirmed",
+			"trigger":       "always",
+			"fix_direction": "fix it",
 		},
 	}), true)
 	runReviewCommand(t, app, "review", "proposal", "collect", runID)
@@ -2498,6 +2573,51 @@ func TestReviewShowDisplaysFindingConfidence(t *testing.T) {
 	}
 	if got := stdout.String(); !strings.Contains(got, "confidence: high") {
 		t.Fatalf("review show should display finding confidence:\n%s", got)
+	}
+}
+
+func TestReviewAcceptProposalCarriesAntiFPFields(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")
+	writeReviewerAttemptForTest(t, runPaths, runID, "reviewer_attempt_001", reviewerStructuredOutput([]map[string]any{
+		{
+			"message":           "candidate finding with all anti-FP fields",
+			"severity":          "medium",
+			"category":          "quality",
+			"file":              "internal/app/review.go",
+			"line":              42,
+			"blocking":          false,
+			"confidence":        "medium",
+			"evidence":          "fixture evidence",
+			"state":             "candidate",
+			"trigger":           "when root contains a space",
+			"fix_direction":     "quote root before passing to sanitizeRepoRootInText",
+			"uncertainty":       "cannot confirm without a path with embedded spaces",
+			"current_code_only": true,
+		},
+	}), true)
+	runReviewCommand(t, app, "review", "proposal", "collect", runID)
+	runReviewCommand(t, app, "review", "proposal", "accept", runID, "p_001")
+
+	findings := readReviewFindings(t, runPaths.ReviewFindingsJSONL)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding after accept, got %d", len(findings))
+	}
+	f := findings[0]
+	if f.State != "candidate" {
+		t.Errorf("accepted finding should carry state=candidate, got %q", f.State)
+	}
+	if f.Trigger != "when root contains a space" {
+		t.Errorf("accepted finding should carry trigger, got %q", f.Trigger)
+	}
+	if f.FixDirection != "quote root before passing to sanitizeRepoRootInText" {
+		t.Errorf("accepted finding should carry fix_direction, got %q", f.FixDirection)
+	}
+	if f.Uncertainty != "cannot confirm without a path with embedded spaces" {
+		t.Errorf("accepted finding should carry uncertainty, got %q", f.Uncertainty)
+	}
+	if !f.CurrentCodeOnly {
+		t.Errorf("accepted finding should carry current_code_only=true")
 	}
 }
 

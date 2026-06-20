@@ -3,6 +3,7 @@ package app
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestResolveReviewerAttemptsForProposalsDefaultsToAllCompleted pins the
@@ -91,5 +92,108 @@ func TestExtractFencedJSONBlocksHandlesGluedOpener(t *testing.T) {
 	prose := "mentioning a ```json fence mid-sentence opens nothing"
 	if blocks = extractFencedJSONBlocks(prose); len(blocks) != 0 {
 		t.Fatalf("a mid-sentence fence mention must not open a block, got %#v", blocks)
+	}
+}
+
+// TestProposalRecordAntiFPFieldsCarryToRecord verifies that the five new
+// anti-FP fields (state, trigger, fix_direction, uncertainty, current_code_only)
+// are carried from the reviewer input to the returned reviewProposalRecord.
+func TestProposalRecordAntiFPFieldsCarryToRecord(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+	input := reviewerFindingProposalInput{
+		Message:         "the message",
+		Severity:        "medium",
+		Category:        "quality",
+		Evidence:        "concrete evidence",
+		State:           "candidate",
+		Trigger:         "when X calls Y",
+		FixDirection:    "inline the nil check",
+		Uncertainty:     "might not trigger in prod",
+		CurrentCodeOnly: boolPtr(false),
+	}
+	rec, warning := proposalRecordFromReviewerInput("/root", "run_001", "reviewer_attempt_001", 1, input, time.Time{})
+	if warning != "" {
+		t.Fatalf("unexpected rejection: %s", warning)
+	}
+	if rec.State != "candidate" {
+		t.Errorf("State: want %q, got %q", "candidate", rec.State)
+	}
+	if rec.Trigger != "when X calls Y" {
+		t.Errorf("Trigger: want %q, got %q", "when X calls Y", rec.Trigger)
+	}
+	if rec.FixDirection != "inline the nil check" {
+		t.Errorf("FixDirection: want %q, got %q", "inline the nil check", rec.FixDirection)
+	}
+	if rec.Uncertainty != "might not trigger in prod" {
+		t.Errorf("Uncertainty: want %q, got %q", "might not trigger in prod", rec.Uncertainty)
+	}
+	if rec.CurrentCodeOnly != false {
+		t.Errorf("CurrentCodeOnly: want false, got true")
+	}
+	if rec.Evidence != "concrete evidence" {
+		t.Errorf("Evidence: want %q, got %q", "concrete evidence", rec.Evidence)
+	}
+}
+
+// TestProposalRecordBlockingCurrentCodeOnlyConstraint pins the cross-field
+// rule: blocking=true requires current_code_only=true. blocking=false may
+// have current_code_only=false (pre-existing advisory finding).
+func TestProposalRecordBlockingCurrentCodeOnlyConstraint(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+	base := reviewerFindingProposalInput{
+		Message:      "blocker",
+		Severity:     "high",
+		Category:     "correctness",
+		Evidence:     "e",
+		State:        "confirmed",
+		Trigger:      "always",
+		FixDirection: "fix it",
+	}
+
+	// blocking=true + current_code_only=false → rejected.
+	bad := base
+	bad.Blocking = boolPtr(true)
+	bad.CurrentCodeOnly = boolPtr(false)
+	if _, w := proposalRecordFromReviewerInput("/root", "run_001", "att_001", 1, bad, time.Time{}); !strings.Contains(w, "blocking finding must have current_code_only=true") {
+		t.Errorf("expected rejection for blocking+!currentCodeOnly, got %q", w)
+	}
+
+	// blocking=true + current_code_only=true → accepted.
+	good := base
+	good.Blocking = boolPtr(true)
+	good.CurrentCodeOnly = boolPtr(true)
+	if _, w := proposalRecordFromReviewerInput("/root", "run_001", "att_001", 1, good, time.Time{}); w != "" {
+		t.Errorf("blocking+currentCodeOnly should be accepted, got %q", w)
+	}
+
+	// blocking=false + current_code_only=false → accepted (pre-existing advisory).
+	preExisting := base
+	preExisting.Blocking = boolPtr(false)
+	preExisting.CurrentCodeOnly = boolPtr(false)
+	if _, w := proposalRecordFromReviewerInput("/root", "run_001", "att_001", 1, preExisting, time.Time{}); w != "" {
+		t.Errorf("non-blocking pre-existing finding should be accepted, got %q", w)
+	}
+}
+
+// TestContractFindingFromInputToleratesAbsentAntiFPFields verifies that the
+// contract-review parsing path (contractFindingFromInput) accepts reviewer
+// output that omits the new anti-FP fields — it must not require state,
+// trigger, fix_direction, uncertainty, or current_code_only.
+func TestContractFindingFromInputToleratesAbsentAntiFPFields(t *testing.T) {
+	input := reviewerFindingProposalInput{
+		Message:  "potential deadlock",
+		Severity: "high",
+		Category: "correctness",
+		Evidence: "seen in loop at line 42",
+	}
+	finding := contractFindingFromInput("claude", "correctness", input)
+	if finding.Message != "potential deadlock" {
+		t.Errorf("Message: want %q, got %q", "potential deadlock", finding.Message)
+	}
+	if finding.Severity != "high" {
+		t.Errorf("Severity: want %q, got %q", "high", finding.Severity)
+	}
+	if finding.Reviewer != "claude" {
+		t.Errorf("Reviewer: want %q, got %q", "claude", finding.Reviewer)
 	}
 }
