@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -2467,4 +2468,36 @@ func nextReviewLoopHelperAttempt(sequenceFileEnv string) int {
 		os.Exit(2)
 	}
 	return next
+}
+
+func TestReviewLoopGitHeadReturnsTrimmedSHA(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := t.TempDir()
+	runGitForReviewLoop := func(args ...string) {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	runGitForReviewLoop("init")
+	runGitForReviewLoop("config", "user.email", "test@test.com")
+	runGitForReviewLoop("config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(root, "f.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitForReviewLoop("add", "f.txt")
+	runGitForReviewLoop("commit", "-m", "init")
+
+	got := reviewLoopGitHead(root)
+	if got == "unavailable" || got == "" {
+		t.Fatalf("reviewLoopGitHead = %q, want a commit SHA", got)
+	}
+	for _, c := range got {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			t.Fatalf("reviewLoopGitHead = %q contains non-hex character %q; output must be trimmed and a valid SHA", got, c)
+		}
+	}
 }
