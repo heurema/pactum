@@ -45,7 +45,8 @@ The flow (full detail in
 8. `pactum contract approve --by manual`
 9. `pactum prompt build` / `pactum prompt show` (a stale map is self-healed and
    the refresh recorded)
-10. `pactum execute plan --agent codex`
+10. `pactum execute plan --agent <agent>` (use the configured executor, or omit
+    `--agent` to take the default)
 11. report current run, relevant files, contract summary, plan command, next
     action
 
