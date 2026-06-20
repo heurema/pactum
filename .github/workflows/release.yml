@@ -3,7 +3,10 @@ name: Release
 # Tag a version to cut a release: `git tag v0.1.0-alpha.1 && git push origin v0.1.0-alpha.1`.
 # pactum links tree-sitter (CGO), so binaries are built on NATIVE runners per
 # platform (no cross-compilation), then archived with the docs + agent skill and
-# attached to a GitHub Release with checksums.
+# attached to a GitHub Release with checksums. Bare per-platform binaries
+# (pactum-<os>-<arch>) are also attached and their sha256s baked into the
+# @heurema/pactum npm package, which the `pactum` launcher downloads + verifies.
+# A v0.0.0-* tag is a smoke test: it builds + releases but only dry-runs npm publish.
 on:
   push:
     tags:
@@ -55,11 +58,16 @@ jobs:
           cp -R assets/agent-skills "staging/${DIST}/agent-skills"
           tar -C staging -czf "${DIST}.tar.gz" "${DIST}"
 
-      - name: Upload archive
+      - name: Bare binary (npm launcher download target)
+        run: cp bin/pactum "pactum-${{ matrix.goos }}-${{ matrix.goarch }}"
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: pactum_${{ matrix.goos }}_${{ matrix.goarch }}
-          path: "*.tar.gz"
+          path: |
+            *.tar.gz
+            pactum-${{ matrix.goos }}-${{ matrix.goarch }}
           retention-days: 1
 
   release:
@@ -77,7 +85,11 @@ jobs:
         run: |
           cd dist
           sha256sum *.tar.gz > checksums.txt
-          cat checksums.txt
+          # checksums.json maps each bare binary (the npm launcher's download
+          # target) to its sha256; baked into the npm package so the npm registry
+          # is the launcher's root of trust, not the GitHub Release.
+          sha256sum pactum-*-* | jq -Rn '[inputs | split("  ") | {(.[1]): .[0]}] | add' > checksums.json
+          cat checksums.txt checksums.json
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -85,6 +97,54 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/checksums.txt
+            dist/pactum-*-*
+            dist/checksums.json
           # Tags with a pre-release suffix (e.g. v0.1.0-alpha.1) publish as prereleases.
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
+
+  publish-npm:
+    name: publish npm package
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Assemble package (bake checksums + stamp version)
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          # Bake the bare-binary sha256s into the package the launcher reads.
+          ( cd dist && sha256sum pactum-*-* ) \
+            | jq -Rn '[inputs | split("  ") | {(.[1]): .[0]}] | add' > npm/checksums.json
+          # Stamp the real version over the 0.0.0 placeholder (matches the tag the
+          # launcher builds its download URL from).
+          node -e "const fs=require('fs'),p='npm/package.json',j=JSON.parse(fs.readFileSync(p));j.version='$VER';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
+          echo '--- npm/package.json ---'; cat npm/package.json
+          echo '--- npm/checksums.json ---'; cat npm/checksums.json
+          # Run the launcher's hermetic tests against the assembled package.
+          node --test npm/bin/pactum.test.mjs
+
+      - name: Publish to npm (dry-run for v0.0.0-* smoke tags)
+        if: ${{ startsWith(github.ref_name, 'v0.0.0') }}
+        working-directory: npm
+        run: npm publish --access public --dry-run
+
+      - name: Publish to npm
+        if: ${{ !startsWith(github.ref_name, 'v0.0.0') }}
+        working-directory: npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
