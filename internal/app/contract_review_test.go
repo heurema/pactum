@@ -58,6 +58,8 @@ func TestContractReviewHelperProcess(t *testing.T) {
 		cleanOnMarker := os.Getenv("PACTUM_CONTRACT_REVIEWER_CLEAN_ON_MARKER") == "1"
 		if cleanOnMarker && strings.Contains(string(stdin), "FIXED_MARKER") {
 			// Contract already fixed; emit no findings this round.
+		} else if os.Getenv("PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING_NO_IMPACT") == "1" {
+			fmt.Print(contractReviewerBlockingNoImpactOutput())
 		} else {
 			blocking := os.Getenv("PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING") == "1"
 			fmt.Print(contractReviewerStructuredFindingOutput(blocking))
@@ -120,19 +122,46 @@ func extractContractVersionFromPrompt(prompt string) string {
 	return "unknown-version"
 }
 
-// contractReviewerStructuredFindingOutput returns a reviewer findings JSON block.
-// When blocking is true the finding has blocking=true; otherwise blocking=false.
+// contractReviewerStructuredFindingOutput returns a reviewer findings JSON block
+// under contractReviewerResultSchema. When blocking is true the finding includes
+// material_impact (required for a finding to remain blocking after parsing).
 func contractReviewerStructuredFindingOutput(blocking bool) string {
+	finding := map[string]any{
+		"message":  "Acceptance criteria do not include machine-checkable validation commands.",
+		"severity": "high",
+		"category": "correctness",
+		"blocking": blocking,
+		"evidence": "validation.commands is empty; acceptance_criteria are prose-only.",
+		"state":    "candidate",
+	}
+	if blocking {
+		finding["material_impact"] = "Executor cannot verify completion: there is no machine-checkable acceptance gate."
+	}
 	block := map[string]any{
-		"schema": reviewerFindingsSchema,
+		"schema":   contractReviewerResultSchema,
+		"findings": []any{finding},
+	}
+	data, err := json.MarshalIndent(block, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	return "reviewer analysis\n```json\n" + string(data) + "\n```\n"
+}
+
+// contractReviewerBlockingNoImpactOutput returns a findings block with
+// blocking=true but no material_impact, exercising the downgrade path.
+func contractReviewerBlockingNoImpactOutput() string {
+	block := map[string]any{
+		"schema": contractReviewerResultSchema,
 		"findings": []any{
 			map[string]any{
-				"message":    "Acceptance criteria do not include machine-checkable validation commands.",
-				"severity":   "high",
-				"category":   "correctness",
-				"blocking":   blocking,
-				"confidence": "high",
-				"evidence":   "validation.commands is empty; acceptance_criteria are prose-only.",
+				"message":  "Wording of acceptance criterion could be tighter.",
+				"severity": "low",
+				"category": "quality",
+				"blocking": true,
+				"evidence": "acceptance_criteria[0] uses vague language.",
+				"state":    "candidate",
+				// No material_impact: triggers downgrade to advisory in the parser.
 			},
 		},
 	}
@@ -1035,6 +1064,70 @@ func TestContractReviewFindingsJSONLWrittenAtLoopEnd(t *testing.T) {
 		if l.Blocking {
 			t.Fatalf("findings.jsonl entry has unexpected blocking=true (no EMIT_BLOCKING set): %#v", l)
 		}
+		// state is always set by the helper (to "candidate"); verify it persists.
+		if l.State == "" {
+			t.Fatalf("findings.jsonl entry has empty state (state must be persisted): %#v", l)
+		}
+	}
+}
+
+// TestContractReviewFindingsJSONLNewFieldsPersisted verifies that material_impact,
+// fix_direction, uncertainty, and state are persisted to findings.jsonl for
+// blocking findings that carry those fields.
+func TestContractReviewFindingsJSONLNewFieldsPersisted(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	app = configureHelperContractReviewers(t, app, paths, "helper")
+	app = configureHelperContractFixer(t, app, paths)
+	setContractReviewMaxRoundsConfig(t, paths, 1)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING", "1")
+	// Fixer emits no revise block → max_rounds reached → blockers_open with blocking findings in JSONL.
+	t.Setenv("PACTUM_CONTRACT_FIXER_HELPER_PROCESS", "1")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "review", "run", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var response contractReviewLoopResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.TerminalReason != "blockers_open" {
+		t.Fatalf("expected terminal_reason=blockers_open, got %q", response.TerminalReason)
+	}
+
+	assertFile(t, runPaths.ContractReviewFindingsJSONL)
+	lines, err := readJSONLines[contractReviewFindingLine](runPaths.ContractReviewFindingsJSONL)
+	if err != nil {
+		t.Fatalf("cannot read findings.jsonl: %v", err)
+	}
+	if len(lines) == 0 {
+		t.Fatalf("findings.jsonl must have entries when blocking findings remain")
+	}
+	for _, l := range lines {
+		// state must be persisted for every finding.
+		if l.State == "" {
+			t.Fatalf("findings.jsonl entry has empty state: %#v", l)
+		}
+		// Blocking findings must carry material_impact (the helper always sets it when blocking=true).
+		if l.Blocking && l.MaterialImpact == "" {
+			t.Fatalf("blocking finding in findings.jsonl has empty material_impact: %#v", l)
+		}
+	}
+	// At least one blocking finding with material_impact must be present.
+	var sawBlockingWithImpact bool
+	for _, l := range lines {
+		if l.Blocking && l.MaterialImpact != "" {
+			sawBlockingWithImpact = true
+			break
+		}
+	}
+	if !sawBlockingWithImpact {
+		t.Fatalf("expected at least one blocking finding with material_impact in findings.jsonl, got: %#v", lines)
 	}
 }
 
@@ -1124,6 +1217,142 @@ func TestContractApproveGuardFailClosed(t *testing.T) {
 			t.Fatalf("error message should mention blocking: %s", got)
 		}
 	})
+}
+
+// TestContractReviewerPromptContainsContractSchema verifies that the rendered
+// contract reviewer prompt uses contractReviewerResultSchema (not the shared
+// code-review schema) in its sample JSON output block, and that the precision
+// discipline rule text is present.
+func TestContractReviewerPromptContainsContractSchema(t *testing.T) {
+	contract := draftContract{Goal: "test goal"}
+	ruleChecks := []struct {
+		name    string
+		wantStr string
+	}{
+		{"hard-rule blocking", "HARD RULE: blocking=true is allowed ONLY"},
+		{"wording advisory rule", "Wording, style, naming, redundancy"},
+		{"material_impact required", "Every blocking finding MUST include a concrete material_impact"},
+		{"advisory-when-no-impact rule", "If you cannot state a concrete material_impact, mark the finding blocking=false"},
+		{"recall-first framing", "recall-first"},
+		{"state=candidate framing", "state=candidate with explicit uncertainty"},
+	}
+	for _, lens := range contractReviewLenses {
+		prompt := renderContractReviewerPrompt(contract, lens)
+		if !strings.Contains(prompt, contractReviewerResultSchema) {
+			t.Errorf("lens %s: prompt does not contain %q", lens.Key, contractReviewerResultSchema)
+		}
+		if strings.Contains(prompt, "reviewer_findings.v1alpha1") {
+			t.Errorf("lens %s: prompt contains code-review schema string, expected contract-local schema only", lens.Key)
+		}
+		for _, rc := range ruleChecks {
+			if !strings.Contains(prompt, rc.wantStr) {
+				t.Errorf("lens %s: prompt missing rule text (%s): %q", lens.Key, rc.name, rc.wantStr)
+			}
+		}
+	}
+}
+
+// TestContractReviewDowngradesBlockingWithoutMaterialImpact verifies that a
+// finding parsed with blocking=true and empty material_impact is downgraded to
+// advisory (blocking=false), a warning is recorded, no fixer is invoked, and
+// the loop resolves cleanly (terminal_reason=resolved).
+func TestContractReviewDowngradesBlockingWithoutMaterialImpact(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	app = configureHelperContractReviewers(t, app, paths, "helper")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING_NO_IMPACT", "1")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "review", "run", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	var response contractReviewLoopResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+
+	// All blocking findings lack material_impact → downgraded to advisory → resolved.
+	if response.TerminalReason != "resolved" {
+		t.Fatalf("expected terminal_reason=resolved (blocking downgraded to advisory), got %q\nfull response: %s", response.TerminalReason, stdout.String())
+	}
+	if len(response.Rounds) == 0 {
+		t.Fatalf("expected at least one round")
+	}
+	round := response.Rounds[0]
+
+	if round.BlockingFindings != 0 {
+		t.Fatalf("blocking_findings must be 0 after downgrade, got %d", round.BlockingFindings)
+	}
+	if round.FixerAttemptID != "" {
+		t.Fatalf("fixer must not be invoked when all blocking findings are downgraded, got fixer_attempt_id=%q", round.FixerAttemptID)
+	}
+
+	// The downgrade warning must appear in round warnings.
+	hasDowngradeWarning := false
+	for _, w := range round.Warnings {
+		if strings.Contains(w, "downgraded") && strings.Contains(w, "material_impact") {
+			hasDowngradeWarning = true
+			break
+		}
+	}
+	if !hasDowngradeWarning {
+		t.Fatalf("expected downgrade warning in round warnings, got: %v", round.Warnings)
+	}
+
+	// All findings are advisory after downgrade.
+	for _, f := range round.Findings {
+		if f.Blocking {
+			t.Fatalf("finding must be non-blocking after downgrade: %#v", f)
+		}
+	}
+}
+
+// TestContractReviewFindingNewFieldPropagation verifies that material_impact,
+// fix_direction, uncertainty, and state are propagated from reviewer output to
+// the parsed contractReviewFinding, and that a blank/unrecognized state defaults
+// to "candidate".
+func TestContractReviewFindingNewFieldPropagation(t *testing.T) {
+	input := contractReviewerFindingInput{
+		Message:        "Missing validation command.",
+		Severity:       "high",
+		Category:       "validation",
+		Blocking:       func() *bool { b := true; return &b }(),
+		Evidence:       "validation.commands is empty.",
+		MaterialImpact: "Gate cannot verify the implementation.",
+		FixDirection:   "Add a runnable validation command.",
+		Uncertainty:    "Might be present elsewhere.",
+		State:          "confirmed",
+	}
+	f := contractFindingFromInput("reviewer", "testability", input)
+	if f.MaterialImpact != "Gate cannot verify the implementation." {
+		t.Errorf("material_impact not propagated: %q", f.MaterialImpact)
+	}
+	if f.FixDirection != "Add a runnable validation command." {
+		t.Errorf("fix_direction not propagated: %q", f.FixDirection)
+	}
+	if f.Uncertainty != "Might be present elsewhere." {
+		t.Errorf("uncertainty not propagated: %q", f.Uncertainty)
+	}
+	if f.State != "confirmed" {
+		t.Errorf("state not propagated: %q", f.State)
+	}
+
+	// Blank state defaults to "candidate".
+	input.State = ""
+	f2 := contractFindingFromInput("reviewer", "testability", input)
+	if f2.State != "candidate" {
+		t.Errorf("blank state must default to candidate, got %q", f2.State)
+	}
+
+	// Unrecognized state defaults to "candidate".
+	input.State = "unknown-value"
+	f3 := contractFindingFromInput("reviewer", "testability", input)
+	if f3.State != "candidate" {
+		t.Errorf("unrecognized state must default to candidate, got %q", f3.State)
+	}
 }
 
 func fileExists(t *testing.T, path string) bool {
