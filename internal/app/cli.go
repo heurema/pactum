@@ -15,6 +15,7 @@ type cli struct {
 	Prompt   promptCmd   `cmd:"" help:"Build and inspect executor prompt boundaries."`
 	Review   reviewCmd   `cmd:"" help:"Manage manual review artifacts."`
 	Search   searchCmd   `cmd:"" help:"Search the Pactum project map."`
+	Skill    skillCmd    `cmd:"" help:"Install and verify the Pactum agent skill package."`
 	Status   statusCmd   `cmd:"" help:"Print Pactum workspace status."`
 	Task     taskCmd     `cmd:"" help:"Create and manage contract-first runs."`
 	Usage    usageCmd    `cmd:"" help:"Print token usage for a run."`
@@ -363,5 +364,16 @@ type searchCmd struct {
 	Limit      int    `help:"Maximum number of results." default:"10"`
 	Kind       string `help:"Document kind filter." default:"any" enum:"any,repo_map,llms,wiki,file,code_item,import"`
 	Symbol     string `name:"symbol" help:"Restrict to code_item hits whose symbol name matches exactly (case-insensitive)."`
+	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
+}
+
+type skillCmd struct {
+	Install skillInstallCmd `cmd:"" help:"Install the embedded Pactum skill package for a coding agent."`
+}
+
+type skillInstallCmd struct {
+	Agent      string `name:"agent" default:"auto" enum:"claude,codex,auto,all" help:"Target agent: claude, codex, auto (detect), or all."`
+	Scope      string `name:"scope" default:"repo" enum:"user,repo" help:"Install scope: repo (.<agent>/skills) or user ($HOME/.<agent>/skills)."`
+	Check      bool   `name:"check" help:"Verify the skill is installed without writing files."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
