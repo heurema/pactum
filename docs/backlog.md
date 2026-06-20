@@ -957,7 +957,56 @@ re-exploration the map could have served vs genuinely-needed file content.
   gate's `make check` passed (gofmt not in it) yet CI's `check` *failed* on it,
   forcing a follow-up format commit. So an executor's output can clear the local
   gate but fail CI — the gate should run `gofmt -l` so unformatted-but-otherwise-
-  correct output is caught before it reaches CI.
+  correct output is caught before it reaches CI. **Reproduced AGAIN in #214** (the
+  skill-install slice): the fixer left `internal/app/skill.go` with const-block
+  misalignment; the local gate's `make check` was green, CI's `check` failed on
+  `gofmt`, forcing a `gofmt -w` amend + re-push. Third live hit — this is now a
+  recurring alpha tax on every dogfood slice that adds Go; pull the one-line gate
+  fix forward.
+
+- **Alpha follow-ups surfaced in the #213/#214 dogfood window** (assorted; the
+  contract-review-operator-resolve slice #213 and the skill-install slice #214):
+  - **#213 BREAKING CLI grammar — `contract review <id>` → `contract review run
+    <id>`** (small, P1 — verify before alpha). #213 restructured `contract
+    review` into a command GROUP (`contract review run` + `contract review
+    finding resolve`), so the bare `contract review <id>` form now errors
+    (`unexpected argument`). This bit us live mid-#213 (an "unexpected argument"
+    on the old form). Audit that every downstream surface uses the new form: the
+    `next` affordances, `error.fix` remedies, `docs/`, and especially
+    `assets/agent-skills/pactum/SKILL.md` + `references/workflow.md` — a stale
+    `contract review <id>` in the skill is an alpha bug (the agent runs a command
+    that hard-errors). Grep the repo for the bare form.
+  - **De-hardcode `--agent codex` from the lifecycle `next` affordance + human
+    output** (small, P1 — cross-agent honesty). Surfaced by skill-slice #214's
+    two non-blocking advisory findings (f_005/f_007): the SKILL.md was correctly
+    de-hardcoded to `<agent>`, but pactum's own machine/human surfaces still
+    emit `pactum execute plan <run> --agent codex` literally — `errors.go:87`,
+    `resolve.go:282` (the `next` arrays) and `prompt.go:563` (human output). So a
+    next-driven CLAUDE workflow is still steered to `--agent codex`, contradicting
+    the cross-agent guidance. Fix: have these surfaces use the configured executor
+    (first `pipeline.execute.by` entry / resolved default) instead of a hardcoded
+    `codex`, or a neutral `<agent>` placeholder in human text. Pre-existing, not a
+    #214 regression — out of scope there, filed here.
+  - **Transient contract-review codex post-round stall** (small — resilience
+    observation). Twice now the contract-review/code-review loop has hung AFTER a
+    reviewer round finished (`reviewer_attempt_finished` emitted, then no progress
+    for 5+ min, ~0%-CPU stale codex procs) — a transient ACP/codex hang, cleared
+    by kill + re-run (the wall-clock cap #209 should also catch it). Not yet a
+    reproducible bug; if it recurs, capture the hung proc's state before killing.
+    Relatedly: the orphaned `app.test` helper procs that pin a core at ~98% CPU
+    for days (seen Jun 10–11, killed Jun 20) suggest the test/agent teardown path
+    leaks children on some timeout/kill paths — worth a look.
+  - **Contract-review reviewer-prompt "no nitpicks" calibration** (med — the
+    deferred sibling (a) of #213's operator-resolve (b)). #213 gave contract-review
+    the operator finding-resolution escape hatch for over-flagged blockers, but the
+    root cause — the contract-review panel raising precision/wording refinements as
+    *blocking* — is unaddressed. Prompt-only slice (NO schema change): a categorical
+    definition of blocking (the contract is genuinely *unexecutable* OR *ungatable*,
+    with concrete sub-cases), and a few-shot block including an example classified
+    NON-blocking, calibrated so BOTH the opus and codex panel members hold the line
+    without going too lenient and missing a real blocker. Keep stores/commands
+    untouched; this only changes the reviewer prompt. (Was explicitly carved OUT of
+    #213's scope.)
 
 - **Config + usage polish slice** (M25.1, shipped; one combined contract):
   (1) **Hid the unfinished budget surface.** `review.budget`
