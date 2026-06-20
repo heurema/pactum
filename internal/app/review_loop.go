@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/heurema/pactum/internal/agents"
+	"github.com/heurema/pactum/internal/gitctx"
 	"github.com/heurema/pactum/internal/ledger"
 	"github.com/heurema/pactum/internal/loop"
 )
@@ -1321,8 +1321,7 @@ func reviewLoopHashFingerprintFile(hasher io.Writer, root string, kind string, r
 }
 
 func reviewLoopGitHead(root string) string {
-	cmd := exec.Command("git", "-C", root, "rev-parse", "--verify", "HEAD")
-	output, err := cmd.Output()
+	output, err := gitctx.Run(stdctx.Background(), root, "rev-parse", "--verify", "HEAD")
 	if err != nil {
 		return "unavailable"
 	}

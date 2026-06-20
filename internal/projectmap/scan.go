@@ -1,18 +1,19 @@
 package projectmap
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/heurema/pactum/internal/codeindex"
+	"github.com/heurema/pactum/internal/gitctx"
 )
 
 type ScanOptions struct {
@@ -277,8 +278,7 @@ func (scan *scanBuilder) finish() ScanResult {
 }
 
 func gitCandidateFiles(root string) ([]string, bool) {
-	command := exec.Command("git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
-	output, err := command.Output()
+	output, err := gitctx.Run(context.Background(), root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 	if err != nil {
 		return nil, false
 	}
