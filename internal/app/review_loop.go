@@ -29,12 +29,15 @@ const (
 // sentinel errors returned by the Step closure to signal early-exit conditions;
 // loop.Run propagates them verbatim so the call site can detect them with errors.Is.
 var (
-	errFindingsOpen     = errors.New("findings_open")
-	errReviewerUnparsed = errors.New("reviewer_findings_unparsed")
-	errGateFailed       = errors.New("gate_failed")
-	errResolved         = errors.New("resolved")
-	errBlockersOpen     = errors.New("blockers_open")
-	errFixerNoProgress  = errors.New("fixer_no_progress")
+	errFindingsOpen           = errors.New("findings_open")
+	errReviewerUnparsed       = errors.New("reviewer_findings_unparsed")
+	errGateFailed             = errors.New("gate_failed")
+	errResolved               = errors.New("resolved")
+	errBlockersOpen           = errors.New("blockers_open")
+	errFixerNoProgress        = errors.New("fixer_no_progress")
+	errPrecisionRejected      = errors.New("precision_rejected")
+	errDebateNoConsensus      = errors.New("debate_no_consensus")
+	errCriticVerdictsUnparsed = errors.New("critic_verdicts_unparsed")
 )
 
 type reviewRunOptions struct {
@@ -99,6 +102,13 @@ type reviewLoopRoundSummary struct {
 	FixOutcomesBlocked         int                     `json:"fix_outcomes_blocked,omitempty"`
 	GateStatus                 string                  `json:"gate_status,omitempty"`
 	GateReportArtifact         string                  `json:"gate_report_artifact,omitempty"`
+	CriticAttemptID            string                  `json:"critic_attempt_id,omitempty"`
+	CriticCorrectiveAttemptID  string                  `json:"critic_corrective_attempt_id,omitempty"`
+	PrecisionCandidates        int                     `json:"precision_candidates"`
+	PrecisionConfirmed         int                     `json:"precision_confirmed"`
+	PrecisionRejected          int                     `json:"precision_rejected"`
+	PrecisionUnresolved        int                     `json:"precision_unresolved"`
+	CriticVerdictsArtifact     string                  `json:"critic_verdicts_artifact,omitempty"`
 }
 
 // reviewLoopReviewer is one resolved panel member: the registry name it was
@@ -185,6 +195,10 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 	if err != nil {
 		return err
 	}
+	critic, sameCriticEngineWarning, err := a.resolveCriticAgent(context, reviewConfig, reviewers)
+	if err != nil {
+		return err
+	}
 	reviewerNames := reviewLoopReviewerNames(reviewers)
 
 	startedAt := a.nowUTC()
@@ -212,6 +226,7 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 	unchangedFingerprintStreak := 0
 	noProgressStreak := 0
 	var prevBlockerKeys map[string]bool
+	criticEngineWarningEmitted := false
 
 	step := func(_ stdctx.Context, rc loop.RoundContext) (loop.RoundResult, error) {
 		round := rc.Round
@@ -262,6 +277,21 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 		if err != nil {
 			return loop.RoundResult{}, err
 		}
+
+		// Dedup proposals: cross-batch against existing open/rebutted findings, and
+		// intra-batch via batchSeen so the first occurrence of a fingerprint wins.
+		//
+		// Cross-batch duplicates are recorded immediately (the findingID is already known).
+		// Intra-batch duplicates are deferred until after the accept loop: the "winner"
+		// proposal's findingID is only known once the critic confirms and accepts it.
+		type deferredIntraBatchDup struct {
+			proposalID  string
+			fingerprint reviewFindingFingerprint
+			proposal    reviewProposalRecord
+		}
+		batchSeen := make(map[reviewFindingFingerprint]bool)
+		var nonDuplicates []reviewProposalRecord
+		var intraBatchDups []deferredIntraBatchDup
 		accepted := 0
 		duplicates := 0
 		for _, proposal := range proposals.Created {
@@ -287,12 +317,149 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 				duplicates++
 				continue
 			}
-			finding, err := a.acceptReviewLoopProposal(context, proposal.ID)
+			if batchSeen[fingerprint] {
+				// Defer recording: the winning proposal for this fingerprint may not be
+				// accepted yet (pending critic). Record after the accept loop so we can
+				// reference the correct finding ID and maintain accepted-before-dup order.
+				intraBatchDups = append(intraBatchDups, deferredIntraBatchDup{proposalID: proposal.ID, fingerprint: fingerprint, proposal: proposal})
+				duplicates++
+				continue
+			}
+			batchSeen[fingerprint] = true
+			nonDuplicates = append(nonDuplicates, proposal)
+		}
+
+		// Partial roundSummary — fields that depend on post-accept state are filled below.
+		roundSummary := reviewLoopRoundSummary{
+			Round:             round,
+			ReviewerAttemptID: firstString(reviewerResult.AttemptIDs),
+			ProposalsCreated:  len(proposals.Created),
+			Warnings:          append([]string{}, proposals.Warnings...),
+			SkippedLenses:     append([]reviewLoopSkippedLens{}, reviewerResult.SkippedLenses...),
+		}
+		if len(reviewerResult.AttemptIDs) > 1 {
+			roundSummary.ReviewerAttemptIDs = append([]string{}, reviewerResult.AttemptIDs...)
+		}
+		roundSummary.ReviewerAttempts = append([]reviewLoopAttemptRef{}, reviewerResult.Attempts...)
+
+		// Critic pass: only when there are non-duplicate proposals to evaluate.
+		if len(nonDuplicates) > 0 {
+			if sameCriticEngineWarning != "" && !criticEngineWarningEmitted {
+				roundSummary.Warnings = append(roundSummary.Warnings, sameCriticEngineWarning)
+				criticEngineWarningEmitted = true
+			}
+			criticResult, err := a.runReviewCriticPass(context, liveOutput, runID, round, critic, nonDuplicates, options.Timeout, wallClockCap)
 			if err != nil {
+				summary.Rounds = append(summary.Rounds, roundSummary)
 				return loop.RoundResult{}, err
 			}
-			openFindings[fingerprint] = finding
-			accepted++
+			roundSummary.CriticAttemptID = criticResult.InitialAttemptID
+			roundSummary.CriticCorrectiveAttemptID = criticResult.CorrectiveAttemptID
+			roundSummary.PrecisionCandidates = criticResult.Candidates
+			roundSummary.PrecisionConfirmed = criticResult.Confirmed
+			roundSummary.PrecisionRejected = criticResult.Disputed
+			roundSummary.PrecisionUnresolved = criticResult.Unresolved
+			roundSummary.CriticVerdictsArtifact = criticResult.VerdictArtifactPath
+			roundSummary.Warnings = append(roundSummary.Warnings, criticResult.Warnings...)
+
+			if criticResult.ParseFailed {
+				// Precedence: critic_verdicts_unparsed blocks approval; ensure OpenBlockingCount >= 1.
+				preSummary, _ := reviewLoopReviewSummary(context.RunPaths)
+				roundSummary.OpenFindings = preSummary.Open
+				roundSummary.OpenBlockingFindings = preSummary.BlockingOpen
+				openBlockingCount := preSummary.BlockingOpen
+				if openBlockingCount < 1 {
+					openBlockingCount = 1
+				}
+				summary.OpenBlockingCount = openBlockingCount
+				summary.Rounds = append(summary.Rounds, roundSummary)
+				return loop.RoundResult{}, errCriticVerdictsUnparsed
+			}
+
+			// Pre-accept summary: reflects blocking state from prior rounds only,
+			// used to determine whether critic terminal reasons apply.
+			preAcceptSummary, err := reviewLoopReviewSummary(context.RunPaths)
+			if err != nil {
+				summary.Rounds = append(summary.Rounds, roundSummary)
+				return loop.RoundResult{}, err
+			}
+
+			// Classify blocking non-duplicate proposals by critic verdict.
+			hasBlockingInsufficient := false
+			hasBlockingDisputed := false
+			hasBlockingConfirmed := false
+			for _, proposal := range nonDuplicates {
+				if !proposal.Blocking {
+					continue
+				}
+				v := criticResult.Verdicts[proposal.ID]
+				switch v.Verdict {
+				case reviewCriticVerdictConfirmed:
+					hasBlockingConfirmed = true
+				case reviewCriticVerdictDisputed:
+					hasBlockingDisputed = true
+				default:
+					hasBlockingInsufficient = true
+				}
+			}
+
+			// Terminal reason checks — only when no prior open blocking findings exist.
+			// Precedence: debate_no_consensus > precision_rejected.
+			if preAcceptSummary.BlockingOpen == 0 {
+				if hasBlockingInsufficient && !hasBlockingConfirmed {
+					roundSummary.OpenFindings = preAcceptSummary.Open
+					roundSummary.OpenBlockingFindings = 0
+					summary.OpenBlockingCount = 1
+					summary.Rounds = append(summary.Rounds, roundSummary)
+					return loop.RoundResult{}, errDebateNoConsensus
+				}
+				if hasBlockingDisputed && !hasBlockingConfirmed {
+					// All blocking candidates disputed, none confirmed — approvable.
+					roundSummary.OpenFindings = preAcceptSummary.Open
+					roundSummary.OpenBlockingFindings = 0
+					summary.Rounds = append(summary.Rounds, roundSummary)
+					return loop.RoundResult{}, errPrecisionRejected
+				}
+			}
+
+			// Accept only critic-confirmed proposals.
+			for _, proposal := range nonDuplicates {
+				v := criticResult.Verdicts[proposal.ID]
+				if v.Verdict != reviewCriticVerdictConfirmed {
+					continue
+				}
+				finding, err := a.acceptReviewLoopProposal(context, proposal.ID)
+				if err != nil {
+					summary.Rounds = append(summary.Rounds, roundSummary)
+					return loop.RoundResult{}, err
+				}
+				fingerprint := fingerprintReviewFinding(proposal.findingCore)
+				openFindings[fingerprint] = finding
+				accepted++
+			}
+		}
+
+		// Write deferred intra-batch duplicate decisions now that openFindings is
+		// populated with any findings accepted this round. This preserves the
+		// accepted-before-duplicate decision ordering that tests rely on.
+		// Also apply severity upgrades here for the same reason: in the old single-pass
+		// loop the winner was accepted before the duplicate was processed, so openFindings
+		// had the finding available for upgrade. We replicate that by doing it here.
+		for _, dup := range intraBatchDups {
+			findingID := ""
+			if existingFinding, ok := openFindings[dup.fingerprint]; ok {
+				findingID = existingFinding.ID
+				upgradedFinding, upgraded, err := a.upgradeDuplicateReviewFindingSeverity(context, existingFinding, dup.proposal)
+				if err != nil {
+					return loop.RoundResult{}, err
+				}
+				if upgraded {
+					openFindings[dup.fingerprint] = upgradedFinding
+				}
+			}
+			if err := a.recordDuplicateReviewLoopProposal(context, dup.proposalID, findingID, "matches earlier proposal in same batch"); err != nil {
+				return loop.RoundResult{}, err
+			}
 		}
 
 		reviewSummaryAfterAccept, err := reviewLoopReviewSummary(context.RunPaths)
@@ -300,23 +467,14 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 			return loop.RoundResult{}, err
 		}
 
-		roundSummary := reviewLoopRoundSummary{
-			Round:                round,
-			ReviewerAttemptID:    firstString(reviewerResult.AttemptIDs),
-			ProposalsCreated:     len(proposals.Created),
-			ProposalsAccepted:    accepted,
-			OpenFindings:         reviewSummaryAfterAccept.Open,
-			OpenBlockingFindings: reviewSummaryAfterAccept.BlockingOpen,
-			Warnings:             append([]string{}, proposals.Warnings...),
-			SkippedLenses:        append([]reviewLoopSkippedLens{}, reviewerResult.SkippedLenses...),
-		}
-		if len(reviewerResult.AttemptIDs) > 1 {
-			roundSummary.ReviewerAttemptIDs = append([]string{}, reviewerResult.AttemptIDs...)
-		}
-		roundSummary.ReviewerAttempts = append([]reviewLoopAttemptRef{}, reviewerResult.Attempts...)
+		roundSummary.ProposalsAccepted = accepted
+		roundSummary.OpenFindings = reviewSummaryAfterAccept.Open
+		roundSummary.OpenBlockingFindings = reviewSummaryAfterAccept.BlockingOpen
 
-		// Path (3) and (4): proposals.Created == 0 (accepted == 0 && duplicates == 0 by invariant)
-		if accepted == 0 && duplicates == 0 {
+		// Path (3) and (4): no proposals from reviewer AND no critic-filtered proposals.
+		// len(nonDuplicates) == 0 guards against the case where the critic filtered all
+		// non-duplicate proposals — that round is NOT a clean round (criterion 22).
+		if accepted == 0 && duplicates == 0 && len(nonDuplicates) == 0 {
 			if len(proposals.Warnings) == 0 && reviewSummaryAfterAccept.BlockingOpen == 0 {
 				// Path (4): clean round — no proposals, no warnings, no parse-miss, and no
 				// open blocking findings from prior rounds.
@@ -497,6 +655,16 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 		loopErr = nil
 	case errors.Is(loopErr, errFixerNoProgress):
 		summary.TerminalReason = "fixer_no_progress"
+		loopErr = nil
+	case errors.Is(loopErr, errCriticVerdictsUnparsed):
+		summary.TerminalReason = "critic_verdicts_unparsed"
+		loopErr = nil
+	case errors.Is(loopErr, errDebateNoConsensus):
+		summary.TerminalReason = "debate_no_consensus"
+		summary.OpenBlockingCount = 1
+		loopErr = nil
+	case errors.Is(loopErr, errPrecisionRejected):
+		summary.TerminalReason = "precision_rejected"
 		loopErr = nil
 	case loopErr == nil:
 		switch outcome.Reason {
@@ -1338,7 +1506,8 @@ func writeReviewLoopSummary(stdout io.Writer, summary reviewLoopSummaryDocument)
 	fmt.Fprintln(stdout, "Run:")
 	fmt.Fprintf(stdout, "  id: %s\n", summary.RunID)
 	fmt.Fprintf(stdout, "  terminal reason: %s\n", summary.TerminalReason)
-	if summary.TerminalReason == "blockers_open" || summary.TerminalReason == "fixer_no_progress" {
+	if summary.TerminalReason == "blockers_open" || summary.TerminalReason == "fixer_no_progress" ||
+		summary.TerminalReason == "critic_verdicts_unparsed" || summary.TerminalReason == "debate_no_consensus" {
 		fmt.Fprintf(stdout, "  %d open blocking findings remain\n", summary.OpenBlockingCount)
 	}
 	fmt.Fprintf(stdout, "  rounds: %d/%d\n", len(summary.Rounds), summary.MaxRounds)
