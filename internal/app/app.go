@@ -206,7 +206,6 @@ func writeWorkspaceStatus(stdout io.Writer, report statusResponse) {
 	fmt.Fprintf(stdout, "  status: %s\n", report.ProjectMap.Status)
 	fmt.Fprintf(stdout, "  run: %s\n", report.ProjectMap.RunID)
 	fmt.Fprintf(stdout, "  files indexed: %d\n", report.ProjectMap.FilesIndexed)
-	fmt.Fprintf(stdout, "  code items: %d\n", report.ProjectMap.CodeItems)
 	fmt.Fprintf(stdout, "  search index: %s\n", report.ProjectMap.SearchIndex)
 	if len(report.ProjectMap.StaleReasons) > 0 {
 		fmt.Fprintln(stdout)
@@ -248,18 +247,11 @@ func writeWorkspaceStatus(stdout io.Writer, report statusResponse) {
 }
 
 func (a App) Search(stdout io.Writer, query string, limit int, kind string, symbol string, jsonOutput bool) error {
-	symbol = strings.TrimSpace(symbol)
-	if symbol != "" {
-		normalizedKind, err := searchpkg.NormalizeKind(kind)
-		if err != nil {
-			return err
-		}
-		if normalizedKind != searchpkg.KindAny && normalizedKind != searchpkg.KindCodeItem {
-			return fmt.Errorf("--symbol only applies to code_item results; drop --kind %s", normalizedKind)
-		}
+	if strings.TrimSpace(symbol) != "" {
+		return errors.New("--symbol is no longer supported; tree-sitter symbol extraction was removed")
 	}
-	if strings.TrimSpace(query) == "" && symbol == "" {
-		return errors.New("usage: pactum search <query>, or pactum search --symbol <name>")
+	if strings.TrimSpace(query) == "" {
+		return errors.New("usage: pactum search <query>")
 	}
 
 	_, paths, ok, err := a.requireWorkspace(stdout, false)
@@ -268,10 +260,9 @@ func (a App) Search(stdout io.Writer, query string, limit int, kind string, symb
 	}
 
 	response, err := searchpkg.Query(paths.SearchSQLite, searchpkg.QueryOptions{
-		Query:  query,
-		Limit:  limit,
-		Kind:   kind,
-		Symbol: symbol,
+		Query: query,
+		Limit: limit,
+		Kind:  kind,
 	})
 	if err != nil {
 		if searchpkg.IsMissingIndex(err) {
@@ -316,15 +307,6 @@ func writeSearchResults(stdout io.Writer, response searchpkg.Response) {
 	for _, result := range response.Results {
 		fmt.Fprintf(stdout, "%d. %s %s\n", result.Rank, result.Kind, result.Address())
 		switch result.Kind {
-		case searchpkg.KindCodeItem, searchpkg.KindImport:
-			fmt.Fprintf(stdout, "   kind: %s\n", result.CodeKind)
-			fmt.Fprintf(stdout, "   name: %s\n", result.Title)
-			if result.Language != "" {
-				fmt.Fprintf(stdout, "   language: %s\n", result.Language)
-			}
-			if result.Signature != "" {
-				fmt.Fprintf(stdout, "   signature: %s\n", result.Signature)
-			}
 		case searchpkg.KindFile:
 			if result.Language != "" {
 				fmt.Fprintf(stdout, "   language: %s\n", result.Language)

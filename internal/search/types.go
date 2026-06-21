@@ -9,28 +9,23 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/heurema/pactum/internal/codeindex"
 	"github.com/heurema/pactum/internal/projectmap"
 )
 
 const (
-	KindAny      = "any"
-	KindRepoMap  = "repo_map"
-	KindLLMS     = "llms"
-	KindWiki     = "wiki"
-	KindFile     = "file"
-	KindCodeItem = "code_item"
-	KindImport   = "import"
+	KindAny     = "any"
+	KindRepoMap = "repo_map"
+	KindLLMS    = "llms"
+	KindWiki    = "wiki"
+	KindFile    = "file"
 )
 
 var supportedKinds = map[string]struct{}{
-	KindAny:      {},
-	KindRepoMap:  {},
-	KindLLMS:     {},
-	KindWiki:     {},
-	KindFile:     {},
-	KindCodeItem: {},
-	KindImport:   {},
+	KindAny:     {},
+	KindRepoMap: {},
+	KindLLMS:    {},
+	KindWiki:    {},
+	KindFile:    {},
 }
 
 type Document struct {
@@ -42,11 +37,6 @@ type Document struct {
 	Language  string
 	CodeKind  string
 	CreatedAt string
-	// StartLine, EndLine, and Signature carry symbol-precise addressing and are
-	// populated for kind=code_item documents only; other kinds leave them zero.
-	StartLine int
-	EndLine   int
-	Signature string
 }
 
 type IndexInput struct {
@@ -55,16 +45,12 @@ type IndexInput struct {
 	LLMSBody    []byte
 	WikiPages   []projectmap.WikiPage
 	Files       []projectmap.FileRecord
-	CodeItems   []codeindex.Item
 }
 
 type QueryOptions struct {
 	Query string
 	Limit int
 	Kind  string
-	// Symbol restricts results to code_item hits whose symbol name (Result.Title)
-	// matches exactly, case-insensitively. It may be set without a Query.
-	Symbol string
 }
 
 // ResponseSchema identifies the machine-readable search response shape.
@@ -84,9 +70,9 @@ type Result struct {
 	Title    string `json:"title"`
 	Language string `json:"language"`
 	CodeKind string `json:"code_kind"`
-	// StartLine, EndLine, and Signature address a code_item hit's symbol. They
-	// are emitted only for kind=code_item hits with valid metadata; non-code_item
-	// results omit them so their JSON shape is unchanged.
+	// StartLine, EndLine, and Signature are reserved for a future symbol layer.
+	// They are never populated by the current file/wiki corpus and will always
+	// be zero/empty in this version of pactum.
 	StartLine int     `json:"start_line,omitempty"`
 	EndLine   int     `json:"end_line,omitempty"`
 	Signature string  `json:"signature,omitempty"`
@@ -94,20 +80,20 @@ type Result struct {
 	Snippet   string  `json:"snippet"`
 }
 
-// validRange reports whether a code_item carries a usable line range: both lines
-// positive and the end not before the start.
+// HasRange reports whether the result carries a valid symbol line range.
+// Reserved for a future symbol layer; always returns false in the current
+// file/wiki corpus.
+func (r Result) HasRange() bool {
+	return validRange(r.StartLine, r.EndLine)
+}
+
+// validRange reports whether both lines are positive and end >= start.
 func validRange(start, end int) bool {
 	return start > 0 && end >= start
 }
 
-// HasRange reports whether the result carries a valid code_item line range. Only
-// code_item hits ever do.
-func (r Result) HasRange() bool {
-	return r.Kind == KindCodeItem && validRange(r.StartLine, r.EndLine)
-}
-
 // Address returns the symbol-precise address "path:start-end" when the result
-// has a valid range, otherwise the bare path. It never renders "path:0-0".
+// has a valid range, otherwise the bare path.
 func (r Result) Address() string {
 	if r.HasRange() {
 		return fmt.Sprintf("%s:%d-%d", r.Path, r.StartLine, r.EndLine)
@@ -183,46 +169,6 @@ func Documents(input IndexInput) []Document {
 			CodeKind:  file.Kind,
 			CreatedAt: createdAt,
 		})
-	}
-
-	codeItems := append([]codeindex.Item(nil), input.CodeItems...)
-	codeindex.SortItems(codeItems)
-	for _, item := range codeItems {
-		body := strings.Join(nonEmpty(
-			"name: "+item.Name,
-			"kind: "+item.Kind,
-			"language: "+item.Language,
-			"package: "+item.Package,
-			"parent: "+item.Parent,
-			"import_path: "+item.ImportPath,
-			"signature: "+item.Signature,
-			"path: "+item.Path,
-		), "\n")
-		// Import/module/namespace markers are indexed under kind=import so they
-		// stay searchable for debugging without polluting code_item results.
-		// Definitions remain kind=code_item.
-		kind := KindCodeItem
-		if item.IsImportLike() {
-			kind = KindImport
-		}
-		document := Document{
-			ID:        fmt.Sprintf("%s:%s:%s:%s:%d", kind, item.Path, item.Kind, item.Name, item.StartLine),
-			Kind:      kind,
-			Path:      item.Path,
-			Title:     item.Name,
-			Body:      body,
-			Language:  item.Language,
-			CodeKind:  item.Kind,
-			CreatedAt: createdAt,
-		}
-		// Symbol-precise addressing rides on code_item definitions only; import
-		// markers carry no range or signature worth surfacing.
-		if kind == KindCodeItem {
-			document.StartLine = item.StartLine
-			document.EndLine = item.EndLine
-			document.Signature = item.Signature
-		}
-		documents = append(documents, document)
 	}
 
 	sort.Slice(documents, func(i, j int) bool {

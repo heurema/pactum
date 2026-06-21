@@ -85,4 +85,22 @@ step "pactum task new (contract-only, no execution)"
 step "pactum doctor (PATH check only)"
 "${PACTUM_BIN}" doctor
 
+step "no code-items.jsonl after init"
+CODE_ITEMS="${TMP_REPO}/.heurema/pactum/map/code-items.jsonl"
+if [ -f "${CODE_ITEMS}" ]; then
+  echo "FAIL: code-items.jsonl should not exist after init (tree-sitter removed)"
+  exit 1
+fi
+echo "OK: code-items.jsonl was not created"
+
+step "map refresh deletes stale code-items.jsonl"
+mkdir -p "$(dirname "${CODE_ITEMS}")"
+echo '{"path":"fake.go","kind":"func","name":"Fake"}' > "${CODE_ITEMS}"
+"${PACTUM_BIN}" map refresh
+if [ -f "${CODE_ITEMS}" ]; then
+  echo "FAIL: map refresh should have deleted the stale code-items.jsonl"
+  exit 1
+fi
+echo "OK: stale code-items.jsonl was removed by map refresh"
+
 printf '\nSMOKE OK: pactum built, initialized, and exercised the safe command surface.\n'

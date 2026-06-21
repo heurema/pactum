@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/heurema/pactum/internal/artifacts"
-	"github.com/heurema/pactum/internal/codeindex"
 )
 
 // --- fixture builders ----------------------------------------------------
@@ -97,8 +96,7 @@ func initConfigHeavyFixture(t *testing.T) (string, artifacts.Paths) {
 // --- Part A: map quality fixture matrix ----------------------------------
 
 func TestMapQualityGoCLIRepo(t *testing.T) {
-	root, paths := initGoCLIFixture(t)
-	app := testApp(root)
+	_, paths := initGoCLIFixture(t)
 
 	overview := mustReadFile(t, paths.WikiOverview)
 	if !strings.Contains(overview, "Likely role: Go") || !strings.Contains(overview, "go.mod present") {
@@ -115,11 +113,6 @@ func TestMapQualityGoCLIRepo(t *testing.T) {
 	entrypoints := mustReadFile(t, paths.WikiEntrypoints)
 	if !strings.Contains(entrypoints, "cmd/app/main.go") {
 		t.Fatalf("entrypoints.md should list cmd/app/main.go:\n%s", entrypoints)
-	}
-
-	found := wikiSearch(t, app, "main", "--kind", "code_item")
-	if !hasCodeKind(found.Results, "go_main") {
-		t.Fatalf("search \"main\" --kind code_item should find go_main: %#v", found.Results)
 	}
 }
 
@@ -161,11 +154,6 @@ func TestMapQualityTSVueViteRepo(t *testing.T) {
 		t.Fatalf("config.md should include vite.config.ts:\n%s", config)
 	}
 
-	for _, item := range readCodeItems(t, paths.CodeItemsJSONL) {
-		if strings.HasSuffix(item.Path, ".vue") {
-			t.Fatalf(".vue files should not produce code items: %#v", item)
-		}
-	}
 }
 
 func TestMapQualityPythonRepo(t *testing.T) {
@@ -195,8 +183,7 @@ func TestMapQualityPythonRepo(t *testing.T) {
 }
 
 func TestMapQualityDotNetRepo(t *testing.T) {
-	root, paths := initDotNetFixture(t)
-	app := testApp(root)
+	_, paths := initDotNetFixture(t)
 
 	overview := mustReadFile(t, paths.WikiOverview)
 	if !strings.Contains(overview, "Likely role: C# / .NET") {
@@ -226,17 +213,6 @@ func TestMapQualityDotNetRepo(t *testing.T) {
 	if !strings.Contains(entrypoints, "src/MyApp/Program.cs") || !strings.Contains(entrypoints, "Program.cs") {
 		t.Fatalf("entrypoints.md should list Program.cs as a candidate:\n%s", entrypoints)
 	}
-
-	// C# is a supported language: definitions are extracted.
-	if !hasCodeItemKind(readCodeItems(t, paths.CodeItemsJSONL), "cs_class") {
-		t.Fatalf("expected C# code items (cs_class) from Program.cs")
-	}
-
-	// using/namespace markers stay out of code_item search.
-	found := wikiSearch(t, app, "Greeter", "--kind", "code_item").Results
-	if !hasCodeKind(found, "cs_class") {
-		t.Fatalf("search \"Greeter\" --kind code_item should find the cs_class: %#v", found)
-	}
 }
 
 func TestMapQualityMavenRepo(t *testing.T) {
@@ -262,11 +238,6 @@ func TestMapQualityMavenRepo(t *testing.T) {
 	tests := mustReadFile(t, paths.WikiTests)
 	if !strings.Contains(tests, "src/test/java/AppTest.java") {
 		t.Fatalf("tests.md should recognize src/test/java:\n%s", tests)
-	}
-
-	// Java symbols are not parsed.
-	if items := readCodeItems(t, paths.CodeItemsJSONL); len(items) != 0 {
-		t.Fatalf("Java repo should have zero code items, got %#v", items)
 	}
 }
 
@@ -307,11 +278,6 @@ func TestMapQualityRustRepo(t *testing.T) {
 	if !strings.Contains(entrypoints, "Rust binary entrypoint") || !strings.Contains(entrypoints, "Cargo.toml present") {
 		t.Fatalf("entrypoints.md should cite Cargo.toml and the Rust binary convention:\n%s", entrypoints)
 	}
-
-	// Rust symbols are not parsed.
-	if items := readCodeItems(t, paths.CodeItemsJSONL); len(items) != 0 {
-		t.Fatalf("Rust repo should have zero code items, got %#v", items)
-	}
 }
 
 func initExpressFixture(t *testing.T) (string, artifacts.Paths) {
@@ -348,8 +314,7 @@ module.exports = Router
 }
 
 func TestMapQualityCommonJSExpress(t *testing.T) {
-	root, paths := initExpressFixture(t)
-	app := testApp(root)
+	_, paths := initExpressFixture(t)
 
 	overview := mustReadFile(t, paths.WikiOverview)
 	if !strings.Contains(overview, "Node.js / JavaScript") {
@@ -359,29 +324,6 @@ func TestMapQualityCommonJSExpress(t *testing.T) {
 	entrypoints := mustReadFile(t, paths.WikiEntrypoints)
 	if !strings.Contains(entrypoints, "index.js") {
 		t.Fatalf("entrypoints.md should include index.js:\n%s", entrypoints)
-	}
-
-	if items := readCodeItems(t, paths.CodeItemsJSONL); len(items) == 0 {
-		t.Fatal("CommonJS repo should produce non-zero code items")
-	}
-
-	// require(...) is searchable as an import.
-	imports := wikiSearch(t, app, "express", "--kind", "import").Results
-	if !hasCodeKind(imports, "js_import") {
-		t.Fatalf("search \"express\" --kind import should find a js_import: %#v", imports)
-	}
-
-	// module.exports identifier is searchable as a code_item.
-	defs := wikiSearch(t, app, "createApplication", "--kind", "code_item").Results
-	if !hasCodeKind(defs, "js_export") {
-		t.Fatalf("search \"createApplication\" --kind code_item should find a js_export: %#v", defs)
-	}
-
-	// require items must not pollute code_item search.
-	for _, r := range wikiSearch(t, app, "express", "--kind", "code_item").Results {
-		if r.Kind == "import" || r.CodeKind == "js_import" {
-			t.Fatalf("--kind code_item should not return require/js_import entries: %#v", r)
-		}
 	}
 }
 
@@ -419,10 +361,6 @@ func TestMapQualityMonorepoEntrypointsSearchable(t *testing.T) {
 func TestMapQualityConfigHeavyRepo(t *testing.T) {
 	_, paths := initConfigHeavyFixture(t)
 
-	if items := readCodeItems(t, paths.CodeItemsJSONL); len(items) != 0 {
-		t.Fatalf("config-heavy repo should have zero code items, got %#v", items)
-	}
-
 	overview := mustReadFile(t, paths.WikiOverview)
 	if !strings.Contains(overview, ".github/") {
 		t.Fatalf("overview.md should still list areas without code items:\n%s", overview)
@@ -455,7 +393,7 @@ func TestMapQualityConfigHeavyRepo(t *testing.T) {
 
 // --- Part B: search quality ----------------------------------------------
 
-func TestSearchPrefersDefinitionsAndWikiOverImports(t *testing.T) {
+func TestSearchPrefersWikiOverFiles(t *testing.T) {
 	root, _ := initGoCLIFixture(t)
 	app := testApp(root)
 
@@ -463,57 +401,20 @@ func TestSearchPrefersDefinitionsAndWikiOverImports(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("search \"main\" returned no results")
 	}
-	if results[0].Kind == "import" {
-		t.Fatalf("top result for \"main\" should not be an import: %#v", results)
+	for _, r := range results {
+		if r.Kind == "import" || r.Kind == "code_item" {
+			t.Fatalf("search returned removed kind %q (tree-sitter removed): %#v", r.Kind, r)
+		}
 	}
-
-	firstGood, firstImport := -1, -1
+	firstWiki := -1
 	for i, r := range results {
-		if firstGood < 0 && (r.Kind == "code_item" || r.Kind == "wiki") {
-			firstGood = i
-		}
-		if firstImport < 0 && r.Kind == "import" {
-			firstImport = i
+		if r.Kind == "wiki" {
+			firstWiki = i
+			break
 		}
 	}
-	if firstGood < 0 {
-		t.Fatalf("expected a code_item or wiki result for \"main\": %#v", results)
-	}
-	if firstImport >= 0 && firstImport < firstGood {
-		t.Fatalf("import-like result ranked above definitions/wiki for \"main\": %#v", results)
-	}
-}
-
-func TestSearchKindCodeItemExcludesImports(t *testing.T) {
-	root, _ := initGoCLIFixture(t)
-	app := testApp(root)
-
-	results := wikiSearch(t, app, "main", "--kind", "code_item").Results
-	if len(results) == 0 {
-		t.Fatal("search \"main\" --kind code_item returned nothing")
-	}
-	for _, r := range results {
-		if r.Kind != "code_item" {
-			t.Fatalf("--kind code_item returned non-code_item: %#v", r)
-		}
-		if r.CodeKind == "go_import" || r.CodeKind == "go_package" {
-			t.Fatalf("--kind code_item should exclude import-like entries: %#v", r)
-		}
-	}
-}
-
-func TestSearchKindImportReturnsImports(t *testing.T) {
-	root, _ := initGoCLIFixture(t)
-	app := testApp(root)
-
-	results := wikiSearch(t, app, "main", "--kind", "import").Results
-	if len(results) == 0 {
-		t.Fatal("search \"main\" --kind import returned nothing")
-	}
-	for _, r := range results {
-		if r.Kind != "import" {
-			t.Fatalf("--kind import returned non-import: %#v", r)
-		}
+	if firstWiki < 0 {
+		t.Fatalf("expected a wiki result for \"main\": %#v", results)
 	}
 }
 
@@ -571,15 +472,6 @@ func TestSearchTestSurfacesWikiTestsPage(t *testing.T) {
 func hasCodeKind(results []wikiSearchResult, codeKind string) bool {
 	for _, r := range results {
 		if r.CodeKind == codeKind {
-			return true
-		}
-	}
-	return false
-}
-
-func hasCodeItemKind(items []codeindex.Item, kind string) bool {
-	for _, item := range items {
-		if item.Kind == kind {
 			return true
 		}
 	}

@@ -24,6 +24,8 @@ var removedFlagConcepts = []string{
 	"--allow-execute",
 	"--mode yolo",
 	"agents.adapters",
+	"--symbol",
+	"code_index:",
 }
 
 // TestGeneratedPromptArtifactsHaveNoStaleMilestoneWording builds a full run
@@ -113,7 +115,7 @@ func TestReadOnlyCommandsDoNotAppendLedgerEvents(t *testing.T) {
 
 	readOnlyCommands := [][]string{
 		{"status"},
-		{"search", "cache", "--kind", "code_item"},
+		{"search", "cache"},
 		{"memory", "search", "cache"},
 		{"memory", "stale"},
 		{"memory", "show", runID},

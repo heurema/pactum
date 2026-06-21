@@ -5,24 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/heurema/pactum/internal/codeindex"
 	"github.com/heurema/pactum/internal/projectmap"
 )
-
-func TestRebuildAndQueryUsesFTS5(t *testing.T) {
-	dbPath := buildSearchTestIndex(t)
-
-	response, err := Query(dbPath, QueryOptions{Query: "Runner", Kind: KindCodeItem})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(response.Results) != 1 {
-		t.Fatalf("results = %#v, want one result", response.Results)
-	}
-	if response.Results[0].Kind != KindCodeItem || response.Results[0].Title != "Runner" {
-		t.Fatalf("result = %#v, want Runner code_item", response.Results[0])
-	}
-}
 
 func TestQueryTreatsOperatorLikeInputAsLiteralTokens(t *testing.T) {
 	dbPath := buildSearchTestIndex(t)
@@ -59,7 +43,27 @@ func TestFTSQueryQuotesTokens(t *testing.T) {
 	}
 }
 
-func TestRebuildIndexesWikiPagesAndSeparatesImports(t *testing.T) {
+func TestNormalizeKindAcceptsAllSupportedKinds(t *testing.T) {
+	for _, kind := range []string{"any", "repo_map", "llms", "wiki", "file"} {
+		got, err := NormalizeKind(kind)
+		if err != nil {
+			t.Fatalf("NormalizeKind(%q) error: %v", kind, err)
+		}
+		if got != kind {
+			t.Fatalf("NormalizeKind(%q) = %q", kind, got)
+		}
+	}
+}
+
+func TestNormalizeKindRejectsRemovedKinds(t *testing.T) {
+	for _, kind := range []string{"code_item", "import"} {
+		if _, err := NormalizeKind(kind); err == nil {
+			t.Fatalf("NormalizeKind(%q) should fail for removed kind", kind)
+		}
+	}
+}
+
+func TestRebuildIndexesWikiPages(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "search.sqlite")
 	err := Rebuild(dbPath, IndexInput{
 		GeneratedAt: time.Date(2026, 6, 4, 9, 0, 0, 0, time.UTC),
@@ -70,10 +74,7 @@ func TestRebuildIndexesWikiPagesAndSeparatesImports(t *testing.T) {
 			Title:   "Configuration",
 			Content: []byte("# Configuration\n\n- `vite.config.ts` — Vite build configuration\n"),
 		}},
-		CodeItems: []codeindex.Item{
-			{Path: "cmd/app/main.go", Kind: "go_import", Language: "go", Name: "example.com/main/client", ImportPath: "example.com/main/client", StartLine: 3},
-			{Path: "cmd/app/main.go", Kind: "go_main", Language: "go", Name: "main", StartLine: 5},
-		},
+		Files: []projectmap.FileRecord{{Path: "cmd/app/main.go", Kind: "source", Language: "Go"}},
 	})
 	if err != nil {
 		t.Fatalf("Rebuild failed: %v", err)
@@ -87,41 +88,16 @@ func TestRebuildIndexesWikiPagesAndSeparatesImports(t *testing.T) {
 		t.Fatalf("wiki query = %#v, want one map/wiki/config.md hit", wiki.Results)
 	}
 
-	codeItem, err := Query(dbPath, QueryOptions{Query: "main", Kind: KindCodeItem})
+	file, err := Query(dbPath, QueryOptions{Query: "main", Kind: KindFile})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(codeItem.Results) == 0 {
-		t.Fatal("code_item query for main returned nothing")
+	if len(file.Results) == 0 {
+		t.Fatal("file query for main returned nothing")
 	}
-	for _, result := range codeItem.Results {
-		if result.CodeKind == "go_import" {
-			t.Fatalf("code_item query returned import-like entry: %#v", result)
-		}
-	}
-
-	imports, err := Query(dbPath, QueryOptions{Query: "main", Kind: KindImport})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(imports.Results) == 0 {
-		t.Fatal("import query for main returned nothing")
-	}
-	for _, result := range imports.Results {
-		if result.Kind != KindImport {
-			t.Fatalf("import query returned non-import: %#v", result)
-		}
-	}
-}
-
-func TestNormalizeKindAcceptsWikiAndImport(t *testing.T) {
-	for _, kind := range []string{"wiki", "import"} {
-		got, err := NormalizeKind(kind)
-		if err != nil {
-			t.Fatalf("NormalizeKind(%q) error: %v", kind, err)
-		}
-		if got != kind {
-			t.Fatalf("NormalizeKind(%q) = %q", kind, got)
+	for _, result := range file.Results {
+		if result.Kind != KindFile {
+			t.Fatalf("file query returned non-file: %#v", result)
 		}
 	}
 }
@@ -134,26 +110,15 @@ func buildSearchTestIndex(t *testing.T) string {
 		GeneratedAt: time.Date(2026, 5, 31, 18, 40, 12, 0, time.UTC),
 		RepoMapBody: []byte(`# Pactum Project Map
 
-## Code surface
+## Summary
 
 Contract runner index.
 `),
-		LLMSBody: []byte("Use code-items.jsonl for code surface.\n"),
+		LLMSBody: []byte("Deterministic project map.\n"),
 		Files: []projectmap.FileRecord{{
 			Path:     "internal/contract/runner.go",
 			Kind:     "source",
 			Language: "Go",
-		}},
-		CodeItems: []codeindex.Item{{
-			Path:      "internal/contract/runner.go",
-			Kind:      "go_type",
-			Language:  "go",
-			Name:      "Runner",
-			Package:   "contract",
-			Exported:  true,
-			Signature: "type Runner struct",
-			StartLine: 3,
-			EndLine:   3,
 		}},
 	})
 	if err != nil {

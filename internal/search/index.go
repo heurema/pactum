@@ -12,9 +12,9 @@ import (
 // indexSchemaVersion marks the stored shape of the search index. Bump it
 // whenever the documents table or FTS layout changes so an index written by an
 // older binary is detected as stale (see ensureSchemaCurrent) rather than read
-// with the wrong columns. v2 added the code_item start_line/end_line/signature
-// columns.
-const indexSchemaVersion = "pactum.search.index.v2"
+// with the wrong columns. v3 removed the code_item symbol columns
+// (start_line/end_line/signature) after tree-sitter extraction was dropped.
+const indexSchemaVersion = "pactum.search.index.v3"
 
 func Rebuild(dbPath string, input IndexInput) error {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
@@ -50,10 +50,7 @@ func createSchema(db *sql.DB) error {
 			body TEXT NOT NULL,
 			language TEXT,
 			code_kind TEXT,
-			created_at TEXT NOT NULL,
-			start_line INTEGER NOT NULL DEFAULT 0,
-			end_line INTEGER NOT NULL DEFAULT 0,
-			signature TEXT NOT NULL DEFAULT ''
+			created_at TEXT NOT NULL
 		)`,
 		`CREATE VIRTUAL TABLE documents_fts USING fts5(
 			title,
@@ -80,7 +77,7 @@ func insertDocuments(db *sql.DB, documents []Document) error {
 	}
 	defer tx.Rollback()
 
-	docStmt, err := tx.Prepare(`INSERT INTO documents (id, kind, path, title, body, language, code_kind, created_at, start_line, end_line, signature) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	docStmt, err := tx.Prepare(`INSERT INTO documents (id, kind, path, title, body, language, code_kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -102,9 +99,6 @@ func insertDocuments(db *sql.DB, documents []Document) error {
 			document.Language,
 			document.CodeKind,
 			document.CreatedAt,
-			document.StartLine,
-			document.EndLine,
-			document.Signature,
 		)
 		if err != nil {
 			return err

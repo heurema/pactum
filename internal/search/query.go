@@ -17,14 +17,9 @@ const defaultLimit = 10
 // Deterministic ranking adjustments applied on top of the raw FTS5 bm25 score.
 // bm25 is negative and "lower is better", so a boost subtracts from the score
 // and a penalty adds to it. The values are intentionally small and additive:
-// they reorder near-equal matches (for example a definition vs. an import of
-// the same token) without overriding clearly stronger lexical matches. This is
-// a light polish, not a relevance model — keep it simple.
+// they reorder near-equal matches without overriding clearly stronger lexical
+// matches.
 const (
-	// importPenalty pushes import-like entries below definitions and wiki
-	// pages in unfiltered ("any") searches. It is not applied when the caller
-	// explicitly asks for --kind import.
-	importPenalty = 2.0
 	// wikiPageBoost lifts the most navigation-relevant wiki pages
 	// (entrypoints, commands, config) for unfiltered searches.
 	wikiPageBoost = 1.0
@@ -58,16 +53,9 @@ func Query(dbPath string, options QueryOptions) (Response, error) {
 		limit = defaultLimit
 	}
 
-	symbol := strings.TrimSpace(options.Symbol)
 	match := ftsQuery(options.Query)
-	if match == "" && symbol == "" {
+	if match == "" {
 		return response, nil
-	}
-	// --symbol resolves a known identifier straight to its address, so it only
-	// ever yields code_item hits. The CLI rejects incompatible --kind values
-	// before reaching here; forcing the kind keeps the candidate pool relevant.
-	if symbol != "" {
-		kind = KindCodeItem
 	}
 
 	db, err := sql.Open("sqlite", dbPath)
@@ -80,37 +68,12 @@ func Query(dbPath string, options QueryOptions) (Response, error) {
 		return response, err
 	}
 
-	// Symbol-only lookup needs no lexical match: resolve the identifier directly
-	// against code_item titles in deterministic order.
-	if match == "" {
-		results, err := querySymbol(db, symbol, limit)
-		if err != nil {
-			return response, err
-		}
-		response.Results = results
-		return response, nil
-	}
-
 	// Fetch a larger candidate pool ordered by raw bm25 so the deterministic
-	// re-rank below has material to reorder; without this, a strong import
-	// match could crowd a weaker definition out of the top `limit` before the
-	// penalty is ever applied.
+	// re-rank below has material to reorder.
 	pool := limit * 5
 	if pool < 50 {
 		pool = 50
 	}
-
-	// --symbol restricts the pool to exact (case-insensitive) symbol-name matches
-	// in SQL, mirroring querySymbol. Filtering in Go after the bm25 LIMIT could
-	// drop an exact match that ranks below the pool cutoff; the predicate keeps
-	// every match in the pool so the cap applies to symbol hits only.
-	where := "documents_fts MATCH ? AND (? = 'any' OR d.kind = ?)"
-	queryArgs := []any{match, kind, kind}
-	if symbol != "" {
-		where += " AND lower(d.title) = lower(?)"
-		queryArgs = append(queryArgs, symbol)
-	}
-	queryArgs = append(queryArgs, pool)
 
 	rows, err := db.Query(`
 SELECT
@@ -120,17 +83,14 @@ SELECT
 	d.title,
 	COALESCE(d.language, ''),
 	COALESCE(d.code_kind, ''),
-	d.start_line,
-	d.end_line,
-	d.signature,
 	-- SQLite FTS5 bm25 uses lower scores for better matches; values are often negative.
 	bm25(documents_fts) AS score,
 	snippet(documents_fts, 1, '', '', '...', 16) AS snippet
 FROM documents_fts
 JOIN documents d ON documents_fts.rowid = d.rowid
-WHERE `+where+`
+WHERE documents_fts MATCH ? AND (? = 'any' OR d.kind = ?)
 ORDER BY score ASC, d.kind ASC, d.path ASC, d.title ASC
-LIMIT ?`, queryArgs...)
+LIMIT ?`, match, kind, kind, pool)
 	if err != nil {
 		return response, err
 	}
@@ -143,8 +103,6 @@ LIMIT ?`, queryArgs...)
 	var candidates []ranked
 	for rows.Next() {
 		var result Result
-		var startLine, endLine int
-		var signature string
 		if err := rows.Scan(
 			&result.ID,
 			&result.Kind,
@@ -152,15 +110,11 @@ LIMIT ?`, queryArgs...)
 			&result.Title,
 			&result.Language,
 			&result.CodeKind,
-			&startLine,
-			&endLine,
-			&signature,
 			&result.Score,
 			&result.Snippet,
 		); err != nil {
 			return response, err
 		}
-		hydrateSymbolMetadata(&result, startLine, endLine, signature)
 		result.Snippet = strings.TrimSpace(result.Snippet)
 		candidates = append(candidates, ranked{
 			result:   result,
@@ -225,69 +179,11 @@ func isMissingTableError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "no such table")
 }
 
-// querySymbol resolves a bare --symbol lookup (no lexical query) to its
-// code_item hits, matching Result.Title exactly and case-insensitively. Results
-// are ordered deterministically by path then range so duplicate symbol names
-// across packages return stably.
-func querySymbol(db *sql.DB, symbol string, limit int) ([]Result, error) {
-	rows, err := db.Query(`
-SELECT id, kind, path, title, COALESCE(language, ''), COALESCE(code_kind, ''), start_line, end_line, signature
-FROM documents
-WHERE kind = ? AND lower(title) = lower(?)
-ORDER BY path ASC, start_line ASC, id ASC
-LIMIT ?`, KindCodeItem, symbol, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var results []Result
-	for rows.Next() {
-		var result Result
-		var startLine, endLine int
-		var signature string
-		if err := rows.Scan(
-			&result.ID,
-			&result.Kind,
-			&result.Path,
-			&result.Title,
-			&result.Language,
-			&result.CodeKind,
-			&startLine,
-			&endLine,
-			&signature,
-		); err != nil {
-			return nil, err
-		}
-		hydrateSymbolMetadata(&result, startLine, endLine, signature)
-		result.Rank = len(results) + 1
-		results = append(results, result)
-	}
-	return results, rows.Err()
-}
-
-// hydrateSymbolMetadata copies stored symbol metadata onto a result, but only
-// when the range is valid. Invalid rows surface neither a "path:0-0" address nor
-// a dangling signature, so --json carries start_line, end_line, and signature
-// solely for code_item hits with usable metadata.
-func hydrateSymbolMetadata(result *Result, startLine, endLine int, signature string) {
-	if validRange(startLine, endLine) {
-		result.StartLine = startLine
-		result.EndLine = endLine
-		result.Signature = signature
-	}
-}
-
 // rankAdjustment returns the deterministic delta added to a result's bm25 score
 // before sorting. Negative values improve rank (boost); positive values worsen
-// it (penalty). kindFilter is the normalized --kind filter; the import penalty
-// only applies to unfiltered ("any") searches so an explicit --kind import
-// request is never penalized.
+// it (penalty). kindFilter is the normalized --kind filter.
 func rankAdjustment(query string, kindFilter string, result Result) float64 {
 	var adjustment float64
-	if kindFilter == KindAny && result.Kind == KindImport {
-		adjustment += importPenalty
-	}
 	if kindFilter == KindAny && result.Kind == KindWiki && boostedWikiPages[result.Path] {
 		adjustment -= wikiPageBoost
 	}

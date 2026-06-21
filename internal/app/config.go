@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/heurema/pactum/internal/agents"
-	"github.com/heurema/pactum/internal/codeindex"
 	"gopkg.in/yaml.v3"
 )
 
@@ -33,6 +32,9 @@ type configFile struct {
 	OutOfScope   string               `yaml:"out_of_scope"`
 	Pipeline     pipelineConfig       `yaml:"pipeline"`
 	WallClockCap yamlDuration         `yaml:"wall_clock_cap,omitempty"`
+	// Warnings collects deprecation messages populated at load time. Not
+	// serialized; callers should print these to stderr.
+	Warnings []string `yaml:"-"`
 }
 
 // yamlDuration is a time.Duration that decodes from a Go duration string (e.g.
@@ -62,8 +64,11 @@ func (d yamlDuration) Duration() time.Duration {
 }
 
 type mapConfig struct {
-	MaxFileBytes int    `yaml:"max_file_bytes"`
-	CodeIndex    string `yaml:"code_index"`
+	MaxFileBytes int `yaml:"max_file_bytes"`
+	// CodeIndex is accepted but ignored for back-compat with existing configs.
+	// It has no effect: tree-sitter extraction was removed. Remove this field
+	// from your config file when convenient.
+	CodeIndex string `yaml:"code_index,omitempty"`
 }
 
 // pipelineConfig holds the closed set of pipeline stages. Absent stages decode
@@ -152,7 +157,6 @@ func defaultConfigFile() configFile {
 		},
 		Map: mapConfig{
 			MaxFileBytes: 500000,
-			CodeIndex:    codeindex.ModeAuto,
 		},
 		OutOfScope: gateScopeEnforcementBlock,
 		Pipeline: pipelineConfig{
@@ -224,6 +228,10 @@ func readConfig(path string) (configFile, error) {
 	normalizePipelineBy(&config.Pipeline)
 	if config.WallClockCap.Duration() < 0 {
 		return configFile{}, errors.New("config wall_clock_cap: must be positive")
+	}
+	if config.Map.CodeIndex != "" {
+		config.Warnings = append(config.Warnings,
+			"config map.code_index is deprecated and has no effect; remove it from your config (tree-sitter extraction was removed)")
 	}
 	return config, nil
 }

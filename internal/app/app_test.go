@@ -16,7 +16,6 @@ import (
 
 	"github.com/heurema/pactum/internal/agents"
 	"github.com/heurema/pactum/internal/artifacts"
-	"github.com/heurema/pactum/internal/codeindex"
 	"github.com/heurema/pactum/internal/projectmap"
 	searchpkg "github.com/heurema/pactum/internal/search"
 	"gopkg.in/yaml.v3"
@@ -54,7 +53,6 @@ func helper() {}
 		paths.RepoMap,
 		paths.AreaIndex,
 		paths.FilesJSONL,
-		paths.CodeItemsJSONL,
 		paths.HashesJSONL,
 		paths.SearchSQLite,
 		paths.WikiOverview,
@@ -80,9 +78,6 @@ func helper() {}
 	}
 	if config.Map.MaxFileBytes != 500000 {
 		t.Fatalf("config map.max_file_bytes = %d, want 500000", config.Map.MaxFileBytes)
-	}
-	if config.Map.CodeIndex != codeindex.ModeAuto {
-		t.Fatalf("config map.code_index = %q, want auto", config.Map.CodeIndex)
 	}
 	if config.OutOfScope != gateScopeEnforcementBlock {
 		t.Fatalf("config out_of_scope = %q, want block", config.OutOfScope)
@@ -159,18 +154,8 @@ func helper() {}
 	if len(hashes) != len(files) {
 		t.Fatalf("hash record count = %d, want %d", len(hashes), len(files))
 	}
-	codeItems := readCodeItems(t, paths.CodeItemsJSONL)
-	if !hasCodeItem(codeItems, "src/main.go", "go_main", "main") {
-		t.Fatalf("code items missing go_main main: %#v", codeItems)
-	}
-	if !hasCodeItem(codeItems, "src/main.go", "go_func", "Start") {
-		t.Fatalf("code items missing exported Start func: %#v", codeItems)
-	}
-	if !hasCodeItem(codeItems, "src/main.go", "go_type", "Server") {
-		t.Fatalf("code items missing exported Server type: %#v", codeItems)
-	}
-	if hasCodeItem(codeItems, "src/main.go", "go_func", "helper") {
-		t.Fatalf("code items should not include unexported helper: %#v", codeItems)
+	if _, err := os.Stat(paths.CodeItemsJSONL); !os.IsNotExist(err) {
+		t.Fatalf("code-items.jsonl should not be created by init (tree-sitter removed)")
 	}
 
 	repoMap := mustReadFile(t, paths.RepoMap)
@@ -178,25 +163,14 @@ func helper() {}
 		"# Pactum Project Map",
 		"Repository root: `.`",
 		"## Summary",
-		"Code items (best-effort hints):",
 		"## How to navigate this map",
 		"## Wiki pages",
 		"`wiki/overview.md`",
 		"`wiki/structure.md`",
 		"## Project map artifacts",
-		"## Code surface (best-effort code hints)",
-		"`src/main.go`: `go_main` `main`",
-		"`src/main.go`: `go_func` `main.Start`",
-		"`src/main.go`: `go_type` `main.Server`",
-		"## Language support",
-		"Go, Python, JavaScript, TypeScript/TSX/JSX, and C#",
-		"not complete semantic truth",
-		"Code items are best-effort navigation hints",
-		"Imports are not treated as primary code surface.",
-		"Unsupported languages/framework files may have no code items.",
 		"Source files remain the source of truth.",
 		"## Agent guidance",
-		"Before adding new code, search/read relevant files and code items.",
+		"Before adding new code, search/read relevant files.",
 		"README.md",
 		"src/main.go",
 		"Go: 1 file(s)",
@@ -208,10 +182,8 @@ func helper() {}
 	if strings.Contains(repoMap, "Important entrypoints") {
 		t.Fatalf("repo-map.md should not use old entrypoints terminology:\n%s", repoMap)
 	}
-	// repo-map.md is wiki-first: the wiki pages must be listed before the
-	// best-effort code surface.
-	if wikiIdx, codeIdx := strings.Index(repoMap, "## Wiki pages"), strings.Index(repoMap, "## Code surface"); wikiIdx < 0 || codeIdx < 0 || wikiIdx > codeIdx {
-		t.Fatalf("repo-map.md must list wiki pages before code surface (wiki=%d code=%d):\n%s", wikiIdx, codeIdx, repoMap)
+	if strings.Contains(repoMap, "code_item") || strings.Contains(repoMap, "code-items") {
+		t.Fatalf("repo-map.md must not mention code items (tree-sitter removed):\n%s", repoMap)
 	}
 	llms := mustReadFile(t, paths.LLMS)
 	for _, want := range []string{
@@ -222,10 +194,7 @@ func helper() {}
 		"map/wiki/entrypoints.md",
 		"map/wiki/config.md",
 		"map/wiki/tests.md",
-		"code-items.jsonl",
-		"best-effort symbol hints",
 		"Source files remain the source of truth.",
-		"Not every possible symbol is indexed.",
 		"inspect relevant existing files",
 		"If ownership is unclear, ask for clarification.",
 	} {
@@ -236,13 +205,16 @@ func helper() {}
 	if strings.Contains(llms, "Tree-sitter") {
 		t.Fatalf("llms.txt should not mention Tree-sitter:\n%s", llms)
 	}
+	if strings.Contains(llms, "code-items.jsonl") || strings.Contains(llms, "code_item") {
+		t.Fatalf("llms.txt must not mention code items (tree-sitter removed):\n%s", llms)
+	}
 	manifest, err := readMapManifest(paths.MapManifest)
 	assertNoError(t, err)
 	if manifest.RepoRoot != "." {
 		t.Fatalf("map manifest repo_root = %q, want .", manifest.RepoRoot)
 	}
-	if manifest.Artifacts["code_items"] != "map/code-items.jsonl" {
-		t.Fatalf("manifest code_items artifact = %q", manifest.Artifacts["code_items"])
+	if manifest.Artifacts["code_items"] != "" {
+		t.Fatalf("manifest must not list a code_items artifact (tree-sitter removed): %q", manifest.Artifacts["code_items"])
 	}
 	if manifest.Artifacts["search"] != "map/search.sqlite" {
 		t.Fatalf("manifest search artifact = %q", manifest.Artifacts["search"])
@@ -262,12 +234,6 @@ func helper() {}
 		if manifest.Artifacts[key] != want {
 			t.Fatalf("manifest %s artifact = %q, want %q", key, manifest.Artifacts[key], want)
 		}
-	}
-	if manifest.CodeIndex.Mode != codeindex.ModeAuto {
-		t.Fatalf("manifest code_index.mode = %q, want auto", manifest.CodeIndex.Mode)
-	}
-	if manifest.CodeIndex.Items != len(codeItems) {
-		t.Fatalf("manifest code_index.items = %d, want %d", manifest.CodeIndex.Items, len(codeItems))
 	}
 	if manifest.ConfigHash == "" {
 		t.Fatalf("manifest config_hash should be populated")
@@ -391,63 +357,8 @@ func TestInitUsesConfigMaxFileBytesAndManifestWarnings(t *testing.T) {
 	if manifest.FilesSkipped != 1 {
 		t.Fatalf("manifest files_skipped = %d, want 1", manifest.FilesSkipped)
 	}
-	if manifest.CodeIndex.Items == 0 {
-		t.Fatalf("manifest code_index.items = 0, want at least package item")
-	}
 	if !strings.Contains(strings.Join(manifest.Warnings, "\n"), "skipped large file: large.go") {
 		t.Fatalf("manifest warnings did not mention skipped large.go: %#v", manifest.Warnings)
-	}
-}
-
-func TestInitCodeIndexOffDisablesCodeItemExtraction(t *testing.T) {
-	root := t.TempDir()
-	paths := artifacts.New(root)
-	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
-	config := defaultConfigFile()
-	config.Map.CodeIndex = codeindex.ModeOff
-	assertNoError(t, writeYAML(paths.Config, config))
-	mustWriteFile(t, filepath.Join(root, "main.go"), `package main
-
-type Server struct{}
-
-func main() {}
-func Start() {}
-`)
-
-	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-
-	codeItems := readCodeItems(t, paths.CodeItemsJSONL)
-	if len(codeItems) != 0 {
-		t.Fatalf("code items should be empty when code_index is off: %#v", codeItems)
-	}
-	manifest, err := readMapManifest(paths.MapManifest)
-	assertNoError(t, err)
-	if manifest.CodeIndex.Mode != codeindex.ModeOff {
-		t.Fatalf("manifest code_index.mode = %q, want off", manifest.CodeIndex.Mode)
-	}
-	if manifest.CodeIndex.Items != 0 {
-		t.Fatalf("manifest code_index.items = %d, want 0", manifest.CodeIndex.Items)
-	}
-}
-
-func TestInitRecordsGoParseWarningsWithoutFailing(t *testing.T) {
-	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "broken.go"), "package broken\nfunc {\n")
-
-	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-
-	manifest, err := readMapManifest(artifacts.New(root).MapManifest)
-	assertNoError(t, err)
-	if !strings.Contains(strings.Join(manifest.Warnings, "\n"), "broken.go") {
-		t.Fatalf("manifest warnings did not mention parse failure: %#v", manifest.Warnings)
 	}
 }
 
@@ -2545,7 +2456,6 @@ func TestMapRefreshCommandRebuildsMapOnly(t *testing.T) {
 		"files indexed:",
 		"files ignored:",
 		"files skipped:",
-		"code items:",
 		"warnings:",
 		"search index: ready",
 	} {
@@ -2665,7 +2575,7 @@ func TestSearchMissingIndexPrintsGuidance(t *testing.T) {
 	}
 }
 
-func TestSearchFindsFilesAndCodeItems(t *testing.T) {
+func TestSearchFindsFiles(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "internal", "contracts", "runner.go"), `package contracts
 
@@ -2696,23 +2606,8 @@ func helper() {}
 			t.Fatalf("search output missing %q:\n%s", want, got)
 		}
 	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = testApp(root).Run([]string{"search", "BuildRunner"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
-	}
-	got = stdout.String()
-	for _, want := range []string{
-		"code_item internal/contracts/runner.go",
-		"kind: go_func",
-		"name: BuildRunner",
-		"language: go",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("code item search output missing %q:\n%s", want, got)
-		}
+	if strings.Contains(got, "code_item") {
+		t.Fatalf("search must not return code_item results (tree-sitter removed):\n%s", got)
 	}
 }
 
@@ -2731,30 +2626,33 @@ type Runner struct{}
 
 	stdout.Reset()
 	stderr.Reset()
-	code = testApp(root).Run([]string{"search", "Runner", "--kind", "code_item"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
-	}
-	got := stdout.String()
-	if !strings.Contains(got, "code_item internal/contracts/runner.go") {
-		t.Fatalf("code_item filter did not return code item:\n%s", got)
-	}
-	if strings.Contains(got, "file internal/contracts/runner.go") {
-		t.Fatalf("code_item filter returned file result:\n%s", got)
-	}
-
-	stdout.Reset()
-	stderr.Reset()
 	code = testApp(root).Run([]string{"search", "Runner", "--kind", "file"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
 	}
-	got = stdout.String()
+	got := stdout.String()
 	if !strings.Contains(got, "file internal/contracts/runner.go") {
 		t.Fatalf("file filter did not return file result:\n%s", got)
 	}
-	if strings.Contains(got, "code_item internal/contracts/runner.go") {
-		t.Fatalf("file filter returned code item result:\n%s", got)
+	if strings.Contains(got, "code_item") {
+		t.Fatalf("file filter must not return code_item (tree-sitter removed):\n%s", got)
+	}
+}
+
+func TestSearchKindCodeItemRejected(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Hi\n")
+
+	var stdout, stderr bytes.Buffer
+	if code := testApp(root).Run([]string{"init"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code := testApp(root).Run([]string{"search", "hello", "--kind", "code_item"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("search --kind code_item should fail (kind removed); stdout:\n%s", stdout.String())
 	}
 }
 
@@ -3201,27 +3099,6 @@ func readFileRecords(t *testing.T, path string) []projectmap.FileRecord {
 		records = append(records, record)
 	}
 	return records
-}
-
-func readCodeItems(t *testing.T, path string) []codeindex.Item {
-	t.Helper()
-	lines := readLines(t, path)
-	records := make([]codeindex.Item, 0, len(lines))
-	for _, line := range lines {
-		var record codeindex.Item
-		assertNoError(t, json.Unmarshal([]byte(line), &record))
-		records = append(records, record)
-	}
-	return records
-}
-
-func hasCodeItem(items []codeindex.Item, path string, kind string, name string) bool {
-	for _, item := range items {
-		if item.Path == path && item.Kind == kind && item.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 func readRunState(t *testing.T, path string) contractRunState {

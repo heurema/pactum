@@ -360,10 +360,10 @@ type versionCmd struct {
 }
 
 type searchCmd struct {
-	Query      string `arg:"" optional:"" name:"query" help:"Search query. Optional when --symbol is given."`
+	Query      string `arg:"" optional:"" name:"query" help:"Search query."`
 	Limit      int    `help:"Maximum number of results." default:"10"`
-	Kind       string `help:"Document kind filter." default:"any" enum:"any,repo_map,llms,wiki,file,code_item,import"`
-	Symbol     string `name:"symbol" help:"Restrict to code_item hits whose symbol name matches exactly (case-insensitive)."`
+	Kind       string `help:"Document kind filter." default:"any" enum:"any,repo_map,llms,wiki,file"`
+	Symbol     string `name:"symbol" hidden:"" help:"Removed: symbol search was removed when tree-sitter was dropped."`
 	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 

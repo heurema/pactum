@@ -111,13 +111,6 @@ func TestWikiVueFixtureProducesUsefulPages(t *testing.T) {
 		}
 	}
 
-	// .vue files must not be expected to produce code items.
-	codeItems := readCodeItems(t, paths.CodeItemsJSONL)
-	for _, item := range codeItems {
-		if strings.HasSuffix(item.Path, ".vue") {
-			t.Fatalf("did not expect code items for .vue file: %#v", item)
-		}
-	}
 }
 
 // TestWikiCommandsListMakeAndScripts covers Part H #5 and #6: Makefile targets
@@ -150,8 +143,8 @@ func TestWikiCommandsListMakeAndScripts(t *testing.T) {
 }
 
 // TestWikiUnsupportedFrameworkFilesStillUseful covers Part H #8: a repo whose
-// files yield zero code items still gets useful wiki pages that mention those
-// files.
+// files produce no parsed symbols still gets useful wiki pages that mention
+// those files.
 func TestWikiUnsupportedFrameworkFilesStillUseful(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Frontend only\n")
@@ -163,10 +156,6 @@ func TestWikiUnsupportedFrameworkFilesStillUseful(t *testing.T) {
 	wikiRunOK(t, app, "init")
 	paths := artifacts.New(root)
 
-	if items := readCodeItems(t, paths.CodeItemsJSONL); len(items) != 0 {
-		t.Fatalf("expected zero code items for unsupported framework files, got %#v", items)
-	}
-
 	overview := mustReadFile(t, paths.WikiOverview)
 	if !strings.Contains(overview, "src/") || !strings.Contains(overview, "styles/") {
 		t.Fatalf("overview.md should mention the top-level areas:\n%s", overview)
@@ -174,9 +163,6 @@ func TestWikiUnsupportedFrameworkFilesStillUseful(t *testing.T) {
 	areaSrc := mustReadFile(t, filepath.Join(paths.WikiAreasDir, "src.md"))
 	if !strings.Contains(areaSrc, "src/App.vue") {
 		t.Fatalf("areas/src.md should mention App.vue:\n%s", areaSrc)
-	}
-	if !strings.Contains(areaSrc, "No code hints for this area") {
-		t.Fatalf("areas/src.md should note the absence of code hints:\n%s", areaSrc)
 	}
 }
 
@@ -226,35 +212,22 @@ func TestWikiSearchIndexesWikiPages(t *testing.T) {
 	}
 }
 
-// TestWikiSearchDeEmphasizesImports covers Part H #10: import-like items are not
-// returned under --kind code_item but are returned under --kind import.
-func TestWikiSearchDeEmphasizesImports(t *testing.T) {
+// TestWikiSearchReturnsFilesAndWiki covers that search returns file and wiki
+// kinds but never the removed code_item or import kinds.
+func TestWikiSearchReturnsFilesAndWiki(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.22\n")
-	mustWriteFile(t, filepath.Join(root, "cmd", "app", "main.go"), "package main\n\nimport \"github.com/acme/main/client\"\n\nfunc main() {}\n")
+	mustWriteFile(t, filepath.Join(root, "cmd", "app", "main.go"), "package main\n\nfunc main() {}\n")
 	app := testApp(root)
 	wikiRunOK(t, app, "init")
 
-	codeItems := wikiSearch(t, app, "main", "--kind", "code_item")
-	if len(codeItems.Results) == 0 {
-		t.Fatalf("search \"main\" --kind code_item returned no results")
+	results := wikiSearch(t, app, "main")
+	if len(results.Results) == 0 {
+		t.Fatalf("search \"main\" returned no results")
 	}
-	for _, result := range codeItems.Results {
-		if result.Kind != "code_item" {
-			t.Fatalf("--kind code_item returned non-code_item: %#v", result)
-		}
-		if result.CodeKind == "go_import" || result.CodeKind == "go_package" {
-			t.Fatalf("--kind code_item should not return import-like entries: %#v", result)
-		}
-	}
-
-	imports := wikiSearch(t, app, "main", "--kind", "import")
-	if len(imports.Results) == 0 {
-		t.Fatalf("search \"main\" --kind import returned no import entries")
-	}
-	for _, result := range imports.Results {
-		if result.Kind != "import" {
-			t.Fatalf("--kind import returned non-import: %#v", result)
+	for _, result := range results.Results {
+		if result.Kind == "code_item" || result.Kind == "import" {
+			t.Fatalf("search returned removed kind %q (tree-sitter removed): %#v", result.Kind, result)
 		}
 	}
 }
