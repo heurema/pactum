@@ -92,6 +92,31 @@ func gitGuardPrechecks(root string, isReviewFix bool) (bool, string, *gitGuardSn
 		return inconclusiveErr(fmt.Errorf("git guard: rev-parse --absolute-git-dir: %w", err))
 	}
 
+	// Resolve the git common dir for shared-ref-store state checks. Linked
+	// worktrees are supported — refs are shared across all linked worktrees via
+	// the common dir, so:
+	//   (a) a branch checked out in another worktree cannot be force-moved from
+	//       this one — if the guard must restore such a ref and git refuses, it
+	//       surfaces as executor_git_restore_failed;
+	//   (b) concurrent git activity in another worktree could perturb shared refs
+	//       mid-run — this is an accepted, documented residual and does not block.
+	//
+	// Stale lock path resolution uses the common dir for shared-ref-store locks
+	// (refs.lock, packed-refs.lock, loose-ref locks under refs/). When
+	// --git-common-dir returns a relative path (e.g. ".git" in a primary worktree)
+	// it is resolved via filepath.Join(root, commonDir), where root is the
+	// directory used with "git -C root", because git's relative output is rooted
+	// at root, not the process CWD. index.lock remains resolved against the
+	// per-worktree git dir (always absolute, from --absolute-git-dir) because each
+	// worktree has its own index.
+	commonDir, err := gitExec(root, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return inconclusiveErr(fmt.Errorf("git guard: rev-parse --git-common-dir: %w", err))
+	}
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(root, commonDir)
+	}
+
 	// No in-progress operations.
 	for _, markerFile := range []string{"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG"} {
 		if _, err := os.Stat(filepath.Join(gitDir, markerFile)); err == nil {
@@ -104,15 +129,21 @@ func gitGuardPrechecks(root string, isReviewFix bool) (bool, string, *gitGuardSn
 		}
 	}
 
-	// No stale lock files at the git-dir root.
-	for _, lockFile := range []string{"index.lock", "refs.lock", "packed-refs.lock"} {
-		if _, err := os.Stat(filepath.Join(gitDir, lockFile)); err == nil {
+	// No stale lock files. index.lock is per-worktree; resolved against the
+	// absolute git dir. Shared-ref-store locks (refs.lock, packed-refs.lock, loose
+	// ref locks under refs/) are resolved against the common dir so that detection
+	// is effective in both primary and linked worktrees.
+	if _, err := os.Stat(filepath.Join(gitDir, "index.lock")); err == nil {
+		return inconclusive()
+	}
+	for _, lockFile := range []string{"refs.lock", "packed-refs.lock"} {
+		if _, err := os.Stat(filepath.Join(commonDir, lockFile)); err == nil {
 			return inconclusive()
 		}
 	}
 	// No loose ref lock files (e.g. refs/heads/main.lock).
 	var foundRefLock bool
-	_ = filepath.WalkDir(filepath.Join(gitDir, "refs"), func(_ string, d fs.DirEntry, walkErr error) error {
+	_ = filepath.WalkDir(filepath.Join(commonDir, "refs"), func(_ string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil || d.IsDir() {
 			return nil
 		}
@@ -128,21 +159,6 @@ func gitGuardPrechecks(root string, isReviewFix bool) (bool, string, *gitGuardSn
 
 	// No submodules.
 	if _, err := os.Stat(filepath.Join(root, ".gitmodules")); err == nil {
-		return inconclusive()
-	}
-
-	// No linked worktrees.
-	worktreeOut, err := gitExec(root, "worktree", "list", "--porcelain")
-	if err != nil {
-		return inconclusiveErr(fmt.Errorf("git guard: worktree list: %w", err))
-	}
-	count := 0
-	for _, line := range strings.Split(worktreeOut, "\n") {
-		if strings.HasPrefix(line, "worktree ") {
-			count++
-		}
-	}
-	if count > 1 {
 		return inconclusive()
 	}
 
