@@ -315,6 +315,12 @@ func parseForEachRef(out string) map[string]string {
 //	inconclusive > restore_failed > history_mutation > ref_mutation > index_mutation
 //
 // When inconclusive is detected, all restoration is suppressed.
+//
+// Terminality: inconclusive, restore_failed, history_mutation, and ref_mutation
+// all void the attempt (TerminalReason set). An index-only mutation is benign —
+// it is detected, restored, and recorded in MutationClass, but leaves
+// TerminalReason empty so the attempt completes: staging touches only the
+// ephemeral index, not history or refs.
 func gitGuardCompareAndRestore(root string, snap *gitGuardSnapshot, isReviewFix bool, transportErr error) gitGuardOutcome {
 	outcome := gitGuardOutcome{}
 	if transportErr != nil {
@@ -567,6 +573,17 @@ func gitGuardCompareAndRestore(root string, snap *gitGuardSnapshot, isReviewFix 
 	if len(restoreErrs) > 0 {
 		outcome.TerminalReason = gitGuardReasonRestoreFailed
 		outcome.RestoreError = strings.Join(restoreErrs, "; ")
+	} else if outcome.MutationClass == gitGuardReasonIndexMutation {
+		// Index-only staging is benign and does NOT void the attempt. The agent
+		// ran `git add` (or similar), which touches only the ephemeral index;
+		// HEAD and all refs are untouched, the working tree — the real execution
+		// output — is intact, and the guard has already reset the index to the
+		// snapshot tree above. Record the mutation for audit (MutationClass +
+		// RestoredState) but leave TerminalReason empty so the attempt completes:
+		// staging is normal agent behavior, not history/ref tampering. Only
+		// history/ref mutation, a failed restore, or an inconclusive state void
+		// an attempt.
+		outcome.TerminalReason = ""
 	} else {
 		outcome.TerminalReason = dominantClass()
 	}

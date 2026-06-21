@@ -293,8 +293,14 @@ func TestGitGuardCompareAndRestore_IndexOnly_Detected_And_Restored(t *testing.T)
 
 	outcome := gitGuardCompareAndRestore(root, snap, false, nil)
 
-	if outcome.TerminalReason != gitGuardReasonIndexMutation {
-		t.Errorf("expected terminal_reason=%q, got %q", gitGuardReasonIndexMutation, outcome.TerminalReason)
+	// Index-only staging is benign: it is detected and the index is restored,
+	// but it must NOT void the attempt (no terminal reason). The mutation is
+	// recorded in MutationClass for audit instead.
+	if outcome.TerminalReason != "" {
+		t.Errorf("index-only staging must not be terminal, got terminal_reason=%q", outcome.TerminalReason)
+	}
+	if outcome.MutationClass != gitGuardReasonIndexMutation {
+		t.Errorf("expected mutation_class=%q, got %q", gitGuardReasonIndexMutation, outcome.MutationClass)
 	}
 
 	// Index should be restored: staged.txt must no longer be in the index.
