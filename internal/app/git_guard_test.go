@@ -629,3 +629,160 @@ func TestGitGuardInconclusiveSuppressesRestore(t *testing.T) {
 		t.Errorf("inconclusive should suppress ref restoration: extra should remain at %s, got %s", newCommit, currentExtra)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// gitGuardPrechecks — linked worktree: agent commit detected and restored
+// ---------------------------------------------------------------------------
+
+func TestGitGuardPrechecks_LinkedWorktree_AgentCommitDetected(t *testing.T) {
+	skipIfNoGit(t)
+	primaryRoot := initTestRepo(t)
+
+	// A branch can only be checked out in one worktree at a time; create a
+	// fresh branch for the linked worktree.
+	mustGitG(t, primaryRoot, "branch", "wt-branch")
+	wtDir := filepath.Join(t.TempDir(), "wt")
+	mustGitG(t, primaryRoot, "worktree", "add", wtDir, "wt-branch")
+	t.Cleanup(func() {
+		_ = exec.Command("git", "-C", primaryRoot, "worktree", "remove", "--force", wtDir).Run()
+	})
+
+	// Prechecks inside the linked worktree must succeed — multi-worktree presence
+	// alone must not return executor_git_guard_inconclusive.
+	ok, reason, snap, err := gitGuardPrechecks(wtDir, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected ok=true in linked worktree, got reason=%q", reason)
+	}
+	if snap == nil {
+		t.Fatal("expected non-nil snapshot")
+	}
+
+	// Simulate agent making a commit inside the linked worktree.
+	if err := os.WriteFile(filepath.Join(wtDir, "agent.txt"), []byte("agent work"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitG(t, wtDir, "add", "agent.txt")
+	mustGitG(t, wtDir, "commit", "-m", "agent commit in linked worktree")
+
+	outcome := gitGuardCompareAndRestore(wtDir, snap, false, nil)
+
+	if outcome.TerminalReason != gitGuardReasonHistoryMutation {
+		t.Errorf("expected terminal_reason=%q, got %q (must not be executor_git_guard_inconclusive)", gitGuardReasonHistoryMutation, outcome.TerminalReason)
+	}
+
+	// HEAD must be restored to the snapshot hash.
+	currentHead := mustGitG(t, wtDir, "rev-parse", "HEAD")
+	if currentHead != snap.HeadHash {
+		t.Errorf("HEAD not restored: want %s, got %s", snap.HeadHash, currentHead)
+	}
+
+	// Agent's changes must be present as unstaged working-tree modifications.
+	statusOut := mustGitG(t, wtDir, "status", "--porcelain=v1")
+	if !strings.Contains(statusOut, "agent.txt") {
+		t.Errorf("expected agent.txt in status after restore, got: %q", statusOut)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// gitGuardPrechecks — stale lock detection uses git common dir
+// ---------------------------------------------------------------------------
+
+func TestGitGuardPrechecks_PackedRefsLock_PrimaryWorktree(t *testing.T) {
+	skipIfNoGit(t)
+	root := initTestRepo(t)
+
+	// In a primary worktree --git-common-dir returns a relative path (e.g. ".git").
+	// The implementation resolves it via filepath.Join(root, commonDir).
+	commonDir := mustGitG(t, root, "rev-parse", "--git-common-dir")
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(root, commonDir)
+	}
+	if err := os.WriteFile(filepath.Join(commonDir, "packed-refs.lock"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, reason, _, err := gitGuardPrechecks(root, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false when packed-refs.lock exists in common dir")
+	}
+	if reason != gitGuardReasonInconclusive {
+		t.Errorf("expected %q, got %q", gitGuardReasonInconclusive, reason)
+	}
+}
+
+func TestGitGuardPrechecks_PackedRefsLock_LinkedWorktree(t *testing.T) {
+	skipIfNoGit(t)
+	primaryRoot := initTestRepo(t)
+
+	mustGitG(t, primaryRoot, "branch", "wt-branch")
+	wtDir := filepath.Join(t.TempDir(), "wt")
+	mustGitG(t, primaryRoot, "worktree", "add", wtDir, "wt-branch")
+	t.Cleanup(func() {
+		_ = exec.Command("git", "-C", primaryRoot, "worktree", "remove", "--force", wtDir).Run()
+	})
+
+	// In a linked worktree --git-common-dir returns the absolute path to the
+	// primary .git dir (the shared ref store).
+	commonDir := mustGitG(t, wtDir, "rev-parse", "--git-common-dir")
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(wtDir, commonDir)
+	}
+	if err := os.WriteFile(filepath.Join(commonDir, "packed-refs.lock"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, reason, _, err := gitGuardPrechecks(wtDir, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false when packed-refs.lock exists in common dir")
+	}
+	if reason != gitGuardReasonInconclusive {
+		t.Errorf("expected %q, got %q", gitGuardReasonInconclusive, reason)
+	}
+}
+
+func TestGitGuardPrechecks_LooseRefLock_LinkedWorktree(t *testing.T) {
+	skipIfNoGit(t)
+	primaryRoot := initTestRepo(t)
+
+	mustGitG(t, primaryRoot, "branch", "wt-branch")
+	wtDir := filepath.Join(t.TempDir(), "wt")
+	mustGitG(t, primaryRoot, "worktree", "add", wtDir, "wt-branch")
+	t.Cleanup(func() {
+		_ = exec.Command("git", "-C", primaryRoot, "worktree", "remove", "--force", wtDir).Run()
+	})
+
+	// In a linked worktree --git-common-dir returns the absolute path to the
+	// primary .git dir. The loose-ref lock walk must use this common dir so that
+	// shared-ref-store locks are detectable from inside the linked worktree.
+	commonDir := mustGitG(t, wtDir, "rev-parse", "--git-common-dir")
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(wtDir, commonDir)
+	}
+	refsHeadsDir := filepath.Join(commonDir, "refs", "heads")
+	if err := os.MkdirAll(refsHeadsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(refsHeadsDir, "wt-branch.lock"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, reason, _, err := gitGuardPrechecks(wtDir, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false when loose ref lock file exists in common dir refs/")
+	}
+	if reason != gitGuardReasonInconclusive {
+		t.Errorf("expected %q, got %q", gitGuardReasonInconclusive, reason)
+	}
+}
