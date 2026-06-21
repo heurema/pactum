@@ -1,0 +1,42 @@
+{
+  "schema": "pactum.contract_draft_proposal.v1alpha1",
+  "run_id": "run_20260621_144127",
+  "status": "accepted",
+  "created_at": "2026-06-21T14:41:41Z",
+  "source": "drafter_attempt",
+  "drafter_attempt_id": "drafter_attempt_001",
+  "drafter": "codex",
+  "in_scope": [
+    "Modify internal/app/git_guard.go only enough to stop treating multiple git worktrees as an inconclusive precondition while preserving all other gitGuardPrechecks behavior.",
+    "Add or update tests in internal/app/git_guard_test.go using a real linked worktree created with git worktree add.",
+    "Add a code comment near the removed or replaced worktree guard explaining linked-worktree support and the accepted residual shared-ref edge."
+  ],
+  "out_of_scope": [
+    "Changing git guard snapshot, compare, or restore semantics beyond what is required for linked-worktree precheck support.",
+    "Changing terminal reason constants, result JSON field names, or the terminal-reason set.",
+    "Weakening existing preconditions for detached HEAD, dirty execute-stage trees outside .heurema, unmerged paths, in-progress git operations, stale lock files, submodules, sparse index, or split index.",
+    "Adding cross-worktree locking, shared-ref concurrency protection, or broader execute/review-fix workflow changes.",
+    "Changing files outside internal/app/git_guard.go and internal/app/git_guard_test.go."
+  ],
+  "acceptance": [
+    "A clean primary worktree with at least one linked sibling worktree no longer causes gitGuardPrechecks to return executor_git_guard_inconclusive solely because multiple worktrees exist.",
+    "A clean linked worktree created with git worktree add returns ok=true from gitGuardPrechecks with a non-nil snapshot when no other precondition is violated.",
+    "A test demonstrates that an agent commit made inside the linked worktree after snapshot is detected by gitGuardCompareAndRestore as executor_git_history_mutation, restores HEAD to the snapshot hash, and leaves the committed work present but unstaged in the linked worktree.",
+    "The linked-worktree test does not pass by accepting executor_git_guard_inconclusive as an outcome.",
+    "Existing inconclusive preconditions still return executor_git_guard_inconclusive with nil snapshots for detached HEAD, dirty execute-stage trees outside .heurema, in-progress git operations or unmerged paths, stale git lock files, submodules, sparse index, and split index.",
+    "The implementation does not introduce, remove, or rename any git guard terminal reason.",
+    "A code comment documents that refs are shared across linked worktrees, that git refusing to restore a ref checked out elsewhere will surface as executor_git_restore_failed, and that concurrent git activity in another worktree remains an accepted nonblocking residual risk.",
+    "make check passes."
+  ],
+  "validation": [
+    "go test ./internal/app -run TestGitGuard",
+    "make check"
+  ],
+  "assumptions": [
+    "The test environment has git installed with git worktree add support; tests may keep using the repository's existing skipIfNoGit helper when git is unavailable.",
+    "The linked-worktree test can create temporary branches and worktree directories under t.TempDir without relying on absolute local paths.",
+    "Concurrent git activity in sibling worktrees is not required to be simulated by tests for this change."
+  ],
+  "accepted_at": "2026-06-21T14:42:56Z",
+  "accepted_by": "manual"
+}

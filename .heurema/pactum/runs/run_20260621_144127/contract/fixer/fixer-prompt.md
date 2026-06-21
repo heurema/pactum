@@ -1,0 +1,83 @@
+# Contract Review Fixer Prompt
+
+You are fixing a software change contract to address blocking review findings.
+
+Current contract version: 83af98ea07c1e9762d632f1a40ee0604b75b52488a221ecd88be7f3000a6e869
+
+## Current Contract
+
+**Goal**: Fix the git-history guard so it runs inside a linked git worktree instead of blanket-blocking. Currently gitGuardPrechecks in internal/app/git_guard.go runs `git worktree list --porcelain` and returns executor_git_guard_inconclusive whenever more than one worktree exists (around lines 134-146). This blocks the write-enabled execute and review-fix stages in ANY git worktree checkout — and even in the primary checkout when any sibling worktree exists — which breaks the common worktree-based workflow (pactum's own dogfooding runs in worktrees, so the just-merged guard immediately blocked it).
+
+The guard's snapshot/restore operates correctly per-worktree: HEAD (symbolic-ref + hash), the index (write-tree), and `git reset --mixed` / `git update-ref` all work in a linked worktree, scoped to that worktree's own HEAD/index. So a linked worktree is NOT a reason to bail.
+
+First read internal/app/git_guard.go (the gitGuardPrechecks function and the multi-worktree check) and internal/app/git_guard_test.go to understand the existing precondition tests and helpers.
+
+Fix: remove the blanket multi-worktree inconclusive precondition so the guard runs normally in a linked (or primary-with-siblings) worktree. KEEP every other precondition unchanged (attached HEAD, clean tree excluding .heurema, no unmerged paths, no in-progress merge/rebase/cherry-pick/revert/bisect/sequencer, no stale lock files, no submodules, no sparse/split index). Document the residual shared-ref edge in a code comment: refs are shared across linked worktrees, so (a) a branch checked out in ANOTHER worktree cannot be force-moved from this one — if the guard ever needs to restore such a ref and git refuses, that already surfaces loudly as executor_git_restore_failed; and (b) concurrent git activity in another worktree could in theory perturb shared refs mid-run — this is an accepted, documented residual for now and must NOT block.
+
+Scope: internal/app/git_guard.go (remove/replace only the multi-worktree precondition, plus the explanatory comment) and internal/app/git_guard_test.go (add a test that the guard runs its normal snapshot/compare/restore inside a linked worktree created with `git worktree add` — e.g. an agent commit made inside the worktree is detected and restored as executor_git_history_mutation with the work left unstaged, NOT executor_git_guard_inconclusive). Do NOT weaken the other preconditions, change the snapshot/restore logic, or alter the terminal-reason set.
+
+Acceptance: a write-stage guard run inside a linked git worktree (created via `git worktree add`) does NOT return executor_git_guard_inconclusive merely because other worktrees exist; the guard performs its normal snapshot/compare/restore there, and an in-worktree agent commit is detected and restored as executor_git_history_mutation leaving the work unstaged; all other preconditions (detached HEAD, dirty non-.heurema tree, in-progress op, submodules, sparse/split index) still return executor_git_guard_inconclusive; a code comment documents the linked-worktree support and the residual shared-ref edge; make check passes.
+
+**Scope in**:
+  - Modify internal/app/git_guard.go only enough to stop treating multiple git worktrees as an inconclusive precondition while preserving all other gitGuardPrechecks behavior.
+  - Fix the stale-lock-file precondition to resolve refs.lock, packed-refs.lock, and the loose-ref-lock walk (under refs/) against the git common dir (obtained via `git rev-parse --git-common-dir`) rather than the per-worktree git dir. index.lock is per-worktree and remains resolved via --absolute-git-dir. In a primary worktree both commands return the same path, so no special-casing is needed.
+  - Add or update tests in internal/app/git_guard_test.go using a real linked worktree created with git worktree add.
+  - Add a code comment near the removed or replaced worktree guard explaining linked-worktree support, the use of the git common dir for shared-ref lock resolution, and the accepted residual shared-ref edge.
+
+**Scope out**:
+  - Changing git guard snapshot, compare, or restore semantics beyond what is required for linked-worktree precheck support.
+  - Changing terminal reason constants, result JSON field names, or the terminal-reason set.
+  - Weakening existing preconditions for detached HEAD, dirty execute-stage trees outside .heurema, unmerged paths, in-progress git operations, stale lock files, submodules, sparse index, or split index.
+  - Adding cross-worktree locking, shared-ref concurrency protection, or broader execute/review-fix workflow changes.
+  - Changing files outside internal/app/git_guard.go and internal/app/git_guard_test.go.
+
+**Acceptance criteria**:
+  - A clean primary worktree with at least one linked sibling worktree no longer causes gitGuardPrechecks to return executor_git_guard_inconclusive solely because multiple worktrees exist.
+  - A clean linked worktree created with git worktree add returns ok=true from gitGuardPrechecks with a non-nil snapshot when no other precondition is violated.
+  - A test demonstrates that an agent commit made inside the linked worktree after snapshot is detected by gitGuardCompareAndRestore as executor_git_history_mutation, restores HEAD to the snapshot hash, and leaves the committed work present but unstaged in the linked worktree.
+  - The linked-worktree test does not pass by accepting executor_git_guard_inconclusive as an outcome.
+  - Existing inconclusive preconditions still return executor_git_guard_inconclusive with nil snapshots for detached HEAD, dirty execute-stage trees outside .heurema, in-progress git operations or unmerged paths, stale git lock files, submodules, sparse index, and split index.
+  - Stale lock file detection for refs.lock, packed-refs.lock, and loose-ref locks under refs/ resolves paths against the git common dir (from `git rev-parse --git-common-dir`), not the per-worktree git dir, so the check is effective in both primary and linked worktrees. This is a correctness fix to make an existing precondition work properly in linked worktrees; the stale-lock detection behavior (which lock files are checked and what constitutes a stale lock) is unchanged. Because `--git-common-dir` may return a relative path (e.g., `.git` in a primary worktree) and git commands in this implementation always run with `-C root`, a relative output is relative to `root`, not the process working directory. The implementation must resolve a relative common-dir output by joining it with `root` (e.g., `if !filepath.IsAbs(commonDir) { commonDir = filepath.Join(root, commonDir) }`). Using filepath.Abs is incorrect here because it resolves against the process CWD, not `root`. index.lock remains resolved against the per-worktree git dir (always absolute, obtained via --absolute-git-dir) because each worktree has its own index.
+  - Two tests verify stale lock file detection using the git common dir path. (a) Primary-worktree test: within a freshly initialized primary git repo, a stale packed-refs.lock is placed at the path constructed by joining `root` with the relative `--git-common-dir` output (e.g., filepath.Join(root, ".git", "packed-refs.lock")); gitGuardPrechecks(root) must return executor_git_guard_inconclusive. This test exercises the relative-path resolution branch — `--git-common-dir` returns `.git` (relative) in a primary worktree, so the filepath.Join(root, commonDir) logic is the active code path. (b) Linked-worktree test: within a linked worktree created via git worktree add, a stale packed-refs.lock is placed at the absolute path returned by `--git-common-dir` (which is absolute in a linked worktree, pointing to the shared primary .git dir); gitGuardPrechecks on the linked worktree root must return executor_git_guard_inconclusive. Both sub-tests must confirm the outcome is executor_git_guard_inconclusive, not any other reason.
+  - The implementation does not introduce, remove, or rename any git guard terminal reason.
+  - A code comment documents: (a) refs are shared across linked worktrees; (b) git refusing to restore a ref checked out elsewhere will surface as executor_git_restore_failed; (c) concurrent git activity in another worktree is an accepted nonblocking residual; (d) stale lock path resolution uses the git common dir for shared-ref-store locks — when `--git-common-dir` returns a relative path it is resolved via filepath.Join(root, commonDir), where root is the directory passed to `git -C root`, because git's relative output is rooted at root, not the process CWD — ensuring detection is correct in both primary and linked worktrees.
+  - make check passes.
+
+**Validation commands**:
+  - go test ./internal/app -run TestGitGuard
+  - make check
+
+**Assumptions**:
+  - The test environment has git installed with git worktree add support; tests may keep using the repository's existing skipIfNoGit helper when git is unavailable.
+  - The linked-worktree test can create temporary branches and worktree directories under t.TempDir without relying on absolute local paths.
+  - Concurrent git activity in sibling worktrees is not required to be simulated by tests for this change.
+  - `git rev-parse --git-common-dir` is available in every environment that supports git worktree add. Its output may be a relative path (e.g., `.git` in a primary worktree); when relative, it is relative to the root directory used with `git -C root`, not the process working directory. The correct resolution is `if !filepath.IsAbs(commonDir) { commonDir = filepath.Join(root, commonDir) }`. Using filepath.Abs is incorrect because it resolves against process CWD rather than `root`. Once resolved via this join, the common dir path in a primary worktree points to the same directory as `--absolute-git-dir`, so no further special-casing between primary and linked worktrees is needed beyond this conditional join.
+
+## Blocking Findings to Address
+
+1. [codex-xhigh/scope-fidelity] The contract gives conflicting scope boundaries for git_guard.go: one section says to remove/replace only the multi-worktree precondition, while Scope in later requires changing stale-lock-file path resolution.
+   Evidence: Earlier scope: "internal/app/git_guard.go (remove/replace only the multi-worktree precondition, plus the explanatory comment)". Later Scope in: "Fix the stale-lock-file precondition to resolve refs.lock, packed-refs.lock, and the loose-ref-lock walk... against the git common dir".
+
+## Fixer Instructions
+
+- Address each blocking finding by updating the relevant contract field.
+- Do NOT change the goal field — it is out of scope for the fixer.
+- Only include the contract fields you are changing in the output.
+- base_version must exactly match the version shown above.
+
+## Output
+
+Output your reasoning, then a single JSON block with the revise payload:
+
+```json
+{
+  "schema": "pactum.contract_revise.v1alpha1",
+  "base_version": "83af98ea07c1e9762d632f1a40ee0604b75b52488a221ecd88be7f3000a6e869",
+  "contract": {
+    "acceptance_criteria": ["...updated criteria..."],
+    "validation": {"commands": ["...updated commands..."]}
+  }
+}
+```
+
+Omit any contract field you are not changing. Do not include the goal field.
