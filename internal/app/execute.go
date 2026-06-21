@@ -83,6 +83,7 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 	}
 
 	promptRepoPath := executionPromptRepoPath(runID)
+	var guardOutcome gitGuardOutcome
 	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[agents.DryRunPlan, executionRequestDocument, executionResultDocument, struct{}]{
 		Stdout:           stdout,
 		LiveOutput:       liveOutput,
@@ -104,6 +105,7 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 		StartedEvent:     "execution_attempt_started",
 		FinishedEvent:    "execution_attempt_finished",
 		ExitKind:         "agent",
+		GitGuard:         &agentAttemptGitGuard{Root: root, IsReviewFix: false, Outcome: &guardOutcome},
 		TimeoutMessage: func(timeout time.Duration) string {
 			return fmt.Sprintf("agent process produced no output for %s", timeout)
 		},
@@ -128,12 +130,22 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 			}, nil
 		},
 		BuildResult: func(context agentAttemptContext[agents.DryRunPlan], runResult agents.RunResult) executionResultDocument {
-			return executionResultDocument{
+			result := executionResultDocument{
 				Schema:        executionResultSchema,
 				RunID:         runID,
 				AttemptID:     context.AttemptID,
 				processResult: processResultFromRunResult(runResult),
 			}
+			if guardOutcome.TerminalReason != "" {
+				result.GitGuard = &gitGuardOutcome{
+					TerminalReason: guardOutcome.TerminalReason,
+					MutationClass:  guardOutcome.MutationClass,
+					RestoredState:  guardOutcome.RestoredState,
+					RestoreError:   guardOutcome.RestoreError,
+					Detail:         guardOutcome.Detail,
+				}
+			}
+			return result
 		},
 		ProcessResult: func(result executionResultDocument) processResult {
 			return result.processResult
@@ -143,7 +155,9 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 		},
 		WrapRunOnly: func(result executionResultDocument) any {
 			next := []string{}
-			if result.ExitCode == 0 && (!result.TimedOut || result.CompletedDespiteTimeout) {
+			if result.ExitCode == 0 &&
+				(!result.TimedOut || result.CompletedDespiteTimeout) &&
+				(result.GitGuard == nil || result.GitGuard.TerminalReason == "") {
 				next = nextCommandsForRun(prep.Paths, runID)
 			}
 			return executeRunResponse{executionResultDocument: result, Next: next}
@@ -369,9 +383,10 @@ type executionRequestDocument struct {
 }
 
 type executionResultDocument struct {
-	Schema    string `json:"schema"`
-	RunID     string `json:"run_id"`
-	AttemptID string `json:"attempt_id"`
+	Schema    string           `json:"schema"`
+	RunID     string           `json:"run_id"`
+	AttemptID string           `json:"attempt_id"`
+	GitGuard  *gitGuardOutcome `json:"git_guard,omitempty"`
 	processResult
 }
 
