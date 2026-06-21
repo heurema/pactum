@@ -16,6 +16,15 @@ import (
 
 var agentAttemptLifecycleMu sync.Mutex
 
+// agentAttemptGitGuard wires the git guard into the lifecycle for a write
+// stage. Outcome is filled by the guard before BuildResult is called; callers
+// can capture the pointer in their BuildResult closures.
+type agentAttemptGitGuard struct {
+	Root        string
+	IsReviewFix bool             // skip clean-tree precondition
+	Outcome     *gitGuardOutcome // filled before BuildResult runs
+}
+
 type agentAttemptLifecycle[Prepared any, Request any, Result any, Response any] struct {
 	Stdout     io.Writer
 	LiveOutput io.Writer
@@ -64,6 +73,10 @@ type agentAttemptLifecycle[Prepared any, Request any, Result any, Response any] 
 
 	ExitKind       string
 	TimeoutMessage func(time.Duration) string
+
+	// GitGuard, when non-nil, wraps the transport call with the git-history guard.
+	// Set only for write-enabled stages (execute, review-fix).
+	GitGuard *agentAttemptGitGuard
 
 	Prepare       func(createdAt string) (Prepared, error)
 	BuildRequest  func(agentAttemptContext[Prepared]) (Request, error)
@@ -162,66 +175,108 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 	var runResult agents.RunResult
 	var runErr error
 	var retryArtifactErr error
-	for callNum := 1; callNum <= maxTransportCalls; callNum++ {
-		runResult, runErr = a.agentTransport().Run(runReq)
 
-		// Pre-start failure: the transport could not launch the process at all.
-		// Preserve the existing early-return behavior so no partial artifacts are
-		// written. Retries are not attempted for pre-start failures.
-		if runErr != nil && runResult.StartedAt == "" {
-			break
+	// Git guard: preconditions + snapshot. On precondition failure, skip the
+	// transport entirely and synthesize a failed RunResult so the lifecycle
+	// still produces a complete attempt artifact.
+	var guardSnap *gitGuardSnapshot
+	var guardSkipTransport bool
+	if cfg.GitGuard != nil {
+		ok, reason, snap, err := gitGuardPrechecks(cfg.GitGuard.Root, cfg.GitGuard.IsReviewFix)
+		if err != nil {
+			return err
 		}
-
-		// Wall-clock cap or completed-despite-timeout suppress retries: the result
-		// is conclusive and must be returned as-is on any stage.
-		if runResult.WallClockTimeout || runResult.CompletedDespiteTimeout {
-			break
-		}
-
-		isLastCall := callNum >= maxTransportCalls
-		// Write stages (ReadOnly=false) are never retried: retrying after a
-		// possible write risks duplicate writes. No retry-decision artifact is
-		// written for write stages.
-		if !cfg.ReadOnly {
-			break
-		}
-		// Last call on a read-only stage: no more retries are available.
-		if isLastCall {
-			if runErr != nil || isTransportOutputEmpty(attemptPaths.StdoutLog) {
-				retryArtifactErr = appendRetryDecision(retryDecisionsPath, cfg.Stage, attemptID, runErr, runResult, cfg.ReadOnly, callNum, 0)
+		if !ok {
+			*cfg.GitGuard.Outcome = gitGuardOutcome{
+				TerminalReason: reason,
+				Detail:         "precondition check failed before transport",
 			}
-			break
-		}
-
-		// Determine whether this failure/empty output is retryable.
-		var cls agents.TransportErrorClass
-		if runErr != nil {
-			cls = agents.ClassifyTransportError(runErr)
-			// An idle timeout sets RunResult.TimedOut and cancels the context; the
-			// resulting context.Canceled is retryable as an idle timeout regardless of
-			// what the classifier returns for context.Canceled alone.
-			if runResult.TimedOut && !runResult.WallClockTimeout {
-				cls.Retryable = true
-				cls.Kind = "idle_timeout"
-				cls.Reason = "idle timeout: agent process killed after period of no output"
+			guardSkipTransport = true
+			nowNano := a.nowUTC().Format(time.RFC3339Nano)
+			runResult = agents.RunResult{
+				StartedAt:  nowNano,
+				FinishedAt: nowNano,
+				ExitCode:   1,
 			}
-		} else if isTransportOutputEmpty(attemptPaths.StdoutLog) {
-			cls = agents.TransportErrorClass{Retryable: true, Kind: "empty_output", Reason: "transport returned no output"}
+			runErr = fmt.Errorf("git guard: %s", reason)
 		} else {
-			break // success
+			guardSnap = snap
+		}
+	}
+
+	if !guardSkipTransport {
+		for callNum := 1; callNum <= maxTransportCalls; callNum++ {
+			runResult, runErr = a.agentTransport().Run(runReq)
+
+			// Pre-start failure: the transport could not launch the process at all.
+			// Preserve the existing early-return behavior so no partial artifacts are
+			// written. Retries are not attempted for pre-start failures.
+			if runErr != nil && runResult.StartedAt == "" {
+				break
+			}
+
+			// Wall-clock cap or completed-despite-timeout suppress retries: the result
+			// is conclusive and must be returned as-is on any stage.
+			if runResult.WallClockTimeout || runResult.CompletedDespiteTimeout {
+				break
+			}
+
+			isLastCall := callNum >= maxTransportCalls
+			// Write stages (ReadOnly=false) are never retried: retrying after a
+			// possible write risks duplicate writes. No retry-decision artifact is
+			// written for write stages.
+			if !cfg.ReadOnly {
+				break
+			}
+			// Last call on a read-only stage: no more retries are available.
+			if isLastCall {
+				if runErr != nil || isTransportOutputEmpty(attemptPaths.StdoutLog) {
+					retryArtifactErr = appendRetryDecision(retryDecisionsPath, cfg.Stage, attemptID, runErr, runResult, cfg.ReadOnly, callNum, 0)
+				}
+				break
+			}
+
+			// Determine whether this failure/empty output is retryable.
+			var cls agents.TransportErrorClass
+			if runErr != nil {
+				cls = agents.ClassifyTransportError(runErr)
+				// An idle timeout sets RunResult.TimedOut and cancels the context; the
+				// resulting context.Canceled is retryable as an idle timeout regardless of
+				// what the classifier returns for context.Canceled alone.
+				if runResult.TimedOut && !runResult.WallClockTimeout {
+					cls.Retryable = true
+					cls.Kind = "idle_timeout"
+					cls.Reason = "idle timeout: agent process killed after period of no output"
+				}
+			} else if isTransportOutputEmpty(attemptPaths.StdoutLog) {
+				cls = agents.TransportErrorClass{Retryable: true, Kind: "empty_output", Reason: "transport returned no output"}
+			} else {
+				break // success
+			}
+
+			delay := transportRetryDelay(callNum, a.jitter())
+			if !cls.Retryable {
+				delay = 0
+			}
+			if retryArtifactErr = appendRetryDecision(retryDecisionsPath, cfg.Stage, attemptID, runErr, runResult, cfg.ReadOnly, callNum, delay); retryArtifactErr != nil {
+				break
+			}
+			if !cls.Retryable {
+				break
+			}
+			a.sleep(delay)
 		}
 
-		delay := transportRetryDelay(callNum, a.jitter())
-		if !cls.Retryable {
-			delay = 0
+		// Git guard: compare post-transport state to snapshot and restore if needed.
+		// Runs even when the transport errored, so mutations are always detected.
+		if cfg.GitGuard != nil && guardSnap != nil {
+			outcome := gitGuardCompareAndRestore(cfg.GitGuard.Root, guardSnap, cfg.GitGuard.IsReviewFix, runErr)
+			*cfg.GitGuard.Outcome = outcome
+			if outcome.TerminalReason != "" && runErr == nil {
+				// Transport succeeded but guard found a mutation; fail the attempt.
+				runErr = fmt.Errorf("git guard: %s", outcome.TerminalReason)
+			}
 		}
-		if retryArtifactErr = appendRetryDecision(retryDecisionsPath, cfg.Stage, attemptID, runErr, runResult, cfg.ReadOnly, callNum, delay); retryArtifactErr != nil {
-			break
-		}
-		if !cls.Retryable {
-			break
-		}
-		a.sleep(delay)
 	}
 
 	if retryArtifactErr != nil {
@@ -256,6 +311,10 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 		// The run-only document above is the payload (like a gate failure's
 		// report): the typed error tells the --json path not to append a
 		// second JSON document (the error envelope) to the same stdout.
+		// Git guard terminal reason takes precedence over generic exit-code messages.
+		if cfg.GitGuard != nil && cfg.GitGuard.Outcome.TerminalReason != "" {
+			return agentAttemptFailedError{msg: "git guard: " + cfg.GitGuard.Outcome.TerminalReason}
+		}
 		process := cfg.ProcessResult(result)
 		if process.WallClockTimeout {
 			return agentAttemptFailedError{msg: fmt.Sprintf("%s process killed after wall-clock cap", cfg.ExitKind)}
@@ -264,6 +323,15 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 			return agentAttemptFailedError{msg: cfg.TimeoutMessage(cfg.Timeout)}
 		}
 		return agentAttemptFailedError{msg: processExitError{Kind: cfg.ExitKind, ExitCode: process.ExitCode}.Error()}
+	}
+
+	// Guard terminal reason on an otherwise-successful transport: the transport
+	// exited 0 but the guard detected and restored a git mutation — still fail.
+	if cfg.GitGuard != nil && cfg.GitGuard.Outcome.TerminalReason != "" {
+		if err := writeAgentAttemptRunOnly(cfg, request, result); err != nil {
+			return err
+		}
+		return agentAttemptFailedError{msg: "git guard: " + cfg.GitGuard.Outcome.TerminalReason}
 	}
 
 	if cfg.AfterSuccess == nil {

@@ -61,6 +61,13 @@ func (a App) ReviewApplyFixOutcomes(stdout io.Writer, runID string, fixerAttempt
 	if err != nil {
 		return err
 	}
+	var fixResult reviewFixResultDocument
+	if err := readJSON(attemptPaths.ResultJSON, &fixResult); err != nil {
+		return fmt.Errorf("review fix attempt result unreadable: %s: %w", attemptID, err)
+	}
+	if fixResult.GitGuard != nil && fixResult.GitGuard.TerminalReason != "" {
+		return fmt.Errorf("review fix attempt %s blocked by git guard (%s): cannot apply outcomes", attemptID, fixResult.GitGuard.TerminalReason)
+	}
 	stdoutBytes, err := activeStore.ReadBytes(attemptPaths.StdoutLog)
 	if err != nil {
 		if os.IsNotExist(err) {

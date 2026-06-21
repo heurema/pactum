@@ -285,6 +285,12 @@ func latestCompletedGateExecution(context runContext, contractSHA256 string) (ex
 		if err := readJSON(attemptPaths.ResultJSON, &result); err != nil {
 			return executionAttemptSummary{}, "", false, err
 		}
+		if result.GitGuard != nil && result.GitGuard.TerminalReason != "" {
+			// The most recent matching attempt is git-guard-blocked. Do NOT fall
+			// back to an older successful attempt: that would hide the blocked
+			// attempt and allow a corrupted execution to proceed to the gate.
+			return executionAttemptSummary{}, "", false, nil
+		}
 		if result.AttemptID == "" {
 			result.AttemptID = attemptID
 		}

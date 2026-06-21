@@ -72,10 +72,11 @@ type reviewFixRequestDocument struct {
 }
 
 type reviewFixResultDocument struct {
-	Schema    string `json:"schema"`
-	RunID     string `json:"run_id"`
-	AttemptID string `json:"attempt_id"`
-	Fixer     string `json:"fixer"`
+	Schema    string           `json:"schema"`
+	RunID     string           `json:"run_id"`
+	AttemptID string           `json:"attempt_id"`
+	Fixer     string           `json:"fixer"`
+	GitGuard  *gitGuardOutcome `json:"git_guard,omitempty"`
 	processResult
 }
 
@@ -108,6 +109,7 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 		return err
 	}
 
+	var guardOutcome gitGuardOutcome
 	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[reviewFixDryRunDocument, reviewFixRequestDocument, reviewFixResultDocument, struct{}]{
 		Stdout:           stdout,
 		LiveOutput:       liveOutput,
@@ -130,6 +132,7 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 		StartedEvent:     "review_fix_attempt_started",
 		FinishedEvent:    "review_fix_attempt_finished",
 		ExitKind:         "review fix",
+		GitGuard:         &agentAttemptGitGuard{Root: context.Root, IsReviewFix: true, Outcome: &guardOutcome},
 		TimeoutMessage: func(timeout time.Duration) string {
 			return fmt.Sprintf("review fix process produced no output for %s", timeout)
 		},
@@ -148,13 +151,23 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 			}, nil
 		},
 		BuildResult: func(context agentAttemptContext[reviewFixDryRunDocument], runResult agents.RunResult) reviewFixResultDocument {
-			return reviewFixResultDocument{
+			result := reviewFixResultDocument{
 				Schema:        reviewFixResultSchema,
 				RunID:         runID,
 				AttemptID:     context.AttemptID,
 				Fixer:         prep.Fixer.Name,
 				processResult: processResultFromRunResult(runResult),
 			}
+			if guardOutcome.TerminalReason != "" {
+				result.GitGuard = &gitGuardOutcome{
+					TerminalReason: guardOutcome.TerminalReason,
+					MutationClass:  guardOutcome.MutationClass,
+					RestoredState:  guardOutcome.RestoredState,
+					RestoreError:   guardOutcome.RestoreError,
+					Detail:         guardOutcome.Detail,
+				}
+			}
+			return result
 		},
 		ProcessResult: func(result reviewFixResultDocument) processResult {
 			return result.processResult
@@ -164,7 +177,9 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 		},
 		WrapRunOnly: func(result reviewFixResultDocument) any {
 			next := []string{}
-			if result.ExitCode == 0 && (!result.TimedOut || result.CompletedDespiteTimeout) {
+			if result.ExitCode == 0 &&
+				(!result.TimedOut || result.CompletedDespiteTimeout) &&
+				(result.GitGuard == nil || result.GitGuard.TerminalReason == "") {
 				// Recorded fixer output is parsed into resolutions; applying it
 				// is the safe next move.
 				next = []string{"pactum review fix apply " + runID}

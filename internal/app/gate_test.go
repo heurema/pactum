@@ -673,6 +673,104 @@ func TestGateValidationHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
+// ---------------------------------------------------------------------------
+// Git-guard lifecycle integration tests
+// ---------------------------------------------------------------------------
+
+// TestGitGuardLifecycle_PreconditionBlocksTransport verifies that a dirty
+// working tree detected before execute prevents the agent transport from
+// running and records executor_git_guard_inconclusive in the attempt result.
+func TestGitGuardLifecycle_PreconditionBlocksTransport(t *testing.T) {
+	skipIfNoGit(t)
+
+	// Initialize a real git repo so the git guard activates on execute.
+	root := initTestRepo(t)
+	// setupContractRun writes README.md to root; since we init'd the git repo
+	// with only a.txt committed, README.md will be untracked at execute time
+	// and trigger the clean-tree precondition failure.
+	app, paths, runID := setupGatePreparedRun(t, root, nil, false)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	transport := &recordingAgentTransport{}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("execute run should fail when git guard precondition fails")
+	}
+
+	// Transport must not have been called.
+	if len(transport.requests) != 0 {
+		t.Errorf("transport should not be called when precondition fails; got %d calls", len(transport.requests))
+	}
+
+	// Attempt result must expose the git-guard terminal reason.
+	attemptPaths := executionAttemptPaths(runPaths, "attempt_001")
+	var result executionResultDocument
+	assertNoError(t, readJSON(attemptPaths.ResultJSON, &result))
+	if result.GitGuard == nil || result.GitGuard.TerminalReason != gitGuardReasonInconclusive {
+		t.Errorf("expected git_guard.terminal_reason=%q in result; got %#v", gitGuardReasonInconclusive, result.GitGuard)
+	}
+}
+
+// TestGitGuardLifecycle_GateBlockedByGuardedAttempt verifies that the gate
+// refuses to proceed when the latest matching execute attempt has a non-empty
+// git-guard terminal_reason and does NOT fall back to an older clean attempt.
+func TestGitGuardLifecycle_GateBlockedByGuardedAttempt(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	// Mark the existing (clean) attempt as git-guard-blocked.
+	attempt1ResultPath := filepath.Join(runPaths.AttemptsDir, "attempt_001", "result.json")
+	markGitGuardBlocked := func(path string) {
+		var doc map[string]any
+		assertNoError(t, readJSON(path, &doc))
+		doc["git_guard"] = map[string]any{"terminal_reason": gitGuardReasonHistoryMutation}
+		assertNoError(t, writeJSON(path, doc))
+	}
+	markGitGuardBlocked(attempt1ResultPath)
+	markGitGuardBlocked(runPaths.LastResultJSON)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("gate run should fail when the latest attempt is git-guard-blocked")
+	}
+	if got := stderr.String(); !strings.Contains(got, "no completed execution attempts found") {
+		t.Errorf("expected 'no completed execution attempts found' in gate stderr, got: %s", got)
+	}
+}
+
+// TestGitGuardLifecycle_ReadOnlyStageSkipsGuard verifies that a read-only
+// stage (review run) is not affected by the git-history guard even when
+// executed inside a real git repository with a dirty working tree.
+func TestGitGuardLifecycle_ReadOnlyStageSkipsGuard(t *testing.T) {
+	skipIfNoGit(t)
+
+	// Use a real git repo. setupApprovedPreparedReview writes README.md (and
+	// other files) that remain untracked after the initial commit — the same
+	// dirty-tree state that would block an execute stage. Review must still
+	// call the transport.
+	root := initTestRepo(t)
+	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+
+	transport := &recordingAgentTransport{}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "codex"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review run (read-only) exited %d, stderr: %s", code, stderr.String())
+	}
+
+	// Transport must be called — the git guard must not interfere with read-only stages.
+	if len(transport.requests) == 0 {
+		t.Error("read-only review stage should call the transport without git-guard interference")
+	}
+}
+
 // TestGateRunPassesCompletedDespiteTimeoutAttempt pins the end-to-end story of
 // completion-aware finalize: an idle-killed attempt whose agent had already
 // completed (exit 0, timed_out true, completed_despite_timeout true) must pass
