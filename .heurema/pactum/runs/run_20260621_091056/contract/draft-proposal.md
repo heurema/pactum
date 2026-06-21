@@ -1,0 +1,53 @@
+# Contract Draft Proposal
+
+## Status
+- Run id: run_20260621_091056
+- Status: accepted
+- Source: drafter_attempt
+- Drafter attempt: drafter_attempt_001
+- Drafter: codex
+- Accepted by: manual
+- Accepted at: 2026-06-21T09:13:04Z
+
+## In scope
+- Add the code-review critic implementation in internal/app/review_critic.go, including request, result, verdict schemas, prompt rendering, verdict parsing, corrective retry handling, deterministic verdict ordering, and warnings for dropped unknown proposal IDs.
+- Integrate the critic into internal/app/review_loop.go after reviewer proposal parsing and before proposal acceptance so every newly-created reviewer proposal is evaluated by one read-only critic pass before it can become a finding.
+- Extend code-review configuration with pipeline.code_review.critic_by, validate that it names at most one registered reviewer agent, and implement the default different-engine critic selection with same-engine fallback warning.
+- Record critic attempts, verdict artifacts, round precision counts, critic artifact paths, warnings, and terminal reasons in review/loop-summary.json and the --json review response.
+- Add focused tests for critic parsing, prompt content, model selection, read-only attempt execution, proposal acceptance filtering, terminal reasons, artifacts, and JSON summary output.
+
+## Out of scope
+- Do not change the contract-review loop or contract-review finding behavior.
+- Do not change fixer behavior except that the fixer only sees confirmed open blocking review findings that already reached the existing finding path.
+- Do not change transport, loop-engine internals, or the read-only/write permission boundary.
+- Do not remove or weaken the existing reviewer panel, reviewer lenses, reviewer_findings schema, or anti-false-positive fields.
+- Do not require live agent execution for validation; tests should use existing fake or stub agent mechanisms.
+
+## Acceptance criteria
+- A review round runs exactly one critic pass over all newly-created reviewer proposals, including proposals whose reviewer state is candidate or confirmed, before any of those proposals are accepted as findings.
+- The critic attempt is executed through runAgentAttemptLifecycle with ReadOnly set to true and cannot apply patches or write outside normal Pactum attempt artifacts.
+- Only proposals with critic verdict confirmed are accepted through the review-loop proposal acceptance seam and can become open blocking findings.
+- Proposals with critic verdict disputed do not become findings and do not remain pending in a precision_rejected round.
+- If all new blocking proposals are disputed and there are no prior open blocking findings, the loop terminates with terminal_reason precision_rejected and approval is not blocked by those rejected proposals.
+- If any new proposal receives insufficient_evidence and there is no confirmed blocking finding to drive the fixer, the loop terminates with terminal_reason debate_no_consensus and does not silently report a clean or resolved round.
+- If critic verdict output cannot be parsed after one corrective re-attempt, no new proposals from that critic batch are accepted and the loop terminates with terminal_reason critic_verdicts_unparsed.
+- A critic verdict for an unknown proposal_id is ignored, a warning is recorded, and the unknown verdict does not create or modify a proposal or finding.
+- Critic verdict artifacts are emitted as pactum.review_critic_verdicts.v1alpha1 JSONL sorted by proposal_id for deterministic output.
+- Each round summary records critic_attempt_id, precision_candidates, precision_confirmed, precision_rejected, precision_unresolved, and critic_verdicts_artifact when a critic pass runs.
+- The review/loop-summary.json artifact and pactum review run --json output expose the critic fields and new terminal reasons.
+- When pipeline.code_review.critic_by is absent, the critic defaults to a registered reviewer on a different inferred engine than the primary reviewer when available.
+- When no different-engine reviewer is available, the critic falls back to the same engine and records a visible warning in the round summary.
+- When pipeline.code_review.critic_by is present, unknown names or multiple names fail configuration validation before the review loop starts.
+- Previously-open blocking findings still drive the fixer even when all newly-created proposals in the current round are disputed by the critic.
+
+## Validation commands
+- go test ./internal/app -run 'TestReviewCritic|TestReviewRun.*Critic|TestReviewRun.*Precision|TestConfig.*Critic'
+- go test ./internal/app
+- make check
+
+## Assumptions
+- The critic evaluates only newly-created proposals from the current review round; existing open, rebutted, accepted, or duplicate findings keep their current behavior.
+- The existing model-to-engine inference used for cross-model reviewer defaults is the source of truth for deciding whether the critic uses a different engine.
+- Adding critic_by under pipeline.code_review is acceptable within the existing v1alpha1 config format.
+- Critic validation tests can use fake agent transports and should not require running real external agents.
+

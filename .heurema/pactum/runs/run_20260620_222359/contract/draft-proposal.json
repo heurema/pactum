@@ -1,0 +1,53 @@
+{
+  "schema": "pactum.contract_draft_proposal.v1alpha1",
+  "run_id": "run_20260620_222359",
+  "status": "accepted",
+  "created_at": "2026-06-20T22:24:08Z",
+  "source": "drafter_attempt",
+  "drafter_attempt_id": "drafter_attempt_001",
+  "drafter": "codex",
+  "in_scope": [
+    "Add `internal/app/git_guard.go` and focused tests for git state preconditions, snapshots, mutation detection, restoration, and terminal reason classification using temporary real git repositories.",
+    "Integrate the guard in `runAgentAttemptLifecycle` around the single `agentTransport().Run` call for write-enabled stages only, covering execute and review-fix while leaving read-only stages unchanged.",
+    "Extend execute and review-fix result documents, last-result artifacts, and JSON run responses with a machine-readable git-guard outcome including `terminal_reason`, detected mutation class, restored state, and restore error details when present.",
+    "Block execute `next` affordances, review-fix apply affordances, and gate progression whenever the relevant attempt result has a non-empty git-guard `terminal_reason`.",
+    "Use a dedicated controlled git execution path for guard-owned write operations such as `git reset --mixed \u003corigHash\u003e` and ref restoration; do not reuse the read-only `internal/gitctx` wrapper for those writes.",
+    "Add or update tests around execute, review-fix, and gate behavior so git-guard terminal reasons are observable through attempt artifacts and CLI JSON responses."
+  ],
+  "out_of_scope": [
+    "Do not add an ACP RequestPermission command denylist in this change.",
+    "Do not change the read-only contract of `internal/gitctx` or broaden its allowed git commands to perform writes.",
+    "Do not change transport/provider selection, ACP adapter behavior, retry policy, or the review loop engine except where necessary to pass guard outcomes through existing lifecycle result handling.",
+    "Do not add v1 support for submodules, linked worktrees, sparse indexes, split indexes, or multi-worktree recovery; these cases must be treated as inconclusive precondition failures.",
+    "Do not auto-restore ambiguous reset-hard, stash, pruned-object, or multi-candidate recovery cases in v1.",
+    "Do not commit or otherwise mutate repository history as part of normal execute or review-fix agent handling."
+  ],
+  "acceptance": [
+    "On a write-enabled stage, dirty working tree, detached HEAD, unmerged paths, in-progress merge/rebase/cherry-pick/revert/bisect/sequencer, stale git lock files, submodules, linked worktrees, sparse index, or split index is detected before the transport runs; the agent transport is not called and the attempt records `terminal_reason` `executor_git_guard_inconclusive`.",
+    "On a clean-start write-enabled stage where the agent makes only ordinary working-tree file edits, the guard records an empty `terminal_reason`, preserves existing successful execute/review-fix behavior, and exposes the normal next affordance.",
+    "If the agent creates commits, amends commits, rebases, or moves the current branch from a clean start, the guard detects the history mutation, restores HEAD and the current branch to the original commit with `git reset --mixed`, leaves the agent's file changes as unstaged working-tree changes, and records `terminal_reason` `executor_git_history_mutation`.",
+    "If the agent only stages index changes from a clean start, the guard restores the original index tree while preserving working-tree content and records `terminal_reason` `executor_git_index_mutation`.",
+    "If the agent creates, deletes, or moves non-current refs such as branches, tags, notes, remotes, or stash refs, the guard detects and restores safely restorable refs and records `terminal_reason` `executor_git_ref_mutation` unless the case is ambiguous.",
+    "If HEAD hash ends unchanged but reflog state or reachable/dangling commit objects changed, including commit-then-reset-hard, the guard detects the mutation and records `terminal_reason` `executor_git_guard_inconclusive` without silently proceeding.",
+    "If a new stash entry is created, the guard detects it, does not auto-restore in v1, leaves recoverable git state intact, and records `terminal_reason` `executor_git_guard_inconclusive`.",
+    "If any guard restore command fails, the attempt records `terminal_reason` `executor_git_restore_failed` and includes enough restore error detail for a human to diagnose the repository state.",
+    "Execute and review-fix attempt `result.json`, run-level `last-result.json`, and `--json` CLI output expose the same git-guard terminal reason and outcome fields.",
+    "Any non-empty git-guard `terminal_reason` suppresses execute `next`, suppresses review-fix apply `next`, and prevents `pactum gate run` from treating the attempt as a completed successful execution.",
+    "Read-only lifecycle stages still run without the git-history guard and preserve existing read-only retry behavior.",
+    "Tests assert precondition no-run behavior, clean no-op behavior, commit restore, index-only restore, ref mutation handling, reset-hard or stash inconclusive handling, result artifact fields, next suppression, gate blocking, and read-only stage non-interference."
+  ],
+  "validation": [
+    "go test ./internal/app -run 'GitGuard|Execute|ReviewFix|Gate' -count=1",
+    "go test ./internal/app ./internal/gitctx -count=1",
+    "make check"
+  ],
+  "assumptions": [
+    "The implementation environment has a `git` binary available for tests and guard operations.",
+    "Tests may configure `user.name` and `user.email` inside temporary git repositories without modifying global git config.",
+    "Rejecting write-enabled agent execution when the repository has any pre-existing staged, unstaged, or untracked change is acceptable for v1.",
+    "It is acceptable to add new result JSON fields for git-guard outcome data as long as existing process result fields remain compatible.",
+    "The guard's own restoration commands may create reflog entries; detection is based on the post-agent, pre-restore comparison, and restoration metadata should distinguish guard-caused writes from agent-caused mutations."
+  ],
+  "accepted_at": "2026-06-20T22:26:43Z",
+  "accepted_by": "manual"
+}

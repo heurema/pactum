@@ -1,0 +1,79 @@
+{
+  "schema": "pactum.gate_report.v1alpha1",
+  "run_id": "run_20260620_152350",
+  "created_at": "2026-06-20T16:12:04Z",
+  "status": "needs_review",
+  "execution": {
+    "attempt_id": "attempt_001",
+    "exit_code": 0,
+    "timed_out": false,
+    "result": "execute/last-result.json"
+  },
+  "changes": {
+    "status": "changed",
+    "changed_files": [
+      "internal/app/review_loop.go",
+      "internal/app/review_loop_test.go",
+      "internal/projectmap/scan.go"
+    ],
+    "new_files": [
+      "internal/gitctx/gitctx.go",
+      "internal/gitctx/gitctx_test.go"
+    ],
+    "missing_files": [],
+    "reasons": [
+      "changed file: internal/app/review_loop.go",
+      "changed file: internal/app/review_loop_test.go",
+      "changed file: internal/projectmap/scan.go",
+      "new file: internal/gitctx/gitctx.go",
+      "new file: internal/gitctx/gitctx_test.go"
+    ]
+  },
+  "validation": {
+    "commands_allowed": true,
+    "commands": [
+      {
+        "id": "command_001",
+        "command": "go test ./internal/gitctx ./internal/projectmap ./internal/app",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_001/stdout.log",
+        "stderr": "gate/validation/command_001/stderr.log",
+        "result": "gate/validation/command_001/result.json"
+      },
+      {
+        "id": "command_002",
+        "command": "make check",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_002/stdout.log",
+        "stderr": "gate/validation/command_002/stderr.log",
+        "result": "gate/validation/command_002/result.json"
+      },
+      {
+        "id": "command_003",
+        "command": "find internal/gitctx -name '*.go' ! -name '*_test.go' | xargs grep -lF 'exec.CommandContext' | grep -q .",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_003/stdout.log",
+        "stderr": "gate/validation/command_003/stderr.log",
+        "result": "gate/validation/command_003/result.json"
+      },
+      {
+        "id": "command_004",
+        "command": "! grep -qF '\"os/exec\"' internal/projectmap/scan.go internal/app/review_loop.go",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_004/stdout.log",
+        "stderr": "gate/validation/command_004/stderr.log",
+        "result": "gate/validation/command_004/result.json"
+      }
+    ]
+  },
+  "summary": {
+    "execution_passed": true,
+    "validation_passed": true,
+    "changes_need_review": true,
+    "scope_blocked": false
+  }
+}

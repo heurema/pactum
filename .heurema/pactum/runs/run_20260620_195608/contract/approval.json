@@ -1,0 +1,7 @@
+{
+  "schema": "pactum.approval.v1alpha1",
+  "status": "approved",
+  "approved_at": "2026-06-20T20:24:25Z",
+  "approved_by": "claude-dogfood",
+  "contract_sha256": "4baecaaf68ea65470d8324672406a713aeed2feddc951a3a6768ab1ca1455379"
+}

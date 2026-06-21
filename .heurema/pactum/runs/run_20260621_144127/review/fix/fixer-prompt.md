@@ -1,0 +1,103 @@
+# Review Fix Prompt
+
+This prompt is prepared for a write-enabled executor agent subprocess.
+Pactum captures the fix attempt artifacts and may parse the required structured outcome block.
+
+## Objective
+Address the current run's review findings against the approved Pactum contract.
+
+## Inputs
+- Fixer context: .heurema/pactum/runs/run_20260621_144127/review/fix/fixer-context.md
+- Contract: .heurema/pactum/runs/run_20260621_144127/contract/contract.json
+- Review artifacts: .heurema/pactum/runs/run_20260621_144127/review/review.json, .heurema/pactum/runs/run_20260621_144127/review/findings.jsonl, .heurema/pactum/runs/run_20260621_144127/review/resolutions.jsonl
+
+## Approved contract
+- Goal: Fix the git-history guard so it runs inside a linked git worktree instead of blanket-blocking. Currently gitGuardPrechecks in internal/app/git_guard.go runs `git worktree list --porcelain` and returns executor_git_guard_inconclusive whenever more than one worktree exists (around lines 134-146). This blocks the write-enabled execute and review-fix stages in ANY git worktree checkout — and even in the primary checkout when any sibling worktree exists — which breaks the common worktree-based workflow (pactum's own dogfooding runs in worktrees, so the just-merged guard immediately blocked it).
+
+The guard's snapshot/restore operates correctly per-worktree: HEAD (symbolic-ref + hash), the index (write-tree), and `git reset --mixed` / `git update-ref` all work in a linked worktree, scoped to that worktree's own HEAD/index. So a linked worktree is NOT a reason to bail.
+
+First read internal/app/git_guard.go (the gitGuardPrechecks function and the multi-worktree check) and internal/app/git_guard_test.go to understand the existing precondition tests and helpers.
+
+Fix: remove the blanket multi-worktree inconclusive precondition so the guard runs normally in a linked (or primary-with-siblings) worktree. KEEP every other precondition unchanged (attached HEAD, clean tree excluding .heurema, no unmerged paths, no in-progress merge/rebase/cherry-pick/revert/bisect/sequencer, no stale lock files, no submodules, no sparse/split index). Document the residual shared-ref edge in a code comment: refs are shared across linked worktrees, so (a) a branch checked out in ANOTHER worktree cannot be force-moved from this one — if the guard ever needs to restore such a ref and git refuses, that already surfaces loudly as executor_git_restore_failed; and (b) concurrent git activity in another worktree could in theory perturb shared refs mid-run — this is an accepted, documented residual for now and must NOT block.
+
+Scope: internal/app/git_guard.go (remove/replace only the multi-worktree precondition, plus the explanatory comment) and internal/app/git_guard_test.go (add a test that the guard runs its normal snapshot/compare/restore inside a linked worktree created with `git worktree add` — e.g. an agent commit made inside the worktree is detected and restored as executor_git_history_mutation with the work left unstaged, NOT executor_git_guard_inconclusive). Do NOT weaken the other preconditions, change the snapshot/restore logic, or alter the terminal-reason set.
+
+Acceptance: a write-stage guard run inside a linked git worktree (created via `git worktree add`) does NOT return executor_git_guard_inconclusive merely because other worktrees exist; the guard performs its normal snapshot/compare/restore there, and an in-worktree agent commit is detected and restored as executor_git_history_mutation leaving the work unstaged; all other preconditions (detached HEAD, dirty non-.heurema tree, in-progress op, submodules, sparse/split index) still return executor_git_guard_inconclusive; a code comment documents the linked-worktree support and the residual shared-ref edge; make check passes.
+- In scope:
+  - Remove the blanket multi-worktree inconclusive precondition from gitGuardPrechecks in internal/app/git_guard.go, replacing it with a code comment documenting: linked-worktree support; use of the git common dir for shared-ref lock resolution; and the accepted residual shared-ref edge (concurrent activity in a sibling worktree is non-blocking; a ref checked out in another worktree that git refuses to restore will surface as executor_git_restore_failed).
+  - Fix the stale-lock-file precondition in internal/app/git_guard.go to resolve refs.lock, packed-refs.lock, and the loose-ref-lock walk (under refs/) against the git common dir obtained via `git rev-parse --git-common-dir`, rather than the per-worktree git dir. This is a correctness companion to the multi-worktree removal: without it, stale shared-ref-store lock detection is ineffective in linked worktrees. index.lock remains resolved via --absolute-git-dir because each worktree has its own index. When `--git-common-dir` returns a relative path (as it does in a primary worktree, e.g. `.git`), resolve it with filepath.Join(root, commonDir) — not filepath.Abs — because the output is relative to root (the directory used with `git -C`), not the process CWD.
+  - Add or update tests in internal/app/git_guard_test.go: (a) a linked-worktree test using a real worktree created with `git worktree add` that verifies an agent commit inside the linked worktree is detected by gitGuardCompareAndRestore as executor_git_history_mutation, HEAD is restored to the snapshot hash, and the work is left unstaged — the test must not accept executor_git_guard_inconclusive as the outcome; (b) a primary-worktree stale-lock test that places packed-refs.lock at filepath.Join(root, ".git", "packed-refs.lock") and confirms gitGuardPrechecks returns executor_git_guard_inconclusive (exercises the relative-path resolution branch); (c) a linked-worktree stale-lock test that places packed-refs.lock at the absolute common-dir path returned by `--git-common-dir` and confirms gitGuardPrechecks returns executor_git_guard_inconclusive.
+- Out of scope:
+  - Changing git guard snapshot, compare, or restore semantics beyond what is required for linked-worktree precheck support.
+  - Changing terminal reason constants, result JSON field names, or the terminal-reason set.
+  - Weakening existing preconditions for detached HEAD, dirty execute-stage trees outside .heurema, unmerged paths, in-progress git operations, submodules, sparse index, or split index.
+  - Adding cross-worktree locking, shared-ref concurrency protection, or broader execute/review-fix workflow changes.
+  - Changing files outside internal/app/git_guard.go and internal/app/git_guard_test.go.
+- Acceptance criteria:
+  - A clean primary worktree with at least one linked sibling worktree no longer causes gitGuardPrechecks to return executor_git_guard_inconclusive solely because multiple worktrees exist.
+  - A clean linked worktree created with git worktree add returns ok=true from gitGuardPrechecks with a non-nil snapshot when no other precondition is violated.
+  - A test demonstrates that an agent commit made inside the linked worktree after snapshot is detected by gitGuardCompareAndRestore as executor_git_history_mutation, restores HEAD to the snapshot hash, and leaves the committed work present but unstaged in the linked worktree.
+  - The linked-worktree test does not pass by accepting executor_git_guard_inconclusive as an outcome.
+  - Existing inconclusive preconditions still return executor_git_guard_inconclusive with nil snapshots for detached HEAD, dirty execute-stage trees outside .heurema, in-progress git operations or unmerged paths, stale git lock files, submodules, sparse index, and split index.
+  - Stale lock file detection for refs.lock, packed-refs.lock, and loose-ref locks under refs/ resolves paths against the git common dir (from `git rev-parse --git-common-dir`), not the per-worktree git dir, so the check is effective in both primary and linked worktrees. This is a correctness fix to make an existing precondition work properly in linked worktrees; the stale-lock detection behavior (which lock files are checked and what constitutes a stale lock) is unchanged. Because `--git-common-dir` may return a relative path (e.g., `.git` in a primary worktree) and git commands in this implementation always run with `-C root`, a relative output is relative to `root`, not the process working directory. The implementation must resolve a relative common-dir output by joining it with `root` (e.g., `if !filepath.IsAbs(commonDir) { commonDir = filepath.Join(root, commonDir) }`). Using filepath.Abs is incorrect here because it resolves against the process CWD, not `root`. index.lock remains resolved against the per-worktree git dir (always absolute, obtained via --absolute-git-dir) because each worktree has its own index.
+  - Two tests verify stale lock file detection using the git common dir path. (a) Primary-worktree test: within a freshly initialized primary git repo, a stale packed-refs.lock is placed at the path constructed by joining `root` with the relative `--git-common-dir` output (e.g., filepath.Join(root, ".git", "packed-refs.lock")); gitGuardPrechecks(root) must return executor_git_guard_inconclusive. This test exercises the relative-path resolution branch — `--git-common-dir` returns `.git` (relative) in a primary worktree, so the filepath.Join(root, commonDir) logic is the active code path. (b) Linked-worktree test: within a linked worktree created via git worktree add, a stale packed-refs.lock is placed at the absolute path returned by `--git-common-dir` (which is absolute in a linked worktree, pointing to the shared primary .git dir); gitGuardPrechecks on the linked worktree root must return executor_git_guard_inconclusive. Both sub-tests must confirm the outcome is executor_git_guard_inconclusive, not any other reason.
+  - The implementation does not introduce, remove, or rename any git guard terminal reason.
+  - A code comment documents: (a) refs are shared across linked worktrees; (b) git refusing to restore a ref checked out elsewhere will surface as executor_git_restore_failed; (c) concurrent git activity in another worktree is an accepted nonblocking residual; (d) stale lock path resolution uses the git common dir for shared-ref-store locks — when `--git-common-dir` returns a relative path it is resolved via filepath.Join(root, commonDir), where root is the directory passed to `git -C root`, because git's relative output is rooted at root, not the process CWD — ensuring detection is correct in both primary and linked worktrees.
+  - make check passes.
+- Validation commands:
+  - go test ./internal/app -run TestGitGuard
+  - make check
+
+## Current review findings
+- Summary: findings=1 open=1 resolved=0 blocking_open=1
+- Blocking findings (fix or rebut these — emit exactly one fix-outcome for each):
+  - f_001 severity=medium category=quality blocking=true status=open: The linked-worktree stale-lock tests do not cover the changed loose-ref lock walk against the git common dir.
+    location: internal/app/git_guard_test.go:719
+- Advisory (non-blocking) findings (context only — do NOT edit code and do NOT emit outcomes for them):
+  - none
+
+## Fix boundaries
+- Trace each finding to the relevant code before acting.
+- Fix valid findings in place.
+- For false positives, explain a concrete rebuttal instead of changing code.
+- Keep changes inside the approved contract and review-finding scope.
+- Do not edit `.heurema` artifacts.
+- Do not run `pactum review approve`, `pactum review finding resolve`, or `pactum review run`.
+
+## House style
+- Match the surrounding code: idiom, naming, comment density.
+- Comment only where the code is not self-explanatory; do not narrate the obvious.
+- Search for and reuse existing helpers before writing new ones.
+- Keep the diff small and focused: change only what the contract requires.
+- Simplicity first: no enterprise patterns for simple problems, question every new abstraction, no premature generalization or optimization.
+- Over-engineering DON'Ts: wrappers that add nothing, factories or abstractions for a single case, unused extension points, dual implementations where the old path has no callers, silent fallbacks that hide failures.
+- No dead code, no commented-out code, no unused parameters.
+- Handle errors per the project's existing convention; no silent failures.
+- Tests verify behavior, not implementation details, and cover error paths.
+- Fake-test DON'Ts: always-pass tests, hardcoded-value checks, assertions on mock behavior instead of the code under test, ignored errors, commented-out cases.
+
+The reviewer will re-check your fixes against the discipline rules above.
+
+## Output shape
+Your final output MUST include exactly one fenced `json` block with this shape:
+
+```json
+{
+  "schema": "pactum.review_fix_outcomes.v1alpha1",
+  "outcomes": [
+    {
+      "finding_id": "f_001",
+      "outcome": "fixed",
+      "note": "What changed and where, or the concrete rebuttal/blocker."
+    }
+  ]
+}
+```
+
+Rules:
+- Include exactly one outcome entry for every blocking finding listed above with status open.
+- Do NOT edit code for advisory (non-blocking) findings, and do NOT emit outcomes for them; they are context only.
+- Use outcome fixed when you changed code to address a valid blocking finding.
+- Use outcome rebutted when the blocking finding is a false positive; note must contain the concrete rebuttal.
+- Use outcome blocked when concrete missing information or state prevents a fix.
+- Do not include advisory or resolved findings in the outcomes list.

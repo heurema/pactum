@@ -1,0 +1,140 @@
+# Executor Prompt
+
+This prompt is prepared from an approved Pactum contract.
+This prompt is prepared for the selected built-in agent when `pactum execute run` is used.
+Pactum records execution artifacts and validates contract, map, and memory boundaries before execution.
+
+## Contract status
+- Run: run_20260621_091056
+- Approval: approved
+- Contract hash: 01751a892a5a0e1ea0114cb0ca3a806ab6bb0ae17f231f569b858b32fa11fc9d
+
+## Goal
+Add a critic pass (recall→precision) to the code-review loop: after the reviewer panel proposes candidate findings, an independent READ-ONLY critic agent verifies each candidate, and ONLY critic-confirmed candidates are accepted as findings that can block convergence or drive the fixer. This is the precision filter that stops the fixer churning on hallucinated (false-positive) findings — the same thesis as the contract-review precision discipline, but applied to code-review findings via a separate agent pass. It consumes the candidate/confirmed state and the trigger/evidence/fix_direction/uncertainty fields already added to the reviewer findings schema by the anti-FP slice.
+
+FIRST read the current code-review loop: internal/app/review_loop.go (the per-round flow, the accept seam `acceptReviewLoopProposal`, proposal→finding acceptance, terminal-reason mapping), internal/app/review_proposals.go (the reviewer findings schema pactum.reviewer_findings.v1alpha1 and its candidate/confirmed state + anti-FP fields), internal/app/review.go (renderReviewerPrompt, reviewFindingRecord), internal/app/config.go (the agent registry + cross-model reviewer default), and how reviewer attempts run read-only via runAgentAttemptLifecycle. Do not guess.
+
+DESIGN:
+1. New internal/app/review_critic.go with the critic round. Schemas: pactum.review_critic_request.v1alpha1, pactum.review_critic_result.v1alpha1, pactum.review_critic_verdicts.v1alpha1. The critic is a READ-ONLY agent attempt (ReadOnly: true) run through runAgentAttemptLifecycle, exactly like the reviewers.
+2. Insert the critic between proposal generation and acceptance: after a round's NEW candidate proposals are parsed, run ONE critic pass over those new candidates (evaluate ALL candidates in a single prompt to cap cost), then accept into findings ONLY the candidates the critic CONFIRMED. The critic emits one verdict per proposal_id with verdict ∈ {confirmed, disputed, insufficient_evidence}. Verdicts are sorted by proposal_id for deterministic artifacts; a verdict for an unknown/hallucinated proposal_id is dropped with a warning.
+3. The critic prompt (renderReviewCriticPrompt) frames an adversarial precision check: for each candidate, independently re-read the cited code and either confirm with concrete evidence, dispute with counter-evidence, or mark insufficient_evidence naming exactly what is missing. A false positive reaching the result is worse than dropping a marginal candidate; the critic must justify a confirm, never rubber-stamp.
+4. Critic model selection: default the critic to a reviewer registry entry on a DIFFERENT engine than the primary reviewer when one is configured (mirror pactum's existing cross-model reviewer-default logic); fall back to the same model WITH a recorded warning when only one engine is available; allow an explicit pipeline.code_review.critic_by registry name override (validated as at most one registered ACP reviewer). The critic is read-only.
+5. New loud terminal reasons in the review loop: `precision_rejected` (a round's blocking candidates were all disputed and no open blocking findings remain — approvable); `debate_no_consensus` (a candidate is insufficient_evidence leaving an evidence gap with no confirmed blocker — blocks approval); `critic_verdicts_unparsed` (critic output could not be parsed into verdicts after one corrective re-attempt — blocks approval). A critic failure must NEVER collapse to a clean round. Prior already-open blocking findings still drive the fixer even if all NEW candidates are rejected.
+6. Record critic artifacts per round: the critic attempt, the verdicts (pactum.review_critic_verdicts.v1alpha1 JSONL), and round-summary fields (critic_attempt_id, precision_candidates, precision_confirmed, precision_rejected, precision_unresolved, critic_verdicts_artifact). The critic pass must be observable in review/loop-summary.json and the --json review output.
+
+SCOPE: new internal/app/review_critic.go (+ tests); integration edits in internal/app/review_loop.go (accept seam + round flow + terminal reasons), internal/app/review.go / review_proposals.go as needed for the critic prompt/schema, internal/app/config.go for the optional critic_by; and tests. Do NOT change the contract-review path, the fixer's behavior, the transport/loop-engine internals, or the read-only/write boundary. Keep the reviewer panel and the anti-FP schema as-is — the critic consumes the candidate proposals they produce.
+
+ACCEPTANCE: after the reviewer panel proposes candidates, a read-only critic pass runs over the NEW candidates and only critic-confirmed candidates become accepted (blocking-eligible) findings; a disputed blocking candidate does not become an open blocking finding and the round can converge `precision_rejected`; an insufficient_evidence candidate blocks approval as `debate_no_consensus`; unparseable critic output after one corrective re-attempt terminates `critic_verdicts_unparsed` (never a silent clean round); the critic defaults to a different-engine model when available and falls back to same-model with a recorded warning otherwise, overridable via pipeline.code_review.critic_by; prior open blocking findings still drive the fixer when new candidates are all rejected; the critic attempt + verdicts + round-summary precision fields are recorded as artifacts and exposed in the --json review output; make check passes.
+
+## In scope
+- Add the code-review critic implementation in internal/app/review_critic.go, including request, result, verdict schemas, prompt rendering, verdict parsing, corrective retry handling, deterministic verdict ordering, and warnings for dropped unknown proposal IDs.
+- Integrate the critic into internal/app/review_loop.go after reviewer proposal parsing and before proposal acceptance so every newly-created reviewer proposal is evaluated by one read-only critic pass before it can become a finding.
+- Extend code-review configuration with pipeline.code_review.critic_by, validate that it names at most one registered reviewer agent, and implement the default different-engine critic selection with same-engine fallback warning.
+- Record critic attempts, verdict artifacts, round precision counts, critic artifact paths, warnings, and terminal reasons in review/loop-summary.json and the --json review response.
+- Add focused tests for critic parsing, prompt content, model selection, read-only attempt execution, proposal acceptance filtering, terminal reasons, artifacts, and JSON summary output.
+
+## Out of scope
+- Do not change the contract-review loop or contract-review finding behavior.
+- Do not change fixer behavior except that the fixer only sees confirmed open blocking review findings that already reached the existing finding path.
+- Do not change transport, loop-engine internals, or the read-only/write permission boundary.
+- Do not remove or weaken the existing reviewer panel, reviewer lenses, reviewer_findings schema, or anti-false-positive fields.
+- Do not require live agent execution for validation; tests should use existing fake or stub agent mechanisms.
+
+## Acceptance criteria
+- The existing dedup filter (fingerprint matching against open and rebutted findings, including severity upgrades for proposals that match an open finding at a higher severity) runs before the critic in each round. For each proposal in proposals.Created (in position order), a proposal is identified as a duplicate if its fingerprint matches an open finding, a rebutted finding, or an earlier proposal in the same proposals.Created batch (first-seen in the batch wins; all subsequent same-fingerprint proposals in the same batch are duplicates). Proposals identified as duplicates bypass the critic and follow the existing duplicate decision path unchanged. The critic evaluates only proposals that survive this filter as non-duplicates.
+- If there are no non-duplicate proposals from the current round (all proposals were identified as duplicates or no proposals were created), no critic pass runs for that round; the loop proceeds on the post-dedup finding state using the existing path logic.
+- A review round runs at most one critic pass, which consists of an initial critic agent attempt and, if that attempt's output is unparseable, exactly one corrective re-attempt. No more than two critic agent invocations occur per round. The phrase 'exactly one critic pass' means this initial-plus-optional-corrective sequence per round, not a single agent invocation.
+- Both the initial critic agent attempt and any corrective re-attempt are executed through runAgentAttemptLifecycle with ReadOnly set to true and cannot apply patches or write outside normal Pactum attempt artifacts.
+- Only non-duplicate proposals with critic verdict confirmed are passed to the review-loop proposal acceptance seam (acceptReviewLoopProposal) and can become open blocking findings.
+- A non-duplicate proposal with critic verdict disputed is not accepted as a finding.
+- A non-duplicate proposal whose proposal_id was included in the critic request but is absent from the critic response (no matching verdict was emitted) is treated as insufficient_evidence: it is not accepted as a finding, its absence is recorded as a warning in the round summary, and the same terminal-reason logic applies as for an explicit insufficient_evidence verdict.
+- When the critic response contains more than one verdict for the same proposal_id, the first occurrence by position is used and subsequent occurrences are discarded; each discarded duplicate verdict is recorded as a warning in the round summary.
+- A critic verdict for a proposal_id that does not correspond to any non-duplicate proposal in the critic request is ignored; a warning is recorded in the round summary and no proposal or finding is created or modified.
+- If the initial critic agent attempt fails due to an execution error that does not produce output (transport error, empty stdout, wall-clock kill, or any other runAgentAttemptLifecycle error), the loop terminates immediately with terminal_reason critic_verdicts_unparsed without issuing a corrective re-attempt. If the initial critic agent attempt produces output but that output cannot be parsed into verdicts, exactly one corrective re-attempt is issued. If the corrective re-attempt fails for any reason (execution error or unparseable output), the loop terminates with terminal_reason critic_verdicts_unparsed. In all cases when critic_verdicts_unparsed fires, no non-duplicate proposals from that critic batch are accepted as findings and the loop summary sets OpenBlockingCount to a positive value (>= 1) so the approve gate rejects the review.
+- debate_no_consensus applies only to non-duplicate blocking proposals. If one or more non-duplicate blocking proposals receive an insufficient_evidence verdict (explicitly, or via the missing-verdict rule in criterion 7), and there are no prior open blocking findings (BlockingOpen == 0 after the dedup filter), and no non-duplicate blocking proposals from the current round received a confirmed verdict, the loop terminates with terminal_reason debate_no_consensus. Non-blocking proposals receiving insufficient_evidence are not accepted as findings and do not trigger debate_no_consensus. When debate_no_consensus fires, the loop summary sets OpenBlockingCount to a positive value (>= 1) so the approve gate rejects the review.
+- When a non-duplicate blocking proposal receives an insufficient_evidence verdict and prior open blocking findings exist (BlockingOpen > 0 after the dedup filter), the new proposal is not accepted as a finding, a warning is recorded in the round summary, debate_no_consensus does not fire, and the loop continues with the fixer working on the prior open blocking findings.
+- precision_rejected requires at least one non-duplicate blocking proposal to have been evaluated by the critic. If one or more non-duplicate blocking proposals were evaluated and all received disputed verdicts, and there are no prior open blocking findings (BlockingOpen == 0 after the dedup filter), the loop terminates with terminal_reason precision_rejected. precision_rejected does not set OpenBlockingCount and is directly approvable via the existing approve gate. Non-blocking proposals may have been confirmed in the same round without preventing precision_rejected.
+- When multiple terminal conditions are satisfied simultaneously in a single round, the precedence is critic_verdicts_unparsed > debate_no_consensus > precision_rejected > resolved: critic_verdicts_unparsed fires if the initial critic attempt fails with an execution error or if output remains unparseable after both attempts, regardless of how verdicts would otherwise have landed; debate_no_consensus fires in preference to precision_rejected when at least one non-duplicate blocking proposal has an insufficient_evidence verdict (explicit or via missing verdict) and no prior open blocking findings remain and no non-duplicate blocking proposals from the current round received a confirmed verdict; precision_rejected fires in preference to resolved when one or more non-duplicate blocking proposals were evaluated and all were disputed and no prior open blocking findings remain.
+- Neither debate_no_consensus nor critic_verdicts_unparsed permits approval: when either is the terminal_reason, OpenBlockingCount is set to a positive value (>= 1) in the loop summary so that pactum review approve rejects via the existing loopSummary.OpenBlockingCount > 0 check. Neither terminal reason silently produces a clean or approvable round.
+- Critic verdict artifacts are written as pactum.review_critic_verdicts.v1alpha1 JSONL with one entry per non-duplicate proposal evaluated by the critic. For each proposal in the critic request that received no matching verdict in the critic response, the implementation writes a synthetic entry with verdict value 'missing_verdict'. All entries (explicit and synthetic) are sorted by proposal_id for deterministic output.
+- Each round summary records the following fields when a critic pass runs: critic_attempt_id (initial critic attempt ID), critic_corrective_attempt_id (corrective re-attempt ID, present only when a corrective attempt ran), precision_candidates (count of non-duplicate proposals evaluated by the critic), precision_confirmed (count with confirmed verdict), precision_rejected (count with disputed verdict), precision_unresolved (count with insufficient_evidence or missing verdict), and critic_verdicts_artifact (path to the verdict JSONL artifact).
+- The review/loop-summary.json artifact and pactum review run --json output expose the per-round critic fields from criterion 17 and the new terminal reasons (precision_rejected, debate_no_consensus, critic_verdicts_unparsed).
+- When pipeline.code_review.critic_by is absent, the critic engine baseline is the inferred engine of the first reviewer in the resolved panel (reviewers[0] as returned by resolveReviewLoopReviewers, reflecting any --reviewer override or pipeline.code_review.by configuration). The critic is the first registered reviewer agent in registry order whose inferred engine differs from this baseline; when multiple registered reviewer agents differ from the baseline, the first in registry order is selected.
+- When no registered reviewer agent has an inferred engine different from the baseline (all registered reviewer agents are on the same engine as reviewers[0]), the critic uses reviewers[0]'s agent and records a visible warning in the round summary.
+- When pipeline.code_review.critic_by is present, the value must name exactly one registered reviewer agent; providing zero or multiple names fails configuration validation before the review loop starts.
+- Previously-open blocking findings still drive the fixer even when all newly-created non-duplicate proposals in the current round are disputed by the critic.
+- The implementation includes internal/app/review_critic_test.go containing tests covering at minimum: critic verdict parsing (confirmed, disputed, insufficient_evidence, unknown proposal_id); missing-verdict treatment as insufficient_evidence; duplicate-verdict handling; critic prompt content; critic model selection using registered reviewer agents (different-engine default, same-engine fallback with warning, and explicit critic_by); critic agent attempt executed as read-only through runAgentAttemptLifecycle; proposal acceptance filtering for each verdict type; all three new terminal reasons individually and their precedence when co-occurring (critic_verdicts_unparsed > debate_no_consensus > precision_rejected); the approve-gate rejection behavior for debate_no_consensus and critic_verdicts_unparsed; per-round critic fields and artifact recording; pactum review run --json output exposing critic fields; critic execution failure (transport error, empty stdout) terminating as critic_verdicts_unparsed without a corrective re-attempt; intra-batch fingerprint dedup (two proposals in the same batch with identical fingerprints: first is evaluated by the critic, second is treated as duplicate bypassing the critic); the case where one blocking proposal is confirmed and a different blocking proposal has an insufficient_evidence verdict in the same round (debate_no_consensus does not fire; the confirmed finding becomes an open blocker and the loop continues); the observable status of critic-filtered proposals in the critic verdicts artifact (verdict values disputed, insufficient_evidence, and missing_verdict for proposals absent from the critic response); and a round where all non-blocking proposals are critic-disputed does not trigger precision_rejected, debate_no_consensus, or an incorrect clean-round terminal reason. The focused validation command uses -v and -count=1 to confirm the tests execute; the command `go test ./internal/app -run 'TestReviewCritic|TestReviewRun.*Critic|TestReviewRun.*Precision|TestConfig.*Critic' -v -count=1 2>&1 | grep -c '^--- PASS'` must return a count greater than zero, confirming at least one test ran and passed rather than being vacuously skipped.
+- When all non-duplicate proposals in a round receive disputed or insufficient_evidence verdicts from the critic (precision_confirmed == 0) and none of the proposals were blocking, no new terminal reason from the critic pass fires. Because proposals.Created > 0 while accepted == 0, this case breaks the existing invariant (accepted==0 && duplicates==0 implies proposals.Created==0) that the existing clean-round path (Path 4, returning Clean:true) relies on. The implementation therefore introduces a distinct handling path for this case rather than reusing Path 4: it uses BlockingOpen (post-dedup) to determine the outcome — if BlockingOpen == 0, the loop terminates with terminal_reason resolved; if BlockingOpen > 0, the loop continues with the fixer working on existing open blocking findings. The implementation must not return Clean:true for any round where precision_candidates > 0. Critic-filtered proposals are reflected in round summary fields (precision_candidates, precision_rejected, precision_unresolved).
+- The critic prompt is constructed to include all non-duplicate proposals from the current round in a single invocation. No per-batch splitting or pagination is implemented for large candidate sets. If the critic model returns an error due to context overflow or any other execution failure, that error is handled per criterion 10 as a critic execution failure terminating with critic_verdicts_unparsed.
+- The critic is independent in the structural sense: it executes as a separate agent pass with its own conversation context and cannot access the reviewer panel's intermediate reasoning or prior conversation turns. The critic may share an underlying model or registered agent configuration with non-primary reviewer panel members; independence is enforced by architectural separation (separate invocation, separate context) and is not required to be guaranteed by model diversity.
+- Critic-filtered proposals (those receiving disputed or insufficient_evidence verdicts, or whose verdict is absent from the critic response per criterion 7) are NOT passed to acceptReviewLoopProposal and do not appear as open, rebutted, or accepted findings in the review state. The critic verdicts artifact (pactum.review_critic_verdicts.v1alpha1 JSONL, criterion 16) is the canonical per-proposal status record: it contains one entry per non-duplicate proposal evaluated by the critic, including synthetic entries with verdict value 'missing_verdict' for proposals absent from the critic response. Tests and tooling observe per-proposal critic status by reading verdict values from this artifact: 'disputed' for proposals that received a disputed verdict, 'insufficient_evidence' for proposals that received an explicit insufficient_evidence verdict, and 'missing_verdict' for proposals whose verdict was absent from the critic response. These proposals are not persisted as candidate or pending findings and are not visible to the fixer.
+
+## Validation commands
+- grep -c 'func TestReviewCritic' ./internal/app/review_critic_test.go
+- go test ./internal/app -run 'TestReviewCritic|TestReviewRun.*Critic|TestReviewRun.*Precision|TestConfig.*Critic' -v -count=1
+- go test ./internal/app -run 'TestReviewCritic|TestReviewRun.*Critic|TestReviewRun.*Precision|TestConfig.*Critic' -v -count=1 2>&1 | grep -c '^--- PASS'
+- go test ./internal/app
+- make check
+
+## Assumptions
+- The critic evaluates only newly-created proposals from the current review round; existing open, rebutted, accepted, or duplicate findings keep their current behavior.
+- The existing model-to-engine inference used for cross-model reviewer defaults is the source of truth for deciding whether the critic uses a different engine.
+- Adding critic_by under pipeline.code_review is acceptable within the existing v1alpha1 config format.
+- Critic validation tests can use fake agent transports and should not require running real external agents.
+- A reviewer proposal's blocking status (whether it counts as a 'blocking proposal' for critic-pass terminal-reason decisions) is determined by the proposal's severity field relative to the configured blocking severity threshold, evaluated before the critic pass. This pre-acceptance severity classification is the source of truth for all criteria referencing 'non-duplicate blocking proposals.'
+- runAgentAttemptLifecycle distinguishes execution failure with no output (returns a non-nil error) from a completed attempt that produces output that cannot be parsed (returns nil error with non-empty stdout). Criterion 10's distinction between 'execution error that does not produce output' (no corrective re-attempt) and 'output that cannot be parsed' (one corrective re-attempt) relies on this existing distinction in runAgentAttemptLifecycle's return values. No changes to transport or loop-engine internals are required to support this distinction.
+- The ACP reviewer registry order is stable within a single review run, determined at configuration load time and unchanged during execution. Default critic selection ('first registered reviewer agent in registry order whose inferred engine differs from the baseline') is therefore deterministic for a given configuration.
+
+## Clarifications
+- None
+
+## Project context
+- Executor context: context/executor-context.md
+- Repo map: .heurema/pactum/map/repo-map.md
+- Search results: context/search-results.json
+- Accepted memory context: context/memory-context.md
+
+## Accepted memory
+
+Memory context:
+- context/memory-context.md
+
+Selected memory:
+- total: 5
+- fresh: 5
+- stale: 0
+- unknown: 0
+
+Items:
+- mem_026 [fresh] score=97 — Add an absolute per-attempt WALL-CLOCK CAP to the ACP agent transport so an a...
+- mem_025 [fresh] score=90 — Make the review loop (both contract_review and code_review, which share inter...
+- mem_021 [fresh] score=90 — Make pactum's code-review loop never silently drop reviewer findings, and rec...
+- mem_027 [fresh] score=72 — Give the CONTRACT-REVIEW loop the same operator finding-resolution that CODE-...
+- mem_017 [fresh] score=70 — Rework the pactum config to the new pipeline shape and wire it through the ex...
+
+Rules:
+- Accepted memory is context, not semantic truth.
+- Stale memory may be outdated; verify before using.
+- Use `pactum search "<term>"` and inspect current source files before relying on memory.
+- Do not implement from memory alone.
+
+## Instructions for future executor
+- Follow the approved contract.
+- Do not implement out-of-scope work.
+- Search before creating new code.
+- Prefer existing code items when applicable.
+- If the contract is ambiguous, stop and request clarification.
+- Use the listed validation commands as expected checks.
+- Pactum gate can run approved validation commands after execution.
+
+## House style
+- Match the surrounding code: idiom, naming, comment density.
+- Comment only where the code is not self-explanatory; do not narrate the obvious.
+- Search for and reuse existing helpers before writing new ones.
+- Keep the diff small and focused: change only what the contract requires.
+- Simplicity first: no enterprise patterns for simple problems, question every new abstraction, no premature generalization or optimization.
+- Over-engineering DON'Ts: wrappers that add nothing, factories or abstractions for a single case, unused extension points, dual implementations where the old path has no callers, silent fallbacks that hide failures.
+- No dead code, no commented-out code, no unused parameters.
+- Handle errors per the project's existing convention; no silent failures.
+- Tests verify behavior, not implementation details, and cover error paths.
+- Fake-test DON'Ts: always-pass tests, hardcoded-value checks, assertions on mock behavior instead of the code under test, ignored errors, commented-out cases.

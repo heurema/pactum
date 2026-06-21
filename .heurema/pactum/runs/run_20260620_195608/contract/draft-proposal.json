@@ -1,0 +1,46 @@
+{
+  "schema": "pactum.contract_draft_proposal.v1alpha1",
+  "run_id": "run_20260620_195608",
+  "status": "accepted",
+  "created_at": "2026-06-20T19:56:15Z",
+  "source": "drafter_attempt",
+  "drafter_attempt_id": "drafter_attempt_001",
+  "drafter": "codex",
+  "in_scope": [
+    "Update only the contract-review path in internal/app/contract_review.go to carry material_impact, fix_direction, uncertainty, and state on contract reviewer findings.",
+    "Update contract-review prompt rendering so reviewer output uses the contract reviewer result schema and no longer asks for the code-review reviewer_findings schema.",
+    "Update contract-review parsing and validation so old findings that omit the new fields remain parseable, while blocking findings without non-empty material_impact are downgraded to advisory with a recorded reason.",
+    "Update internal/app/contract_review_test.go helpers and tests to cover prompt text, new field propagation, material_impact downgrade behavior, and wording/completeness-preference findings staying non-blocking."
+  ],
+  "out_of_scope": [
+    "Changing the contract goal.",
+    "Changing the code-review reviewer path, including internal/app/review.go and internal/app/review_proposals.go.",
+    "Changing the loop engine, agent transport, contract-fixer revise behavior, or manual finding resolution semantics.",
+    "Adding a v2 schema, migration path, or backwards-compatibility layer for external contract-review consumers.",
+    "Running real Pactum agents."
+  ],
+  "acceptance": [
+    "contractReviewFinding serializes and persists material_impact, fix_direction, uncertainty, and state for contract-review findings where those fields are provided.",
+    "The contract reviewer prompt sample JSON includes material_impact, fix_direction, uncertainty, and state, and documents state as candidate or confirmed.",
+    "The contract reviewer prompt states that reviewers should report likely-real defects recall-first, using state=candidate with explicit uncertainty when not confirmed.",
+    "The contract reviewer prompt states the hard rule that blocking=true is allowed only for material spec defects that would make implementation wrong, ambiguous, or stuck.",
+    "The contract reviewer prompt states that wording, style, naming, redundancy, and completeness/thoroughness preferences must be blocking=false advisory findings.",
+    "The contract reviewer prompt requires every blocking finding to include a concrete material_impact and instructs reviewers to mark findings advisory when no material implementation consequence can be stated.",
+    "The contract-review parser keeps findings that omit the new fields parseable instead of dropping the whole finding.",
+    "A contract-review finding parsed with blocking=true and blank or omitted material_impact is emitted with blocking=false, and the round warnings record the downgrade reason.",
+    "A wording or completeness-preference finding emitted as blocking without material_impact does not increment blocking_findings, does not invoke the fixer as a blocker, and does not prevent a clean review round.",
+    "Existing tests that intentionally exercise real blocking contract-review loop behavior emit material_impact so the fixer, max-rounds, blockers-open, and no-progress paths remain covered.",
+    "No code-review reviewer prompt, parser, schema, or tests are changed except as indirectly exercised by make check."
+  ],
+  "validation": [
+    "go test ./internal/app -run 'TestContractReview'",
+    "make check"
+  ],
+  "assumptions": [
+    "Recording downgrade reasons in the existing contract-review round warnings is sufficient for the required recorded reason.",
+    "The in-place schema break is acceptable because there are no external contract-review consumers yet.",
+    "For non-blocking legacy findings that omit the new fields, preserving empty string values for the new fields is acceptable."
+  ],
+  "accepted_at": "2026-06-20T19:58:10Z",
+  "accepted_by": "manual"
+}

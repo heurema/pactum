@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1alpha1",
+  "id": "command_004",
+  "command": "! grep -qF '\"os/exec\"' internal/projectmap/scan.go internal/app/review_loop.go",
+  "started_at": "2026-06-20T16:12:04.549394Z",
+  "finished_at": "2026-06-20T16:12:04.553824Z",
+  "duration_ms": 4,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "gate/validation/command_004/stdout.log",
+  "stderr": "gate/validation/command_004/stderr.log"
+}

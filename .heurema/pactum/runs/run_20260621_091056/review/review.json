@@ -1,0 +1,29 @@
+{
+  "schema": "pactum.review.v1alpha1",
+  "run_id": "run_20260621_091056",
+  "status": "approved",
+  "created_at": "2026-06-21T11:23:35Z",
+  "updated_at": "2026-06-21T11:43:44Z",
+  "gate": {
+    "status": "needs_review",
+    "report": "gate/gate-report.json"
+  },
+  "summary": {
+    "findings": 14,
+    "open": 3,
+    "resolved": 11,
+    "blocking_open": 0
+  },
+  "approval": {
+    "approved_at": "2026-06-21T11:43:44Z",
+    "approved_by": "claude-dogfood"
+  },
+  "artifacts": {
+    "review": "review/review.json",
+    "findings": "review/findings.jsonl",
+    "resolutions": "review/resolutions.jsonl",
+    "proposals": "review/proposals.jsonl",
+    "proposal_decisions": "review/proposal-decisions.jsonl",
+    "gate_report": "gate/gate-report.json"
+  }
+}

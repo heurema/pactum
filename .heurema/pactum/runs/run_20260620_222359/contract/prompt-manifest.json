@@ -1,0 +1,47 @@
+{
+  "schema": "pactum.executor_prompt.v1alpha1",
+  "run_id": "run_20260620_222359",
+  "built_at": "2026-06-20T23:04:28Z",
+  "status": "ready",
+  "contract_sha256": "47b4a7699f04dc66ad5ba40de60f3f69d47b83522473c565144cb19d505be3f8",
+  "approval_status": "approved",
+  "approved_by": "claude-dogfood",
+  "approved_at": "2026-06-20T23:04:28Z",
+  "map_run_id": "map_20260620_230428",
+  "map_refresh": {
+    "triggered": true,
+    "reason": "project_map_stale",
+    "previous_map_run_id": "map_20260620_115144",
+    "run_id": "map_20260620_230428"
+  },
+  "artifacts": {
+    "prompt": "contract/prompt.md",
+    "executor_context": "context/executor-context.md",
+    "contract": "contract/contract.json",
+    "approval": "contract/approval.json",
+    "repo_context": "context/repo-context.md",
+    "search_results": "context/search-results.json"
+  },
+  "memory": {
+    "context": "context/memory-context.md",
+    "selection": "context/memory-selection.json",
+    "context_sha256": "a4bb3e3d1f179cd8ec79916aa750afe471534d46284286c2ef9bc5b08e713963",
+    "selection_sha256": "d3083b8c5c01d939ddd9b72ced767b2985b416a285c8eafaccc1bb2ace584520",
+    "source_sha256": "f98e459bcec3ecabbd1b63da0018c08daf3a44a07ebf2123517115ca7b582224",
+    "selected": {
+      "total": 5,
+      "fresh": 4,
+      "stale": 1,
+      "unknown": 0
+    },
+    "latest_refresh": null
+  },
+  "checks": {
+    "contract_approved": true,
+    "contract_hash_matches_approval": true,
+    "project_map_fresh": true,
+    "blocking_clarifications_open": 0,
+    "memory_context_ready": true,
+    "memory_source_current": true
+  }
+}
