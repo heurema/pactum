@@ -736,6 +736,138 @@ stable prefix** (angle 1) and **scoping context** (angle 2), NOT from harder-sel
 the map to an agent that won't use it. Quantify: how much of `execute` input is
 re-exploration the map could have served vs genuinely-needed file content.
 
+## Review & orchestration improvements (design DONE → [review-orchestration-patterns.md](review-orchestration-patterns.md))
+
+**Design converged via a three-round council** — candidate patterns for the
+autonomous review loop + agent orchestration, drawn from a survey of comparable
+agentic code-review tooling, then hardened over three rounds: implementation-grade
+design by two external reasoning models (gpt-5.5 at xhigh effort, Gemini 3.1 Pro)
+grounded in pactum's source, an adversarial reconciliation, and a three-way
+fork-resolution round with Claude. Per-item Go design, new schemas, terminal
+reasons, effort, and tests in
+[`review-orchestration-patterns.md`](review-orchestration-patterns.md). **Final
+ship order** (the doc has the full design):
+
+> **✅ SHIPPED → PR #229 (`feat/contract-review-precision`). Contract-review precision discipline (dogfood finding, 2026-06-20).**
+> Running pactum on its own slices showed the real **bottleneck is contract-review, not
+> code-review**: it repeatedly grinds to `blockers_open` / `max_rounds` (4 rounds, ~20
+> reviewer attempts) on low-signal *wording* nits, and we keep operator-overriding the
+> lone blocker (e.g. slice #4's `crf_011` "acceptance criteria are prose-only" — 10 of its
+> 11 findings were advisory wording quibbles; slice #3 ground the same way). Contract-review
+> is a **separate** mechanism (`pactum.contract_reviewer_result.v1alpha1`, its own lenses +
+> `renderContractReviewerPrompt`) that got **none** of #2's anti-FP work — its finding is
+> just `message + evidence`, no recall→precision discipline. **Fix:** port the precision
+> thesis into `renderContractReviewerPrompt`; add contract-appropriate finding fields (which
+> criterion/field is defective, a *material-impact* rationale, `fix_direction`, `uncertainty`,
+> `candidate|confirmed`); and one hard rule — **a finding blocks only if it is a material
+> spec defect that would make the implementation wrong or stuck; wording/style/completeness
+> preferences are advisory and never block.** `trigger`/`current_code_only` do NOT port (code
+> concepts). It's the contract-side sibling of #2 and the natural host for #1's critic pass.
+> **Sequence: do it right after #3 (retry), ahead of the rest** — it unblocks the dogfood
+> pipeline itself. Effort: M.
+
+> **⬆ RAISED PRIORITY — Forbid the executor from committing (dogfood finding, 2026-06-20).**
+> During the slice-#3 dogfood the `execute run` agent (Claude Code over ACP) ran `git commit`
+> on its own, committing its work (commit `1c1d2d3`, 1207 lines) instead of leaving the change
+> in the working tree. This **silently breaks the intended flow**: `gate` and `review` inspect
+> the working-tree diff against the contract baseline, so a committed change presents as a clean
+> tree (nothing for the gate/review to see). Slices #2 and #4 left the tree dirty as expected —
+> the behavior is inconsistent and depends on the agent's whim. **IN PROGRESS — dogfood slice
+> `feat/git-history-guard` (run_20260620_222359).**
+>
+> **Design (converged via a codex×Gemini×Claude research council).** Command-level interception is
+> NOT reliable: an ACP `RequestPermission` denylist (or hosting the terminal, or git hooks, or a
+> PATH `git` shim) is bypassable by indirection (`bash commit.sh`), by the adapters' own
+> auto-approve/bypass modes (Claude bypass-mode allows without asking the client; codex only asks
+> when its policy decides), by `--no-verify`, and by absolute paths. **The reliable, adapter-
+> independent mechanism is a post-hoc git guard that observes the EFFECT, not the command:**
+> snapshot git state before the agent, compare after, restore + fail loud if mutated.
+> - **PRIMARY — git guard** (`internal/app/git_guard.go`, wraps `agentTransport().Run` in
+>   `runAgentAttemptLifecycle` for write stages execute + review-fix). Preconditions at start
+>   (attached HEAD, clean tree, no in-progress op, no submodules → else `executor_git_guard_inconclusive`
+>   without running). Snapshot: HEAD + all refs + **reflog state** (catches `commit && reset --hard`
+>   where HEAD ends unchanged) + **commit-object set** (catches dangling) + index tree. On mutation,
+>   `git reset --mixed <origHash>` leaves the work UNSTAGED in the working tree + restore other refs;
+>   reset-hard/stash/ambiguous → `executor_git_guard_inconclusive` (work safe in reflog, never lost).
+>   Terminal reasons: `executor_git_history_mutation` / `executor_git_ref_mutation` /
+>   `executor_git_index_mutation` / `executor_git_restore_failed` / `executor_git_guard_inconclusive`;
+>   a non-empty reason blocks the execute `next`/gate. Uses write-git (NOT the read-only `gitctx`).
+> - **SECONDARY (separate follow-up) — ACP permission tripwire**: parse `RawInput["command"]`
+>   (string=Claude / argv-array=Codex; unrecognized→allow) and reject direct `git commit/reset/...`
+>   as a fast-fail token-saver — explicitly NOT a security boundary.
+> - **TERTIARY** — a prompt house-rule (belt). **Honest scope:** the guard is not mainly "gate would
+>   miss it" (the gate is hash-based); it protects the workflow invariant + recovers reset-hard-lost
+>   work + fails loud. Effort: M (guard) + S (tripwire follow-up).
+> - **Related, separate:** the executor also strayed outside the prose contract scope (`app.go`) and
+>   the gate missed it (no `paths_in_scope` globs) — consider defaulting glob scope from the
+>   contract's named files.
+
+1. **#2 Anti-false-positive finding schema** (high). Modify
+   `pactum.reviewer_findings.v1alpha1` **in place** (breaking change — no external users
+   yet, so no v1alpha2/migration); the shared parser must still not break contract-review.
+   Add `state` (`candidate|confirmed`), `trigger`, `evidence`,
+   `fix_direction`, `uncertainty`, `current_code_only` on `reviewProposalRecord`
+   (`review_proposals.go:26`) and `reviewFindingRecord` (`review.go:196`); reframe the
+   reviewer prompt to recall-first. **Evidence is copied into the confirmed finding,
+   length-capped ~500–1000 chars** (the fixer consumes findings; a lookup join would
+   silently lose evidence). `current_code_only=false` can't be blocking. The data
+   contract the critic (#1) consumes — do first.
+2. **#4 Safe-by-construction read-only git** (low). New `internal/gitctx`:
+   `exec.CommandContext` (no shell), `GIT_OPTIONAL_LOCKS=0`, allowlist read-only
+   subcommands, drop `branch`/`tag` for `for-each-ref`/`show-ref`, block
+   `--no-index`/`--output`/path-escape; migrate `gitCandidateFiles` + `reviewLoopGitHead`.
+   Complements (does not replace) the ACP write guard.
+3. **#3 Transport retry/error classifier — read-only v1** (med) — **merge into the
+   "Executor resilience" item below.** New `internal/agents/retry.go`
+   `ClassifyTransportError`: full error-chain walk, 5xx > nested-4xx, permanent
+   quota/auth vs transient 429/5xx/network. Drive from `runAgentAttemptLifecycle`
+   (`agent_attempt.go:88`), **not** `loop.Run`. **v1 retries read-only stages only;**
+   write-stage retry is a follow-up gated by `WriteBoundaryCrossed=false` **and** an
+   unchanged working-tree fingerprint (catches native codex writes bypassing
+   `WriteTextFile`).
+4. **#1 Critic pass — recall→precision** (med). New `internal/app/review_critic.go`.
+   Refactor the accept seam (`acceptReviewLoopProposal`, `review_loop.go:290`/`:1113`):
+   dedupe → critic over **new candidates only** → accept only `verdict=confirmed`.
+   Verdicts `confirmed|disputed|insufficient_evidence`; new loud reasons
+   `precision_rejected` / `debate_no_consensus` / `critic_verdicts_unparsed`. **Critic
+   defaults to a different-engine reviewer when available** (fallback same-model +
+   warning on single-engine; `pipeline.code_review.critic_by` override). Directly kills
+   the fixer-churns-on-hallucinated-blocker failure mode; sharpens the loud-loop
+   differentiator. Distinct from the parked **Judge selector — best-of-N** (that selects
+   whole outputs; this filters individual findings).
+5. **Shared in-flight agent limiter** (low) — **own PR**, the salvaged nugget from the
+   dropped #8. Today the reviewer fan-out runs concurrently with no enforced global cap.
+   Wrap the single transport call `agentTransport().Run` (`agent_attempt.go:130`) with a
+   `golang.org/x/sync/semaphore` (already a dep) + an `AttemptIDOverride` so concurrency
+   doesn't perturb artifact names.
+6. **#7 Fixer loop-breaker — default-on** (med). Deterministic, **no LLM compactor**:
+   after one same-blocker no-progress round, inject the prior failed diff + exact gate
+   stderr + open-blocker keys + a "try a different approach" nudge into the next fixer
+   prompt (`renderReviewFixPrompt`, `review_fix.go:331`); free, no extra model call.
+   Bounded to one attempt; if the same blocker set remains → new loud terminal
+   `fixer_loop_breaker_exhausted`. Knob `pipeline.code_review.loop_breaker`,
+   **default-on** (operator decision). The gate still judges real files, never the
+   injected summary.
+7. **#5 Reflection** (`pactum reflect`, med). Deterministic CLI analyzer (no LLM
+   mutator) over `events.jsonl` + review/fixer/gate/usage records → an "orchestration
+   lessons" artifact under `runs/<id>/orchestration/`, strictly separate from project
+   memory; never mutates a contract. Default **target-run** sampling, `--last N` opt-in,
+   error terminals excluded unless `--include-errors`. Now *tunes* #7's payload rather
+   than gating it.
+8. **#6 Seeded alloy** for the reviewer panel (low). `alloy_group` in the registry
+   (`config.go:128`) with **seed-pinned** per-run/round/lens selection, recorded in
+   artifacts; reviewer panel only, fixer stays fixed. Low marginal value (the panel
+   already supports cross-model) → ship last.
+
+**Dropped:** concurrent **investigation waves** (#8, recursive/agent-spawn) — friction
+with single-shot execution + the reverted plan-DAG (banner at top of this file). Only
+the shared in-flight limiter (item 5) is salvaged.
+
+**Explicitly not solved by the surveyed tooling** (these pactum gaps stand): budget
+*enforcement* / spend caps (owned by [`cost-budget-design.md`](cost-budget-design.md));
+sandboxing / interactive execute-time approvals; external prompt templating
+(the surveyed tooling also compiles its prompts in as source constants).
+
 ## Hardening / cleanup
 
 - **Executor resilience: auto-retry on transient failure + resume (not reset)**
