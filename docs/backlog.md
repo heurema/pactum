@@ -361,6 +361,23 @@ decision the agent relayed — attribution without ceremony.
 
 ## Agent file-navigation arc (research-backed)
 
+> **Reframed — research now recommends DROPPING the map + tree-sitter, not
+> enhancing them (2026-06-21).** A deep web-research pass + a two-round
+> Claude/Codex/Gemini council concluded that the executor empirically ignores
+> the map (0 references measured), the field has moved to agentic on-demand
+> search (ripgrep + read, not a pre-built AST/embedding index), and tree-sitter
+> is pactum's only CGO dependency — dropping it makes pactum **pure-Go** and
+> collapses the entire native-runner/Windows-mingw/musl release complexity to a
+> trivial `GOOS/GOARCH` cross-compile (Alpine/musl, Windows-ARM, FreeBSD free).
+> Recommendation: **B-minus + run-local snapshot** — drop tree-sitter, drop the
+> persisted global map/wiki/FTS, scope from `git ls-files`, search with
+> `git grep` on demand, and make the deterministic boundary a per-run
+> files+hashes snapshot captured at prompt build. First slice: drop
+> `internal/codeindex`/tree-sitter → pure-Go. Full design, evidence, migration
+> sequence, and the one irreversible loss (`pactum search --symbol`) in
+> [drop-treesitter-map-design.md](drop-treesitter-map-design.md). The
+> enhancement items below are superseded unless that recommendation is rejected.
+
 Agents (executor, reviewer lenses, clarifier, drafter) read large source files
 through their own grep/read tools; on big files (`internal/app/review.go` is
 ~1.5k lines) the dominant pattern is a 3-hop loop — grep, read a window,
