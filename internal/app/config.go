@@ -84,6 +84,9 @@ type pipelineStage struct {
 	// load. Empty/absent means the stage uses its default role assignment.
 	By   stageBy     `yaml:"by,omitempty"`
 	Loop *loopConfig `yaml:"loop,omitempty"`
+	// CriticBy names the registry entry used as the critic agent for the
+	// code_review stage. Only valid on code_review; ignored on other stages.
+	CriticBy string `yaml:"critic_by,omitempty"`
 }
 
 // stageBy accepts a bare agent name (scalar) or a list of names, normalizing
@@ -291,6 +294,11 @@ func validatePipeline(pipeline pipelineConfig, registry []agentRegistryEntry) er
 		for i, name := range nonEmpty {
 			if !registered[name] {
 				return fmt.Errorf("config pipeline.%s.by[%d]: unknown agent %q (not registered in config agents)", ns.name, i, name)
+			}
+		}
+		if ns.name == "code_review" {
+			if name := strings.TrimSpace(ns.stage.CriticBy); name != "" && !registered[name] {
+				return fmt.Errorf("config pipeline.code_review.critic_by: unknown agent %q (not registered in config agents)", name)
 			}
 		}
 	}

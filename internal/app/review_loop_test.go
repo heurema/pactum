@@ -1675,6 +1675,7 @@ func TestReviewLoop(t *testing.T) {
 		requiredRound := []string{
 			"round", "reviewer_attempt_id", "proposals_created", "proposals_accepted",
 			"open_findings", "open_blocking_findings", "clean_streak", "unchanged_fingerprint_streak",
+			"precision_candidates", "precision_confirmed", "precision_rejected", "precision_unresolved",
 		}
 		// Optional omitempty per-round fields.
 		allowedRound := map[string]bool{
@@ -1686,6 +1687,10 @@ func TestReviewLoop(t *testing.T) {
 			"fixer_attempt_id": true, "fix_outcomes_resolved": true,
 			"fix_outcomes_rebutted": true, "fix_outcomes_blocked": true,
 			"gate_status": true, "gate_report_artifact": true,
+			"precision_candidates": true, "precision_confirmed": true,
+			"precision_rejected": true, "precision_unresolved": true,
+			"critic_attempt_id": true, "critic_corrective_attempt_id": true,
+			"critic_verdicts_artifact": true,
 		}
 
 		var rawResp map[string]json.RawMessage
@@ -2105,6 +2110,10 @@ func configureReviewLoopHelpers(t *testing.T, app App, paths artifacts.Paths) Ap
 		},
 		[]agents.AgentDescriptor{
 			reviewLoopHelperDescriptor(testAgentEngine(reviewLoopReviewerName), "TestReviewLoopReviewerHelperProcess"),
+			// Register the other engine so cross-engine critic resolution uses the helper
+			// process rather than the no-command built-in ACP descriptor. The reviewer helper
+			// detects critic prompts (via reviewLoopCriticOutput) and confirms all proposals.
+			reviewLoopHelperDescriptor("codex", "TestReviewLoopReviewerHelperProcess"),
 		},
 	)
 	return app
@@ -2241,6 +2250,40 @@ func appendReviewLoopResolutionWithOutcomeForTest(t *testing.T, runPaths contrac
 	assertNoError(t, appendJSONLine(runPaths.ReviewResolutionsJSONL, record))
 }
 
+// reviewLoopCriticOutput detects whether stdin is a critic prompt and, if so,
+// outputs confirmed verdicts for every proposal ID found in the prompt, then
+// exits. This keeps existing loop tests working: proposals are always confirmed
+// so the loop behaves the same as before the critic pass was introduced.
+func reviewLoopCriticOutput(stdin []byte) bool {
+	if !strings.Contains(string(stdin), "precision critic") {
+		return false
+	}
+	var verdicts []map[string]any
+	for _, line := range strings.Split(string(stdin), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "### p_") {
+			id := strings.TrimPrefix(trimmed, "### ")
+			verdicts = append(verdicts, map[string]any{
+				"proposal_id": id,
+				"verdict":     reviewCriticVerdictConfirmed,
+				"reason":      "helper confirms all proposals",
+			})
+		}
+	}
+	block := map[string]any{
+		"schema":   reviewCriticVerdictsSchema,
+		"verdicts": verdicts,
+	}
+	data, err := json.MarshalIndent(block, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "critic output error: %v\n", err)
+		os.Exit(2)
+	}
+	fmt.Printf("```json\n%s\n```\n", string(data))
+	os.Exit(0)
+	return true // unreachable
+}
+
 func TestReviewLoopReviewerHelperProcess(t *testing.T) {
 	if os.Getenv("PACTUM_REVIEW_LOOP_REVIEWER_PROCESS") != "1" {
 		return
@@ -2251,6 +2294,7 @@ func TestReviewLoopReviewerHelperProcess(t *testing.T) {
 		fmt.Fprintf(os.Stderr, "stdin error: %v\n", err)
 		os.Exit(2)
 	}
+	reviewLoopCriticOutput(stdin)
 	fmt.Printf("stdin_has_reviewer_prompt=%t\n", strings.Contains(string(stdin), "# Reviewer Prompt"))
 	// Only the correctness-lens attempt of the five-lens fan-out reports and
 	// advances the round sequence; the other lenses always emit a clean block.
@@ -2351,6 +2395,7 @@ func runReviewLoopPanelReviewerHelper(label string, severity string) {
 		fmt.Fprintf(os.Stderr, "stdin error: %v\n", err)
 		os.Exit(2)
 	}
+	reviewLoopCriticOutput(stdin)
 	for i := 0; i < 50; i++ {
 		fmt.Printf("panel_reviewer=%s line=%d stdin_has_reviewer_prompt=%t\n", label, i, strings.Contains(string(stdin), "# Reviewer Prompt"))
 	}
