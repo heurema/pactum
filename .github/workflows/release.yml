@@ -1,11 +1,9 @@
 name: Release
 
-# Tag a version to cut a release: `git tag v0.1.0-alpha.1 && git push origin v0.1.0-alpha.1`.
-# pactum links tree-sitter (CGO), so binaries are built on NATIVE runners per
-# platform (no cross-compilation), then archived with the docs + agent skill and
-# attached to a GitHub Release with checksums. Bare per-platform binaries
-# (pactum-<os>-<arch>) are also attached and their sha256s baked into the
-# @heurema/pactum npm package, which the `pactum` launcher downloads + verifies.
+# pactum is pure Go (no CGO), so all five release targets cross-compile on a
+# single ubuntu-latest runner via GOOS/GOARCH with CGO_ENABLED=0. No native
+# per-platform runners or C toolchain required.
+# Tag a version to cut a release: `git tag v0.1.0 && git push origin v0.1.0`.
 # A v0.0.0-* tag is a smoke test: it builds + releases but only dry-runs npm publish.
 on:
   push:
@@ -17,17 +15,10 @@ permissions:
 
 jobs:
   build:
-    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { runner: macos-latest, goos: darwin, goarch: arm64 }
-          - { runner: macos-latest, goos: darwin, goarch: amd64 }
-          - { runner: ubuntu-latest, goos: linux, goarch: amd64 }
-          - { runner: ubuntu-24.04-arm, goos: linux, goarch: arm64 }
-          - { runner: windows-latest, goos: windows, goarch: amd64 }
-    runs-on: ${{ matrix.runner }}
+    name: build all targets
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,57 +30,54 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build (native CGO)
-        if: runner.os != 'Windows'
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "1"
-        run: |
-          VER="${GITHUB_REF_NAME#v}"
-          make build VERSION="$VER"
-
-      # Windows has no GNU make on the runner; build go directly with the same
-      # ldflags. CGO uses the runner's bundled mingw-w64 gcc to link tree-sitter.
-      - name: Build (native CGO, Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "1"
+      - name: Cross-compile
+        # Targets: darwin/arm64  darwin/amd64  linux/amd64  linux/arm64  windows/amd64
+        # Binaries: pactum-darwin-arm64  pactum-darwin-amd64  pactum-linux-amd64  pactum-linux-arm64  pactum-windows-amd64.exe
+        # Archives: darwin_arm64.tar.gz  darwin_amd64.tar.gz  linux_amd64.tar.gz  linux_arm64.tar.gz  windows_amd64.tar.gz
         run: |
           VER="${GITHUB_REF_NAME#v}"
           PKG=github.com/heurema/pactum/internal/version
-          LDFLAGS="-X $PKG.Version=$VER -X $PKG.Commit=$(git rev-parse --short HEAD) -X $PKG.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          go build -ldflags "$LDFLAGS" -o bin/pactum.exe ./cmd/pactum
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          LDFLAGS="-X $PKG.Version=$VER -X $PKG.Commit=$COMMIT -X $PKG.Date=$DATE"
 
-      - name: Package
-        shell: bash
-        run: |
-          VER="${GITHUB_REF_NAME#v}"
-          EXT=""; [ "${{ matrix.goos }}" = "windows" ] && EXT=".exe"
-          DIST="pactum_${VER}_${{ matrix.goos }}_${{ matrix.goarch }}"
-          mkdir -p "staging/${DIST}"
-          cp "bin/pactum${EXT}" "staging/${DIST}/"
-          cp README.md SECURITY.md "staging/${DIST}/"
-          cp -R docs "staging/${DIST}/docs"
-          cp -R assets/agent-skills "staging/${DIST}/agent-skills"
-          tar -C staging -czf "${DIST}.tar.gz" "${DIST}"
+          for t in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64; do
+            export GOOS="${t%/*}"
+            export GOARCH="${t#*/}"
+            DIST="pactum_${VER}_${GOOS}_${GOARCH}"
+            mkdir -p "staging/${DIST}"
 
-      - name: Bare binary (npm launcher download target)
-        shell: bash
-        run: |
-          EXT=""; [ "${{ matrix.goos }}" = "windows" ] && EXT=".exe"
-          cp "bin/pactum${EXT}" "pactum-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}"
+            if [ "$GOOS" = "windows" ]; then
+              go build -ldflags "$LDFLAGS" -o bin/pactum.exe ./cmd/pactum
+              cp bin/pactum.exe "staging/${DIST}/"
+              cp bin/pactum.exe "pactum-windows-amd64.exe"
+            else
+              go build -ldflags "$LDFLAGS" -o bin/pactum ./cmd/pactum
+              cp bin/pactum "staging/${DIST}/"
+              cp bin/pactum "pactum-${GOOS}-${GOARCH}"
+            fi
+
+            cp README.md SECURITY.md "staging/${DIST}/"
+            cp -R docs/ "staging/${DIST}/docs"
+            cp -R assets/agent-skills "staging/${DIST}/agent-skills"
+            tar -C staging -czf "${DIST}.tar.gz" "${DIST}"
+          done
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: pactum_${{ matrix.goos }}_${{ matrix.goarch }}
+          name: release-artifacts
           path: |
-            *.tar.gz
-            pactum-${{ matrix.goos }}-${{ matrix.goarch }}*
+            pactum-darwin-arm64
+            pactum-darwin-amd64
+            pactum-linux-amd64
+            pactum-linux-arm64
+            pactum-windows-amd64.exe
+            pactum_*_darwin_arm64.tar.gz
+            pactum_*_darwin_amd64.tar.gz
+            pactum_*_linux_amd64.tar.gz
+            pactum_*_linux_arm64.tar.gz
+            pactum_*_windows_amd64.tar.gz
           retention-days: 1
 
   release:

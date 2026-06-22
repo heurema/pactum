@@ -23,8 +23,8 @@ npx @heurema/pactum --help
 |---------|--------------|---------------------------|
 | macOS   | arm64        | Apple Silicon             |
 | macOS   | x64          | Intel                     |
-| Linux   | amd64        | glibc (Ubuntu, Debian, …) |
-| Linux   | arm64        | glibc (Ubuntu, Debian, …) |
+| Linux   | amd64        | glibc and musl (Ubuntu, Debian, Alpine, …) |
+| Linux   | arm64        | glibc and musl (Ubuntu, Debian, Alpine, …) |
 | Windows | amd64        | x64                       |
 
 ### Windows
@@ -36,14 +36,9 @@ and caches it under `%LOCALAPPDATA%\pactum\cache\<version>\`. Windows on ARM
 
 ### Alpine / musl Linux
 
-Only glibc Linux binaries are shipped. On Alpine or other musl-based
-distributions the launcher exits with:
-
-```
-pactum: only glibc Linux binaries are published; Alpine/musl is not yet supported — use a glibc image (Ubuntu/Debian) or build from source: https://github.com/heurema/pactum
-```
-
-Use a glibc image (Ubuntu/Debian) or [build from source](install.md).
+The published linux-amd64 and linux-arm64 binaries are pure-Go static builds
+(CGO_ENABLED=0), so they run on musl-based distributions such as Alpine without
+modification. No extra configuration is needed.
 
 ## Binary cache
 
