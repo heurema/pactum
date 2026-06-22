@@ -89,43 +89,104 @@ func readWorkspaceMapRunID(t *testing.T, manifestPath string) string {
 func TestPromptBuildSelfHealsStaleProjectMap(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedPromptContract(t, root)
-	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
-	previousMapRunID := readWorkspaceMapRunID(t, paths.Manifest)
-	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
+	// Record map run ID before prompt build.
+	mapRunIDBefore := readWorkspaceMapRunID(t, paths.Manifest)
+	// Make the project map stale by adding a new file (working-tree change, no new commit).
+	mustWriteFile(t, filepath.Join(root, "new_feature.go"), "package main\n")
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("prompt build with a stale map should refresh and succeed, exited %d, stderr: %s", code, stderr.String())
-	}
-	newMapRunID := readWorkspaceMapRunID(t, paths.Manifest)
-	if newMapRunID == previousMapRunID {
-		t.Fatalf("prompt build should have refreshed the stale map: %q", newMapRunID)
+		t.Fatalf("prompt build should succeed even with stale project map, exited %d, stderr: %s", code, stderr.String())
 	}
 	got := stdout.String()
-	for _, want := range []string{
-		"Executor prompt built",
-		"stale map refreshed: " + newMapRunID,
+	if !strings.Contains(got, "Executor prompt built") {
+		t.Fatalf("prompt build output missing 'Executor prompt built':\n%s", got)
+	}
+	if strings.Contains(got, "stale map refreshed") {
+		t.Fatalf("prompt build must not self-heal the map:\n%s", got)
+	}
+	// Verify RefreshMap was not called — the workspace map run ID must be unchanged.
+	if mapRunIDAfter := readWorkspaceMapRunID(t, paths.Manifest); mapRunIDAfter != mapRunIDBefore {
+		t.Fatalf("prompt build must not change map run ID: was %q, now %q", mapRunIDBefore, mapRunIDAfter)
+	}
+}
+
+func TestPromptBuildFailsWhenRepoHasNoCommits(t *testing.T) {
+	skipIfNoGit(t)
+	root := t.TempDir()
+	mustGitG(t, root, "init")
+	mustGitG(t, root, "config", "user.email", "test@test.com")
+	mustGitG(t, root, "config", "user.name", "Test")
+	mustGitG(t, root, "config", "commit.gpgsign", "false")
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+	app := testApp(root)
+
+	var stdout, stderr bytes.Buffer
+	for _, args := range [][]string{
+		{"init"},
 	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("self-heal output missing %q:\n%s", want, got)
+		stdout.Reset()
+		stderr.Reset()
+		if code := app.Run(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("%v exited %d, stderr: %s", args, code, stderr.String())
 		}
 	}
-	manifest, err := readPromptManifest(runPaths.PromptManifest)
-	assertNoError(t, err)
-	want := promptMapRefresh{Triggered: true, Reason: "project_map_stale", PreviousMapRunID: previousMapRunID, RunID: newMapRunID}
-	if manifest.MapRefresh != want {
-		t.Fatalf("manifest map_refresh = %#v, want %#v", manifest.MapRefresh, want)
+	setAgentRegistryConfig(t, artifacts.New(root),
+		agentRegistryEntry{Name: "codex", Model: "gpt-5"},
+	)
+	stdout.Reset()
+	stderr.Reset()
+	for _, args := range [][]string{
+		{"map", "refresh"},
+		{"task", "new", "add feature"},
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		if code := app.Run(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("%v exited %d, stderr: %s", args, code, stderr.String())
+		}
 	}
-	if manifest.MapRunID != newMapRunID || !manifest.Checks.ProjectMapFresh {
-		t.Fatalf("manifest should record the refreshed map: %#v", manifest)
+	// Approve the contract without ever making a commit — HEAD cannot be resolved.
+	paths := artifacts.New(root)
+	runID := "run_20260531_184012"
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{
+		"goal": "add feature",
+		"scope": map[string]any{
+			"in":  []string{"internal/app/**"},
+			"out": []string{},
+		},
+		"acceptance_criteria": []string{"Feature works"},
+		"validation":          map[string]any{"commands": []string{}},
+		"assumptions":         []string{},
+	})
+	for _, args := range [][]string{
+		{"contract", "revise", runID, "--from", fromFile},
+		{"contract", "approve", runID},
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		if code := app.Run(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("%v exited %d, stderr: %s", args, code, stderr.String())
+		}
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code := app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("prompt build should fail when repo has no commits")
+	}
+	if got := stderr.String(); !strings.Contains(got, "cannot build executor prompt") || !strings.Contains(got, "HEAD") {
+		t.Fatalf("no-commits prompt build stderr mismatch:\n%s", got)
 	}
 }
 
 func TestPromptBuildJSONReportsMapRefresh(t *testing.T) {
 	root := t.TempDir()
-	app, paths, runID := setupApprovedPromptContract(t, root)
-	previousMapRunID := readWorkspaceMapRunID(t, paths.Manifest)
+	app, _, runID := setupApprovedPromptContract(t, root)
+	// Stale working tree does not affect prompt build; map_refresh is always {triggered:false}.
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
 
 	var stdout, stderr bytes.Buffer
@@ -135,26 +196,14 @@ func TestPromptBuildJSONReportsMapRefresh(t *testing.T) {
 	}
 	var response promptBuildResponse
 	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
-	if !response.MapRefresh.Triggered || response.MapRefresh.Reason != "project_map_stale" {
-		t.Fatalf("response map_refresh = %#v, want a triggered refresh", response.MapRefresh)
+	if response.MapRefresh != (promptMapRefresh{Triggered: false}) {
+		t.Fatalf("map_refresh should always be {triggered:false}: %#v", response.MapRefresh)
 	}
-	if response.MapRefresh.PreviousMapRunID != previousMapRunID || response.MapRefresh.RunID == previousMapRunID || response.MapRefresh.RunID == "" {
-		t.Fatalf("response map_refresh run ids mismatch: %#v (previous %q)", response.MapRefresh, previousMapRunID)
+	if response.Manifest.MapRefresh != (promptMapRefresh{Triggered: false}) {
+		t.Fatalf("manifest map_refresh should always be {triggered:false}: %#v", response.Manifest.MapRefresh)
 	}
-	if response.Manifest.MapRefresh != response.MapRefresh {
-		t.Fatalf("manifest and response map_refresh diverge: %#v vs %#v", response.Manifest.MapRefresh, response.MapRefresh)
-	}
-
-	// A fresh map reports an untriggered refresh.
-	stdout.Reset()
-	stderr.Reset()
-	if code := app.Run([]string{"prompt", "build", runID, "--json"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("prompt build --json (fresh map) exited %d, stderr: %s", code, stderr.String())
-	}
-	var fresh promptBuildResponse
-	assertNoError(t, json.Unmarshal(stdout.Bytes(), &fresh))
-	if fresh.MapRefresh != (promptMapRefresh{Triggered: false}) {
-		t.Fatalf("fresh map should report map_refresh{triggered:false}: %#v", fresh.MapRefresh)
+	if response.Manifest.HeadCommit == "" {
+		t.Fatalf("manifest should record head_commit")
 	}
 }
 

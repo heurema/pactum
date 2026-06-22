@@ -12,9 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/heurema/pactum/internal/artifacts"
 	"github.com/heurema/pactum/internal/ledger"
-	"github.com/heurema/pactum/internal/projectmap"
 )
 
 const (
@@ -160,7 +158,7 @@ func (a App) GateRun(stdout io.Writer, runID string, jsonOutput bool) error {
 			validation.Commands = append(validation.Commands, result)
 		}
 	}
-	changes := a.buildGateChangeReport(context.Root, context.Paths)
+	changes := a.buildGateChangeReport(context.Root)
 	scope := buildGateScopeReport(context.Contract, changes, config.OutOfScope)
 
 	summary := gateSummary{
@@ -352,7 +350,21 @@ func nonEmptyValidationCommands(commands []string) []string {
 	return filtered
 }
 
-func (a App) buildGateChangeReport(root string, paths artifacts.Paths) gateChangeReport {
+// isUnmergedStatus reports whether the XY pair represents an unmerged entry.
+// This covers any pair with U in either column and the well-known special pairs
+// that git uses for unmerged states without a U: DD, AU, UD, UA, DU, AA, UU.
+func isUnmergedStatus(x, y byte) bool {
+	if x == 'U' || y == 'U' {
+		return true
+	}
+	switch string([]byte{x, y}) {
+	case "DD", "AU", "UD", "UA", "DU", "AA", "UU":
+		return true
+	}
+	return false
+}
+
+func (a App) buildGateChangeReport(root string) gateChangeReport {
 	report := gateChangeReport{
 		Status:       "clean",
 		ChangedFiles: []string{},
@@ -361,56 +373,120 @@ func (a App) buildGateChangeReport(root string, paths artifacts.Paths) gateChang
 		Reasons:      []string{},
 	}
 
-	expected, err := readHashRecords(paths.HashesJSONL)
-	if os.IsNotExist(err) {
-		expected = []projectmap.HashRecord{}
-	} else if err != nil {
-		report.Status = "unknown"
-		report.Reasons = append(report.Reasons, "cannot read project map hashes: "+err.Error())
+	out, err := gitExec(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil {
+		report.Status = "changed"
+		report.Reasons = []string{"git status failed: " + err.Error()}
 		return report
 	}
-	config, err := readConfig(paths.Config)
-	if err != nil {
-		report.Status = "unknown"
-		report.Reasons = append(report.Reasons, "cannot read project map config: "+err.Error())
-		return report
-	}
-	current, err := projectmap.Scan(root, projectmap.ScanOptions{
-		MaxFileBytes: int64(config.Map.MaxFileBytes),
-	})
-	if err != nil {
-		report.Status = "unknown"
-		report.Reasons = append(report.Reasons, "cannot scan repository: "+err.Error())
+	if out == "" {
 		return report
 	}
 
-	expectedByPath := make(map[string]string, len(expected))
-	for _, record := range expected {
-		if strings.HasPrefix(record.Path, artifacts.WorkspaceRel+"/") {
-			continue
-		}
-		expectedByPath[record.Path] = record.SHA256
-		fullPath := filepath.Join(root, filepath.FromSlash(record.Path))
-		if !filesystemRegularFile(fullPath) {
-			report.MissingFiles = append(report.MissingFiles, record.Path)
-			continue
-		}
-		hash, err := fileSHA256(fullPath)
-		if err != nil {
-			report.Status = "unknown"
-			report.Reasons = append(report.Reasons, "cannot hash file: "+record.Path+": "+err.Error())
-			return report
-		}
-		if hash != record.SHA256 {
-			report.ChangedFiles = append(report.ChangedFiles, record.Path)
+	// Bucket priority constants: higher value wins when the same path appears in
+	// multiple git status entries (missing > changed > new).
+	const (
+		bucketNew     = 1
+		bucketChanged = 2
+		bucketMissing = 3
+	)
+	buckets := make(map[string]int)
+	place := func(path string, b int) {
+		if buckets[path] < b {
+			buckets[path] = b
 		}
 	}
-	for _, record := range current.Hashes {
-		if strings.HasPrefix(record.Path, artifacts.WorkspaceRel+"/") {
+
+	// classifyByXY applies the contract's ordered rules for non-rename entries:
+	// (1) D → missing, (2) M/T → changed, (3) unmerged → changed,
+	// (4) A/?? → new, (5) unknown → changed.
+	classifyByXY := func(path string, x, y byte) {
+		switch {
+		case x == 'D' || y == 'D':
+			place(path, bucketMissing)
+		case x == 'M' || y == 'M' || x == 'T' || y == 'T':
+			place(path, bucketChanged)
+		case isUnmergedStatus(x, y):
+			place(path, bucketChanged)
+		case x == '?' && y == '?':
+			place(path, bucketNew)
+		case x == 'A':
+			place(path, bucketNew)
+		default:
+			place(path, bucketChanged)
+		}
+	}
+
+	// classifyDest classifies a rename/copy destination by Y only (X is R or C,
+	// not a state indicator): D→missing, M/T→changed, unmerged→changed,
+	// ' '→new (file newly placed at this path), unknown→changed.
+	classifyDest := func(path string, x, y byte) {
+		switch {
+		case y == 'D':
+			place(path, bucketMissing)
+		case y == 'M' || y == 'T':
+			place(path, bucketChanged)
+		case isUnmergedStatus(x, y):
+			place(path, bucketChanged)
+		case y == ' ':
+			place(path, bucketNew)
+		default:
+			place(path, bucketChanged)
+		}
+	}
+
+	// Porcelain v1 with -z: each entry is "XY PATH\0"; rename/copy entries are
+	// "XY DEST\0ORIG\0" (two NUL-separated tokens).
+	tokens := strings.Split(out, "\x00")
+	for i := 0; i < len(tokens); {
+		token := tokens[i]
+		i++
+		if len(token) < 4 {
+			continue // empty trailing token or malformed
+		}
+		x, y := token[0], token[1]
+		path := token[3:] // skip "XY "
+
+		// Skip git-ignored files.
+		if x == '!' && y == '!' {
 			continue
 		}
-		if _, ok := expectedByPath[record.Path]; !ok {
-			report.NewFiles = append(report.NewFiles, record.Path)
+
+		// Rename/copy: consume orig and classify both paths.
+		if x == 'R' || x == 'C' {
+			var orig string
+			if i < len(tokens) {
+				orig = tokens[i]
+				i++
+			}
+			// Orig outside .heurema/ is effectively deleted from the working tree.
+			if orig != "" && !strings.HasPrefix(orig, ".heurema/") {
+				place(orig, bucketMissing)
+			}
+			// Skip dest if it is inside .heurema/.
+			if strings.HasPrefix(path, ".heurema/") {
+				continue
+			}
+			classifyDest(path, x, y)
+			continue
+		}
+
+		// Skip paths under .heurema/.
+		if strings.HasPrefix(path, ".heurema/") {
+			continue
+		}
+
+		classifyByXY(path, x, y)
+	}
+
+	for p, b := range buckets {
+		switch b {
+		case bucketMissing:
+			report.MissingFiles = append(report.MissingFiles, p)
+		case bucketChanged:
+			report.ChangedFiles = append(report.ChangedFiles, p)
+		case bucketNew:
+			report.NewFiles = append(report.NewFiles, p)
 		}
 	}
 
@@ -486,8 +562,9 @@ func nonEmptyPathGlobs(patterns []string) []string {
 
 func gateScopeCandidateFiles(changes gateChangeReport) []string {
 	seen := map[string]bool{}
-	files := make([]string, 0, len(changes.ChangedFiles)+len(changes.NewFiles))
-	for _, path := range append(append([]string{}, changes.ChangedFiles...), changes.NewFiles...) {
+	files := make([]string, 0, len(changes.ChangedFiles)+len(changes.NewFiles)+len(changes.MissingFiles))
+	all := append(append(append([]string{}, changes.ChangedFiles...), changes.NewFiles...), changes.MissingFiles...)
+	for _, path := range all {
 		if seen[path] {
 			continue
 		}

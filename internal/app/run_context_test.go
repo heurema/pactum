@@ -50,6 +50,11 @@ func TestExtractRunContextQueries(t *testing.T) {
 func initFormatFixture(t *testing.T) (string, artifacts.Paths) {
 	t.Helper()
 	root := t.TempDir()
+	skipIfNoGit(t)
+	mustGitG(t, root, "init")
+	mustGitG(t, root, "config", "user.email", "test@test.com")
+	mustGitG(t, root, "config", "user.name", "Test")
+	mustGitG(t, root, "config", "commit.gpgsign", "false")
 	mustWriteFile(t, filepath.Join(root, "package.json"), "{\n  \"name\": \"web\"\n}\n")
 	mustWriteFile(t, filepath.Join(root, "apps", "admin", "src", "lib", "format.ts"), `export function formatCurrency(value: number): string {
   return value.toFixed(2)
@@ -59,6 +64,8 @@ func initFormatFixture(t *testing.T) (string, artifacts.Paths) {
 `)
 	app := testApp(root)
 	wikiRunOK(t, app, "init")
+	mustGitG(t, root, "add", "package.json")
+	mustGitG(t, root, "commit", "-m", "init")
 	return root, artifacts.New(root)
 }
 

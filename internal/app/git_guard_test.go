@@ -42,6 +42,13 @@ func skipIfNoGit(t *testing.T) {
 	}
 }
 
+// tryGitG runs a git command in root and returns whether it succeeded. Unlike
+// mustGitG it does not fail the test, useful for commands expected to exit
+// non-zero (e.g. a merge that creates a conflict).
+func tryGitG(root string, args ...string) bool {
+	return exec.Command("git", append([]string{"-C", root}, args...)...).Run() == nil
+}
+
 // ---------------------------------------------------------------------------
 // gitGuardPrechecks
 // ---------------------------------------------------------------------------
