@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -18,29 +18,8 @@ export function assetName(platform, arch) {
   return PLATFORM_MAP[`${platform}/${arch}`] ?? null;
 }
 
-// Returns true if the current Linux process is running on musl (Alpine or similar).
-export function detectMusl() {
-  if (existsSync('/etc/alpine-release')) return true;
-  try {
-    const report = process.report?.getReport?.();
-    if (report?.header) {
-      const h = report.header;
-      // glibc sets glibcVersionRuntime; musl leaves it absent.
-      if (!h.glibcVersionRuntime && !h.glibcVersionCompiler) return true;
-    }
-  } catch {
-    // ignore — if we can't tell, assume glibc
-  }
-  return false;
-}
-
-// Returns a non-null error string if the platform should be rejected before any
-// work, or null if supported. Accepts overrides for testability.
-export function platformError(platform, arch, isMusl) {
-  if (isMusl === undefined) isMusl = platform === 'linux' ? detectMusl() : false;
-  if (platform === 'linux' && isMusl) {
-    return 'pactum: only glibc Linux binaries are published; Alpine/musl is not yet supported — use a glibc image (Ubuntu/Debian) or build from source: https://github.com/heurema/pactum';
-  }
+// Returns a non-null error string if the platform is unsupported, or null if supported.
+export function platformError(platform, arch) {
   if (!assetName(platform, arch)) {
     return `pactum: unsupported platform: ${platform}/${arch}`;
   }

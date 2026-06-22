@@ -41,11 +41,12 @@ describe('platformError', () => {
     assert.ok(!msg.includes('\n'), 'must be single-line');
   });
 
-  it('rejects musl Linux', () => {
-    const msg = platformError('linux', 'x64', /* isMusl */ true);
-    assert.ok(msg && msg.length > 0, 'expected non-empty message for musl');
-    assert.match(msg, /Alpine|musl/i);
-    assert.ok(!msg.includes('\n'), 'must be single-line');
+  it('accepts linux/x64 musl as supported', () => {
+    assert.equal(platformError('linux', 'x64', /* isMusl */ true), null);
+  });
+
+  it('accepts linux/arm64 musl as supported', () => {
+    assert.equal(platformError('linux', 'arm64', /* isMusl */ true), null);
   });
 
   it('rejects unsupported arch', () => {
@@ -77,11 +78,6 @@ describe('platformError', () => {
     assert.ok(err !== null);
     // assetName returns null for win32/arm64, so cachePath would fail — gate must run first.
     assert.equal(assetName('win32', 'arm64'), null);
-  });
-
-  it('gate returns error before cache-path or download would be called (musl)', () => {
-    const err = platformError('linux', 'x64', true);
-    assert.ok(err !== null);
   });
 
   it('gate returns error before cache-path or download would be called (unsupported arch)', () => {
