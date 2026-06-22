@@ -172,7 +172,7 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 		return err
 	}
 
-	if err := activeStore.WriteBytes(context.RunPaths.ExecutorContext, renderExecutorContext(context.State, report.ProjectMap.RunID, hash, searchResults, decisions, memory.Selected), 0o644); err != nil {
+	if err := activeStore.WriteBytes(context.RunPaths.ExecutorContext, renderExecutorContext(context.State, report.ProjectMap.RunID, hash, decisions, memory.Selected), 0o644); err != nil {
 		return err
 	}
 	if err := activeStore.WriteBytes(context.RunPaths.PromptMD, renderApprovedPromptMD(context.Contract, context.State.RunID, hash, selection), 0o644); err != nil {
@@ -342,7 +342,7 @@ func removePromptReadinessArtifacts(runPaths contractRunPathSet) error {
 	return nil
 }
 
-func renderExecutorContext(state contractRunState, mapRunID string, contractSHA256 string, searchResults runSearchResults, decisions []clarificationDecisionRecord, memory promptManifestMemorySelected) []byte {
+func renderExecutorContext(state contractRunState, mapRunID string, contractSHA256 string, decisions []clarificationDecisionRecord, memory promptManifestMemorySelected) []byte {
 	var buffer bytes.Buffer
 	fmt.Fprintln(&buffer, "# Executor Context")
 	fmt.Fprintln(&buffer)
@@ -351,17 +351,6 @@ func renderExecutorContext(state contractRunState, mapRunID string, contractSHA2
 	fmt.Fprintf(&buffer, "- Run status: %s\n", state.Status)
 	fmt.Fprintf(&buffer, "- Map run id: %s\n", mapRunID)
 	fmt.Fprintf(&buffer, "- Contract hash: %s\n", contractSHA256)
-	fmt.Fprintln(&buffer)
-	fmt.Fprintln(&buffer, "## Project map")
-	fmt.Fprintf(&buffer, "- Repo map: %s\n", artifacts.WorkspaceRel+"/map/repo-map.md")
-	fmt.Fprintf(&buffer, "- LLM map pointer: %s\n", artifacts.WorkspaceRel+"/map/llms.txt")
-	fmt.Fprintf(&buffer, "- Search index: %s\n", artifacts.WorkspaceRel+"/map/search.sqlite")
-	fmt.Fprintln(&buffer)
-	fmt.Fprintln(&buffer, "## Retrieval guidance")
-	fmt.Fprintln(&buffer, "- Use `pactum search \"<term>\"` before adding new code.")
-	fmt.Fprintln(&buffer, "- Prefer existing exported functions and types when applicable.")
-	fmt.Fprintln(&buffer, "- If ownership is unclear, stop and ask for clarification.")
-	fmt.Fprintln(&buffer, "- Do not rely on this map as complete semantic truth.")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Accepted memory")
 	fmt.Fprintln(&buffer, "- Memory context: context/memory-context.md")
@@ -372,25 +361,6 @@ func renderExecutorContext(state contractRunState, mapRunID string, contractSHA2
 	fmt.Fprintf(&buffer, "- Unknown: %d\n", memory.Unknown)
 	fmt.Fprintln(&buffer, "- Treat memory as context, not semantic truth.")
 	fmt.Fprintln(&buffer, "- Stale memory must be verified before use.")
-	fmt.Fprintln(&buffer)
-	fmt.Fprintln(&buffer, "## Relevant search results")
-	if searchResults.QuerySource != "" {
-		fmt.Fprintf(&buffer, "Query source: %s\n", searchResults.QuerySource)
-	}
-	if len(searchResults.Queries) > 0 {
-		fmt.Fprintln(&buffer, "Targeted queries:")
-		for _, query := range searchResults.Queries {
-			fmt.Fprintf(&buffer, "- %s\n", query)
-		}
-	}
-	if len(searchResults.Results) == 0 {
-		fmt.Fprintln(&buffer, "No relevant results. Run `pactum search \"<term>\"` with narrower terms.")
-	} else {
-		fmt.Fprintln(&buffer, "Results:")
-		for i, result := range searchResults.Results {
-			fmt.Fprintf(&buffer, "%d. %s %s\n", i+1, result.Kind, result.Path)
-		}
-	}
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Clarification decisions")
 	if len(decisions) == 0 {
@@ -453,8 +423,6 @@ func renderApprovedPromptMD(contract draftContract, runID string, contractSHA256
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Project context")
 	fmt.Fprintln(&buffer, "- Executor context: context/executor-context.md")
-	fmt.Fprintf(&buffer, "- Repo map: %s\n", artifacts.WorkspaceRel+"/map/repo-map.md")
-	fmt.Fprintln(&buffer, "- Search results: context/search-results.json")
 	fmt.Fprintln(&buffer, "- Accepted memory context: context/memory-context.md")
 	fmt.Fprintln(&buffer)
 	writeApprovedPromptMemorySection(&buffer, selection)
@@ -521,7 +489,7 @@ func writeApprovedPromptMemorySection(buffer *bytes.Buffer, selection memorySele
 	fmt.Fprintln(buffer, "Rules:")
 	fmt.Fprintln(buffer, "- Accepted memory is context, not semantic truth.")
 	fmt.Fprintln(buffer, "- Stale memory may be outdated; verify before using.")
-	fmt.Fprintln(buffer, "- Use `pactum search \"<term>\"` and inspect current source files before relying on memory.")
+	fmt.Fprintln(buffer, "- Inspect current source files before relying on memory.")
 	fmt.Fprintln(buffer, "- Do not implement from memory alone.")
 	fmt.Fprintln(buffer)
 }

@@ -781,13 +781,8 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 	repoContext := mustReadFile(t, filepath.Join(runDir, "context", "repo-context.md"))
 	for _, want := range []string{
 		"Map run: map_20260531_184012",
-		"Repo map path: .heurema/pactum/map/repo-map.md",
-		"LLMS path: .heurema/pactum/map/llms.txt",
-		"Search index path: .heurema/pactum/map/search.sqlite",
 		"Pactum has not yet done agentic clarification.",
 		"deterministic context",
-		"# Pactum Project Map",
-		"Repository root: `.`",
 	} {
 		if !strings.Contains(repoContext, want) {
 			t.Fatalf("repo-context.md missing %q:\n%s", want, repoContext)
@@ -817,8 +812,6 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 	contractMD := mustReadFile(t, filepath.Join(runDir, "contract", "contract.md"))
 	if !strings.Contains(contractMD, "## Goal\n"+task) ||
 		!strings.Contains(contractMD, "Manual clarification, contract approval, prompt build, and agent execution are available through staged Pactum commands.") ||
-		!strings.Contains(contractMD, "Repo map: .heurema/pactum/map/repo-map.md") ||
-		!strings.Contains(contractMD, "Search results: context/search-results.json") ||
 		!strings.Contains(contractMD, "## Clarifications\n- None") ||
 		!strings.Contains(contractMD, "## Validation commands\nTBD") ||
 		!strings.Contains(contractMD, "## Assumptions\nTBD") ||
@@ -922,24 +915,6 @@ func TestRunContractOnlyArtifactsUseRepoRelativePaths(t *testing.T) {
 	} {
 		if !strings.Contains(runJSON, want) {
 			t.Fatalf("run.json missing portable path %q:\n%s", want, runJSON)
-		}
-	}
-	for _, want := range []string{
-		"Repo map path: .heurema/pactum/map/repo-map.md",
-		"LLMS path: .heurema/pactum/map/llms.txt",
-		"Search index path: .heurema/pactum/map/search.sqlite",
-		"Repository root: `.`",
-	} {
-		if !strings.Contains(repoContext, want) {
-			t.Fatalf("repo-context.md missing repo-relative path %q:\n%s", want, repoContext)
-		}
-	}
-	for _, want := range []string{
-		"Repo map: .heurema/pactum/map/repo-map.md",
-		"Search results: context/search-results.json",
-	} {
-		if !strings.Contains(contractMD, want) {
-			t.Fatalf("contract.md missing repo-relative path %q:\n%s", want, contractMD)
 		}
 	}
 	if !strings.Contains(searchResults, `"path": "task.md"`) {
@@ -1898,15 +1873,6 @@ func TestContractArtifactsUseRepoRelativePaths(t *testing.T) {
 		"contract/approval.json":      mustReadFile(t, runPaths.ApprovalJSON),
 	} {
 		assertDoesNotContainRoot(t, name, content, root)
-	}
-	contractMD := mustReadFile(t, runPaths.ContractMD)
-	for _, want := range []string{
-		"Repo map: .heurema/pactum/map/repo-map.md",
-		"Search results: context/search-results.json",
-	} {
-		if !strings.Contains(contractMD, want) {
-			t.Fatalf("contract.md missing repo-relative path %q:\n%s", want, contractMD)
-		}
 	}
 }
 

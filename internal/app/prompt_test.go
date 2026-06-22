@@ -241,13 +241,26 @@ func TestPromptBuildSucceedsForApprovedContract(t *testing.T) {
 		"# Executor Context",
 		"Run id: " + runID,
 		"Map run id: map_20260531_184012",
-		"Repo map: .heurema/pactum/map/repo-map.md",
-		"Search index: .heurema/pactum/map/search.sqlite",
-		"Use `pactum search \"<term>\"` before adding new code.",
 		"q_001: Yes. Prompt build must be approved first.",
 	} {
 		if !strings.Contains(executorContext, want) {
 			t.Fatalf("executor-context.md missing %q:\n%s", want, executorContext)
+		}
+	}
+	for _, absent := range []string{
+		"repo-map.md",
+		"llms.txt",
+		"search.sqlite",
+		"context/search-results.json",
+		"Relevant search results",
+	} {
+		if strings.Contains(executorContext, absent) {
+			t.Fatalf("executor-context.md must not contain %q:\n%s", absent, executorContext)
+		}
+	}
+	for _, absent := range []string{"repo-map.md", "llms.txt", "search.sqlite", "context/search-results.json", "pactum search"} {
+		if strings.Contains(promptMD, absent) {
+			t.Fatalf("prompt.md must not contain %q:\n%s", absent, promptMD)
 		}
 	}
 }

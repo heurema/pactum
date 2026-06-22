@@ -549,18 +549,12 @@ func renderContractDrafterContext(prep contractDraftPreparation) string {
 		fmt.Fprintln(&b, "- None")
 	}
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "## Repository context")
-	writeFileExcerpt(&b, prep.Context.RunPaths.RepoContext)
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "## Search results")
-	writeFileExcerpt(&b, prep.Context.RunPaths.SearchResults)
-	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Drafter guidance")
 	fmt.Fprintln(&b, "- Propose only additions to the contract fields listed in the prompt.")
 	fmt.Fprintln(&b, "- Do not change or restate the contract goal.")
 	fmt.Fprintln(&b, "- Do not answer clarification questions.")
 	fmt.Fprintln(&b, "- Do not edit files.")
-	fmt.Fprintln(&b, "- Treat repository map/search context as navigation hints, not semantic truth.")
+	fmt.Fprintln(&b, "- Verify any file references by reading the current source.")
 	return b.String()
 }
 
