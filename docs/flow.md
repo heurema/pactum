@@ -11,7 +11,7 @@ report, the review, and the accepted memory are all files you can read.
 
 | Stage | Command | Main artifacts | Mutates state? |
 | --- | --- | --- | --- |
-| Init / map | `pactum init`, `pactum map refresh` | `manifest.json`, `config.yaml`, `map/` (`wiki/` pages, `repo-map.md`, `llms.txt`, `files.jsonl`, `code-items.jsonl`, `hashes.jsonl`, `search.sqlite`) | Yes |
+| Init / map | `pactum init`, `pactum map refresh` | `manifest.json`, `config.yaml`, `map/` (`wiki/` pages, `repo-map.md`, `llms.txt`, `files.jsonl`, `hashes.jsonl`, `search.sqlite`) | Yes |
 | Status / search | `pactum status`, `pactum search "<query>"` | — (reads map + workspace) | No |
 | Task | `pactum task new "<task>"`, `pactum task list`, `pactum task show`, `pactum task use` | `runs/<id>/run.json`, `task.md`, `context/repo-context.md`, `context/search-results.json`, `context/memory-context.md`, `contract/contract.json`, `contract/contract.md`, `contract/approval.json`, `cache/current-run` | `new`/`use`: Yes; `list`/`show`: No |
 | Clarify | `pactum clarify add`, `pactum clarify answer`, `pactum clarify run`, `pactum clarify show` | `clarify/questions.jsonl`, `clarify/answers.jsonl`, `clarify/decisions.jsonl`, `clarify/loop-summary.json` | `add`/`answer`/`run`: Yes; `show`: No |
@@ -47,13 +47,11 @@ directory), a file inventory, a human-readable `repo-map.md`, an `llms.txt`
 router, and a SQLite full-text search index. The wiki is generated from
 deterministic facts (file inventory and manifests) and uses conservative,
 evidence-backed language (candidate entrypoint, detected config, likely role).
-Tree-sitter `code-items.jsonl` is kept only as best-effort symbol hints — it is
-incomplete by design, unsupported languages/framework files may have no code
-items, and source files remain the source of truth. In a git repository the
-scan enumerates files via git, so the repo's `.gitignore` is honored (build
-artifacts like `__pycache__/` or `dist/` are not indexed); `.heurema` is always
-excluded, and non-git directories fall back to a filesystem walk that skips
-`.git`, `.heurema`, and common vendor/build directories.
+In a git repository the scan enumerates files via git, so the repo's
+`.gitignore` is honored (build artifacts like `__pycache__/` or `dist/` are not
+indexed); `.heurema` is always excluded, and non-git directories fall back to a
+filesystem walk that skips `.git`, `.heurema`, and common vendor/build
+directories.
 
 `pactum map refresh` rebuilds those artifacts, including the wiki. `pactum
 status` reports whether the map is fresh or stale (for example, when tracked
@@ -61,24 +59,11 @@ files changed since the last scan) and points you at `pactum map refresh` when a
 refresh is needed.
 
 `pactum search "<query>"` queries the lexical index. The index covers the repo
-map, the `llms.txt` router, the map wiki pages, files, code items, and imports.
-Filter with `--kind` (`repo_map`, `llms`, `wiki`, `file`, `code_item`,
-`import`); `--kind code_item` excludes import-like entries, which are searchable
-under `--kind import`. Ranking is FTS5 bm25 with a small, deterministic polish:
-in unfiltered (`any`) searches import-like entries get a penalty and the
-entrypoints/commands/config wiki pages get a modest boost, and an exact
-title/path-basename match gets a small boost. It is a light reordering of
-near-equal matches, not a relevance model.
-
-Code-item hits are symbol-addressable: results carry the symbol's line range
-and signature, rendered as `path:start-end`, so the consumer (usually an
-agent) can read exactly that range instead of scanning the file (`--json`
-adds `start_line`/`end_line`/`signature` on `code_item` results only).
-`pactum search --symbol <name>` resolves a known identifier directly: the
-positional query becomes optional, matching is exact and case-insensitive on
-the symbol name, duplicates across packages return in deterministic
-path/range order, and `--symbol` combines only with `--kind code_item` (or
-the default `any`).
+map, the `llms.txt` router, the map wiki pages, and files. Filter with `--kind`
+(`repo_map`, `llms`, `wiki`, `file`). Ranking is FTS5 bm25 with a small,
+deterministic polish: the entrypoints/commands/config wiki pages get a modest
+boost, and an exact title/path-basename match gets a small boost. It is a light
+reordering of near-equal matches, not a relevance model.
 
 ### Task
 

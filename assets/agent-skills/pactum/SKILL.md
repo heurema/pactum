@@ -32,8 +32,8 @@ self-sufficient for the safe path. Consult them for deeper detail:
 - **`.heurema/pactum/` run records are durable.** Do not delete or revert them.
   Do not mix `.heurema/pactum` churn into feature commits — report them
   separately unless the user asks for an audit-record commit.
-- Source files are the source of truth. Pactum's map, wiki, and code-items are
-  navigation context — verify against the actual files before relying on them.
+- Source files are the source of truth. Pactum's map and wiki are navigation
+  context — verify against the actual files before relying on them.
 - Never hide a non-zero command exit; report failures with their output.
 
 ## Machine affordances (use `next` and `error.fix` — never memorize stage order)
@@ -91,14 +91,12 @@ unless Pactum directs you to via `next` or `error.fix`.
 ```sh
 # Identifiers and domain terms
 pactum search "<identifier or term>" --json
-# Exact symbol lookup (no positional query needed)
-pactum search --symbol <SymbolName> --json
 # Kind filters
 pactum search "<term>" --kind wiki --json
-pactum search "<term>" --kind code_item --json
+pactum search "<term>" --kind file --json
 ```
 
-Read the returned file paths and line ranges. Also read the relevant
+Read the returned file paths. Also read the relevant
 `map/wiki/` pages (overview, structure, areas) and the actual source files.
 
 **6. Clarify ambiguities**

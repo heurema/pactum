@@ -113,7 +113,6 @@ func TestReadOnlyCommandsDoNotAppendLedgerEvents(t *testing.T) {
 
 	readOnlyCommands := [][]string{
 		{"status"},
-		{"search", "cache", "--kind", "code_item"},
 		{"memory", "search", "cache"},
 		{"memory", "stale"},
 		{"memory", "show", runID},

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/heurema/pactum/internal/agents"
-	"github.com/heurema/pactum/internal/codeindex"
 	"gopkg.in/yaml.v3"
 )
 
@@ -62,8 +61,10 @@ func (d yamlDuration) Duration() time.Duration {
 }
 
 type mapConfig struct {
-	MaxFileBytes int    `yaml:"max_file_bytes"`
-	CodeIndex    string `yaml:"code_index"`
+	MaxFileBytes int `yaml:"max_file_bytes"`
+	// Deprecated: no-op; retained so existing configs containing map.code_index
+	// load without error under the strict YAML decoder (KnownFields(true)).
+	CodeIndex string `yaml:"code_index,omitempty"`
 }
 
 // pipelineConfig holds the closed set of pipeline stages. Absent stages decode
@@ -155,7 +156,6 @@ func defaultConfigFile() configFile {
 		},
 		Map: mapConfig{
 			MaxFileBytes: 500000,
-			CodeIndex:    codeindex.ModeAuto,
 		},
 		OutOfScope: gateScopeEnforcementBlock,
 		Pipeline: pipelineConfig{

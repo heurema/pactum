@@ -27,8 +27,7 @@ docs and the agent skill.
 
 ## Build from source
 
-The rest of this page covers building from source (Go 1.26+ and a C toolchain —
-pactum links tree-sitter via CGO), plus a first-repo smoke check.
+The rest of this page covers building from source (Go 1.26+) and a first-repo smoke check.
 
 ## Prerequisites
 

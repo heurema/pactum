@@ -111,8 +111,7 @@ Then tell your coding agent: **"use pactum for this task."** The skill package
 Supported: **macOS (arm64/x64)**, **Linux (amd64/arm64, glibc)**, and **Windows
 (amd64)**. Windows on ARM and Alpine/musl Linux are not yet supported. Prebuilt
 binaries are on
-[Releases](https://github.com/heurema/pactum/releases); from source needs Go 1.26+
-and a C toolchain (tree-sitter via CGO). Details: [docs/install.md](docs/install.md).
+[Releases](https://github.com/heurema/pactum/releases); from source needs Go 1.26+. Details: [docs/install.md](docs/install.md).
 
 ## Safety & limits
 

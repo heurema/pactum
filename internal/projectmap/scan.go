@@ -12,13 +12,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/heurema/pactum/internal/codeindex"
 	"github.com/heurema/pactum/internal/gitctx"
 )
 
 type ScanOptions struct {
-	MaxFileBytes  int64
-	CodeIndexMode string
+	MaxFileBytes int64
 }
 
 type FileRecord struct {
@@ -35,18 +33,14 @@ type HashRecord struct {
 }
 
 type ScanResult struct {
-	Files                     []FileRecord
-	Hashes                    []HashRecord
-	CodeItems                 []codeindex.Item
-	FilesIgnored              int
-	FilesSkipped              int
-	Languages                 map[string]int
-	CodeIndexMode             string
-	CodeIndexLanguagesSeen    []string
-	CodeIndexLanguagesIndexed []string
-	TopDirs                   []string
-	Important                 []string
-	Warnings                  []string
+	Files        []FileRecord
+	Hashes       []HashRecord
+	FilesIgnored int
+	FilesSkipped int
+	Languages    map[string]int
+	TopDirs      []string
+	Important    []string
+	Warnings     []string
 }
 
 var ignoredDirs = map[string]struct{}{
@@ -106,25 +100,18 @@ func Scan(root string, options ...ScanOptions) (ScanResult, error) {
 }
 
 type scanBuilder struct {
-	option                    ScanOptions
-	result                    ScanResult
-	topDirs                   map[string]struct{}
-	important                 map[string]struct{}
-	codeIndexLanguagesSeen    map[string]struct{}
-	codeIndexLanguagesIndexed map[string]struct{}
+	option    ScanOptions
+	result    ScanResult
+	topDirs   map[string]struct{}
+	important map[string]struct{}
 }
 
 func newScanBuilder(option ScanOptions) *scanBuilder {
 	return &scanBuilder{
-		option: option,
-		result: ScanResult{
-			Languages:     make(map[string]int),
-			CodeIndexMode: codeindex.NormalizeMode(option.CodeIndexMode),
-		},
-		topDirs:                   make(map[string]struct{}),
-		important:                 make(map[string]struct{}),
-		codeIndexLanguagesSeen:    make(map[string]struct{}),
-		codeIndexLanguagesIndexed: make(map[string]struct{}),
+		option:    option,
+		result:    ScanResult{Languages: make(map[string]int)},
+		topDirs:   make(map[string]struct{}),
+		important: make(map[string]struct{}),
 	}
 }
 
@@ -216,24 +203,6 @@ func (scan *scanBuilder) scanFileInfo(path string, rel string, info fs.FileInfo)
 		scan.result.Languages[language]++
 	}
 
-	codeLanguage := codeindex.LanguageForPath(rel)
-	if codeindex.IsSupported(codeLanguage) {
-		scan.codeIndexLanguagesSeen[codeLanguage] = struct{}{}
-	}
-	if codeindex.Enabled(scan.result.CodeIndexMode) && codeindex.IsSupported(codeLanguage) {
-		source, err := os.ReadFile(path)
-		if err != nil {
-			scan.result.Warnings = append(scan.result.Warnings, "read code file failed: "+rel+": "+err.Error())
-		} else {
-			extracted := codeindex.Extract(rel, codeLanguage, source)
-			scan.result.CodeItems = append(scan.result.CodeItems, extracted.Items...)
-			scan.result.Warnings = append(scan.result.Warnings, extracted.Warnings...)
-			if len(extracted.Warnings) == 0 {
-				scan.codeIndexLanguagesIndexed[codeLanguage] = struct{}{}
-			}
-		}
-	}
-
 	parts := strings.Split(rel, "/")
 	if len(parts) > 1 {
 		scan.topDirs[parts[0]] = struct{}{}
@@ -262,12 +231,9 @@ func (scan *scanBuilder) finish() ScanResult {
 	sort.Slice(scan.result.Hashes, func(i, j int) bool {
 		return scan.result.Hashes[i].Path < scan.result.Hashes[j].Path
 	})
-	codeindex.SortItems(scan.result.CodeItems)
 	sort.Strings(scan.result.Warnings)
 
 	scan.result.TopDirs = sortedKeys(scan.topDirs)
-	scan.result.CodeIndexLanguagesSeen = sortedKeys(scan.codeIndexLanguagesSeen)
-	scan.result.CodeIndexLanguagesIndexed = sortedKeys(scan.codeIndexLanguagesIndexed)
 	for _, candidate := range importantFiles {
 		if _, ok := scan.important[candidate]; ok {
 			scan.result.Important = append(scan.result.Important, candidate)
@@ -317,11 +283,9 @@ func isPactumWorkspacePath(rel string) bool {
 
 func scanOption(options []ScanOptions) ScanOptions {
 	if len(options) == 0 {
-		return ScanOptions{CodeIndexMode: codeindex.ModeAuto}
+		return ScanOptions{}
 	}
-	option := options[0]
-	option.CodeIndexMode = codeindex.NormalizeMode(option.CodeIndexMode)
-	return option
+	return options[0]
 }
 
 func sha256File(path string) (string, error) {

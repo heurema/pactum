@@ -9,8 +9,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/heurema/pactum/internal/codeindex"
 )
 
 type Manifest struct {
@@ -26,17 +24,8 @@ type Manifest struct {
 	FilesIndexed    int               `json:"files_indexed"`
 	FilesIgnored    int               `json:"files_ignored"`
 	FilesSkipped    int               `json:"files_skipped"`
-	CodeIndex       CodeIndexManifest `json:"code_index"`
 	Warnings        []string          `json:"warnings,omitempty"`
 	Artifacts       map[string]string `json:"artifacts"`
-}
-
-type CodeIndexManifest struct {
-	Mode               string   `json:"mode"`
-	SupportedLanguages []string `json:"supported_languages"`
-	LanguagesSeen      []string `json:"languages_seen"`
-	LanguagesIndexed   []string `json:"languages_indexed"`
-	Items              int      `json:"items"`
 }
 
 func WriteJSONL[T any](path string, records []T) error {
@@ -63,15 +52,11 @@ func RenderRepoMap(root string, generatedAt time.Time, scan ScanResult, wiki []W
 	fmt.Fprintf(&buffer, "## Summary\n\n")
 	fmt.Fprintf(&buffer, "- Indexed files: %d\n", len(scan.Files))
 	fmt.Fprintf(&buffer, "- Ignored files/directories: %d\n", scan.FilesIgnored)
-	fmt.Fprintf(&buffer, "- Detected languages: %d\n", len(scan.Languages))
-	fmt.Fprintf(&buffer, "- Code items (best-effort hints): %d\n\n", len(scan.CodeItems))
+	fmt.Fprintf(&buffer, "- Detected languages: %d\n\n", len(scan.Languages))
 
 	fmt.Fprintf(&buffer, "## How to navigate this map\n\n")
 	fmt.Fprintf(&buffer, "- Start with the wiki: read `wiki/overview.md` first.\n")
 	fmt.Fprintf(&buffer, "- The wiki is generated from deterministic facts (file inventory and manifests).\n")
-	fmt.Fprintf(&buffer, "- Code items are best-effort navigation hints, not complete semantic truth.\n")
-	fmt.Fprintf(&buffer, "- Unsupported languages/framework files may have no code items.\n")
-	fmt.Fprintf(&buffer, "- Imports are not treated as primary code surface.\n")
 	fmt.Fprintf(&buffer, "- Source files remain the source of truth.\n\n")
 
 	fmt.Fprintf(&buffer, "## Wiki pages\n\n")
@@ -90,7 +75,6 @@ func RenderRepoMap(root string, generatedAt time.Time, scan ScanResult, wiki []W
 	fmt.Fprintf(&buffer, "## Project map artifacts\n\n")
 	fmt.Fprintf(&buffer, "- `files.jsonl` — deterministic per-file metadata.\n")
 	fmt.Fprintf(&buffer, "- `hashes.jsonl` — per-file content hashes.\n")
-	fmt.Fprintf(&buffer, "- `code-items.jsonl` — best-effort symbol hints (incomplete by design).\n")
 	fmt.Fprintf(&buffer, "- `search.sqlite` — local full-text search index.\n")
 	fmt.Fprintf(&buffer, "- `manifest.json` — map manifest listing all artifacts.\n\n")
 
@@ -136,29 +120,15 @@ func RenderRepoMap(root string, generatedAt time.Time, scan ScanResult, wiki []W
 	}
 	fmt.Fprintf(&buffer, "\n")
 
-	fmt.Fprintf(&buffer, "## Code surface (best-effort code hints)\n\n")
-	codeSurface := codeSurfaceLines(scan.CodeItems, 80)
-	if len(codeSurface) == 0 {
-		fmt.Fprintf(&buffer, "- None detected\n")
-	} else {
-		for _, line := range codeSurface {
-			fmt.Fprintf(&buffer, "- %s\n", line)
-		}
-	}
-	fmt.Fprintf(&buffer, "\n")
-
 	fmt.Fprintf(&buffer, "## Language support\n\n")
 	fmt.Fprintf(&buffer, "- File metadata is collected for common source, config, and documentation files.\n")
-	fmt.Fprintf(&buffer, "- Best-effort code hints are extracted for the starter language pack: Go, Python, JavaScript, TypeScript/TSX/JSX, and C#.\n")
-	fmt.Fprintf(&buffer, "- Code items are best-effort navigation hints; imports are not treated as primary code surface.\n")
-	fmt.Fprintf(&buffer, "- Unsupported languages/framework files may have no code items but still appear in the wiki and file inventory.\n")
 	fmt.Fprintf(&buffer, "- Pactum does not perform LSP, references, call graph, or semantic analysis in this phase.\n")
 	fmt.Fprintf(&buffer, "- The map is a navigation aid, not complete semantic truth.\n")
 	fmt.Fprintf(&buffer, "- Source files remain the source of truth.\n\n")
 
 	fmt.Fprintf(&buffer, "## Agent guidance\n\n")
 	fmt.Fprintf(&buffer, "- Read the wiki first (`wiki/overview.md`), then drill into the relevant area page.\n")
-	fmt.Fprintf(&buffer, "- Before adding new code, search/read relevant files and code items.\n")
+	fmt.Fprintf(&buffer, "- Before adding new code, search/read relevant files.\n")
 	fmt.Fprintf(&buffer, "- Prefer existing exported functions/types when applicable.\n")
 	fmt.Fprintf(&buffer, "- If ownership is unclear, ask for clarification instead of guessing.\n")
 
@@ -184,14 +154,11 @@ Read order:
 - Read map/wiki/tests.md for tests.
 - See map/repo-map.md for the human-readable map.
 
-Best-effort hints:
-- Use map/code-items.jsonl only as best-effort symbol hints. They are incomplete by design.
+File inventory:
 - Use map/files.jsonl for the deterministic file inventory and hashes.
-- Unsupported languages and framework files may have no code items.
 
 Ground rules:
 - Source files remain the source of truth.
-- Not every possible symbol is indexed.
 - Before creating new code, inspect relevant existing files.
 - If ownership is unclear, ask for clarification.
 `) + "\n")
@@ -245,43 +212,6 @@ func languageSummary(languages map[string]int) []languageItem {
 		return items[i].Count > items[j].Count
 	})
 	return items
-}
-
-func codeSurfaceLines(items []codeindex.Item, limit int) []string {
-	lines := make([]string, 0, len(items))
-	add := func(line string) bool {
-		lines = append(lines, line)
-		return limit > 0 && len(lines) >= limit
-	}
-
-	for _, item := range items {
-		if item.IsEntryPoint() {
-			if add(fmt.Sprintf("`%s`: `%s` `%s`", item.Path, item.Kind, item.Name)) {
-				return lines
-			}
-		}
-	}
-
-	for _, item := range items {
-		if item.IsImportLike() {
-			continue
-		}
-		label := item.Name
-		if item.Package != "" && item.Parent == "" {
-			label = item.Package + "." + item.Name
-		}
-		if item.Parent != "" {
-			label = item.Parent + "." + item.Name
-		}
-		if label == "" {
-			continue
-		}
-		if add(fmt.Sprintf("`%s`: `%s` `%s`", item.Path, item.Kind, label)) {
-			return lines
-		}
-	}
-
-	return lines
 }
 
 func treeLines(files []FileRecord, maxDepth int) []string {
