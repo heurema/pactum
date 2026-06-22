@@ -69,8 +69,7 @@ reordering of near-equal matches, not a relevance model.
 
 `pactum task new "<task>"` creates a run directory and a **draft contract**. The
 draft records the goal and empty scope/acceptance/validation sections for you to
-fill in, alongside deterministic context: a repository context excerpt, the
-lexical search results for the task, and the accepted memory selected for the
+fill in, alongside run metadata and the accepted memory selected for the
 task. The new run is recorded as the **current run** (a local-only pointer at
 `cache/current-run`), so the staged commands below can omit the run id.
 

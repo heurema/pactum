@@ -701,14 +701,6 @@ func openClarificationQuestionTexts(questions []clarifyQuestionStatus) []string 
 	return open
 }
 
-func readRunSearchResultCount(path string) int {
-	var results runSearchResults
-	if err := readJSON(path, &results); err != nil {
-		return 0
-	}
-	return len(results.Results)
-}
-
 // writeApprovalResetWarning surfaces that a just-recorded clarification regressed
 // an already-approved run back to the clarification stage (approval reset to
 // pending). Re-clarifying an approved run is a legitimate operation, so this warns

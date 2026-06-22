@@ -16,8 +16,6 @@ import (
 	searchpkg "github.com/heurema/pactum/internal/search"
 )
 
-const maxRepoMapContextBytes = 20000
-
 const (
 	runSchema      = "pactum.run.v1alpha1"
 	contractSchema = "pactum.contract.v1alpha1"
@@ -156,13 +154,13 @@ func (a App) createContractOnlyRun(root string, task string) (contractRunState, 
 	}
 	files := map[string][]byte{
 		runPaths.TaskMD:              renderTaskMD(task, createdAt),
-		runPaths.RepoContext:         renderRepoContext(root, paths, report.ProjectMap.RunID, createdAt),
+		runPaths.RepoContext:         renderRepoContext(report.ProjectMap.RunID, createdAt),
 		runPaths.MemoryContextMD:     []byte(renderMemoryContextMD(memorySelection)),
 		runPaths.QuestionsJSONL:      nil,
 		runPaths.AnswersJSONL:        nil,
 		runPaths.DecisionsJSONL:      nil,
 		runPaths.UsageJSONL:          nil,
-		runPaths.ContractMD:          renderContractMDFromDraft(contract, report.ProjectMap.RunID, len(searchResults.Results)),
+		runPaths.ContractMD:          renderContractMDFromDraft(contract, report.ProjectMap.RunID),
 		runPaths.PromptMD:            renderPromptMDFromDraft(contract),
 		runPaths.MemorySelectionJSON: mustMarshalJSON(memorySelection),
 	}
@@ -389,52 +387,18 @@ func renderTaskMD(task string, generatedAt time.Time) []byte {
 	return buffer.Bytes()
 }
 
-func renderRepoContext(root string, paths artifacts.Paths, mapRunID string, generatedAt time.Time) []byte {
+func renderRepoContext(mapRunID string, generatedAt time.Time) []byte {
 	var buffer bytes.Buffer
 	fmt.Fprintln(&buffer, "# Repository Context")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintf(&buffer, "Generated: %s\n\n", generatedAt.Format(time.RFC3339))
 	fmt.Fprintf(&buffer, "Map run: %s\n", mapRunID)
-	fmt.Fprintf(&buffer, "Repo map path: %s\n", toRepoRel(root, paths.RepoMap))
-	fmt.Fprintf(&buffer, "LLMS path: %s\n", toRepoRel(root, paths.LLMS))
-	fmt.Fprintf(&buffer, "Search index path: %s\n", toRepoRel(root, paths.SearchSQLite))
 	fmt.Fprintln(&buffer, "Accepted memory context: context/memory-context.md")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "Notes:")
 	fmt.Fprintln(&buffer, "- Pactum has not yet done agentic clarification.")
-	fmt.Fprintln(&buffer, "- This is deterministic context assembled from existing map artifacts.")
-	fmt.Fprintln(&buffer)
-	fmt.Fprintln(&buffer, "## Project map")
-	fmt.Fprintln(&buffer)
-
-	repoMap, err := os.ReadFile(paths.RepoMap)
-	if err != nil {
-		fmt.Fprintf(&buffer, "Project map is unavailable at %s.\n", toRepoRel(root, paths.RepoMap))
-		return buffer.Bytes()
-	}
-	repoMap = sanitizeRepoMapForRunContext(root, repoMap)
-	if len(repoMap) <= maxRepoMapContextBytes {
-		buffer.Write(repoMap)
-		if !bytes.HasSuffix(repoMap, []byte("\n")) {
-			fmt.Fprintln(&buffer)
-		}
-		return buffer.Bytes()
-	}
-	buffer.Write(repoMap[:maxRepoMapContextBytes])
-	if !bytes.HasSuffix(repoMap[:maxRepoMapContextBytes], []byte("\n")) {
-		fmt.Fprintln(&buffer)
-	}
-	fmt.Fprintf(&buffer, "\n[Truncated to %d bytes from %s]\n", maxRepoMapContextBytes, toRepoRel(root, paths.RepoMap))
+	fmt.Fprintln(&buffer, "- This is deterministic context assembled from the run task description.")
 	return buffer.Bytes()
-}
-
-func sanitizeRepoMapForRunContext(root string, repoMap []byte) []byte {
-	sanitized := bytes.ReplaceAll(repoMap, []byte(root), []byte("."))
-	slashRoot := filepath.ToSlash(root)
-	if slashRoot != root {
-		sanitized = bytes.ReplaceAll(sanitized, []byte(slashRoot), []byte("."))
-	}
-	return sanitized
 }
 
 const runContextSearchLimit = 10
@@ -703,7 +667,7 @@ func draftContractFor(runID string, task string) draftContract {
 	}
 }
 
-func renderContractMDFromDraft(contract draftContract, mapRunID string, searchResults int) []byte {
+func renderContractMDFromDraft(contract draftContract, mapRunID string) []byte {
 	var buffer bytes.Buffer
 	fmt.Fprintln(&buffer, "# Contract Draft")
 	fmt.Fprintln(&buffer)
@@ -716,8 +680,6 @@ func renderContractMDFromDraft(contract draftContract, mapRunID string, searchRe
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Relevant repository context")
 	fmt.Fprintf(&buffer, "- Map run: %s\n", mapRunID)
-	fmt.Fprintf(&buffer, "- Repo map: %s\n", filepath.ToSlash(filepath.Join(artifacts.WorkspaceRel, "map", "repo-map.md")))
-	fmt.Fprintf(&buffer, "- Search results: context/search-results.json (%d result(s))\n", searchResults)
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Clarifications")
 	if len(contract.Clarifications.Questions) == 0 {

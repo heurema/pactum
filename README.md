@@ -59,7 +59,7 @@ agent.
   the spec the agent is held to cannot silently change underneath it.
 - **Deterministic context.** A wiki-first project map and a SQLite full-text index
   (lexical, no embeddings) give reproducible context; the executor prompt is
-  assembled from the contract, map, and accepted memory and recorded in a
+  assembled from the contract and accepted memory and recorded in a
   manifest — a prompt boundary that is itself part of the audit trail.
 - **Auditable stages.** Every stage writes durable artifacts under
   `.heurema/pactum/` — the prompt the agent saw, the plan, the diff, the checks,

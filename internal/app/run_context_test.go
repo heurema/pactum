@@ -178,9 +178,9 @@ func TestRunContextSearchRefreshedFromContract(t *testing.T) {
 	}
 
 	ec := mustReadFile(t, ecPath)
-	for _, want := range []string{"Query source: contract", "Targeted queries:", "apps/admin/src/lib/format.ts"} {
-		if !strings.Contains(ec, want) {
-			t.Fatalf("executor-context.md missing %q:\n%s", want, ec)
+	for _, absent := range []string{"repo-map.md", "llms.txt", "search.sqlite", "context/search-results.json", "Relevant search results"} {
+		if strings.Contains(ec, absent) {
+			t.Fatalf("executor-context.md must not contain map/search injection %q:\n%s", absent, ec)
 		}
 	}
 	if strings.Contains(ec, root) {

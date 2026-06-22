@@ -839,8 +839,7 @@ func writeContractArtifacts(runPaths contractRunPathSet, contract draftContract,
 	if err := writeJSON(runPaths.ContractJSON, contract); err != nil {
 		return err
 	}
-	searchCount := readRunSearchResultCount(runPaths.SearchResults)
-	if err := activeStore.WriteBytes(runPaths.ContractMD, renderContractMDFromDraft(contract, mapRunID, searchCount), 0o644); err != nil {
+	if err := activeStore.WriteBytes(runPaths.ContractMD, renderContractMDFromDraft(contract, mapRunID), 0o644); err != nil {
 		return err
 	}
 	return activeStore.WriteBytes(runPaths.PromptMD, renderPromptMDFromDraft(contract), 0o644)
