@@ -340,57 +340,78 @@ func TestExecutePlanHashMismatchFails(t *testing.T) {
 	}
 }
 
-func TestExecutePlanStaleMapFails(t *testing.T) {
+func TestExecutePlanStaleHeadFails(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupApprovedAndBuiltPrompt(t, root)
-	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
+	// Advance HEAD after prompt build; executor prompt is now stale.
+	mustWriteFile(t, filepath.Join(root, "new_feature.go"), "package main\n")
+	mustGitG(t, root, "add", "new_feature.go")
+	mustGitG(t, root, "commit", "-m", "advance HEAD")
 
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("execute plan should fail with stale map")
+		t.Fatalf("execute plan should fail when HEAD has changed since prompt build")
 	}
-	if got := stderr.String(); !strings.Contains(got, "cannot prepare execution: project map is stale") {
-		t.Fatalf("stale map stderr mismatch:\n%s", got)
+	if got := stderr.String(); !strings.Contains(got, "cannot prepare execution: repository HEAD has changed since executor prompt was built") {
+		t.Fatalf("stale head stderr mismatch:\n%s", got)
 	}
 }
 
-func TestExecutePlanFailsWhenPromptManifestMapRunIsStale(t *testing.T) {
+func TestExecutePlanFailsWhenPromptHeadIsStale(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 	assertFile(t, runPaths.PromptManifest)
 	manifest := readPromptManifestForTest(t, runPaths.PromptManifest)
+	if manifest.HeadCommit == "" {
+		t.Fatalf("prompt manifest should record head_commit")
+	}
 
-	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
+	// Advance HEAD after prompt build; the recorded HeadCommit is now stale.
+	mustWriteFile(t, filepath.Join(root, "new_feature.go"), "package main\n")
+	mustGitG(t, root, "add", "new_feature.go")
+	mustGitG(t, root, "commit", "-m", "advance HEAD")
+
+	_ = paths // keep paths in scope for assertNoFile below
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"map", "refresh"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
-	}
-	workspace, err := readWorkspaceManifest(paths.Manifest)
-	assertNoError(t, err)
-	if workspace.Map.CurrentRunID == manifest.MapRunID {
-		t.Fatalf("map run did not change after refresh: %s", workspace.Map.CurrentRunID)
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code == 0 {
-		t.Fatalf("execute plan should fail when prompt manifest map run is stale")
+		t.Fatalf("execute plan should fail when prompt HEAD is stale")
 	}
-	if got := stderr.String(); !strings.Contains(got, "cannot prepare execution: executor prompt was built for a different project map") {
-		t.Fatalf("stale prompt map stderr mismatch:\n%s", got)
+	if got := stderr.String(); !strings.Contains(got, "cannot prepare execution: repository HEAD has changed since executor prompt was built") {
+		t.Fatalf("stale head stderr mismatch:\n%s", got)
 	}
 	assertNoFile(t, runPaths.DryRunJSON)
 }
 
-func TestExecutePlanSucceedsAfterPromptBuildOnLatestMap(t *testing.T) {
+func TestExecutePlanFailsWhenPromptHasNoHeadCommit(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedAndBuiltPrompt(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	// Clear the head_commit field to simulate a manifest built before this migration.
+	manifest := readPromptManifestForTest(t, runPaths.PromptManifest)
+	manifest.HeadCommit = ""
+	assertNoError(t, writeJSON(runPaths.PromptManifest, manifest))
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("execute plan should fail when manifest has no head_commit")
+	}
+	if got := stderr.String(); !strings.Contains(got, "executor prompt was built without a HEAD commit anchor") {
+		t.Fatalf("no head_commit stderr mismatch:\n%s", got)
+	}
+	assertNoFile(t, runPaths.DryRunJSON)
+}
+
+func TestExecutePlanSucceedsAfterPromptBuildOnCurrentHead(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedPromptContract(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
+	// Modify working tree (stale map, but HEAD unchanged).
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
 	var stdout, stderr bytes.Buffer
 	code := app.Run([]string{"map", "refresh"}, &stdout, &stderr)
@@ -410,12 +431,44 @@ func TestExecutePlanSucceedsAfterPromptBuildOnLatestMap(t *testing.T) {
 	if manifest.MapRunID != workspace.Map.CurrentRunID {
 		t.Fatalf("prompt manifest map_run_id = %q, want %q", manifest.MapRunID, workspace.Map.CurrentRunID)
 	}
+	if manifest.HeadCommit == "" {
+		t.Fatalf("prompt manifest should record head_commit")
+	}
 
 	stdout.Reset()
 	stderr.Reset()
 	code = app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("execute plan exited %d, stderr: %s", code, stderr.String())
+	}
+	assertFile(t, runPaths.DryRunJSON)
+}
+
+func TestExecutePlanSucceedsWithStaleMapsAndUnchangedHead(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedPromptContract(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	// Build the prompt first (HEAD is unchanged from init commit).
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("prompt build exited %d, stderr: %s", code, stderr.String())
+	}
+	manifest := readPromptManifestForTest(t, runPaths.PromptManifest)
+	if manifest.HeadCommit == "" {
+		t.Fatalf("prompt manifest should record head_commit")
+	}
+
+	// Dirty the working tree without making a new commit — map becomes stale but HEAD is still the same.
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nstale map change\n")
+
+	// execute plan must succeed: HEAD equals the prompt's recorded HEAD even though the map is stale.
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"execute", "plan", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute plan should succeed when map is stale but HEAD is unchanged, exited %d, stderr: %s", code, stderr.String())
 	}
 	assertFile(t, runPaths.DryRunJSON)
 }

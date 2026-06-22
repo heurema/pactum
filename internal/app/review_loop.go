@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/heurema/pactum/internal/agents"
+	"github.com/heurema/pactum/internal/artifacts"
 	"github.com/heurema/pactum/internal/gitctx"
 	"github.com/heurema/pactum/internal/ledger"
 	"github.com/heurema/pactum/internal/loop"
@@ -1450,8 +1451,57 @@ func reviewLoopDedupFindingFingerprints(runPaths contractRunPathSet) (map[review
 	return open, rebutted, nil
 }
 
+// reviewLoopBuildChangeReport builds a gateChangeReport from the hashes.jsonl
+// snapshot, preserving the pre-migration hash-based fingerprint semantics for
+// the review loop's no-progress detector. Returns a clean empty report when
+// hashes.jsonl is absent or any artifact read fails.
+func reviewLoopBuildChangeReport(root string, paths artifacts.Paths) gateChangeReport {
+	empty := gateChangeReport{
+		Status:       "clean",
+		ChangedFiles: []string{},
+		NewFiles:     []string{},
+		MissingFiles: []string{},
+		Reasons:      []string{},
+	}
+	if !filesystemRegularFile(paths.HashesJSONL) {
+		return empty
+	}
+	config, err := readConfig(paths.Config)
+	if err != nil {
+		return empty
+	}
+	reasons, err := hashStaleReasons(root, paths.HashesJSONL, config)
+	if err != nil {
+		return empty
+	}
+	report := gateChangeReport{
+		Status:       "clean",
+		ChangedFiles: []string{},
+		NewFiles:     []string{},
+		MissingFiles: []string{},
+		Reasons:      reasons,
+	}
+	for _, reason := range reasons {
+		switch {
+		case strings.HasPrefix(reason, "changed file: "):
+			report.ChangedFiles = append(report.ChangedFiles, strings.TrimPrefix(reason, "changed file: "))
+		case strings.HasPrefix(reason, "missing file: "):
+			report.MissingFiles = append(report.MissingFiles, strings.TrimPrefix(reason, "missing file: "))
+		case strings.HasPrefix(reason, "new file: "):
+			report.NewFiles = append(report.NewFiles, strings.TrimPrefix(reason, "new file: "))
+		}
+	}
+	sort.Strings(report.ChangedFiles)
+	sort.Strings(report.NewFiles)
+	sort.Strings(report.MissingFiles)
+	if len(report.ChangedFiles)+len(report.NewFiles)+len(report.MissingFiles) > 0 {
+		report.Status = "changed"
+	}
+	return report
+}
+
 func (a App) reviewLoopWorkingTreeFingerprint(context reviewContext) (string, error) {
-	changes := a.buildGateChangeReport(context.Root, context.Paths)
+	changes := reviewLoopBuildChangeReport(context.Root, context.Paths)
 	hasher := sha256.New()
 	fmt.Fprintf(hasher, "head\x00%s\x00", reviewLoopGitHead(context.Root))
 	fmt.Fprintf(hasher, "status\x00%s\x00", changes.Status)

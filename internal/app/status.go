@@ -77,6 +77,27 @@ func writeStatusNotInitialized(stdout io.Writer) error {
 	})
 }
 
+// resolveMapStatus reads the current project map status. Config and manifest
+// failures are returned as errors (they are infrastructure failures, not
+// map-specific). Map inspection or artifact failures return stale status with
+// a nil error so callers (e.g. prompt build) are not blocked by broken map
+// artifacts.
+func resolveMapStatus(root string, paths artifacts.Paths) (projectMapStatus, error) {
+	config, err := readConfig(paths.Config)
+	if err != nil {
+		return projectMapStatus{}, err
+	}
+	manifest, err := readWorkspaceManifest(paths.Manifest)
+	if err != nil {
+		return projectMapStatus{}, err
+	}
+	status, err := inspectProjectMap(root, paths, config, manifest.Map.CurrentRunID)
+	if err != nil {
+		return projectMapStatus{Status: "stale", RunID: manifest.Map.CurrentRunID}, nil
+	}
+	return status, nil
+}
+
 func (a App) workspaceStatus(root string) (statusResponse, error) {
 	paths := artifacts.New(root)
 	config, err := readConfig(paths.Config)
@@ -89,7 +110,11 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 	}
 	mapStatus, err := inspectProjectMap(root, paths, config, manifest.Map.CurrentRunID)
 	if err != nil {
-		return statusResponse{}, err
+		mapStatus = projectMapStatus{
+			Status:       "stale",
+			RunID:        manifest.Map.CurrentRunID,
+			StaleReasons: []string{"map artifact error: " + err.Error()},
+		}
 	}
 	activeRuns, err := countActiveRuns(paths)
 	if err != nil {
@@ -269,9 +294,11 @@ func inspectProjectMap(root string, paths artifacts.Paths, config configFile, cu
 	if filesystemRegularFile(paths.HashesJSONL) {
 		reasons, err := hashStaleReasons(root, paths.HashesJSONL, config)
 		if err != nil {
-			return projectMapStatus{}, err
+			// Treat a broken hashes.jsonl as stale rather than failing status.
+			status.StaleReasons = append(status.StaleReasons, "invalid artifact: map/hashes.jsonl")
+		} else {
+			status.StaleReasons = append(status.StaleReasons, reasons...)
 		}
-		status.StaleReasons = append(status.StaleReasons, reasons...)
 	}
 
 	if len(status.StaleReasons) > 0 {

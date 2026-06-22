@@ -222,15 +222,15 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 		return executionPreparation{}, fmt.Errorf("cannot prepare execution: approved contract hash does not match current contract")
 	}
 
-	report, err := a.workspaceStatus(root)
+	currentHead, err := gitExec(root, "rev-parse", "HEAD")
 	if err != nil {
-		return executionPreparation{}, err
+		return executionPreparation{}, fmt.Errorf("cannot prepare execution: cannot determine HEAD commit: %w", err)
 	}
-	if report.ProjectMap.Status != "fresh" {
-		return executionPreparation{}, projectMapStaleError("prepare execution")
+	if manifest.HeadCommit == "" {
+		return executionPreparation{}, fmt.Errorf("cannot prepare execution: executor prompt was built without a HEAD commit anchor")
 	}
-	if manifest.MapRunID != report.ProjectMap.RunID {
-		return executionPreparation{}, fmt.Errorf("cannot prepare execution: executor prompt was built for a different project map")
+	if manifest.HeadCommit != currentHead {
+		return executionPreparation{}, fmt.Errorf("cannot prepare execution: repository HEAD has changed since executor prompt was built")
 	}
 
 	if _, err := activeStore.ReadBytes(runPaths.PromptMD); err != nil {
@@ -316,7 +316,7 @@ func writeExecutePlan(stdout io.Writer, state contractRunState, plan agents.DryR
 	fmt.Fprintln(stdout, "Checks:")
 	fmt.Fprintln(stdout, "  prompt manifest: ready")
 	fmt.Fprintln(stdout, "  contract hash: ok")
-	fmt.Fprintln(stdout, "  project map: fresh")
+	fmt.Fprintln(stdout, "  HEAD commit: anchored")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Would run:")
 	fmt.Fprintf(stdout, "  %s\n", formatAgentCommand(plan.WouldRun))

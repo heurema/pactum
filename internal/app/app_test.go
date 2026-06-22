@@ -2975,6 +2975,12 @@ func testAgentModel(name string) string {
 
 func setupContractRun(t *testing.T, root string) (App, artifacts.Paths, string) {
 	t.Helper()
+	skipIfNoGit(t)
+	mustGitG(t, root, "init")
+	mustGitG(t, root, "config", "user.email", "test@test.com")
+	mustGitG(t, root, "config", "user.name", "Test")
+	mustGitG(t, root, "config", "commit.gpgsign", "false")
+
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
 	app := testApp(root)
 
@@ -3002,6 +3008,9 @@ func setupContractRun(t *testing.T, root string) (App, artifacts.Paths, string) 
 	if code != 0 {
 		t.Fatalf("run --contract-only exited %d, stderr: %s", code, stderr.String())
 	}
+	// Commit initial project state so HEAD exists for prompt build.
+	mustGitG(t, root, "add", "README.md")
+	mustGitG(t, root, "commit", "-m", "init")
 	return app, artifacts.New(root), "run_20260531_184012"
 }
 

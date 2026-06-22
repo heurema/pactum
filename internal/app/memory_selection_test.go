@@ -316,6 +316,11 @@ func TestMemorySearchReadOnly(t *testing.T) {
 
 func setupInitializedMemoryWorkspace(t *testing.T, root string) (App, artifacts.Paths) {
 	t.Helper()
+	skipIfNoGit(t)
+	mustGitG(t, root, "init")
+	mustGitG(t, root, "config", "user.email", "test@test.com")
+	mustGitG(t, root, "config", "user.name", "Test")
+	mustGitG(t, root, "config", "commit.gpgsign", "false")
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
 	app := testApp(root)
 	var stdout, stderr bytes.Buffer
@@ -323,6 +328,8 @@ func setupInitializedMemoryWorkspace(t *testing.T, root string) (App, artifacts.
 	if code != 0 {
 		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
 	}
+	mustGitG(t, root, "add", "README.md")
+	mustGitG(t, root, "commit", "-m", "init")
 	return app, artifacts.New(root)
 }
 

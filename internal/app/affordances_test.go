@@ -56,16 +56,20 @@ func TestJSONErrorEnvelopePinnedPreconditions(t *testing.T) {
 			wantNext:    func(string) []string { return []string{"pactum task list"} },
 		},
 		{
-			name: "project_map_stale",
+			name: "stale_prompt",
 			setup: func(t *testing.T) (App, []string, string) {
 				root := t.TempDir()
 				app, _, runID := setupApprovedAndBuiltPrompt(t, root)
-				mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
+				// Advance HEAD after prompt build; executor prompt is now stale.
+				mustWriteFile(t, filepath.Join(root, "new_feature.go"), "package main\n")
+				mustGitG(t, root, "add", "new_feature.go")
+				mustGitG(t, root, "commit", "-m", "advance HEAD")
 				return app, []string{"execute", "plan", runID, "--json"}, runID
 			},
-			wantCode:    "project_map_stale",
-			wantMessage: func(string) string { return "cannot prepare execution: project map is stale" },
-			wantFix:     func(string) string { return "pactum map refresh" },
+			wantCode: "command_failed",
+			wantMessage: func(string) string {
+				return "cannot prepare execution: repository HEAD has changed since executor prompt was built"
+			},
 		},
 		{
 			name: "contract_not_approved",
@@ -527,7 +531,6 @@ func TestEmittedAffordancesUseCurrentGrammar(t *testing.T) {
 	// Every recognized precondition's fix and next.
 	collectErr(errNotInitialized)
 	collectErr(runNotFoundError(runID))
-	collectErr(projectMapStaleError("build executor prompt"))
 	collectErr(contractNotApprovedError("build executor prompt", runID))
 	collectErr(blockingClarificationsOpenError("approve contract", runID))
 	collectErr(promptNotBuiltError("prepare execution", runID))

@@ -43,14 +43,6 @@ func runNotFoundError(runID string) error {
 	}
 }
 
-func projectMapStaleError(action string) error {
-	return &preconditionError{
-		msg:  fmt.Sprintf("cannot %s: project map is stale", action),
-		code: "project_map_stale",
-		fix:  "pactum map refresh",
-	}
-}
-
 func contractNotApprovedError(action string, runID string) error {
 	return &preconditionError{
 		msg:  fmt.Sprintf("cannot %s: contract is not approved", action),

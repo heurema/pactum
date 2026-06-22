@@ -24,6 +24,7 @@ type promptManifest struct {
 	ApprovedBy     string                  `json:"approved_by"`
 	ApprovedAt     string                  `json:"approved_at"`
 	MapRunID       string                  `json:"map_run_id"`
+	HeadCommit     string                  `json:"head_commit,omitempty"`
 	MapRefresh     promptMapRefresh        `json:"map_refresh"`
 	Artifacts      promptManifestArtifacts `json:"artifacts"`
 	Memory         *promptManifestMemory   `json:"memory"`
@@ -125,29 +126,16 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 		return err
 	}
 
-	report, err := a.workspaceStatus(context.Root)
+	// Map status is informational; prompt build must not be blocked by a stale
+	// or missing map — only a missing HEAD commit is a hard failure.
+	mapStatus, err := resolveMapStatus(context.Root, context.Paths)
 	if err != nil {
 		return err
 	}
-	// A stale project map is self-healed, not a failure: prompt build runs the
-	// refresh itself and records it in the manifest and response.
 	mapRefresh := promptMapRefresh{Triggered: false}
-	if report.ProjectMap.Status != "fresh" {
-		previousMapRunID := report.ProjectMap.RunID
-		refreshed, err := a.RefreshMap(context.Root)
-		if err != nil {
-			return err
-		}
-		mapRefresh = promptMapRefresh{
-			Triggered:        true,
-			Reason:           "project_map_stale",
-			PreviousMapRunID: previousMapRunID,
-			RunID:            refreshed.RunID,
-		}
-		report, err = a.workspaceStatus(context.Root)
-		if err != nil {
-			return err
-		}
+	head, err := gitExec(context.Root, "rev-parse", "HEAD")
+	if err != nil {
+		return fmt.Errorf("cannot build executor prompt: cannot determine HEAD commit: %w", err)
 	}
 
 	now := a.nowUTC()
@@ -159,11 +147,11 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 	if err != nil {
 		return err
 	}
-	manifest := buildPromptManifest(context, hash, report.ProjectMap.RunID, mapRefresh, now, memory)
+	manifest := buildPromptManifest(context, hash, mapStatus.RunID, head, now, memory)
 	// Refresh the run's search context from the approved contract: clarification
 	// and revision usually make the work more precise than the initial task
 	// sentence, so re-derive targeted queries from goal/scope/acceptance/validation.
-	searchResults := buildRunSearchResults(context.Paths, report.ProjectMap, "contract", memoryQueryFromContract(context.Contract))
+	searchResults := buildRunSearchResults(context.Paths, mapStatus, "contract", memoryQueryFromContract(context.Contract))
 	if err := activeStore.WriteBytes(context.RunPaths.SearchResults, mustMarshalJSON(searchResults), 0o644); err != nil {
 		return err
 	}
@@ -172,7 +160,7 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 		return err
 	}
 
-	if err := activeStore.WriteBytes(context.RunPaths.ExecutorContext, renderExecutorContext(context.State, report.ProjectMap.RunID, hash, decisions, memory.Selected), 0o644); err != nil {
+	if err := activeStore.WriteBytes(context.RunPaths.ExecutorContext, renderExecutorContext(context.State, mapStatus.RunID, hash, decisions, memory.Selected), 0o644); err != nil {
 		return err
 	}
 	if err := activeStore.WriteBytes(context.RunPaths.PromptMD, renderApprovedPromptMD(context.Contract, context.State.RunID, hash, selection), 0o644); err != nil {
@@ -239,7 +227,7 @@ func (a App) PromptShow(stdout io.Writer, runID string, jsonOutput bool) error {
 	return nil
 }
 
-func buildPromptManifest(context runContext, contractSHA256 string, mapRunID string, mapRefresh promptMapRefresh, builtAt time.Time, memory promptManifestMemory) promptManifest {
+func buildPromptManifest(context runContext, contractSHA256 string, mapRunID string, headCommit string, builtAt time.Time, memory promptManifestMemory) promptManifest {
 	approvedBy := ""
 	if context.Approval.ApprovedBy != nil {
 		approvedBy = *context.Approval.ApprovedBy
@@ -259,7 +247,8 @@ func buildPromptManifest(context runContext, contractSHA256 string, mapRunID str
 		ApprovedBy:     approvedBy,
 		ApprovedAt:     approvedAt,
 		MapRunID:       mapRunID,
-		MapRefresh:     mapRefresh,
+		HeadCommit:     headCommit,
+		MapRefresh:     promptMapRefresh{Triggered: false},
 		Artifacts: promptManifestArtifacts{
 			Prompt:          "contract/prompt.md",
 			ExecutorContext: "context/executor-context.md",

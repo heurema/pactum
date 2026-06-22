@@ -683,13 +683,12 @@ func TestGateValidationHelperProcess(t *testing.T) {
 func TestGitGuardLifecycle_PreconditionBlocksTransport(t *testing.T) {
 	skipIfNoGit(t)
 
-	// Initialize a real git repo so the git guard activates on execute.
-	root := initTestRepo(t)
-	// setupContractRun writes README.md to root; since we init'd the git repo
-	// with only a.txt committed, README.md will be untracked at execute time
-	// and trigger the clean-tree precondition failure.
+	root := t.TempDir()
 	app, paths, runID := setupGatePreparedRun(t, root, nil, false)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	// Create an untracked file so the git guard clean-tree precondition fails.
+	mustWriteFile(t, filepath.Join(root, "untracked.go"), "package main\n")
 
 	transport := &recordingAgentTransport{}
 	app.AgentTransport = transport
@@ -776,6 +775,140 @@ func TestGitGuardLifecycle_ReadOnlyStageSkipsGuard(t *testing.T) {
 // completed (exit 0, timed_out true, completed_despite_timeout true) must pass
 // the gate's execution check — otherwise the success path dies one pipeline
 // step later and the feature means nothing.
+// TestGateRunBlocksOutOfScopeMissingFile verifies that a file deleted by the
+// executor (present in missing_files) is subject to scope enforcement the same
+// as modified or new files — deleting an out-of-scope file must block the gate.
+func TestGateRunBlocksOutOfScopeMissingFile(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRunWithRevision(t, root, map[string]any{
+		"goal":               "add deterministic gate",
+		"paths_out_of_scope": []string{"README.md"},
+	}, true)
+
+	// Stage-delete README.md to simulate the executor deleting an out-of-scope file.
+	mustGitG(t, root, "rm", "README.md")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("gate run should fail when a missing file is out of scope")
+	}
+	report := readGateReport(t, contractRunPaths(filepath.Join(paths.RunsDir, runID)).GateReportJSON)
+	if report.Status != "failed" {
+		t.Fatalf("expected status=failed, got %q", report.Status)
+	}
+	if report.Scope == nil || report.Scope.Status != "blocked" {
+		t.Fatalf("expected scope.status=blocked: %#v", report.Scope)
+	}
+	if !containsString(report.Changes.MissingFiles, "README.md") {
+		t.Fatalf("README.md should be in missing_files: %#v", report.Changes)
+	}
+	if !containsString(report.Scope.OutOfScope, "README.md") {
+		t.Fatalf("README.md should be in scope.out_of_scope: %#v", report.Scope)
+	}
+}
+
+// TestGateChangeReportExactlyOneBucket verifies the exactly-one-bucket
+// invariant: when a staged deletion and an untracked file exist at the same
+// path, git may emit two porcelain entries ("D  a.txt" and "?? a.txt"); the
+// intermediate-map classifier must place a.txt in exactly one bucket, with
+// missing_files winning over new_files (D > ??).
+func TestGateChangeReportExactlyOneBucket(t *testing.T) {
+	skipIfNoGit(t)
+	root := initTestRepo(t) // commits a.txt
+
+	// Stage-delete a.txt then recreate it as an untracked file.  git status
+	// --porcelain=v1 -z may emit both "D  a.txt" and "?? a.txt".
+	mustGitG(t, root, "rm", "a.txt")
+	mustWriteFile(t, filepath.Join(root, "a.txt"), "new content\n")
+
+	report := testApp(root).buildGateChangeReport(root)
+	if report.Status != "changed" {
+		t.Fatalf("expected status=changed, got %q", report.Status)
+	}
+
+	inMissing := containsString(report.MissingFiles, "a.txt")
+	inChanged := containsString(report.ChangedFiles, "a.txt")
+	inNew := containsString(report.NewFiles, "a.txt")
+
+	count := 0
+	if inMissing {
+		count++
+	}
+	if inChanged {
+		count++
+	}
+	if inNew {
+		count++
+	}
+	if count != 1 {
+		t.Fatalf("a.txt must appear in exactly one bucket; missing=%v changed=%v new=%v", inMissing, inChanged, inNew)
+	}
+	if !inMissing {
+		t.Fatalf("staged-deleted a.txt must be in missing_files (D > ??); missing=%v changed=%v new=%v", inMissing, inChanged, inNew)
+	}
+}
+
+// TestGateRunDetectsRenamedAndModifiedFile verifies that when a tracked file is
+// renamed and the destination is then modified (git status: "RM dest\0orig\0"),
+// the classifier puts dest in changed_files (not new_files) and orig in
+// missing_files — exercising the R/C destination rule for Y=M.
+func TestGateRunDetectsRenamedAndModifiedFile(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+
+	// Stage the rename, then modify the destination without staging so Y=M.
+	assertNoError(t, os.Rename(filepath.Join(root, "README.md"), filepath.Join(root, "new.go")))
+	mustGitG(t, root, "add", "-A")
+	mustWriteFile(t, filepath.Join(root, "new.go"), "package main\n// extra\n")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("gate run exited %d, stderr: %s", code, stderr.String())
+	}
+	report := readGateReport(t, contractRunPaths(filepath.Join(paths.RunsDir, runID)).GateReportJSON)
+	if !containsString(report.Changes.MissingFiles, "README.md") {
+		t.Fatalf("rename origin should be in missing_files: %#v", report.Changes)
+	}
+	if !containsString(report.Changes.ChangedFiles, "new.go") {
+		t.Fatalf("renamed+modified dest should be in changed_files (not new_files): %#v", report.Changes)
+	}
+	if containsString(report.Changes.NewFiles, "new.go") {
+		t.Fatalf("renamed+modified dest must not be in new_files: %#v", report.Changes)
+	}
+}
+
+// TestGateRunDetectsUnmergedFile verifies that a file in unmerged state
+// (git status code UU) is classified as changed_files rather than dropped.
+func TestGateRunDetectsUnmergedFile(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+
+	// Create a UU (both-modified) conflict: two branches each modify README.md
+	// on different lines, then merge.
+	mainBranch := mustGitG(t, root, "rev-parse", "--abbrev-ref", "HEAD")
+	mustGitG(t, root, "checkout", "-b", "feat")
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Feature\n")
+	mustGitG(t, root, "add", "README.md")
+	mustGitG(t, root, "commit", "-m", "feat change")
+	mustGitG(t, root, "checkout", mainBranch)
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Main\n")
+	mustGitG(t, root, "add", "README.md")
+	mustGitG(t, root, "commit", "-m", "main change")
+	tryGitG(root, "merge", "feat") // exits non-zero; conflict state is set up
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("gate run with unmerged file exited %d, stderr: %s", code, stderr.String())
+	}
+	report := readGateReport(t, contractRunPaths(filepath.Join(paths.RunsDir, runID)).GateReportJSON)
+	if !containsString(report.Changes.ChangedFiles, "README.md") {
+		t.Fatalf("unmerged file should be in changed_files: %#v", report.Changes)
+	}
+}
+
 func TestGateRunPassesCompletedDespiteTimeoutAttempt(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
@@ -804,5 +937,76 @@ func TestGateRunPassesCompletedDespiteTimeoutAttempt(t *testing.T) {
 	}
 	if !report.Execution.CompletedDespiteTimeout || !report.Execution.TimedOut {
 		t.Fatalf("execution report should carry the honest pair: %#v", report.Execution)
+	}
+}
+
+// TestGateChangeReportDetectsNewFileInSubdir verifies that --untracked-files=all
+// causes files inside a newly-created directory to appear individually (e.g.
+// "sub/new.go") rather than collapsed to a single directory entry ("sub/").
+func TestGateChangeReportDetectsNewFileInSubdir(t *testing.T) {
+	skipIfNoGit(t)
+	root := initTestRepo(t)
+	subdir := filepath.Join(root, "sub")
+	assertNoError(t, os.MkdirAll(subdir, 0o755))
+	mustWriteFile(t, filepath.Join(subdir, "new.go"), "package sub\n")
+
+	report := testApp(root).buildGateChangeReport(root)
+	if report.Status != "changed" {
+		t.Fatalf("expected status=changed, got %q", report.Status)
+	}
+	if !containsString(report.NewFiles, "sub/new.go") {
+		t.Fatalf("expected sub/new.go in new_files, got new_files=%v", report.NewFiles)
+	}
+	for _, p := range report.NewFiles {
+		if p == "sub/" || p == "sub" {
+			t.Fatalf("directory entry %q must not appear in new_files — want individual files", p)
+		}
+	}
+}
+
+// TestGateChangeReportGitFailure verifies that when git status fails (e.g. the
+// root is not inside a git repository) the change report sets status=changed and
+// populates reasons with a description of the failure.
+func TestGateChangeReportGitFailure(t *testing.T) {
+	skipIfNoGit(t)
+	nonGitRoot := t.TempDir() // not a git repo
+
+	report := testApp(nonGitRoot).buildGateChangeReport(nonGitRoot)
+	if report.Status != "changed" {
+		t.Fatalf("expected status=changed on git failure, got %q", report.Status)
+	}
+	if len(report.Reasons) == 0 {
+		t.Fatal("expected at least one reason on git failure, got none")
+	}
+	found := false
+	for _, r := range report.Reasons {
+		if strings.Contains(r, "git status failed") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected reason containing 'git status failed', got %v", report.Reasons)
+	}
+}
+
+// TestGateChangeReportRenameIntoHeurema verifies that when a tracked file is
+// renamed into .heurema/, the original path is placed in missing_files (the
+// executor effectively deleted it from the working tree).
+func TestGateChangeReportRenameIntoHeurema(t *testing.T) {
+	skipIfNoGit(t)
+	root := initTestRepo(t)
+	// Create the .heurema/ destination directory.
+	assertNoError(t, os.MkdirAll(filepath.Join(root, ".heurema"), 0o755))
+	// Stage the rename: a.txt → .heurema/a.txt.
+	assertNoError(t, os.Rename(filepath.Join(root, "a.txt"), filepath.Join(root, ".heurema", "a.txt")))
+	mustGitG(t, root, "add", "-A")
+
+	report := testApp(root).buildGateChangeReport(root)
+	if report.Status != "changed" {
+		t.Fatalf("expected status=changed, got %q", report.Status)
+	}
+	if !containsString(report.MissingFiles, "a.txt") {
+		t.Fatalf("expected a.txt in missing_files after rename into .heurema/, got missing=%v", report.MissingFiles)
 	}
 }
