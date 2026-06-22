@@ -6,86 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/heurema/pactum/internal/codeindex"
 )
-
-func TestScanExtractsCodeItemsWhenEnabled(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, filepath.Join(root, "cmd", "pactum", "main.go"), `package main
-
-import "fmt"
-
-type App struct{}
-type hidden struct{}
-
-func main() {}
-func Run() {}
-func helper() {}
-
-var _ = fmt.Println
-`)
-
-	scan, err := Scan(root, ScanOptions{CodeIndexMode: codeindex.ModeAuto})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertCodeItem(t, scan.CodeItems, "cmd/pactum/main.go", "go_package", "main")
-	assertCodeItem(t, scan.CodeItems, "cmd/pactum/main.go", "go_import", "fmt")
-	assertCodeItem(t, scan.CodeItems, "cmd/pactum/main.go", "go_main", "main")
-	assertCodeItem(t, scan.CodeItems, "cmd/pactum/main.go", "go_func", "Run")
-	assertCodeItem(t, scan.CodeItems, "cmd/pactum/main.go", "go_type", "App")
-	assertNoCodeItem(t, scan.CodeItems, "cmd/pactum/main.go", "go_func", "helper")
-	assertNoCodeItem(t, scan.CodeItems, "cmd/pactum/main.go", "go_type", "hidden")
-	assertSortedCodeItems(t, scan.CodeItems)
-	assertStringSliceEqual(t, scan.CodeIndexLanguagesSeen, []string{"go"})
-	assertStringSliceEqual(t, scan.CodeIndexLanguagesIndexed, []string{"go"})
-}
-
-func TestScanCodeIndexOffSkipsExtractionWarnings(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, filepath.Join(root, "broken.go"), "package broken\nfunc {\n")
-
-	scan, err := Scan(root, ScanOptions{CodeIndexMode: codeindex.ModeOff})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(scan.CodeItems) != 0 {
-		t.Fatalf("CodeItems = %#v, want empty when code index is off", scan.CodeItems)
-	}
-	if len(scan.Warnings) != 0 {
-		t.Fatalf("Warnings = %#v, want none when code index is off", scan.Warnings)
-	}
-	assertStringSliceEqual(t, scan.CodeIndexLanguagesSeen, []string{"go"})
-	if len(scan.CodeIndexLanguagesIndexed) != 0 {
-		t.Fatalf("CodeIndexLanguagesIndexed = %#v, want empty", scan.CodeIndexLanguagesIndexed)
-	}
-}
-
-func TestScanToleratesCodeIndexParseErrors(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, filepath.Join(root, "broken.go"), "package broken\nfunc {\n")
-
-	scan, err := Scan(root, ScanOptions{CodeIndexMode: codeindex.ModeAuto})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(scan.Warnings) == 0 {
-		t.Fatal("expected parse warning")
-	}
-	if !strings.Contains(strings.Join(scan.Warnings, "\n"), "broken.go") {
-		t.Fatalf("warnings did not mention parse failure: %#v", scan.Warnings)
-	}
-	assertNoCodeItem(t, scan.CodeItems, "broken.go", "go_package", "broken")
-}
 
 func TestScanSkipsFilesOverMaxFileBytes(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "small.go"), "package small\n")
 	writeTestFile(t, filepath.Join(root, "large.go"), "package large\n"+strings.Repeat("x", 128))
 
-	scan, err := Scan(root, ScanOptions{MaxFileBytes: 64, CodeIndexMode: codeindex.ModeAuto})
+	scan, err := Scan(root, ScanOptions{MaxFileBytes: 64})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +57,7 @@ func TestScanGitWorktreeHonorsGitIgnore(t *testing.T) {
 	runGit(t, root, "add", ".gitignore", "tracked.py", "asset.png")
 	runGit(t, root, "add", "-f", ".heurema/state.py")
 
-	scan, err := Scan(root, ScanOptions{MaxFileBytes: 64, CodeIndexMode: codeindex.ModeAuto})
+	scan, err := Scan(root, ScanOptions{MaxFileBytes: 64})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,14 +74,11 @@ func TestScanGitWorktreeHonorsGitIgnore(t *testing.T) {
 	if scan.FilesSkipped != 1 {
 		t.Fatalf("FilesSkipped = %d, want 1", scan.FilesSkipped)
 	}
-	assertCodeItem(t, scan.CodeItems, "src/app.py", "py_func", "run")
-	assertNoCodeItem(t, scan.CodeItems, "ignored/hidden.py", "py_func", "hidden")
 	if !strings.Contains(strings.Join(scan.Warnings, "\n"), "skipped large file: large.py") {
 		t.Fatalf("warnings did not mention skipped git-enumerated file: %#v", scan.Warnings)
 	}
 	assertSortedFiles(t, scan.Files)
 	assertSortedHashes(t, scan.Hashes)
-	assertSortedCodeItems(t, scan.CodeItems)
 }
 
 func TestScanNonGitFallbackUsesIgnoredDirs(t *testing.T) {
@@ -162,7 +87,7 @@ func TestScanNonGitFallbackUsesIgnoredDirs(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "dist", "generated.go"), "package generated\n")
 	writeTestFile(t, filepath.Join(root, ".heurema", "state.go"), "package state\n")
 
-	scan, err := Scan(root, ScanOptions{CodeIndexMode: codeindex.ModeOff})
+	scan, err := Scan(root, ScanOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +110,7 @@ func TestScanFallsBackWhenGitUnavailable(t *testing.T) {
 	}
 	t.Setenv("PATH", emptyPath)
 
-	scan, err := Scan(root, ScanOptions{CodeIndexMode: codeindex.ModeOff})
+	scan, err := Scan(root, ScanOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,25 +146,6 @@ func runGit(t *testing.T, root string, args ...string) {
 	}
 }
 
-func assertCodeItem(t *testing.T, items []codeindex.Item, path string, kind string, name string) {
-	t.Helper()
-	for _, item := range items {
-		if item.Path == path && item.Kind == kind && item.Name == name {
-			return
-		}
-	}
-	t.Fatalf("missing code item path=%s kind=%s name=%s in %#v", path, kind, name, items)
-}
-
-func assertNoCodeItem(t *testing.T, items []codeindex.Item, path string, kind string, name string) {
-	t.Helper()
-	for _, item := range items {
-		if item.Path == path && item.Kind == kind && item.Name == name {
-			t.Fatalf("unexpected code item path=%s kind=%s name=%s in %#v", path, kind, name, items)
-		}
-	}
-}
-
 func assertScanPath(t *testing.T, scan ScanResult, path string) {
 	t.Helper()
 	if !containsFile(scan.Files, path) {
@@ -257,23 +163,6 @@ func assertNoScanPath(t *testing.T, scan ScanResult, path string) {
 	}
 	if containsHash(scan.Hashes, path) {
 		t.Fatalf("unexpected hash record for %s in %#v", path, scan.Hashes)
-	}
-	if containsCodeItemPath(scan.CodeItems, path) {
-		t.Fatalf("unexpected code item for %s in %#v", path, scan.CodeItems)
-	}
-}
-
-func assertSortedCodeItems(t *testing.T, items []codeindex.Item) {
-	t.Helper()
-	for i := 1; i < len(items); i++ {
-		prev := items[i-1]
-		next := items[i]
-		if prev.Path > next.Path ||
-			(prev.Path == next.Path && prev.Kind > next.Kind) ||
-			(prev.Path == next.Path && prev.Kind == next.Kind && prev.Parent > next.Parent) ||
-			(prev.Path == next.Path && prev.Kind == next.Kind && prev.Parent == next.Parent && prev.Name > next.Name) {
-			t.Fatalf("code items are not sorted at %d: %#v before %#v", i, prev, next)
-		}
 	}
 }
 
@@ -307,15 +196,6 @@ func containsFile(files []FileRecord, path string) bool {
 func containsHash(hashes []HashRecord, path string) bool {
 	for _, hash := range hashes {
 		if hash.Path == path {
-			return true
-		}
-	}
-	return false
-}
-
-func containsCodeItemPath(items []codeindex.Item, path string) bool {
-	for _, item := range items {
-		if item.Path == path {
 			return true
 		}
 	}

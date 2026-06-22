@@ -5,13 +5,11 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/heurema/pactum/internal/codeindex"
 )
 
 func renderWikiForTest(t *testing.T, root string) map[string]string {
 	t.Helper()
-	scan, err := Scan(root, ScanOptions{CodeIndexMode: codeindex.ModeAuto})
+	scan, err := Scan(root, ScanOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

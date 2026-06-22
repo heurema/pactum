@@ -11,9 +11,9 @@ it for quick questions and trivial edits, or when the user asks you not to.
 
 ## Core principle
 
-Source files are the source of truth. Pactum's map, wiki, `code-items.jsonl`,
-and memory are navigation and audit context — best-effort and incomplete by
-design. Always confirm against the actual files before relying on them.
+Source files are the source of truth. Pactum's map, wiki, and memory are
+navigation and audit context — best-effort and incomplete by design. Always
+confirm against the actual files before relying on them.
 
 ## Step-by-step
 
@@ -33,17 +33,11 @@ design. Always confirm against the actual files before relying on them.
 
 5. **Search and read.** Run targeted searches rather than one long sentence:
    - identifiers: `pactum search "formatCurrency" --json`
-   - known symbols: `pactum search --symbol formatCurrency --json` (exact,
-     case-insensitive; no positional query needed)
    - paths: `pactum search "apps/admin/src/lib/format.ts" --json`
    - domain terms: `pactum search "currency" --json`
-   - filters: `--kind wiki`, `--kind code_item`, `--kind import`
-   Code-item results carry a `path:start-end` range and signature — read that
-   line range directly instead of scanning the whole file (line numbers hold
-   until you edit the file). Then read `map/wiki/overview.md`,
-   `structure.md`, `entrypoints.md`, `commands.md`, the relevant
-   `areas/<area>.md`, and the actual source files. `--kind code_item`
-   excludes imports; `--kind import` returns them.
+   - filters: `--kind wiki`, `--kind file`
+   Then read `map/wiki/overview.md`, `structure.md`, `entrypoints.md`,
+   `commands.md`, the relevant `areas/<area>.md`, and the actual source files.
 
 6. **Clarify if needed.** For anything ambiguous:
    `pactum clarify add "..." --blocking --json`, then record the answer. A

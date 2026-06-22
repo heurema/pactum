@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/heurema/pactum/internal/artifacts"
-	"github.com/heurema/pactum/internal/codeindex"
 	"github.com/heurema/pactum/internal/projectmap"
 )
 
@@ -35,7 +34,6 @@ type projectMapStatus struct {
 	Status       string   `json:"status"`
 	RunID        string   `json:"run_id"`
 	FilesIndexed int      `json:"files_indexed"`
-	CodeItems    int      `json:"code_items"`
 	SearchIndex  string   `json:"search_index"`
 	StaleReasons []string `json:"stale_reasons"`
 }
@@ -257,7 +255,6 @@ func inspectProjectMap(root string, paths artifacts.Paths, config configFile, cu
 		} else {
 			status.RunID = mapManifest.RunID
 			status.FilesIndexed = mapManifest.FilesIndexed
-			status.CodeItems = mapManifest.CodeIndex.Items
 			if mapManifest.ConfigHashScope != mapConfigHashScope {
 				// Legacy whole-file pin (no scope marker): the hash semantics
 				// changed, so it cannot be compared. Stale once; the next refresh
@@ -293,7 +290,6 @@ func requiredMapArtifacts(paths artifacts.Paths) []mapArtifact {
 		{rel: "map/manifest.json", path: paths.MapManifest},
 		{rel: "map/files.jsonl", path: paths.FilesJSONL},
 		{rel: "map/hashes.jsonl", path: paths.HashesJSONL},
-		{rel: "map/code-items.jsonl", path: paths.CodeItemsJSONL},
 		{rel: "map/repo-map.md", path: paths.RepoMap},
 		{rel: "map/llms.txt", path: paths.LLMS},
 		{rel: "map/search.sqlite", path: paths.SearchSQLite},
@@ -306,8 +302,7 @@ func hashStaleReasons(root string, hashesPath string, config configFile) ([]stri
 		return nil, fmt.Errorf("read hashes: %w", err)
 	}
 	scan, err := projectmap.Scan(root, projectmap.ScanOptions{
-		MaxFileBytes:  int64(config.Map.MaxFileBytes),
-		CodeIndexMode: codeindex.ModeOff,
+		MaxFileBytes: int64(config.Map.MaxFileBytes),
 	})
 	if err != nil {
 		return nil, err

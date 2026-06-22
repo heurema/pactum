@@ -37,8 +37,7 @@ The flow (full detail in
 3. `pactum map refresh` if the map is stale
 4. `pactum task new "<task>"` (sets the current run)
 5. targeted `pactum search` (identifiers, paths, domain terms; `--kind wiki`,
-   `--kind code_item`, `--kind import`) and read the relevant `map/wiki/` pages
-   and source files
+   `--kind file`) and read the relevant `map/wiki/` pages and source files
 6. clarify if needed (`clarify add`, then a typed `clarify answer` or the
    recommended-answer decision verbs `--recommended` / `--all-recommended`)
 7. `pactum contract revise` (goal, in/out of scope, acceptance, validation)
@@ -82,6 +81,6 @@ the threat model in [SECURITY.md](../SECURITY.md). See
 
 ## Source of truth
 
-Pactum's map, wiki, code-items, and memory are navigation and audit context —
+Pactum's map, wiki, and memory are navigation and audit context —
 best-effort and incomplete by design. Source files remain the source of truth;
 the skill verifies against them before relying on the map.

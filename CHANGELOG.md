@@ -12,16 +12,10 @@ yet — everything lives under **Unreleased**.
 - Deterministic map wiki under `map/wiki/` (overview, structure, commands,
   entrypoints, config, tests, and per-area pages), generated from file
   inventory and manifests with conservative, evidence-backed language.
-- Search now indexes the map wiki (`--kind wiki`) and import-like entries
-  (`--kind import`); `--kind code_item` no longer returns import-like entries.
-- Deterministic search ranking polish: import-like entries are penalized and
-  the entrypoints/commands/config wiki pages are boosted in unfiltered
-  searches, with a small exact title/path-match boost.
-- Symbol-addressable search: `code_item` results carry the symbol's line
-  range and signature (`path:start-end` in human output;
-  `start_line`/`end_line`/`signature` in `--json`), and
-  `pactum search --symbol <name>` resolves a known identifier directly
-  (exact, case-insensitive, positional query optional).
+- Search now indexes the map wiki (`--kind wiki`).
+- Deterministic search ranking polish: entrypoints, commands, and config
+  wiki pages are boosted in unfiltered searches, with a small exact
+  title/path-match boost.
 - Map quality fixture coverage (Go CLI, TS/Vue/Vite, Python, .NET, Java/Maven,
   Gradle, Rust, config-heavy) and wiki overclaiming checks.
 - .NET project detection in the map wiki: `.csproj`/`.fsproj`/`.vbproj`/`.sln`/
@@ -33,11 +27,6 @@ yet — everything lives under **Unreleased**.
   `gradle`/`./gradlew` command hints (wrapper preferred when present).
 - Rust entrypoint conventions: `src/main.rs`/`main.rs`/`src/bin/*.rs` are listed
   as candidate Rust binary entrypoints when a `Cargo.toml` is present.
-- Best-effort CommonJS symbol hints for JavaScript/TypeScript: top-level
-  `require(...)` bindings index as import-like hints, and `module.exports` /
-  `exports.foo` / `module.exports.foo` (including `exports = module.exports = x`
-  chains and object-literal exports) index as code-item hints. No require-path
-  resolution, dependency graph, or route detection.
 - Repo-local, cross-agent Pactum agent skill package
   (`assets/agent-skills/pactum/`): a portable `SKILL.md` plus
   `references/{workflow,install,safety}.md`, loadable by Codex (`.agents/skills`)

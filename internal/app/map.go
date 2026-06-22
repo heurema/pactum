@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/heurema/pactum/internal/artifacts"
-	"github.com/heurema/pactum/internal/codeindex"
 	"github.com/heurema/pactum/internal/ledger"
 	"github.com/heurema/pactum/internal/projectmap"
 	searchpkg "github.com/heurema/pactum/internal/search"
@@ -26,14 +25,11 @@ const mapRefreshSchema = "pactum.map_refresh.v1alpha1"
 const mapConfigHashScope = "map"
 
 // mapConfigHash pins the map-relevant config: a deterministic hash of the
-// normalized map: section only (max_file_bytes and code_index). The code_index
-// is normalized through codeindex.NormalizeMode — the same folding Scan applies
-// — so aliases and the empty default that all resolve to "auto" hash alike and
-// do not falsely invalidate the map. Editing unrelated sections such as agents
-// or review.panel — or only comments and key order — never changes this hash;
-// changing a map parameter does.
+// normalized map: section only (max_file_bytes). Editing unrelated sections
+// such as agents or review.panel — or only comments and key order — never
+// changes this hash; changing a map parameter does.
 func mapConfigHash(m mapConfig) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("max_file_bytes=%d\x00code_index=%s", m.MaxFileBytes, codeindex.NormalizeMode(m.CodeIndex))))
+	sum := sha256.Sum256([]byte(fmt.Sprintf("max_file_bytes=%d", m.MaxFileBytes)))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -46,7 +42,6 @@ type MapRefreshResult struct {
 	FilesIndexed int       `json:"files_indexed"`
 	FilesIgnored int       `json:"files_ignored"`
 	FilesSkipped int       `json:"files_skipped"`
-	CodeItems    int       `json:"code_items"`
 	Warnings     int       `json:"warnings"`
 	SearchIndex  string    `json:"search_index"`
 }
@@ -92,8 +87,7 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 	configHash := mapConfigHash(config.Map)
 
 	scan, err := projectmap.Scan(root, projectmap.ScanOptions{
-		MaxFileBytes:  int64(config.Map.MaxFileBytes),
-		CodeIndexMode: config.Map.CodeIndex,
+		MaxFileBytes: int64(config.Map.MaxFileBytes),
 	})
 	if err != nil {
 		return MapRefreshResult{}, err
@@ -102,9 +96,6 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 		return MapRefreshResult{}, err
 	}
 	if err := projectmap.WriteJSONL(paths.HashesJSONL, scan.Hashes); err != nil {
-		return MapRefreshResult{}, err
-	}
-	if err := projectmap.WriteJSONL(paths.CodeItemsJSONL, scan.CodeItems); err != nil {
 		return MapRefreshResult{}, err
 	}
 
@@ -135,7 +126,6 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 		LLMSBody:    llms,
 		WikiPages:   wiki,
 		Files:       scan.Files,
-		CodeItems:   scan.CodeItems,
 	}); err != nil {
 		return MapRefreshResult{}, err
 	}
@@ -154,19 +144,11 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 		FilesIndexed:    len(scan.Files),
 		FilesIgnored:    scan.FilesIgnored,
 		FilesSkipped:    scan.FilesSkipped,
-		CodeIndex: projectmap.CodeIndexManifest{
-			Mode:               scan.CodeIndexMode,
-			SupportedLanguages: codeindex.SupportedLanguages(),
-			LanguagesSeen:      scan.CodeIndexLanguagesSeen,
-			LanguagesIndexed:   scan.CodeIndexLanguagesIndexed,
-			Items:              len(scan.CodeItems),
-		},
-		Warnings: scan.Warnings,
+		Warnings:        scan.Warnings,
 		Artifacts: map[string]string{
 			"repo_map":         "map/repo-map.md",
 			"llms":             "map/llms.txt",
 			"files":            "map/files.jsonl",
-			"code_items":       "map/code-items.jsonl",
 			"hashes":           "map/hashes.jsonl",
 			"search":           "map/search.sqlite",
 			"areas_index":      "map/areas/_index.md",
@@ -194,7 +176,6 @@ func (a App) refreshMap(root string, startedAt time.Time) (MapRefreshResult, err
 		FilesIndexed: len(scan.Files),
 		FilesIgnored: scan.FilesIgnored,
 		FilesSkipped: scan.FilesSkipped,
-		CodeItems:    len(scan.CodeItems),
 		Warnings:     len(scan.Warnings),
 		SearchIndex:  "ready",
 	}
@@ -268,7 +249,6 @@ func writeMapRefreshResult(stdout io.Writer, result MapRefreshResult) {
 	fmt.Fprintf(stdout, "  files indexed: %d\n", result.FilesIndexed)
 	fmt.Fprintf(stdout, "  files ignored: %d\n", result.FilesIgnored)
 	fmt.Fprintf(stdout, "  files skipped: %d\n", result.FilesSkipped)
-	fmt.Fprintf(stdout, "  code items: %d\n", result.CodeItems)
 	fmt.Fprintf(stdout, "  warnings: %d\n", result.Warnings)
 	fmt.Fprintf(stdout, "  search index: %s\n", result.SearchIndex)
 }

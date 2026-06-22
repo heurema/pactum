@@ -9,15 +9,12 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/heurema/pactum/internal/codeindex"
 )
 
 // WikiPage is one generated page of the deterministic map wiki. RelPath is
 // relative to the wiki directory (for example "overview.md" or
 // "areas/src.md"). The wiki is generated from deterministic facts only — file
-// inventory, package manifests, and conventional paths — with Tree-sitter code
-// items used solely as best-effort navigation hints.
+// inventory, package manifests, and conventional paths.
 type WikiPage struct {
 	RelPath string
 	Title   string
@@ -66,7 +63,6 @@ type areaFacts struct {
 	Entrypoints []entrypointFact
 	Configs     []string
 	Tests       []string
-	CodeHints   []codeindex.Item
 }
 
 type wikiFacts struct {
@@ -108,8 +104,6 @@ type wikiFacts struct {
 	configs     []configFact
 	tests       wikiTestFacts
 	commands    wikiCommandFacts
-
-	importCount int
 }
 
 type wikiTestFacts struct {
@@ -238,12 +232,6 @@ func gatherWikiFacts(root string, generatedAt time.Time, scan ScanResult) wikiFa
 		facts.ciCommands = append(facts.ciCommands, readRunCommands(filepath.Join(root, filepath.FromSlash(workflow)))...)
 	}
 	facts.ciCommands = dedupeStrings(facts.ciCommands)
-
-	for _, item := range scan.CodeItems {
-		if item.IsImportLike() {
-			facts.importCount++
-		}
-	}
 
 	facts.ecosystems = detectEcosystems(facts, has)
 	facts.entrypoints = detectEntrypoints(facts)
@@ -511,12 +499,6 @@ func detectEntrypoints(facts wikiFacts) []entrypointFact {
 		}
 		for _, bin := range facts.pkg.Bin {
 			add(normalizeManifestPath(bin), "declared as a bin entry in package.json", true, false)
-		}
-	}
-
-	for _, item := range facts.scan.CodeItems {
-		if item.IsEntryPoint() {
-			add(item.Path, fmt.Sprintf("Tree-sitter entry hint (%s) — best-effort", item.Kind), false, false)
 		}
 	}
 
@@ -803,18 +785,6 @@ func buildAreas(facts wikiFacts) []areaFacts {
 		configByArea[top] = append(configByArea[top], cfg.Path)
 	}
 
-	codeHintsByArea := map[string][]codeindex.Item{}
-	for _, item := range facts.scan.CodeItems {
-		if item.IsImportLike() {
-			continue
-		}
-		top := topLevelDir(item.Path)
-		if top == "" {
-			continue
-		}
-		codeHintsByArea[top] = append(codeHintsByArea[top], item)
-	}
-
 	names := make([]string, 0, len(byArea))
 	for name := range byArea {
 		names = append(names, name)
@@ -831,7 +801,6 @@ func buildAreas(facts wikiFacts) []areaFacts {
 			Languages:   areaLanguages(files),
 			Entrypoints: entrypointByArea[name],
 			Configs:     configByArea[name],
-			CodeHints:   codeHintsByArea[name],
 		}
 		var tests []string
 		for _, file := range files {
@@ -987,7 +956,6 @@ func renderOverview(facts wikiFacts) []byte {
 	fmt.Fprintln(&b, "- `config.md` — detected configuration files.")
 	fmt.Fprintln(&b, "- `tests.md` — test files, test configs, and validation command candidates.")
 	fmt.Fprintln(&b, "- `areas/<area>.md` — a focused page per top-level directory.")
-	fmt.Fprintln(&b, "- `../code-items.jsonl` — best-effort symbol hints only.")
 	fmt.Fprintln(&b)
 
 	writeWikiLimitations(&b)
@@ -1311,22 +1279,6 @@ func renderArea(facts wikiFacts, area areaFacts) []byte {
 			fmt.Fprintf(&b, "- test: `%s`\n", file)
 		}
 	}
-	fmt.Fprintln(&b)
-
-	fmt.Fprintln(&b, "## Best-effort code hints")
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "Code hints come from Tree-sitter and are incomplete by design. Source files remain the source of truth.")
-	fmt.Fprintln(&b)
-	if len(area.CodeHints) == 0 {
-		fmt.Fprintln(&b, "- No code hints for this area (the languages/frameworks here may be unsupported).")
-	} else {
-		for _, item := range capItems(area.CodeHints, 60) {
-			fmt.Fprintf(&b, "- `%s`: `%s` `%s`\n", item.Path, item.Kind, codeHintLabel(item))
-		}
-		if len(area.CodeHints) > 60 {
-			fmt.Fprintf(&b, "- … and %d more hint(s).\n", len(area.CodeHints)-60)
-		}
-	}
 	return b.Bytes()
 }
 
@@ -1344,8 +1296,6 @@ func writeWikiLimitations(b *bytes.Buffer) {
 	fmt.Fprintln(b, "## Limitations")
 	fmt.Fprintln(b)
 	fmt.Fprintln(b, "- This wiki is deterministic, not LLM-generated.")
-	fmt.Fprintln(b, "- Code items are best-effort symbol hints and are incomplete by design.")
-	fmt.Fprintln(b, "- Unsupported languages and framework files may have no code items but still appear in the file inventory and wiki.")
 	fmt.Fprintln(b, "- Inferred roles are conservative guesses backed by evidence; verify against the source.")
 	fmt.Fprintln(b, "- Source files remain the source of truth.")
 }
@@ -1361,17 +1311,6 @@ func writeRoleEvidence(b *bytes.Buffer, label, role string, evidence []string) {
 		}
 	}
 	fmt.Fprintln(b)
-}
-
-func codeHintLabel(item codeindex.Item) string {
-	switch {
-	case item.Parent != "":
-		return item.Parent + "." + item.Name
-	case item.Package != "":
-		return item.Package + "." + item.Name
-	default:
-		return item.Name
-	}
 }
 
 // --- fact-source readers -------------------------------------------------
@@ -1739,13 +1678,6 @@ func capStrings(values []string, limit int) []string {
 }
 
 func capRecords(values []FileRecord, limit int) []FileRecord {
-	if limit > 0 && len(values) > limit {
-		return values[:limit]
-	}
-	return values
-}
-
-func capItems(values []codeindex.Item, limit int) []codeindex.Item {
 	if limit > 0 && len(values) > limit {
 		return values[:limit]
 	}

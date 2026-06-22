@@ -28,7 +28,6 @@ artifacts, the accepted project memory, the event ledger, and scratch space.
 │   ├── repo-map.md
 │   ├── llms.txt
 │   ├── files.jsonl
-│   ├── code-items.jsonl     # best-effort symbol hints (incomplete by design)
 │   ├── hashes.jsonl
 │   ├── search.sqlite
 │   └── manifest.json
@@ -79,7 +78,7 @@ runs/*/review/
 - `map/` — rebuilt at any time with `pactum map refresh` (includes the
   generated `wiki/` pages and the binary `search.sqlite` index). The map is
   wiki-first: start at `map/wiki/overview.md`. The wiki is generated from
-  deterministic facts; `code-items.jsonl` holds best-effort symbol hints only.
+  deterministic facts (file inventory and manifests).
 - `ledger/` and `runs/*/ledger/` — append-only event logs.
 - `cache/`, `tmp/`, `locks/` — scratch and coordination state.
 - `runs/*/execute/` — captured agent stdout/stderr and attempt records, which

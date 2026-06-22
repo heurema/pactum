@@ -481,12 +481,10 @@ func buildRunSearchResults(paths artifacts.Paths, mapStatus projectMapStatus, qu
 }
 
 // runContextSearch runs each targeted query through the local index and merges
-// the hits, deduping by document ID so distinct code_item symbols — same name,
-// kind, and path but different parents or ranges — each keep their address;
-// only the same underlying result resurfaced by multiple queries collapses.
-// Earlier queries are more important: results are kept in query order, then
-// result order within a query, capped at limit. This is deterministic
-// first-pass retrieval, not semantic ranking.
+// the hits, deduping by document ID so the same result surfaced by multiple
+// queries collapses to a single entry. Earlier queries are more important:
+// results are kept in query order, then result order within a query, capped at
+// limit. This is deterministic first-pass retrieval, not semantic ranking.
 func runContextSearch(dbPath string, queries []string, limit int) ([]runSearchResultItem, error) {
 	if limit <= 0 {
 		limit = runContextSearchLimit
@@ -529,20 +527,7 @@ func runContextSearch(dbPath string, queries []string, limit int) ([]runSearchRe
 		}
 	}
 
-	// De-prioritize import-like hits: keep definitions/files/wiki first and
-	// imports last, preserving round-robin order within each group. Imports are
-	// rarely the place to start editing, so they should not crowd the top of the
-	// run context.
-	combined := make([]runSearchResultItem, 0, len(ordered))
-	var imports []runSearchResultItem
-	for _, item := range ordered {
-		if item.Kind == searchpkg.KindImport {
-			imports = append(imports, item)
-			continue
-		}
-		combined = append(combined, item)
-	}
-	combined = append(combined, imports...)
+	combined := ordered
 	if len(combined) > limit {
 		combined = combined[:limit]
 	}

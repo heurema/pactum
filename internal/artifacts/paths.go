@@ -15,17 +15,16 @@ type Paths struct {
 	Config    string
 	Gitignore string
 
-	MapDir         string
-	MapManifest    string
-	LLMS           string
-	RepoMap        string
-	AreasDir       string
-	AreaIndex      string
-	FilesJSONL     string
-	CodeItemsJSONL string
-	HashesJSONL    string
-	SearchSQLite   string
-	MapRunsDir     string
+	MapDir       string
+	MapManifest  string
+	LLMS         string
+	RepoMap      string
+	AreasDir     string
+	AreaIndex    string
+	FilesJSONL   string
+	HashesJSONL  string
+	SearchSQLite string
+	MapRunsDir   string
 
 	WikiDir         string
 	WikiAreasDir    string
@@ -74,17 +73,16 @@ func New(root string) Paths {
 		Config:    filepath.Join(workspace, "config.yaml"),
 		Gitignore: filepath.Join(workspace, ".gitignore"),
 
-		MapDir:         mapDir,
-		MapManifest:    filepath.Join(mapDir, "manifest.json"),
-		LLMS:           filepath.Join(mapDir, "llms.txt"),
-		RepoMap:        filepath.Join(mapDir, "repo-map.md"),
-		AreasDir:       filepath.Join(mapDir, "areas"),
-		AreaIndex:      filepath.Join(mapDir, "areas", "_index.md"),
-		FilesJSONL:     filepath.Join(mapDir, "files.jsonl"),
-		CodeItemsJSONL: filepath.Join(mapDir, "code-items.jsonl"),
-		HashesJSONL:    filepath.Join(mapDir, "hashes.jsonl"),
-		SearchSQLite:   filepath.Join(mapDir, "search.sqlite"),
-		MapRunsDir:     filepath.Join(mapDir, "runs"),
+		MapDir:       mapDir,
+		MapManifest:  filepath.Join(mapDir, "manifest.json"),
+		LLMS:         filepath.Join(mapDir, "llms.txt"),
+		RepoMap:      filepath.Join(mapDir, "repo-map.md"),
+		AreasDir:     filepath.Join(mapDir, "areas"),
+		AreaIndex:    filepath.Join(mapDir, "areas", "_index.md"),
+		FilesJSONL:   filepath.Join(mapDir, "files.jsonl"),
+		HashesJSONL:  filepath.Join(mapDir, "hashes.jsonl"),
+		SearchSQLite: filepath.Join(mapDir, "search.sqlite"),
+		MapRunsDir:   filepath.Join(mapDir, "runs"),
 
 		WikiDir:         filepath.Join(mapDir, "wiki"),
 		WikiAreasDir:    filepath.Join(mapDir, "wiki", "areas"),

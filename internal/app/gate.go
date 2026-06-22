@@ -376,8 +376,7 @@ func (a App) buildGateChangeReport(root string, paths artifacts.Paths) gateChang
 		return report
 	}
 	current, err := projectmap.Scan(root, projectmap.ScanOptions{
-		MaxFileBytes:  int64(config.Map.MaxFileBytes),
-		CodeIndexMode: config.Map.CodeIndex,
+		MaxFileBytes: int64(config.Map.MaxFileBytes),
 	})
 	if err != nil {
 		report.Status = "unknown"
