@@ -906,6 +906,29 @@ sandboxing / interactive execute-time approvals; external prompt templating
   the gate ignore well-known build outputs / honor `.gitignore` for change
   classification.
 
+- **git-guard false-positives on concurrent operator git activity in other
+  worktrees** (med). The guard snapshots ALL refs at execute start and restores
+  them at end — but refs are shared across every worktree of the same repo. So
+  if the operator creates/deletes/pushes a branch in a *parallel* worktree while
+  an execute is running, the guard sees those refs as agent ref-mutations, flags
+  `executor_git_ref_mutation`, and "restores" by deleting the operator's refs —
+  tainting the (otherwise-correct) execute attempt and clobbering the operator's
+  local branch. Hit live in map-removal slice 4: creating a backlog branch during
+  an execute deleted it and voided the attempt, forcing a clean ~78-min re-run.
+  Mitigations: scope ref-tracking to refs the agent could plausibly touch (e.g.
+  only HEAD's branch + refs reachable from the worktree), capture the snapshot
+  with the worktree's own ref view, or at minimum document "no concurrent git ops
+  in any worktree during execute". Distinct from the worktree-presence handling
+  in #234.
+
+- **`make check`'s gofmt can miss an unformatted tracked file** (low). In slice 4
+  `internal/app/gate_test.go` was gofmt-unclean, yet the gate's `make check`
+  reported 0 failures; it was only caught by a direct `gofmt -l` before push. The
+  gofmt step in `make check` does not reliably flag every unformatted TRACKED
+  `.go` file (related to the untracked-file gap, but here the file was tracked).
+  Fix: have the gofmt target run `gofmt -l` over the working-tree copies of all
+  tracked `.go` files and fail on non-empty output.
+
 - **Executor resilience: auto-retry on transient failure + resume (not reset)**
   (med). Today a model drop (rate_limit / network / 5xx) or idle-timeout during
   `execute` (or any agent stage) is recorded as a failed attempt and the operator
