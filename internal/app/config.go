@@ -129,11 +129,72 @@ func (e agentRegistryEntry) modelSpec() agents.ModelSpec {
 	return agents.ModelSpec{Model: strings.TrimSpace(e.Model), Effort: strings.TrimSpace(e.Effort)}
 }
 
+// defaultConfigTemplate is the commented YAML written to config.yaml on a fresh
+// pactum init. Comments are stripped by the YAML parser, so the file loads
+// identically to marshaling defaultConfigFile() — the round-trip test asserts this.
+const defaultConfigTemplate = `# Pactum workspace configuration — v1alpha1
+# Edit this file to tune which agents run, their models and reasoning effort,
+# and how the review loops behave. Run "pactum status" to verify changes.
+version: v1alpha1 # schema version; must be v1alpha1
+
+# agents: named registry entries the pipeline references everywhere
+# (pipeline.*.by, --agent, --reviewer). Each entry requires a name and a pinned
+# model; the engine (claude, codex) is inferred from the model string.
+# Optional per-entry field: effort (e.g. effort: high) to pin reasoning effort.
+# To add a reviewer, append another entry with a different name and model.
+agents:
+  - name: claude            # referenced as "claude" in pipeline.*.by and --agent
+    model: claude-opus-4-8  # change to adjust which model this agent uses
+
+# out_of_scope: what to do when a task touches files outside the approved scope.
+# "block" stops the run; "warn" allows it with a warning.
+# Optional top-level field: wall_clock_cap (e.g. wall_clock_cap: 2h) sets an
+# absolute ceiling on any single agent attempt; defaults to 2h when absent.
+out_of_scope: block
+
+# pipeline: per-stage agent and loop overrides. Each stage accepts an optional
+# "by" field (agent name or list) to override who performs it. Optional stages
+# not emitted by default: contract_draft (drafter agent), execute (executor
+# agent), and memory (post-run distillation) — omit to use built-in defaults.
+pipeline:
+  # clarify drives the pre-contract question/answer loop.
+  # loop.max: maximum rounds before the loop stops (default: 3).
+  # loop.patience: consecutive no-change rounds before converging (default: 0;
+  #   patience is not meaningful for clarify — use non-zero on review stages).
+  # loop.settle: consecutive clean rounds required to stop (default: 0;
+  #   settle is not meaningful for clarify — use non-zero on review stages).
+  clarify:
+    loop:
+      max: 3
+      patience: 0
+      settle: 0
+
+  # contract_review is the multi-reviewer convergence loop.
+  # by: list of agent names used as reviewers (omit for the stage default).
+  # critic_by: optional critic agent name.
+  # loop.max: maximum review rounds (default: 10).
+  # loop.patience: consecutive rounds with no new blocker before converging (default: 2).
+  # loop.settle: consecutive clean rounds required to stop (default: 1).
+  contract_review:
+    loop:
+      max: 10
+      patience: 2
+      settle: 1
+
+  # code_review is the post-execution reviewer loop.
+  # The same loop knobs (max, patience, settle) and by/critic_by fields apply here.
+  code_review:
+    loop:
+      max: 10
+      patience: 2
+      settle: 1
+`
+
 func writeDefaultConfigIfMissing(path string) error {
 	if activeStore.Exists(path) {
 		return nil
 	}
-	return writeYAML(path, defaultConfigFile())
+	return activeStore.WriteBytes(path, []byte(defaultConfigTemplate), 0o644)
 }
 
 func defaultConfigFile() configFile {
@@ -157,20 +218,6 @@ func defaultConfigFile() configFile {
 			},
 		},
 	}
-}
-
-func writeYAML(path string, value any) error {
-	var buffer bytes.Buffer
-	encoder := yaml.NewEncoder(&buffer)
-	encoder.SetIndent(2)
-	if err := encoder.Encode(value); err != nil {
-		_ = encoder.Close()
-		return err
-	}
-	if err := encoder.Close(); err != nil {
-		return err
-	}
-	return activeStore.WriteBytes(path, buffer.Bytes(), 0o644)
 }
 
 func readConfig(path string) (configFile, error) {

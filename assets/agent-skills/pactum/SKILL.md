@@ -69,6 +69,8 @@ pactum status --json
 # If not initialized:
 pactum init
 ```
+After a fresh `pactum init`, surface `.heurema/pactum/config.yaml` to the user
+and offer to adjust agents, models, effort, and review panels before the first contract.
 
 **3. Create the task (sets the current run)**
 ```sh

@@ -16,11 +16,32 @@ func (c *initCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
+	paths := artifacts.New(root)
+	fresh := !activeStore.Exists(paths.Config)
 	if err := r.App.Init(root); err != nil {
 		return err
 	}
-	fmt.Fprintf(r.Stdout, "Initialized Pactum workspace at %s\n", artifacts.New(root).Workspace)
+	fmt.Fprintf(r.Stdout, "Initialized Pactum workspace at %s\n", paths.Workspace)
+	if fresh {
+		printInitOnboarding(r.Stdout)
+	}
 	return nil
+}
+
+func printInitOnboarding(w io.Writer) {
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Agent: before creating your first contract, propose to the user that they")
+	fmt.Fprintln(w, "review and adjust .heurema/pactum/config.yaml — do not silently proceed")
+	fmt.Fprintln(w, "with the default agents, models, effort, or review panels.")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "The config controls named agent roles (drafter, executor, reviewers),")
+	fmt.Fprintln(w, "their models and reasoning effort, review panels (contract_review.by /")
+	fmt.Fprintln(w, "code_review.by), and loop round caps (pipeline.*.loop.max). The file")
+	fmt.Fprintln(w, "has inline comments explaining each field.")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Next steps:")
+	fmt.Fprintln(w, `  pactum task new "<task>"`)
+	fmt.Fprintln(w, "  pactum skill install --agent <claude|codex|auto|all> --scope <repo|user>")
 }
 
 func (c *statusCmd) Run(r *runner) error {

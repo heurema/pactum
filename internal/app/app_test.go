@@ -67,7 +67,7 @@ func helper() {}
 		t.Fatalf("config agents should register the single pinned claude entry: %#v", config.Agents)
 	}
 	configYAML := mustReadFile(t, paths.Config)
-	for _, want := range []string{"agents:", "- name: claude", "model: claude-opus-4-8", "out_of_scope: block", "pipeline:"} {
+	for _, want := range []string{"agents:", "- name: claude", "model: claude-opus-4-8", "out_of_scope: block", "pipeline:", "#"} {
 		if !strings.Contains(configYAML, want) {
 			t.Fatalf("config.yaml missing %q:\n%s", want, configYAML)
 		}
@@ -125,6 +125,76 @@ func helper() {}
 		if !strings.Contains(events[i], want) {
 			t.Fatalf("event %d = %s, want %s", i, events[i], want)
 		}
+	}
+}
+
+func TestInitOnboardingFresh(t *testing.T) {
+	root := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"Initialized Pactum workspace",
+		".heurema/pactum/config.yaml",
+		"propose",
+		"pactum task new",
+		"pactum skill install",
+		"inline comments",
+	} {
+		if !strings.Contains(strings.ToLower(out), strings.ToLower(want)) {
+			t.Fatalf("fresh init output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestInitOnboardingReinit(t *testing.T) {
+	root := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("first init exited %d, stderr: %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = testApp(root).Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("re-init exited %d, stderr: %s", code, stderr.String())
+	}
+	out := stdout.String()
+	if strings.Contains(strings.ToLower(out), "propose") {
+		t.Fatalf("re-init should not print onboarding guidance:\n%s", out)
+	}
+	if !strings.Contains(out, "Initialized Pactum workspace") {
+		t.Fatalf("re-init should still print initialized line:\n%s", out)
+	}
+}
+
+func TestDefaultConfigTemplateRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	paths := artifacts.New(root)
+	mustWriteFile(t, paths.Config, defaultConfigTemplate)
+
+	got, err := readConfig(paths.Config)
+	assertNoError(t, err)
+
+	// Apply the same normalizations readConfig performs to the expected config.
+	want := defaultConfigFile()
+	want.OutOfScope, _ = normalizeOutOfScope(want.OutOfScope)
+	for i := range want.Agents {
+		want.Agents[i].Name = strings.TrimSpace(want.Agents[i].Name)
+	}
+	normalizePipelineBy(&want.Pipeline)
+
+	gotYAML, err := yaml.Marshal(got)
+	assertNoError(t, err)
+	wantYAML, err := yaml.Marshal(want)
+	assertNoError(t, err)
+	if string(gotYAML) != string(wantYAML) {
+		t.Fatalf("defaultConfigTemplate round-trip mismatch:\ngot:\n%s\nwant:\n%s", gotYAML, wantYAML)
 	}
 }
 
@@ -2315,4 +2385,18 @@ func assertNoError(t *testing.T, err error) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writeYAML(path string, value any) error {
+	var buffer bytes.Buffer
+	encoder := yaml.NewEncoder(&buffer)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(value); err != nil {
+		_ = encoder.Close()
+		return err
+	}
+	if err := encoder.Close(); err != nil {
+		return err
+	}
+	return activeStore.WriteBytes(path, buffer.Bytes(), 0o644)
 }
