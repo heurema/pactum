@@ -83,7 +83,6 @@ var requiredDocMentions = []string{
 	"--no-auto",
 	"--recommended",
 	"--all-recommended",
-	"map_refresh",
 	// Packaging / install surface (M5.2).
 	"make build",
 	"go install ./cmd/pactum",

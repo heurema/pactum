@@ -411,26 +411,16 @@ func TestExecutePlanSucceedsAfterPromptBuildOnCurrentHead(t *testing.T) {
 	app, paths, runID := setupApprovedPromptContract(t, root)
 	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
 
-	// Modify working tree (stale map, but HEAD unchanged).
+	// Modify working tree (HEAD unchanged).
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"map", "refresh"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
-	}
-	workspace, err := readWorkspaceManifest(paths.Manifest)
-	assertNoError(t, err)
+	_ = paths // used by setupApprovedPromptContract callers
 
-	stdout.Reset()
-	stderr.Reset()
-	code = app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("prompt build exited %d, stderr: %s", code, stderr.String())
 	}
 	manifest := readPromptManifestForTest(t, runPaths.PromptManifest)
-	if manifest.MapRunID != workspace.Map.CurrentRunID {
-		t.Fatalf("prompt manifest map_run_id = %q, want %q", manifest.MapRunID, workspace.Map.CurrentRunID)
-	}
 	if manifest.HeadCommit == "" {
 		t.Fatalf("prompt manifest should record head_commit")
 	}
@@ -511,7 +501,6 @@ func TestExecutePlanUnsupportedInputModeFails(t *testing.T) {
 		Args:    []string{"dry-run"},
 		Input:   "stdin",
 	})
-	runReviewCommand(t, app, "map", "refresh")
 	runReviewCommand(t, app, "prompt", "build", runID)
 
 	var stdout, stderr bytes.Buffer
@@ -881,13 +870,7 @@ func setupApprovedBuiltPromptWithHelperAgent(t *testing.T, root string, name str
 	registerTestAgents(t, paths, name)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"map", "refresh"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
-	}
-	stdout.Reset()
-	stderr.Reset()
-	code = app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
+	code := app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("prompt build exited %d, stderr: %s", code, stderr.String())
 	}
@@ -900,13 +883,7 @@ func setupApprovedAndBuiltPromptWithAgentRegistry(t *testing.T, root string, ent
 	setAgentRegistryConfig(t, paths, entries...)
 
 	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"map", "refresh"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
-	}
-	stdout.Reset()
-	stderr.Reset()
-	code = app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
+	code := app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("prompt build exited %d, stderr: %s", code, stderr.String())
 	}

@@ -19,16 +19,13 @@ type workspaceManifest struct {
 	RepoRoot      string    `json:"repo_root"`
 	InitializedAt time.Time `json:"initialized_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
-	Map           struct {
-		CurrentRunID string `json:"current_run_id"`
-	} `json:"map"`
-	Status string `json:"status"`
+	Status        string    `json:"status"`
 }
 
 type configFile struct {
 	Version      string               `yaml:"version"`
 	Agents       []agentRegistryEntry `yaml:"agents"`
-	Map          mapConfig            `yaml:"map"`
+	Map          interface{}          `yaml:"map,omitempty"`
 	OutOfScope   string               `yaml:"out_of_scope"`
 	Pipeline     pipelineConfig       `yaml:"pipeline"`
 	WallClockCap yamlDuration         `yaml:"wall_clock_cap,omitempty"`
@@ -58,13 +55,6 @@ func (d yamlDuration) MarshalYAML() (interface{}, error) {
 
 func (d yamlDuration) Duration() time.Duration {
 	return time.Duration(d)
-}
-
-type mapConfig struct {
-	MaxFileBytes int `yaml:"max_file_bytes"`
-	// Deprecated: no-op; retained so existing configs containing map.code_index
-	// load without error under the strict YAML decoder (KnownFields(true)).
-	CodeIndex string `yaml:"code_index,omitempty"`
 }
 
 // pipelineConfig holds the closed set of pipeline stages. Absent stages decode
@@ -154,9 +144,6 @@ func defaultConfigFile() configFile {
 			// inherit-the-CLI-default entry cannot exist.
 			{Name: agents.BuiltinClaude, Model: "claude-opus-4-8"},
 		},
-		Map: mapConfig{
-			MaxFileBytes: 500000,
-		},
 		OutOfScope: gateScopeEnforcementBlock,
 		Pipeline: pipelineConfig{
 			Clarify: pipelineStage{
@@ -184,17 +171,6 @@ func writeYAML(path string, value any) error {
 		return err
 	}
 	return activeStore.WriteBytes(path, buffer.Bytes(), 0o644)
-}
-
-func readWorkspaceManifest(path string) (workspaceManifest, error) {
-	var manifest workspaceManifest
-	if err := readJSON(path, &manifest); err != nil {
-		return workspaceManifest{}, err
-	}
-	if manifest.Schema == "" || manifest.RepoRoot == "" {
-		return workspaceManifest{}, errors.New("workspace manifest is incomplete")
-	}
-	return manifest, nil
 }
 
 func readConfig(path string) (configFile, error) {

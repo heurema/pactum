@@ -484,26 +484,3 @@ func (c *memoryRefreshCmd) Run(r *runner) error {
 func (c *memoryStaleCmd) Run(r *runner) error {
 	return r.App.MemoryStale(r.Stdout, c.JSONOutput)
 }
-
-func (c *searchCmd) Run(r *runner) error {
-	return r.App.Search(r.Stdout, c.Query, c.Limit, c.Kind, c.JSONOutput)
-}
-
-func (c *mapRefreshCmd) Run(r *runner) error {
-	root, workspace, err := r.App.resolveStatusRoot()
-	if err != nil {
-		return err
-	}
-	if workspace == "" {
-		return errNotInitialized
-	}
-	result, err := r.App.RefreshMap(root)
-	if err != nil {
-		return err
-	}
-	if c.JSONOutput {
-		return writeJSONResponse(r.Stdout, mapRefreshResponse{MapRefreshResult: result, Next: []string{}})
-	}
-	writeMapRefreshResult(r.Stdout, result)
-	return nil
-}

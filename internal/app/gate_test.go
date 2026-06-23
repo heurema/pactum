@@ -597,7 +597,6 @@ func setupGatePreparedRunWithRevision(t *testing.T, root string, contractUpdate 
 	registerTestAgents(t, paths, "helper")
 
 	for _, args := range [][]string{
-		{"map", "refresh"},
 		{"prompt", "build", runID},
 	} {
 		stdout.Reset()

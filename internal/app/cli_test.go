@@ -136,8 +136,8 @@ func TestWorkspaceManifestVersionMatchesVersionPackage(t *testing.T) {
 	if code := app.Run([]string{"init"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
 	}
-	manifest, err := readWorkspaceManifest(artifacts.New(root).Manifest)
-	if err != nil {
+	var manifest workspaceManifest
+	if err := readJSON(artifacts.New(root).Manifest, &manifest); err != nil {
 		t.Fatal(err)
 	}
 	if manifest.ToolVersion != version.Version {
@@ -631,19 +631,5 @@ func TestHelpDoesNotMentionRemovedConfirmationFlags(t *testing.T) {
 		if strings.Contains(help, "--yes") || strings.Contains(help, "--allow-commands") {
 			t.Fatalf("%v help still mentions a removed confirmation flag:\n%s", args, help)
 		}
-	}
-}
-
-// --- Map (Part J) -----------------------------------------------------------
-
-func TestMapRefreshHelpHasNoFullFlag(t *testing.T) {
-	root := t.TempDir()
-	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"map", "refresh", "--help"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("map refresh --help exited %d", code)
-	}
-	if strings.Contains(stdout.String(), "--full") {
-		t.Fatalf("map refresh help still mentions --full:\n%s", stdout.String())
 	}
 }

@@ -36,6 +36,20 @@ func TestReadConfigRejectsUnknownKeys(t *testing.T) {
 	}
 }
 
+func TestReadConfigAcceptsLegacyMapBlock(t *testing.T) {
+	// Pre-existing configs with map.max_file_bytes and map.code_index must load
+	// without error; the map block is silently ignored (no-op).
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	contents := "version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\nmap:\n  max_file_bytes: 500000\n  code_index: auto\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := readConfig(path); err != nil {
+		t.Fatalf("readConfig should accept legacy map block: %v", err)
+	}
+}
+
 func TestReadConfigRejectsLegacyTopLevelKeys(t *testing.T) {
 	legacyKeys := []struct {
 		name    string
@@ -407,10 +421,13 @@ func TestDefaultConfigRoundTripsStrictReader(t *testing.T) {
 			t.Fatalf("generated default config should not emit legacy key %q:\n%s", strings.TrimPrefix(forbidden, "\n"), rawStr)
 		}
 	}
-	for _, required := range []string{"version: v1alpha1", "agents:", "map:", "out_of_scope:", "pipeline:"} {
+	for _, required := range []string{"version: v1alpha1", "agents:", "out_of_scope:", "pipeline:"} {
 		if !strings.Contains(rawStr, required) {
 			t.Fatalf("generated default config missing %q:\n%s", required, rawStr)
 		}
+	}
+	if strings.Contains(rawStr, "\nmap:") {
+		t.Fatalf("generated default config must not contain map: block:\n%s", rawStr)
 	}
 }
 

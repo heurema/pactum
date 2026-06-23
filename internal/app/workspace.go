@@ -9,7 +9,6 @@ import (
 
 	"github.com/heurema/pactum/internal/artifacts"
 	"github.com/heurema/pactum/internal/ledger"
-	"github.com/heurema/pactum/internal/projectmap"
 	"github.com/heurema/pactum/internal/version"
 )
 
@@ -27,18 +26,13 @@ func (a App) ensureInitialized() error {
 }
 
 func (a App) Init(root string) error {
-	if err := projectmap.ValidateRoot(root); err != nil {
-		return err
-	}
 	paths := artifacts.New(root)
 	if err := ensureDirs(paths.Dirs()); err != nil {
 		return err
 	}
 
 	now := a.nowUTC()
-	runID := "map_" + now.Format("20060102_150405")
-
-	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "init_started", Timestamp: now, RunID: runID}); err != nil {
+	if err := ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "init_started", Timestamp: now}); err != nil {
 		return err
 	}
 	if err := writeStaticWorkspaceFiles(paths); err != nil {
@@ -56,11 +50,7 @@ func (a App) Init(root string) error {
 	if err := writeJSON(paths.Manifest, manifest); err != nil {
 		return err
 	}
-	result, err := a.refreshMap(root, now)
-	if err != nil {
-		return err
-	}
-	return ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "init_finished", Timestamp: result.FinishedAt, RunID: result.RunID})
+	return ledger.Append(activeStore, paths.EventsJSONL, ledger.Event{Type: "init_finished", Timestamp: now})
 }
 
 func (a App) resolveInitRoot(target string) (string, error) {
@@ -159,11 +149,10 @@ func writeStaticWorkspaceFiles(paths artifacts.Paths) error {
 	}
 	files := map[string][]byte{
 		paths.Gitignore: []byte(strings.TrimSpace(`
-# Regenerable artifacts derived from the repo, the project map, or memory.
+# Regenerable artifacts derived from the repo or memory.
 locks/
 cache/
 tmp/
-map/
 runs/*/context/
 
 # Raw command transcripts. The run outcome lives in git history and the durable

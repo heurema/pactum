@@ -94,9 +94,7 @@ func TestSkillWorkflowReference(t *testing.T) {
 	workflow := readRepoFile(t, skillPackageDir+"/references/workflow.md")
 	for _, want := range []string{
 		"pactum init",
-		"pactum map refresh",
 		"pactum task new",
-		"pactum search",
 		"pactum contract revise",
 		"pactum contract approve --by manual",
 		"pactum prompt build",

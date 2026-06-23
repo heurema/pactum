@@ -49,7 +49,6 @@ func TestExecuteRunUsageRecordsRegistryAgentName(t *testing.T) {
 	// underlying agent for cross-model comparison and adds the registry name.
 	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "pinned-codex", Model: "gpt-5"})
 	app.AgentRegistry = testAgentRegistry(codexHelperAgentDescriptor())
-	runReviewCommand(t, app, "map", "refresh")
 	runReviewCommand(t, app, "prompt", "build", runID)
 	t.Setenv("PACTUM_HELPER_PROCESS", "1")
 	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)

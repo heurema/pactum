@@ -1167,7 +1167,7 @@ func renderReviewerContext(prep reviewerDryRunPreparation) string {
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Reviewer guidance")
 	fmt.Fprintln(&b, "- This context is not complete semantic truth.")
-	fmt.Fprintln(&b, "- Use `pactum search \"<term>\"` and inspect files before proposing findings.")
+	fmt.Fprintln(&b, "- Inspect files before proposing findings.")
 	fmt.Fprintln(&b, "- Do not invent changes.")
 	fmt.Fprintln(&b, "- Do not approve automatically.")
 	fmt.Fprintln(&b, "- Report every issue you believe is likely real: use state=candidate for uncertain findings and drop only when trigger, evidence, and fix_direction cannot be filled concretely.")

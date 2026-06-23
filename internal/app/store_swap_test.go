@@ -34,7 +34,6 @@ func TestContractReviseUsesSwappedStore(t *testing.T) {
 		UpdatedAt: time.Date(2026, 6, 8, 1, 2, 3, 0, time.UTC),
 		RepoRoot:  ".",
 		Workspace: artifacts.WorkspaceRel,
-		MapRunID:  "map_20260608_010000",
 	}
 	contract := draftContract{
 		Schema:             contractSchema,

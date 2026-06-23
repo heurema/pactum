@@ -11,9 +11,9 @@ report, the review, and the accepted memory are all files you can read.
 
 | Stage | Command | Main artifacts | Mutates state? |
 | --- | --- | --- | --- |
-| Init / map | `pactum init`, `pactum map refresh` | `manifest.json`, `config.yaml`, `map/` (`wiki/` pages, `repo-map.md`, `llms.txt`, `files.jsonl`, `hashes.jsonl`, `search.sqlite`) | Yes |
-| Status / search | `pactum status`, `pactum search "<query>"` | — (reads map + workspace) | No |
-| Task | `pactum task new "<task>"`, `pactum task list`, `pactum task show`, `pactum task use` | `runs/<id>/run.json`, `task.md`, `context/repo-context.md`, `context/search-results.json`, `context/memory-context.md`, `contract/contract.json`, `contract/contract.md`, `contract/approval.json`, `cache/current-run` | `new`/`use`: Yes; `list`/`show`: No |
+| Init | `pactum init` | `manifest.json`, `config.yaml` | Yes |
+| Status | `pactum status` | — (reads workspace) | No |
+| Task | `pactum task new "<task>"`, `pactum task list`, `pactum task show`, `pactum task use` | `runs/<id>/run.json`, `task.md`, `context/repo-context.md`, `context/memory-context.md`, `contract/contract.json`, `contract/contract.md`, `contract/approval.json`, `cache/current-run` | `new`/`use`: Yes; `list`/`show`: No |
 | Clarify | `pactum clarify add`, `pactum clarify answer`, `pactum clarify run`, `pactum clarify show` | `clarify/questions.jsonl`, `clarify/answers.jsonl`, `clarify/decisions.jsonl`, `clarify/loop-summary.json` | `add`/`answer`/`run`: Yes; `show`: No |
 | Contract | `pactum contract revise`, `pactum contract approve`, `pactum contract show` | `contract/contract.json`, `contract/contract.md`, `contract/approval.json` | `revise`/`approve`: Yes; `show`: No |
 | Prompt | `pactum prompt build`, `pactum prompt show` | `contract/prompt.md`, `contract/prompt-manifest.json`, `context/executor-context.md`, `context/memory-context.md`, `context/memory-selection.json` | `build`: Yes; `show`: No |
@@ -26,44 +26,19 @@ report, the review, and the accepted memory are all files you can read.
 
 "Mutates state?" means the command writes durable artifacts and/or appends to
 the workspace ledger (`ledger/events.jsonl`). Read-only commands (`status`,
-`search`, every `show`, `clarify show`, `review status`, `memory search`,
+every `show`, `clarify show`, `review status`, `memory search`,
 `memory stale`) never append ledger events.
 
 ## Stage details
 
-### Init and the project map
+### Init
 
-`pactum init` creates the `.heurema/pactum/` workspace, writes the default
-`config.yaml`, and builds the project map: a deterministic scan of the
-repository. `init` also writes a workspace `.gitignore` that version-controls the
-durable run record — contracts, decisions, the ledger, gate verdicts, review
-findings, and memory — while ignoring regenerable artifacts (`map/`, per-run
-`context/`) and raw `*.log` transcripts: the run outcome lives in git history and
-the learnings in memory, so the bulky agent transcripts are not committed. The map
-is **wiki-first**. It produces a generated map wiki under
-`map/wiki/` (`overview.md`, `structure.md`, `commands.md`, `entrypoints.md`,
-`config.md`, `tests.md`, and one `areas/<area>.md` page per top-level
-directory), a file inventory, a human-readable `repo-map.md`, an `llms.txt`
-router, and a SQLite full-text search index. The wiki is generated from
-deterministic facts (file inventory and manifests) and uses conservative,
-evidence-backed language (candidate entrypoint, detected config, likely role).
-In a git repository the scan enumerates files via git, so the repo's
-`.gitignore` is honored (build artifacts like `__pycache__/` or `dist/` are not
-indexed); `.heurema` is always excluded, and non-git directories fall back to a
-filesystem walk that skips `.git`, `.heurema`, and common vendor/build
-directories.
-
-`pactum map refresh` rebuilds those artifacts, including the wiki. `pactum
-status` reports whether the map is fresh or stale (for example, when tracked
-files changed since the last scan) and points you at `pactum map refresh` when a
-refresh is needed.
-
-`pactum search "<query>"` queries the lexical index. The index covers the repo
-map, the `llms.txt` router, the map wiki pages, and files. Filter with `--kind`
-(`repo_map`, `llms`, `wiki`, `file`). Ranking is FTS5 bm25 with a small,
-deterministic polish: the entrypoints/commands/config wiki pages get a modest
-boost, and an exact title/path-basename match gets a small boost. It is a light
-reordering of near-equal matches, not a relevance model.
+`pactum init` creates the `.heurema/pactum/` workspace and writes the default
+`config.yaml`. `init` also writes a workspace `.gitignore` that version-controls
+the durable run record — contracts, decisions, the ledger, gate verdicts, review
+findings, and memory — while ignoring regenerable artifacts (per-run `context/`)
+and raw `*.log` transcripts: the run outcome lives in git history and the
+learnings in memory, so the bulky agent transcripts are not committed.
 
 ### Task
 
@@ -146,13 +121,9 @@ response reports `approval_reset`, `previous_approval_hash`, and
 
 `pactum prompt build <run_id>` builds the executor **prompt boundary**: a
 deterministic `prompt.md` plus a `prompt-manifest.json` that records the
-approved contract hash, the project map run, and the accepted-memory boundary
-(content and source hashes). Build requires the contract to be approved and no
-open blocking clarifications. A stale project map is not a failure: `prompt
-build` refreshes it itself, names the new map run id in its output, and records
-the self-heal as a `map_refresh` object (`{"triggered": false}` when no refresh
-was needed) in both the `--json` response and the prompt manifest. `pactum
-prompt show` prints the built prompt.
+approved contract hash and the accepted-memory boundary (content and source
+hashes). Build requires the contract to be approved and no open blocking
+clarifications. `pactum prompt show` prints the built prompt.
 
 ### Execute
 
@@ -165,8 +136,8 @@ agents registry; `--agent <name>` picks another registered entry. Direct
 execution is unsandboxed and `execute run` never prompts — running it is
 itself the recorded decision.
 Both first re-verify the boundaries recorded at prompt build: the
-contract hash still matches the approval, the project map is still fresh and
-matches the prompt manifest, and the accepted-memory boundary is unchanged.
+contract hash still matches the approval and the accepted-memory boundary is
+unchanged.
 `pactum execute show` inspects captured attempts: with no attempt id it shows
 the run-level execution summary, and `pactum execute show [run_id]
 <attempt_id>` shows one attempt in detail. See [agents.md](agents.md) for the
@@ -195,10 +166,9 @@ execution path unchanged.
 
 ### Gate
 
-`pactum gate run <run_id>` deterministically compares the working tree against
-the project map hashes to report changed/new/missing files, summarizes the
-latest matching execution attempt, and runs the validation commands from the
-contract. When the approved contract declares `paths_in_scope` and/or
+`pactum gate run <run_id>` reports changed/new/missing files via `git status`,
+summarizes the latest matching execution attempt, and runs the validation
+commands from the contract. When the approved contract declares `paths_in_scope` and/or
 `paths_out_of_scope`, the gate also compares changed and new files against those
 globs. The project config controls enforcement:
 

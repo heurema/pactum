@@ -153,8 +153,6 @@ func classifyErrorCode(err error) string {
 		return "contract_not_approved"
 	case strings.Contains(msg, "unsupported agent"), strings.Contains(msg, "unknown agent"):
 		return "unsupported_agent"
-	case strings.Contains(msg, "project map is stale"), strings.Contains(msg, "map is stale"):
-		return "project_map_stale"
 	case strings.Contains(msg, "not initialized"):
 		return "not_initialized"
 	case strings.Contains(msg, "run not found"):

@@ -41,7 +41,6 @@ type clarifierArtifacts struct {
 	Decisions        string `json:"decisions"`
 	Contract         string `json:"contract"`
 	RepoContext      string `json:"repo_context"`
-	SearchResults    string `json:"search_results"`
 }
 
 type clarifierRequestDocument struct {
@@ -459,7 +458,6 @@ func defaultClarifierArtifacts() clarifierArtifacts {
 		Decisions:        "clarify/decisions.jsonl",
 		Contract:         "contract/contract.json",
 		RepoContext:      "context/repo-context.md",
-		SearchResults:    "context/search-results.json",
 	}
 }
 
@@ -526,15 +524,11 @@ func renderClarifierContext(prep clarifierPreparation) string {
 	fmt.Fprintln(&b, "## Repository context")
 	writeFileExcerpt(&b, prep.Context.RunPaths.RepoContext)
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "## Search results")
-	writeFileExcerpt(&b, prep.Context.RunPaths.SearchResults)
-	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Clarifier guidance")
 	fmt.Fprintln(&b, "- Propose only questions that need a human answer to improve the contract.")
 	fmt.Fprintln(&b, "- Do not answer existing or proposed questions.")
 	fmt.Fprintln(&b, "- Do not modify files.")
 	fmt.Fprintln(&b, "- Avoid duplicates of existing clarification questions.")
-	fmt.Fprintln(&b, "- Treat repository map/search context as navigation hints, not semantic truth.")
 	return b.String()
 }
 

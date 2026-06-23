@@ -347,11 +347,6 @@ func TestNextAffordancesAcrossLifecycleStages(t *testing.T) {
 	next = decodeNext(t, app, "contract", "approve", runID, "--json")
 	assertNext(t, next, "pactum prompt build "+runID)
 
-	// Registering the helper agent changed the config, so refresh the map
-	// before building the prompt. The workspace refreshes print no human
-	// Next: hints, so JSON mirrors that with the explicit empty array.
-	next = decodeNext(t, app, "map", "refresh", "--json")
-	assertNext(t, next)
 	next = decodeNext(t, app, "memory", "refresh", "--json")
 	assertNext(t, next)
 

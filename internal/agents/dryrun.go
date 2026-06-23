@@ -98,7 +98,6 @@ func BuildDryRunPlan(runID string, createdAt string, agent AgentDescriptor, spec
 		Checks: DryRunChecks{
 			PromptManifestReady:         true,
 			ContractHashMatchesApproval: true,
-			ProjectMapFresh:             true,
 		},
 		Artifacts: DryRunArtifacts{
 			Prompt:          DryRunArtifactPrompt,
