@@ -334,7 +334,7 @@ func renderReviewFixContext(prep reviewFixPreparation) string {
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Fixer guidance")
 	fmt.Fprintln(&b, "- Source files are the source of truth.")
-	fmt.Fprintln(&b, "- Use `pactum search \"<term>\"` and inspect current source files before relying on this context.")
+	fmt.Fprintln(&b, "- Inspect current source files before relying on this context.")
 	fmt.Fprintln(&b, "- For each current review finding, trace the finding to the code.")
 	fmt.Fprintln(&b, "- If a finding is valid, fix it in place within the approved contract scope.")
 	fmt.Fprintln(&b, "- If a finding is a false positive, leave code unchanged for that finding and explain the rebuttal in your final output.")

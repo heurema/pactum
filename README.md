@@ -57,10 +57,9 @@ agent.
   contract — goal, in/out of scope, acceptance criteria, validation commands,
   assumptions — that you approve. Approval is pinned to a hash of the contract, so
   the spec the agent is held to cannot silently change underneath it.
-- **Deterministic context.** A wiki-first project map and a SQLite full-text index
-  (lexical, no embeddings) give reproducible context; the executor prompt is
-  assembled from the contract and accepted memory and recorded in a
-  manifest — a prompt boundary that is itself part of the audit trail.
+- **Deterministic context.** The executor prompt is assembled from the contract and
+  accepted memory and recorded in a manifest — a prompt boundary that is itself
+  part of the audit trail.
 - **Auditable stages.** Every stage writes durable artifacts under
   `.heurema/pactum/` — the prompt the agent saw, the plan, the diff, the checks,
   the findings — so a run is inspectable and diffable after the fact.
@@ -74,7 +73,7 @@ agent.
   workflow — every `--json` command carries a `next` array of legal moves and an
   `error.fix` remedy on failure.
 - **Project memory.** Accepted, deterministic memory from reviewed runs feeds
-  future prompts, with lexical search and file-hash freshness.
+  future prompts.
 
 The point isn't that the agent is perfect — it's that an opaque run becomes
 something you can read, review, and reproduce.
@@ -82,18 +81,17 @@ something you can read, review, and reproduce.
 ## The workflow
 
 ```
-map → task → clarify → contract → prompt → execute(plan) → gate → review → memory
+task → clarify → contract → prompt → execute(plan) → gate → review → memory
 ```
 
-1. **Map** — build a deterministic project map + search index from the repo.
-2. **Task** — turn a request into a contract-first run.
-3. **Clarify** — surface and answer blocking questions before committing to a spec.
-4. **Contract** — draft → revise → approve; approval is hash-pinned.
-5. **Prompt** — assemble the deterministic executor prompt (the boundary).
-6. **Execute** — `plan` is the safe stop; `run` is real, explicit execution.
-7. **Gate** — detect changes and run the contract's validation commands.
-8. **Review** — the loud loop (or a manual review); findings are fixed or resolved.
-9. **Memory** — capture reusable, deterministic memory from the reviewed run.
+1. **Task** — turn a request into a contract-first run.
+2. **Clarify** — surface and answer blocking questions before committing to a spec.
+3. **Contract** — draft → revise → approve; approval is hash-pinned.
+4. **Prompt** — assemble the deterministic executor prompt (the boundary).
+5. **Execute** — `plan` is the safe stop; `run` is real, explicit execution.
+6. **Gate** — detect changes and run the contract's validation commands.
+7. **Review** — the loud loop (or a manual review); findings are fixed or resolved.
+8. **Memory** — capture reusable, deterministic memory from the reviewed run.
 
 Full detail in [docs/flow.md](docs/flow.md).
 

@@ -489,7 +489,7 @@ func (a App) refreshClarificationArtifacts(context clarifyContext, updatedAt tim
 	}
 	applyClarificationStatusToContract(&contract, status)
 	contract.Status = "draft"
-	if err := writeContractArtifacts(context.RunPaths, contract, state.MapRunID); err != nil {
+	if err := writeContractArtifacts(context.RunPaths, contract); err != nil {
 		return clarifyStatusResponse{}, false, err
 	}
 	status.RunStatus = state.Status

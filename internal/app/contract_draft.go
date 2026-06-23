@@ -46,7 +46,6 @@ type contractDraftArtifacts struct {
 	Answers        string `json:"answers"`
 	Decisions      string `json:"decisions"`
 	RepoContext    string `json:"repo_context"`
-	SearchResults  string `json:"search_results"`
 }
 
 type contractDrafterRequestDocument struct {
@@ -502,7 +501,6 @@ func defaultContractDraftArtifacts() contractDraftArtifacts {
 		Answers:        "clarify/answers.jsonl",
 		Decisions:      "clarify/decisions.jsonl",
 		RepoContext:    "context/repo-context.md",
-		SearchResults:  "context/search-results.json",
 	}
 }
 

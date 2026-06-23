@@ -6,12 +6,10 @@ import (
 	"io"
 	"math/rand"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/heurema/pactum/internal/agents"
-	searchpkg "github.com/heurema/pactum/internal/search"
 )
 
 const (
@@ -202,22 +200,6 @@ func writeWorkspaceStatus(stdout io.Writer, report statusResponse) {
 	fmt.Fprintf(stdout, "  path: %s\n", report.Workspace)
 	fmt.Fprintln(stdout, "  initialized: yes")
 	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Project map:")
-	fmt.Fprintf(stdout, "  status: %s\n", report.ProjectMap.Status)
-	fmt.Fprintf(stdout, "  run: %s\n", report.ProjectMap.RunID)
-	fmt.Fprintf(stdout, "  files indexed: %d\n", report.ProjectMap.FilesIndexed)
-	fmt.Fprintf(stdout, "  search index: %s\n", report.ProjectMap.SearchIndex)
-	if len(report.ProjectMap.StaleReasons) > 0 {
-		fmt.Fprintln(stdout)
-		fmt.Fprintln(stdout, "Stale reasons:")
-		for _, reason := range report.ProjectMap.StaleReasons {
-			fmt.Fprintf(stdout, "  - %s\n", reason)
-		}
-		fmt.Fprintln(stdout)
-		fmt.Fprintln(stdout, "Suggested:")
-		fmt.Fprintln(stdout, "  pactum map refresh")
-	}
-	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Runs:")
 	fmt.Fprintf(stdout, "  active: %d\n", report.Runs.Active)
 	if report.Runs.LatestRunID != "" {
@@ -246,41 +228,6 @@ func writeWorkspaceStatus(stdout io.Writer, report statusResponse) {
 	fmt.Fprintf(stdout, "  estimated cost: $%.2f\n", report.Usage.EstimatedCostUSD)
 }
 
-func (a App) Search(stdout io.Writer, query string, limit int, kind string, jsonOutput bool) error {
-	if strings.TrimSpace(query) == "" {
-		return errors.New("usage: pactum search <query>")
-	}
-
-	_, paths, ok, err := a.requireWorkspace(stdout, false)
-	if err != nil || !ok {
-		return err
-	}
-
-	response, err := searchpkg.Query(paths.SearchSQLite, searchpkg.QueryOptions{
-		Query: query,
-		Limit: limit,
-		Kind:  kind,
-	})
-	if err != nil {
-		if searchpkg.IsMissingIndex(err) {
-			fmt.Fprintln(stdout, "Search index is missing. Run: pactum map refresh")
-			return nil
-		}
-		if searchpkg.IsStaleIndex(err) {
-			fmt.Fprintln(stdout, "Search index is stale. Run: pactum map refresh")
-			return nil
-		}
-		return err
-	}
-
-	if jsonOutput {
-		return writeJSONResponse(stdout, response)
-	}
-
-	writeSearchResults(stdout, response)
-	return nil
-}
-
 func (a App) agentRegistry() agents.Registry {
 	if a.AgentRegistry != nil {
 		return a.AgentRegistry
@@ -293,29 +240,4 @@ func (a App) agentTransport() agents.Transport {
 		return a.AgentTransport
 	}
 	return agents.ACPTransport{}
-}
-
-func writeSearchResults(stdout io.Writer, response searchpkg.Response) {
-	fmt.Fprintf(stdout, "Search results for: %s\n\n", response.Query)
-	if len(response.Results) == 0 {
-		fmt.Fprintln(stdout, "No results found.")
-		return
-	}
-	for _, result := range response.Results {
-		fmt.Fprintf(stdout, "%d. %s %s\n", result.Rank, result.Kind, result.Path)
-		switch result.Kind {
-		case searchpkg.KindFile:
-			if result.Language != "" {
-				fmt.Fprintf(stdout, "   language: %s\n", result.Language)
-			}
-			if result.CodeKind != "" {
-				fmt.Fprintf(stdout, "   kind: %s\n", result.CodeKind)
-			}
-		default:
-			fmt.Fprintf(stdout, "   title: %s\n", result.Title)
-		}
-		if result.Rank < len(response.Results) {
-			fmt.Fprintln(stdout)
-		}
-	}
 }

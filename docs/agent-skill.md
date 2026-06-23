@@ -34,19 +34,16 @@ The flow (full detail in
 
 1. verify the CLI (`which pactum`)
 2. `pactum status`, and `pactum init` only if needed
-3. `pactum map refresh` if the map is stale
-4. `pactum task new "<task>"` (sets the current run)
-5. targeted `pactum search` (identifiers, paths, domain terms; `--kind wiki`,
-   `--kind file`) and read the relevant `map/wiki/` pages and source files
-6. clarify if needed (`clarify add`, then a typed `clarify answer` or the
+3. `pactum task new "<task>"` (sets the current run)
+4. read relevant source files to understand the task context
+5. clarify if needed (`clarify add`, then a typed `clarify answer` or the
    recommended-answer decision verbs `--recommended` / `--all-recommended`)
-7. `pactum contract revise` (goal, in/out of scope, acceptance, validation)
-8. `pactum contract approve --by manual`
-9. `pactum prompt build` / `pactum prompt show` (a stale map is self-healed and
-   the refresh recorded)
-10. `pactum execute plan --agent <agent>` (use the configured executor, or omit
-    `--agent` to take the default)
-11. report current run, relevant files, contract summary, plan command, next
+6. `pactum contract revise` (goal, in/out of scope, acceptance, validation)
+7. `pactum contract approve --by manual`
+8. `pactum prompt build` / `pactum prompt show`
+9. `pactum execute plan --agent <agent>` (use the configured executor, or omit
+   `--agent` to take the default)
+10. report current run, relevant files, contract summary, plan command, next
     action
 
 ## Machine affordances
@@ -81,6 +78,5 @@ the threat model in [SECURITY.md](../SECURITY.md). See
 
 ## Source of truth
 
-Pactum's map, wiki, and memory are navigation and audit context —
-best-effort and incomplete by design. Source files remain the source of truth;
-the skill verifies against them before relying on the map.
+Pactum's memory is navigation and audit context — best-effort and incomplete by
+design. Source files remain the source of truth.

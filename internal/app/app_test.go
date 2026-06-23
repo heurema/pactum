@@ -16,12 +16,10 @@ import (
 
 	"github.com/heurema/pactum/internal/agents"
 	"github.com/heurema/pactum/internal/artifacts"
-	"github.com/heurema/pactum/internal/projectmap"
-	searchpkg "github.com/heurema/pactum/internal/search"
 	"gopkg.in/yaml.v3"
 )
 
-func TestInitCreatesExpectedLayoutAndProjectMap(t *testing.T) {
+func TestInitCreatesExpectedLayout(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
 	mustWriteFile(t, filepath.Join(root, "src", "main.go"), `package main
@@ -48,20 +46,6 @@ func helper() {}
 		paths.Manifest,
 		paths.Config,
 		paths.Gitignore,
-		paths.MapManifest,
-		paths.LLMS,
-		paths.RepoMap,
-		paths.AreaIndex,
-		paths.FilesJSONL,
-		paths.HashesJSONL,
-		paths.SearchSQLite,
-		paths.WikiOverview,
-		paths.WikiStructure,
-		paths.WikiCommands,
-		paths.WikiEntrypoints,
-		paths.WikiConfig,
-		paths.WikiTests,
-		filepath.Join(paths.MapRunsDir, "map_20260531_184012.json"),
 		paths.ProjectMemory,
 		paths.MemoryItems,
 		paths.StaleReport,
@@ -76,9 +60,6 @@ func helper() {}
 	if config.Version != "v1alpha1" {
 		t.Fatalf("config version = %q, want v1alpha1", config.Version)
 	}
-	if config.Map.MaxFileBytes != 500000 {
-		t.Fatalf("config map.max_file_bytes = %d, want 500000", config.Map.MaxFileBytes)
-	}
 	if config.OutOfScope != gateScopeEnforcementBlock {
 		t.Fatalf("config out_of_scope = %q, want block", config.OutOfScope)
 	}
@@ -86,23 +67,22 @@ func helper() {}
 		t.Fatalf("config agents should register the single pinned claude entry: %#v", config.Agents)
 	}
 	configYAML := mustReadFile(t, paths.Config)
-	for _, want := range []string{"agents:", "- name: claude", "model: claude-opus-4-8", "map:", "out_of_scope: block", "pipeline:"} {
+	for _, want := range []string{"agents:", "- name: claude", "model: claude-opus-4-8", "out_of_scope: block", "pipeline:"} {
 		if !strings.Contains(configYAML, want) {
 			t.Fatalf("config.yaml missing %q:\n%s", want, configYAML)
 		}
+	}
+	if strings.Contains(configYAML, "map:") {
+		t.Fatalf("config.yaml should not contain \"map:\":\n%s", configYAML)
 	}
 	for _, forbidden := range []string{"execute:", "models:", "adapters:", "default_executor:", "default_reviewer:", "include_go_ast", "tree_sitter", "tree_sitter_languages", "entrypoints", "default_profile:", "project_map:", "limits:", "memory:", "max_usd", "budget:", "max_tokens:", "code_index:"} {
 		if strings.Contains(configYAML, forbidden) {
 			t.Fatalf("config.yaml should not contain %q:\n%s", forbidden, configYAML)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(paths.MapDir, "entries.jsonl")); !os.IsNotExist(err) {
-		t.Fatalf("entries.jsonl should not be generated as a primary artifact")
-	}
 	gitignore := mustReadFile(t, paths.Gitignore)
 	// Ignore regenerable artifacts and raw command transcripts.
 	for _, want := range []string{
-		"map/",
 		"cache/",
 		"tmp/",
 		"locks/",
@@ -116,7 +96,9 @@ func helper() {}
 	// The durable run record is versioned: the ledger (audit timeline), the
 	// decision/verdict records, and run inputs are NOT ignored. Only *.log
 	// transcripts under execute/review/gate are ignored, not the whole dirs.
+	// The removed project-map artifact path must not appear in generated ignores.
 	for _, forbidden := range []string{
+		"map/",
 		"ledger/",
 		"runs/*/execute/",
 		"runs/*/review/",
@@ -129,125 +111,17 @@ func helper() {}
 			t.Fatalf(".gitignore should not ignore %q:\n%s", forbidden, gitignore)
 		}
 	}
-	workspaceManifest, err := readWorkspaceManifest(paths.Manifest)
-	assertNoError(t, err)
-	if workspaceManifest.RepoRoot != "." {
-		t.Fatalf("workspace manifest repo_root = %q, want .", workspaceManifest.RepoRoot)
-	}
-
-	files := readFileRecords(t, paths.FilesJSONL)
-	seen := map[string]bool{}
-	for _, file := range files {
-		seen[file.Path] = true
-	}
-	if !seen["README.md"] {
-		t.Fatalf("README.md was not indexed: %#v", files)
-	}
-	if !seen["src/main.go"] {
-		t.Fatalf("src/main.go was not indexed: %#v", files)
-	}
-	if seen["node_modules/ignored.js"] {
-		t.Fatalf("node_modules file should have been ignored: %#v", files)
-	}
-
-	hashes := readLines(t, paths.HashesJSONL)
-	if len(hashes) != len(files) {
-		t.Fatalf("hash record count = %d, want %d", len(hashes), len(files))
-	}
-
-	repoMap := mustReadFile(t, paths.RepoMap)
-	for _, want := range []string{
-		"# Pactum Project Map",
-		"Repository root: `.`",
-		"## Summary",
-		"## How to navigate this map",
-		"## Wiki pages",
-		"`wiki/overview.md`",
-		"`wiki/structure.md`",
-		"## Project map artifacts",
-		"## Language support",
-		"not complete semantic truth",
-		"Source files remain the source of truth.",
-		"## Agent guidance",
-		"Before adding new code, search/read relevant files.",
-		"README.md",
-		"src/main.go",
-		"Go: 1 file(s)",
-	} {
-		if !strings.Contains(repoMap, want) {
-			t.Fatalf("repo-map.md missing %q:\n%s", want, repoMap)
-		}
-	}
-	if strings.Contains(repoMap, "Important entrypoints") {
-		t.Fatalf("repo-map.md should not use old entrypoints terminology:\n%s", repoMap)
-	}
-	if strings.Contains(repoMap, "code-items") {
-		t.Fatalf("repo-map.md should not reference code items:\n%s", repoMap)
-	}
-	// repo-map.md is wiki-first: wiki pages must be listed before other sections.
-	if wikiIdx := strings.Index(repoMap, "## Wiki pages"); wikiIdx < 0 {
-		t.Fatalf("repo-map.md must contain wiki pages section:\n%s", repoMap)
-	}
-	llms := mustReadFile(t, paths.LLMS)
-	for _, want := range []string{
-		"deterministic Pactum project map",
-		"map/wiki/overview.md",
-		"map/wiki/structure.md",
-		"map/wiki/commands.md",
-		"map/wiki/entrypoints.md",
-		"map/wiki/config.md",
-		"map/wiki/tests.md",
-		"files.jsonl",
-		"Source files remain the source of truth.",
-		"inspect relevant existing files",
-		"If ownership is unclear, ask for clarification.",
-	} {
-		if !strings.Contains(llms, want) {
-			t.Fatalf("llms.txt missing %q:\n%s", want, llms)
-		}
-	}
-	if strings.Contains(llms, "Tree-sitter") {
-		t.Fatalf("llms.txt should not mention Tree-sitter:\n%s", llms)
-	}
-	if strings.Contains(llms, "code-items") {
-		t.Fatalf("llms.txt should not reference code items:\n%s", llms)
-	}
-	manifest, err := readMapManifest(paths.MapManifest)
-	assertNoError(t, err)
+	var manifest workspaceManifest
+	assertNoError(t, readJSON(paths.Manifest, &manifest))
 	if manifest.RepoRoot != "." {
-		t.Fatalf("map manifest repo_root = %q, want .", manifest.RepoRoot)
-	}
-	if manifest.Artifacts["search"] != "map/search.sqlite" {
-		t.Fatalf("manifest search artifact = %q", manifest.Artifacts["search"])
-	}
-	if manifest.Artifacts["entries"] != "" {
-		t.Fatalf("manifest should not point to entries artifact: %#v", manifest.Artifacts)
-	}
-	for key, want := range map[string]string{
-		"wiki_overview":    "map/wiki/overview.md",
-		"wiki_structure":   "map/wiki/structure.md",
-		"wiki_commands":    "map/wiki/commands.md",
-		"wiki_entrypoints": "map/wiki/entrypoints.md",
-		"wiki_config":      "map/wiki/config.md",
-		"wiki_tests":       "map/wiki/tests.md",
-		"wiki_areas":       "map/wiki/areas/",
-	} {
-		if manifest.Artifacts[key] != want {
-			t.Fatalf("manifest %s artifact = %q, want %q", key, manifest.Artifacts[key], want)
-		}
-	}
-	if manifest.ConfigHash == "" {
-		t.Fatalf("manifest config_hash should be populated")
-	}
-	if manifest.ConfigHashScope != "map" {
-		t.Fatalf("manifest config_hash_scope = %q, want map", manifest.ConfigHashScope)
+		t.Fatalf("workspace manifest repo_root = %q, want .", manifest.RepoRoot)
 	}
 
 	events := readLines(t, paths.EventsJSONL)
-	if len(events) != 6 {
-		t.Fatalf("events line count = %d, want 6: %v", len(events), events)
+	if len(events) != 2 {
+		t.Fatalf("events line count = %d, want 2: %v", len(events), events)
 	}
-	for i, want := range []string{"init_started", "map_refresh_started", "search_index_started", "search_index_finished", "map_refresh_finished", "init_finished"} {
+	for i, want := range []string{"init_started", "init_finished"} {
 		if !strings.Contains(events[i], want) {
 			t.Fatalf("event %d = %s, want %s", i, events[i], want)
 		}
@@ -325,57 +199,6 @@ func TestReadConfigRejectsLegacyReviewBudget(t *testing.T) {
 	}
 }
 
-func TestReadConfigAcceptsLegacyCodeIndex(t *testing.T) {
-	root := t.TempDir()
-	paths := artifacts.New(root)
-	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
-	mustWriteFile(t, paths.Config, "version: v1alpha1\nagents:\n  - name: claude\n    model: claude-opus-4-8\nmap:\n  max_file_bytes: 500000\n  code_index: auto\n")
-
-	config, err := readConfig(paths.Config)
-	assertNoError(t, err)
-	if config.Map.MaxFileBytes != 500000 {
-		t.Fatalf("config.Map.MaxFileBytes = %d, want 500000", config.Map.MaxFileBytes)
-	}
-}
-
-func TestInitUsesConfigMaxFileBytesAndManifestWarnings(t *testing.T) {
-	root := t.TempDir()
-	paths := artifacts.New(root)
-	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
-	config := defaultConfigFile()
-	config.Map.MaxFileBytes = 64
-	assertNoError(t, writeYAML(paths.Config, config))
-	mustWriteFile(t, filepath.Join(root, "small.go"), "package small\n")
-	mustWriteFile(t, filepath.Join(root, "large.go"), "package large\n"+strings.Repeat("x", 128))
-
-	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-
-	files := readFileRecords(t, paths.FilesJSONL)
-	seen := map[string]bool{}
-	for _, file := range files {
-		seen[file.Path] = true
-	}
-	if !seen["small.go"] {
-		t.Fatalf("small.go was not indexed: %#v", files)
-	}
-	if seen["large.go"] {
-		t.Fatalf("large.go should have been skipped: %#v", files)
-	}
-
-	manifest, err := readMapManifest(paths.MapManifest)
-	assertNoError(t, err)
-	if manifest.FilesSkipped != 1 {
-		t.Fatalf("manifest files_skipped = %d, want 1", manifest.FilesSkipped)
-	}
-	if !strings.Contains(strings.Join(manifest.Warnings, "\n"), "skipped large file: large.go") {
-		t.Fatalf("manifest warnings did not mention skipped large.go: %#v", manifest.Warnings)
-	}
-}
-
 func TestStatusBeforeAndAfterInit(t *testing.T) {
 	root := t.TempDir()
 
@@ -405,9 +228,6 @@ func TestStatusBeforeAndAfterInit(t *testing.T) {
 	for _, want := range []string{
 		"Pactum status",
 		"initialized: yes",
-		"status: fresh",
-		"run: map_20260531_184012",
-		"files indexed:",
 		"active: 0",
 		"items: 0",
 		"estimated cost: $0.00",
@@ -415,219 +235,6 @@ func TestStatusBeforeAndAfterInit(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("status after init missing %q:\n%s", want, got)
 		}
-	}
-}
-
-func TestStatusReportsStaleReasonsAndRefreshClearsThem(t *testing.T) {
-	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
-	mustWriteFile(t, filepath.Join(root, "old.go"), "package old\n")
-
-	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-
-	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
-	assertNoError(t, os.Remove(filepath.Join(root, "old.go")))
-	mustWriteFile(t, filepath.Join(root, "new.go"), "package newfile\n")
-
-	stdout.Reset()
-	stderr.Reset()
-	code = testApp(root).Run([]string{"status"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("status exited %d, stderr: %s", code, stderr.String())
-	}
-	got := stdout.String()
-	for _, want := range []string{
-		"status: stale",
-		"changed file: README.md",
-		"missing file: old.go",
-		"new file: new.go",
-		"Suggested:",
-		"pactum map refresh",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("stale status missing %q:\n%s", want, got)
-		}
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = testApp(root).Run([]string{"map", "refresh"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = testApp(root).Run([]string{"status"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("status after refresh exited %d, stderr: %s", code, stderr.String())
-	}
-	got = stdout.String()
-	if !strings.Contains(got, "status: fresh") {
-		t.Fatalf("status after refresh should be fresh:\n%s", got)
-	}
-	if strings.Contains(got, "Stale reasons:") {
-		t.Fatalf("status after refresh should not print stale reasons:\n%s", got)
-	}
-}
-
-func TestStatusReportsMissingArtifactAndConfigChange(t *testing.T) {
-	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
-
-	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-
-	paths := artifacts.New(root)
-	assertNoError(t, os.Remove(paths.SearchSQLite))
-	config, err := readConfig(paths.Config)
-	assertNoError(t, err)
-	config.Map.MaxFileBytes = 123
-	assertNoError(t, writeYAML(paths.Config, config))
-
-	stdout.Reset()
-	stderr.Reset()
-	code = testApp(root).Run([]string{"status"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("status exited %d, stderr: %s", code, stderr.String())
-	}
-	got := stdout.String()
-	for _, want := range []string{
-		"status: stale",
-		"search index: missing",
-		"missing artifact: map/search.sqlite",
-		"map config changed: .heurema/pactum/config.yaml",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("status missing %q:\n%s", want, got)
-		}
-	}
-}
-
-// TestMapStalenessPinsOnlyMapSection pins that the map staleness check narrows
-// to the map: config section: editing a non-map section (here the agents
-// registry) keeps the map fresh, while editing map.max_file_bytes makes it
-// stale.
-func TestMapStalenessPinsOnlyMapSection(t *testing.T) {
-	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
-	var stdout, stderr bytes.Buffer
-	if code := testApp(root).Run([]string{"init"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-	paths := artifacts.New(root)
-
-	// Editing a non-map section must not invalidate the map.
-	config, err := readConfig(paths.Config)
-	assertNoError(t, err)
-	config.Agents = append(config.Agents, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
-	config.Pipeline.CodeReview.By = stageBy{"codex"}
-	assertNoError(t, writeYAML(paths.Config, config))
-
-	statusReasons := func() []string {
-		var out, errOut bytes.Buffer
-		if code := testApp(root).Run([]string{"status", "--json"}, &out, &errOut); code != 0 {
-			t.Fatalf("status --json exited %d, stderr: %s", code, errOut.String())
-		}
-		var response statusResponse
-		assertNoError(t, json.Unmarshal(out.Bytes(), &response))
-		return response.ProjectMap.StaleReasons
-	}
-	for _, reason := range statusReasons() {
-		if strings.Contains(reason, "config") {
-			t.Fatalf("editing a non-map section must not make the map stale: %v", reason)
-		}
-	}
-
-	// Editing a map parameter must invalidate the map.
-	config, err = readConfig(paths.Config)
-	assertNoError(t, err)
-	config.Map.MaxFileBytes = 4096
-	assertNoError(t, writeYAML(paths.Config, config))
-	found := false
-	for _, reason := range statusReasons() {
-		if strings.Contains(reason, "map config changed") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("editing map.max_file_bytes should make the map stale: %v", statusReasons())
-	}
-}
-
-// TestLegacyMapManifestStaleOnceThenMigrates pins that a manifest without the
-// config_hash_scope marker (the legacy whole-file pin) is reported stale once,
-// and the next map refresh writes the map-section hash plus the scope marker so
-// status is fresh again.
-func TestLegacyMapManifestStaleOnceThenMigrates(t *testing.T) {
-	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
-	var stdout, stderr bytes.Buffer
-	if code := testApp(root).Run([]string{"init"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-	paths := artifacts.New(root)
-
-	// Simulate a manifest written before the scope marker: a whole-file pin with
-	// no config_hash_scope.
-	manifest, err := readMapManifest(paths.MapManifest)
-	assertNoError(t, err)
-	manifest.ConfigHashScope = ""
-	manifest.ConfigHash = "legacy-whole-file-hash"
-	assertNoError(t, writeJSON(paths.MapManifest, manifest))
-
-	var out, errOut bytes.Buffer
-	if code := testApp(root).Run([]string{"status", "--json"}, &out, &errOut); code != 0 {
-		t.Fatalf("status --json exited %d, stderr: %s", code, errOut.String())
-	}
-	var response statusResponse
-	assertNoError(t, json.Unmarshal(out.Bytes(), &response))
-	if response.ProjectMap.Status != "stale" {
-		t.Fatalf("legacy manifest should be stale: %#v", response.ProjectMap)
-	}
-	legacyReported := false
-	for _, reason := range response.ProjectMap.StaleReasons {
-		if strings.Contains(reason, "map config pin format changed") {
-			legacyReported = true
-		}
-	}
-	if !legacyReported {
-		t.Fatalf("legacy manifest should report the pin-format change once: %#v", response.ProjectMap.StaleReasons)
-	}
-
-	// A refresh migrates the manifest: map-section hash + scope marker.
-	out.Reset()
-	errOut.Reset()
-	if code := testApp(root).Run([]string{"map", "refresh"}, &out, &errOut); code != 0 {
-		t.Fatalf("map refresh exited %d, stderr: %s", code, errOut.String())
-	}
-	migrated, err := readMapManifest(paths.MapManifest)
-	assertNoError(t, err)
-	if migrated.ConfigHashScope != "map" {
-		t.Fatalf("refresh should write config_hash_scope=map, got %q", migrated.ConfigHashScope)
-	}
-
-	out.Reset()
-	errOut.Reset()
-	if code := testApp(root).Run([]string{"status", "--json"}, &out, &errOut); code != 0 {
-		t.Fatalf("status --json exited %d, stderr: %s", code, errOut.String())
-	}
-	var afterRefresh statusResponse
-	assertNoError(t, json.Unmarshal(out.Bytes(), &afterRefresh))
-	for _, reason := range afterRefresh.ProjectMap.StaleReasons {
-		if strings.Contains(reason, "config") {
-			t.Fatalf("migrated manifest should not be config-stale: %v", reason)
-		}
-	}
-	if afterRefresh.ProjectMap.Status != "fresh" {
-		t.Fatalf("migrated manifest must be fresh, got %q (reasons: %v)", afterRefresh.ProjectMap.Status, afterRefresh.ProjectMap.StaleReasons)
 	}
 }
 
@@ -672,15 +279,6 @@ func TestStatusJSONOutput(t *testing.T) {
 	}
 	if after.Workspace != artifacts.New(root).Workspace {
 		t.Fatalf("workspace = %q, want %q", after.Workspace, artifacts.New(root).Workspace)
-	}
-	if after.ProjectMap.Status != "fresh" {
-		t.Fatalf("project_map.status = %q, want fresh: %#v", after.ProjectMap.Status, after.ProjectMap)
-	}
-	if after.ProjectMap.SearchIndex != "ready" {
-		t.Fatalf("project_map.search_index = %q, want ready", after.ProjectMap.SearchIndex)
-	}
-	if len(after.ProjectMap.StaleReasons) != 0 {
-		t.Fatalf("project_map.stale_reasons = %#v, want empty", after.ProjectMap.StaleReasons)
 	}
 	if after.Runs.Active != 0 || after.Memory.Items != 0 || after.Usage.TotalTokens != 0 || after.Usage.EstimatedCostUSD != 0 {
 		t.Fatalf("unexpected zero-status sections: %#v", after)
@@ -750,7 +348,6 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 		filepath.Join(runDir, "run.json"),
 		filepath.Join(runDir, "task.md"),
 		filepath.Join(runDir, "context", "repo-context.md"),
-		filepath.Join(runDir, "context", "search-results.json"),
 		filepath.Join(runDir, "clarify", "questions.jsonl"),
 		filepath.Join(runDir, "clarify", "answers.jsonl"),
 		filepath.Join(runDir, "clarify", "decisions.jsonl"),
@@ -767,10 +364,10 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 	if state.Schema != "pactum.run.v1alpha1" || state.RunID != "run_20260531_184012" || state.Status != "contract_draft" {
 		t.Fatalf("unexpected run state: %#v", state)
 	}
-	if state.Task != task || state.RepoRoot != "." || state.Workspace != artifacts.WorkspaceRel || state.MapRunID != "map_20260531_184012" {
-		t.Fatalf("run state has unexpected task/root/workspace/map: %#v", state)
+	if state.Task != task || state.RepoRoot != "." || state.Workspace != artifacts.WorkspaceRel {
+		t.Fatalf("run state has unexpected task/root/workspace: %#v", state)
 	}
-	if state.Artifacts.ContractJSON != "contract/contract.json" || state.Artifacts.SearchResults != "context/search-results.json" {
+	if state.Artifacts.ContractJSON != "contract/contract.json" {
 		t.Fatalf("run state artifacts mismatch: %#v", state.Artifacts)
 	}
 
@@ -780,19 +377,12 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 	}
 	repoContext := mustReadFile(t, filepath.Join(runDir, "context", "repo-context.md"))
 	for _, want := range []string{
-		"Map run: map_20260531_184012",
 		"Pactum has not yet done agentic clarification.",
 		"deterministic context",
 	} {
 		if !strings.Contains(repoContext, want) {
 			t.Fatalf("repo-context.md missing %q:\n%s", want, repoContext)
 		}
-	}
-
-	var searchResults runSearchResults
-	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, filepath.Join(runDir, "context", "search-results.json"))), &searchResults))
-	if searchResults.Query != task || searchResults.Results == nil {
-		t.Fatalf("unexpected search-results.json: %#v", searchResults)
 	}
 
 	var contract draftContract
@@ -841,8 +431,8 @@ func TestRunContractOnlyCreatesLayoutAndArtifacts(t *testing.T) {
 	}
 
 	events := readLines(t, paths.EventsJSONL)
-	if len(events) != 8 {
-		t.Fatalf("events line count = %d, want 8: %v", len(events), events)
+	if len(events) != 4 {
+		t.Fatalf("events line count = %d, want 4: %v", len(events), events)
 	}
 	for i, want := range []string{"run_created", "contract_draft_created"} {
 		event := events[len(events)-2+i]
@@ -873,38 +463,21 @@ func TestRunContractOnlyArtifactsUseRepoRelativePaths(t *testing.T) {
 	paths := artifacts.New(root)
 	runDir := filepath.Join(paths.RunsDir, "run_20260531_184012")
 	workspaceManifest := mustReadFile(t, paths.Manifest)
-	mapManifest := mustReadFile(t, paths.MapManifest)
-	repoMap := mustReadFile(t, paths.RepoMap)
-	mapRun := mustReadFile(t, filepath.Join(paths.MapRunsDir, "map_20260531_184012.json"))
 	runJSON := mustReadFile(t, filepath.Join(runDir, "run.json"))
 	repoContext := mustReadFile(t, filepath.Join(runDir, "context", "repo-context.md"))
 	contractMD := mustReadFile(t, filepath.Join(runDir, "contract", "contract.md"))
-	searchResults := mustReadFile(t, filepath.Join(runDir, "context", "search-results.json"))
 
 	for name, content := range map[string]string{
-		"manifest.json":       workspaceManifest,
-		"map/manifest.json":   mapManifest,
-		"map/repo-map.md":     repoMap,
-		"map/runs/run.json":   mapRun,
-		"run.json":            runJSON,
-		"repo-context.md":     repoContext,
-		"contract.md":         contractMD,
-		"search-results.json": searchResults,
+		"manifest.json":   workspaceManifest,
+		"run.json":        runJSON,
+		"repo-context.md": repoContext,
+		"contract.md":     contractMD,
 	} {
 		assertDoesNotContainRoot(t, name, content, root)
 	}
 
-	for name, content := range map[string]string{
-		"manifest.json":     workspaceManifest,
-		"map/manifest.json": mapManifest,
-		"map/runs/run.json": mapRun,
-	} {
-		if !strings.Contains(content, `"repo_root": "."`) {
-			t.Fatalf("%s missing portable repo_root:\n%s", name, content)
-		}
-	}
-	if !strings.Contains(repoMap, "Repository root: `.`") {
-		t.Fatalf("repo-map.md missing portable repository root:\n%s", repoMap)
+	if !strings.Contains(workspaceManifest, `"repo_root": "."`) {
+		t.Fatalf("manifest.json missing portable repo_root:\n%s", workspaceManifest)
 	}
 	for _, want := range []string{
 		`"repo_root": "."`,
@@ -916,41 +489,6 @@ func TestRunContractOnlyArtifactsUseRepoRelativePaths(t *testing.T) {
 		if !strings.Contains(runJSON, want) {
 			t.Fatalf("run.json missing portable path %q:\n%s", want, runJSON)
 		}
-	}
-	if !strings.Contains(searchResults, `"path": "task.md"`) {
-		t.Fatalf("search-results.json should contain repo-relative result path:\n%s", searchResults)
-	}
-}
-
-func TestRunContractOnlySearchResultsWarnWhenIndexMissing(t *testing.T) {
-	root := t.TempDir()
-	task := "add sqlite cache"
-	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
-
-	var stdout, stderr bytes.Buffer
-	app := testApp(root)
-	code := app.Run([]string{"init"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-	paths := artifacts.New(root)
-	assertNoError(t, os.Remove(paths.SearchSQLite))
-
-	stdout.Reset()
-	stderr.Reset()
-	code = app.Run([]string{"task", "new", task}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("run --contract-only exited %d, stderr: %s", code, stderr.String())
-	}
-
-	var searchResults runSearchResults
-	runDir := filepath.Join(paths.RunsDir, "run_20260531_184012")
-	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, filepath.Join(runDir, "context", "search-results.json"))), &searchResults))
-	if searchResults.Query != task || len(searchResults.Results) != 0 {
-		t.Fatalf("unexpected search results for missing index: %#v", searchResults)
-	}
-	if len(searchResults.Warnings) != 1 || !strings.Contains(searchResults.Warnings[0], "Search index is stale") {
-		t.Fatalf("missing stale search warning: %#v", searchResults)
 	}
 }
 
@@ -1864,13 +1402,12 @@ func TestContractArtifactsUseRepoRelativePaths(t *testing.T) {
 	}
 
 	for name, content := range map[string]string{
-		"run.json":                    mustReadFile(t, runPaths.RunJSON),
-		"context/repo-context.md":     mustReadFile(t, runPaths.RepoContext),
-		"context/search-results.json": mustReadFile(t, runPaths.SearchResults),
-		"contract/contract.json":      mustReadFile(t, runPaths.ContractJSON),
-		"contract/contract.md":        mustReadFile(t, runPaths.ContractMD),
-		"contract/prompt.md":          mustReadFile(t, runPaths.PromptMD),
-		"contract/approval.json":      mustReadFile(t, runPaths.ApprovalJSON),
+		"run.json":                mustReadFile(t, runPaths.RunJSON),
+		"context/repo-context.md": mustReadFile(t, runPaths.RepoContext),
+		"contract/contract.json":  mustReadFile(t, runPaths.ContractJSON),
+		"contract/contract.md":    mustReadFile(t, runPaths.ContractMD),
+		"contract/prompt.md":      mustReadFile(t, runPaths.PromptMD),
+		"contract/approval.json":  mustReadFile(t, runPaths.ApprovalJSON),
 	} {
 		assertDoesNotContainRoot(t, name, content, root)
 	}
@@ -2304,189 +1841,9 @@ func TestClarifyArtifactsUseRepoRelativePaths(t *testing.T) {
 		"decisions.jsonl":      mustReadFile(t, runPaths.DecisionsJSONL),
 		"run.json":             mustReadFile(t, runPaths.RunJSON),
 		"repo-context.md":      mustReadFile(t, runPaths.RepoContext),
-		"search-results.json":  mustReadFile(t, runPaths.SearchResults),
 		"contract/contract.md": mustReadFile(t, runPaths.ContractMD),
 	} {
 		assertDoesNotContainRoot(t, name, content, root)
-	}
-}
-
-func TestMapRefreshJSONOutput(t *testing.T) {
-	root := t.TempDir()
-	app := testAppSequence(root)
-	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
-
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"init"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = app.Run([]string{"map", "refresh", "--json"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("map refresh --json exited %d, stderr: %s", code, stderr.String())
-	}
-	var result mapRefreshResponse
-	assertNoError(t, json.Unmarshal(stdout.Bytes(), &result))
-	if result.RunID == "" || result.RepoRoot != "." || result.SearchIndex != "ready" || result.FilesIndexed == 0 {
-		t.Fatalf("unexpected map refresh --json result: %#v", result)
-	}
-	if result.Next == nil || len(result.Next) != 0 {
-		t.Fatalf("map refresh next = %v, want the explicit empty array", result.Next)
-	}
-}
-
-func TestMapRefreshRunIDsAreCollisionSafe(t *testing.T) {
-	root := t.TempDir()
-	paths := artifacts.New(root)
-	assertNoError(t, os.MkdirAll(paths.Workspace, 0o755))
-	config := defaultConfigFile()
-	config.Map.MaxFileBytes = 64
-	assertNoError(t, writeYAML(paths.Config, config))
-	mustWriteFile(t, filepath.Join(root, "small.go"), "package small\n")
-	mustWriteFile(t, filepath.Join(root, "large.go"), "package large\n"+strings.Repeat("x", 128))
-	mustWriteFile(t, filepath.Join(root, "node_modules", "ignored.js"), "console.log('ignored')\n")
-
-	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-	firstManifest, err := readWorkspaceManifest(paths.Manifest)
-	assertNoError(t, err)
-	firstRunID := firstManifest.Map.CurrentRunID
-	if firstRunID != "map_20260531_184012" {
-		t.Fatalf("first run id = %q, want map_20260531_184012", firstRunID)
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = testApp(root).Run([]string{"map", "refresh"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
-	}
-	secondManifest, err := readWorkspaceManifest(paths.Manifest)
-	assertNoError(t, err)
-	secondRunID := secondManifest.Map.CurrentRunID
-	if secondRunID != "map_20260531_184012_02" {
-		t.Fatalf("second run id = %q, want map_20260531_184012_02", secondRunID)
-	}
-	if firstRunID == secondRunID {
-		t.Fatalf("run ids should differ: %q", firstRunID)
-	}
-
-	firstRunPath := filepath.Join(paths.MapRunsDir, firstRunID+".json")
-	secondRunPath := filepath.Join(paths.MapRunsDir, secondRunID+".json")
-	assertFile(t, firstRunPath)
-	assertFile(t, secondRunPath)
-
-	var secondRun MapRefreshResult
-	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, secondRunPath)), &secondRun))
-	if secondRun.RunID != secondRunID {
-		t.Fatalf("run artifact run_id = %q, want %q", secondRun.RunID, secondRunID)
-	}
-	if secondRun.RepoRoot != "." {
-		t.Fatalf("run artifact repo_root = %q, want .", secondRun.RepoRoot)
-	}
-	if secondRun.FilesIgnored == 0 {
-		t.Fatalf("run artifact files_ignored = 0, want non-zero")
-	}
-	if secondRun.FilesSkipped != 1 {
-		t.Fatalf("run artifact files_skipped = %d, want 1", secondRun.FilesSkipped)
-	}
-
-	var raw map[string]json.RawMessage
-	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, secondRunPath)), &raw))
-	for _, key := range []string{"repo_root", "files_ignored", "files_skipped"} {
-		if _, ok := raw[key]; !ok {
-			t.Fatalf("run artifact missing key %q: %s", key, mustReadFile(t, secondRunPath))
-		}
-	}
-}
-
-func TestMapRefreshCommandRebuildsMapOnly(t *testing.T) {
-	root := t.TempDir()
-	app := testAppSequence(root)
-	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
-
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"init"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-
-	paths := artifacts.New(root)
-	configBefore := mustReadFile(t, paths.Config)
-	mustWriteFile(t, paths.ProjectMemory, "# Project Memory\n\nKeep this.\n")
-	mustWriteFile(t, filepath.Join(paths.RunsDir, "keep.json"), "{}\n")
-	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
-
-	stdout.Reset()
-	stderr.Reset()
-	code = app.Run([]string{"map", "refresh"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
-	}
-	got := stdout.String()
-	for _, want := range []string{
-		"Project map refreshed",
-		"Run:",
-		"files indexed:",
-		"files ignored:",
-		"files skipped:",
-		"warnings:",
-		"search index: ready",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("map refresh output missing %q:\n%s", want, got)
-		}
-	}
-	if mustReadFile(t, paths.Config) != configBefore {
-		t.Fatalf("map refresh should not rewrite config.yaml")
-	}
-	if got := mustReadFile(t, paths.ProjectMemory); !strings.Contains(got, "Keep this.") {
-		t.Fatalf("map refresh should not rewrite memory artifacts:\n%s", got)
-	}
-	assertFile(t, filepath.Join(paths.RunsDir, "keep.json"))
-
-	workspaceManifest, err := readWorkspaceManifest(paths.Manifest)
-	assertNoError(t, err)
-	mapManifest, err := readMapManifest(paths.MapManifest)
-	assertNoError(t, err)
-	if workspaceManifest.Map.CurrentRunID != mapManifest.RunID {
-		t.Fatalf("workspace current map run = %q, want %q", workspaceManifest.Map.CurrentRunID, mapManifest.RunID)
-	}
-	runPath := filepath.Join(paths.MapRunsDir, mapManifest.RunID+".json")
-	assertFile(t, runPath)
-	var run MapRefreshResult
-	assertNoError(t, json.Unmarshal([]byte(mustReadFile(t, runPath)), &run))
-	if run.RunID != mapManifest.RunID || run.StartedAt.IsZero() || run.FinishedAt.IsZero() {
-		t.Fatalf("map run artifact incomplete: %#v", run)
-	}
-
-	events := readLines(t, paths.EventsJSONL)
-	if len(events) != 10 {
-		t.Fatalf("events line count = %d, want 10: %v", len(events), events)
-	}
-	for i, want := range []string{"map_refresh_started", "search_index_started", "search_index_finished", "map_refresh_finished"} {
-		if !strings.Contains(events[len(events)-4+i], want) {
-			t.Fatalf("event %d = %s, want %s", len(events)-4+i, events[len(events)-4+i], want)
-		}
-	}
-}
-
-func TestMapRefreshRequiresInitializedWorkspace(t *testing.T) {
-	root := t.TempDir()
-
-	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"map", "refresh"}, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("map refresh before init exited %d, want 1", code)
-	}
-	if got := stderr.String(); !strings.Contains(got, "not initialized") {
-		t.Fatalf("map refresh before init stderr mismatch:\n%s", got)
 	}
 }
 
@@ -2516,158 +1873,6 @@ func TestInitPrefersGitRoot(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "root: "+root) {
 		t.Fatalf("status did not report git root:\n%s", stdout.String())
-	}
-}
-
-func TestSearchBeforeInitPrintsGuidance(t *testing.T) {
-	root := t.TempDir()
-
-	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"search", "anything"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
-	}
-	if got := stdout.String(); !strings.Contains(got, "Pactum is not initialized. Run: pactum init") {
-		t.Fatalf("search before init output mismatch:\n%s", got)
-	}
-}
-
-func TestSearchMissingIndexPrintsGuidance(t *testing.T) {
-	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
-
-	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-	paths := artifacts.New(root)
-	assertNoError(t, os.Remove(paths.SearchSQLite))
-
-	stdout.Reset()
-	stderr.Reset()
-	code = testApp(root).Run([]string{"search", "Example"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
-	}
-	if got := stdout.String(); !strings.Contains(got, "Search index is missing. Run: pactum map refresh") {
-		t.Fatalf("missing search index output mismatch:\n%s", got)
-	}
-}
-
-func TestSearchFindsFiles(t *testing.T) {
-	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "internal", "contracts", "runner.go"), `package contracts
-
-type Runner struct{}
-
-func BuildRunner() {}
-`)
-
-	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = testApp(root).Run([]string{"search", "runner"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
-	}
-	got := stdout.String()
-	for _, want := range []string{
-		"Search results for: runner",
-		"internal/contracts/runner.go",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("search output missing %q:\n%s", want, got)
-		}
-	}
-}
-
-func TestSearchKindFilter(t *testing.T) {
-	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "internal", "contracts", "runner.go"), `package contracts
-
-type Runner struct{}
-`)
-
-	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = testApp(root).Run([]string{"search", "Runner", "--kind", "file"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
-	}
-	got := stdout.String()
-	if !strings.Contains(got, "file internal/contracts/runner.go") {
-		t.Fatalf("file filter did not return file result:\n%s", got)
-	}
-	stdout.Reset()
-	stderr.Reset()
-	code = testApp(root).Run([]string{"search", "Runner", "--kind", "unknown"}, &stdout, &stderr)
-	if code == 0 {
-		t.Fatalf("search with an unknown --kind should have failed")
-	}
-}
-
-func TestSearchJSONOutput(t *testing.T) {
-	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "internal", "contracts", "runner.go"), `package contracts
-
-type Runner struct{}
-`)
-
-	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = testApp(root).Run([]string{"search", "Runner", "--json"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
-	}
-	var response searchpkg.Response
-	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
-	if response.Query != "Runner" {
-		t.Fatalf("query = %q, want Runner", response.Query)
-	}
-	if len(response.Results) == 0 {
-		t.Fatalf("json search results empty:\n%s", stdout.String())
-	}
-	if response.Results[0].Rank == 0 || response.Results[0].ID == "" {
-		t.Fatalf("json search result incomplete: %#v", response.Results[0])
-	}
-}
-
-func TestSearchNoResults(t *testing.T) {
-	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
-
-	var stdout, stderr bytes.Buffer
-	code := testApp(root).Run([]string{"init"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = testApp(root).Run([]string{"search", "unlikelytermxyz"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("search exited %d, stderr: %s", code, stderr.String())
-	}
-	if got := stdout.String(); !strings.Contains(got, "No results found.") {
-		t.Fatalf("no-results output mismatch:\n%s", got)
 	}
 }
 
@@ -2990,18 +2195,11 @@ func setupContractRun(t *testing.T, root string) (App, artifacts.Paths, string) 
 		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
 	}
 	// Register both engines so tests can invoke either by name; codex first
-	// keeps the pre-registry default-executor behavior (first entry wins). The
-	// config edit invalidates the just-built project map, so refresh it.
+	// keeps the pre-registry default-executor behavior (first entry wins).
 	setAgentRegistryConfig(t, artifacts.New(root),
 		agentRegistryEntry{Name: "codex", Model: "gpt-5"},
 		agentRegistryEntry{Name: "claude", Model: "claude-opus-4-8"},
 	)
-	stdout.Reset()
-	stderr.Reset()
-	code = app.Run([]string{"map", "refresh"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("map refresh exited %d, stderr: %s", code, stderr.String())
-	}
 	stdout.Reset()
 	stderr.Reset()
 	code = app.Run([]string{"task", "new", "add sqlite cache"}, &stdout, &stderr)
@@ -3058,18 +2256,6 @@ func readLines(t *testing.T, path string) []string {
 		return nil
 	}
 	return strings.Split(content, "\n")
-}
-
-func readFileRecords(t *testing.T, path string) []projectmap.FileRecord {
-	t.Helper()
-	lines := readLines(t, path)
-	records := make([]projectmap.FileRecord, 0, len(lines))
-	for _, line := range lines {
-		var record projectmap.FileRecord
-		assertNoError(t, json.Unmarshal([]byte(line), &record))
-		records = append(records, record)
-	}
-	return records
 }
 
 func readRunState(t *testing.T, path string) contractRunState {

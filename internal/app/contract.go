@@ -248,7 +248,7 @@ func (a App) contractReviseWithUpdate(context runContext, update contractPartial
 	state.Status = status.RunStatus
 	state.UpdatedAt = now
 
-	if err := writeContractArtifacts(context.RunPaths, contract, state.MapRunID); err != nil {
+	if err := writeContractArtifacts(context.RunPaths, contract); err != nil {
 		return contractReviseResponse{}, err
 	}
 	if err := writeJSON(context.RunPaths.RunJSON, state); err != nil {
@@ -327,7 +327,7 @@ func (a App) ContractApprove(stdout io.Writer, runID string, approvedBy string, 
 	contract := context.Contract
 	applyClarificationStatusToContract(&contract, status)
 	contract.Status = "approved"
-	if err := writeContractArtifacts(context.RunPaths, contract, context.State.MapRunID); err != nil {
+	if err := writeContractArtifacts(context.RunPaths, contract); err != nil {
 		return err
 	}
 	if err := removePromptReadinessArtifacts(context.RunPaths); err != nil {
@@ -835,11 +835,11 @@ func writeReviseFailure(stdout io.Writer, failure contractReviseFailure) error {
 	return writeJSONResponse(stdout, failure)
 }
 
-func writeContractArtifacts(runPaths contractRunPathSet, contract draftContract, mapRunID string) error {
+func writeContractArtifacts(runPaths contractRunPathSet, contract draftContract) error {
 	if err := writeJSON(runPaths.ContractJSON, contract); err != nil {
 		return err
 	}
-	if err := activeStore.WriteBytes(runPaths.ContractMD, renderContractMDFromDraft(contract, mapRunID), 0o644); err != nil {
+	if err := activeStore.WriteBytes(runPaths.ContractMD, renderContractMDFromDraft(contract), 0o644); err != nil {
 		return err
 	}
 	return activeStore.WriteBytes(runPaths.PromptMD, renderPromptMDFromDraft(contract), 0o644)

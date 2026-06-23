@@ -9,12 +9,10 @@ type cli struct {
 	Execute  executeCmd  `cmd:"" help:"Prepare deterministic execution artifacts."`
 	Export   exportCmd   `cmd:"" help:"Export a run's full record as a single archive."`
 	Gate     gateCmd     `cmd:"" help:"Run deterministic validation and scope gates."`
-	Init     initCmd     `cmd:"" help:"Create a Pactum workspace and project map."`
-	Map      mapCmd      `cmd:"" help:"Advanced project map commands."`
+	Init     initCmd     `cmd:"" help:"Create a Pactum workspace."`
 	Memory   memoryCmd   `cmd:"" help:"Propose, inspect, and accept deterministic project memory."`
 	Prompt   promptCmd   `cmd:"" help:"Build and inspect executor prompt boundaries."`
 	Review   reviewCmd   `cmd:"" help:"Manage manual review artifacts."`
-	Search   searchCmd   `cmd:"" help:"Search the Pactum project map."`
 	Skill    skillCmd    `cmd:"" help:"Install and verify the Pactum agent skill package."`
 	Status   statusCmd   `cmd:"" help:"Print Pactum workspace status."`
 	Task     taskCmd     `cmd:"" help:"Create and manage contract-first runs."`
@@ -24,10 +22,6 @@ type cli struct {
 
 type initCmd struct {
 	Path string `arg:"" optional:"" default:"." name:"path" help:"Repository path to initialize."`
-}
-
-type mapCmd struct {
-	Refresh mapRefreshCmd `cmd:"" help:"Rebuild generated project map artifacts."`
 }
 
 type clarifyCmd struct {
@@ -340,10 +334,6 @@ type memoryStaleCmd struct {
 	JSONOutput bool `name:"json" help:"Print machine-readable JSON output."`
 }
 
-type mapRefreshCmd struct {
-	JSONOutput bool `name:"json" help:"Print machine-readable JSON output."`
-}
-
 type statusCmd struct {
 	JSONOutput bool `name:"json" help:"Print machine-readable JSON output."`
 }
@@ -357,13 +347,6 @@ type usageCmd struct {
 
 type versionCmd struct {
 	JSONOutput bool `name:"json" help:"Print machine-readable JSON output."`
-}
-
-type searchCmd struct {
-	Query      string `arg:"" name:"query" help:"Search query."`
-	Limit      int    `help:"Maximum number of results." default:"10"`
-	Kind       string `help:"Document kind filter." default:"any" enum:"any,repo_map,llms,wiki,file"`
-	JSONOutput bool   `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type skillCmd struct {

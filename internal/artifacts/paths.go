@@ -15,26 +15,6 @@ type Paths struct {
 	Config    string
 	Gitignore string
 
-	MapDir       string
-	MapManifest  string
-	LLMS         string
-	RepoMap      string
-	AreasDir     string
-	AreaIndex    string
-	FilesJSONL   string
-	HashesJSONL  string
-	SearchSQLite string
-	MapRunsDir   string
-
-	WikiDir         string
-	WikiAreasDir    string
-	WikiOverview    string
-	WikiStructure   string
-	WikiCommands    string
-	WikiEntrypoints string
-	WikiConfig      string
-	WikiTests       string
-
 	RunsDir string
 
 	MemoryDir        string
@@ -61,7 +41,6 @@ type Paths struct {
 
 func New(root string) Paths {
 	workspace := filepath.Join(root, WorkspaceRel)
-	mapDir := filepath.Join(workspace, "map")
 	memoryDir := filepath.Join(workspace, "memory")
 	ledgerDir := filepath.Join(workspace, "ledger")
 
@@ -72,26 +51,6 @@ func New(root string) Paths {
 		Manifest:  filepath.Join(workspace, "manifest.json"),
 		Config:    filepath.Join(workspace, "config.yaml"),
 		Gitignore: filepath.Join(workspace, ".gitignore"),
-
-		MapDir:       mapDir,
-		MapManifest:  filepath.Join(mapDir, "manifest.json"),
-		LLMS:         filepath.Join(mapDir, "llms.txt"),
-		RepoMap:      filepath.Join(mapDir, "repo-map.md"),
-		AreasDir:     filepath.Join(mapDir, "areas"),
-		AreaIndex:    filepath.Join(mapDir, "areas", "_index.md"),
-		FilesJSONL:   filepath.Join(mapDir, "files.jsonl"),
-		HashesJSONL:  filepath.Join(mapDir, "hashes.jsonl"),
-		SearchSQLite: filepath.Join(mapDir, "search.sqlite"),
-		MapRunsDir:   filepath.Join(mapDir, "runs"),
-
-		WikiDir:         filepath.Join(mapDir, "wiki"),
-		WikiAreasDir:    filepath.Join(mapDir, "wiki", "areas"),
-		WikiOverview:    filepath.Join(mapDir, "wiki", "overview.md"),
-		WikiStructure:   filepath.Join(mapDir, "wiki", "structure.md"),
-		WikiCommands:    filepath.Join(mapDir, "wiki", "commands.md"),
-		WikiEntrypoints: filepath.Join(mapDir, "wiki", "entrypoints.md"),
-		WikiConfig:      filepath.Join(mapDir, "wiki", "config.md"),
-		WikiTests:       filepath.Join(mapDir, "wiki", "tests.md"),
 
 		RunsDir: filepath.Join(workspace, "runs"),
 
@@ -121,11 +80,6 @@ func New(root string) Paths {
 func (p Paths) Dirs() []string {
 	return []string{
 		p.Workspace,
-		p.MapDir,
-		p.AreasDir,
-		p.WikiDir,
-		p.WikiAreasDir,
-		p.MapRunsDir,
 		p.RunsDir,
 		p.MemoryDir,
 		p.FeaturesDir,

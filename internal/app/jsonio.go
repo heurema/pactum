@@ -1,12 +1,11 @@
 package app
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
-
-	"github.com/heurema/pactum/internal/projectmap"
 )
 
 func writeJSON(path string, value any) error {
@@ -26,17 +25,6 @@ func writeJSONResponse(stdout io.Writer, value any) error {
 	return encoder.Encode(value)
 }
 
-func readMapManifest(path string) (projectmap.Manifest, error) {
-	var manifest projectmap.Manifest
-	if err := readJSON(path, &manifest); err != nil {
-		return projectmap.Manifest{}, err
-	}
-	if manifest.RunID == "" {
-		return projectmap.Manifest{}, errors.New("project map manifest is incomplete")
-	}
-	return manifest, nil
-}
-
 func readJSON(path string, value any) error {
 	data, err := activeStore.ReadBytes(path)
 	if err != nil {
@@ -48,4 +36,23 @@ func readJSON(path string, value any) error {
 func isDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+func filesystemRegularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
+func fileSHA256(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }

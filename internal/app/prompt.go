@@ -23,22 +23,10 @@ type promptManifest struct {
 	ApprovalStatus string                  `json:"approval_status"`
 	ApprovedBy     string                  `json:"approved_by"`
 	ApprovedAt     string                  `json:"approved_at"`
-	MapRunID       string                  `json:"map_run_id"`
 	HeadCommit     string                  `json:"head_commit,omitempty"`
-	MapRefresh     promptMapRefresh        `json:"map_refresh"`
 	Artifacts      promptManifestArtifacts `json:"artifacts"`
 	Memory         *promptManifestMemory   `json:"memory"`
 	Checks         promptManifestChecks    `json:"checks"`
-}
-
-// promptMapRefresh records whether prompt build self-healed a stale project
-// map before building. The same additive object appears in the prompt
-// manifest and the prompt build --json response.
-type promptMapRefresh struct {
-	Triggered        bool   `json:"triggered"`
-	Reason           string `json:"reason,omitempty"`
-	PreviousMapRunID string `json:"previous_map_run_id,omitempty"`
-	RunID            string `json:"run_id,omitempty"`
 }
 
 type promptManifestArtifacts struct {
@@ -47,7 +35,6 @@ type promptManifestArtifacts struct {
 	Contract        string `json:"contract"`
 	Approval        string `json:"approval"`
 	RepoContext     string `json:"repo_context"`
-	SearchResults   string `json:"search_results"`
 }
 
 type promptManifestMemory struct {
@@ -75,18 +62,16 @@ type promptManifestMemoryRefresh struct {
 type promptManifestChecks struct {
 	ContractApproved            bool `json:"contract_approved"`
 	ContractHashMatchesApproval bool `json:"contract_hash_matches_approval"`
-	ProjectMapFresh             bool `json:"project_map_fresh"`
 	BlockingClarificationsOpen  int  `json:"blocking_clarifications_open"`
 	MemoryContextReady          bool `json:"memory_context_ready"`
 	MemorySourceCurrent         bool `json:"memory_source_current"`
 }
 
 type promptBuildResponse struct {
-	RunID      string           `json:"run_id"`
-	RunStatus  string           `json:"run_status"`
-	MapRefresh promptMapRefresh `json:"map_refresh"`
-	Manifest   promptManifest   `json:"manifest"`
-	Next       []string         `json:"next"`
+	RunID     string         `json:"run_id"`
+	RunStatus string         `json:"run_status"`
+	Manifest  promptManifest `json:"manifest"`
+	Next      []string       `json:"next"`
 }
 
 type promptShowResponse struct {
@@ -126,13 +111,6 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 		return err
 	}
 
-	// Map status is informational; prompt build must not be blocked by a stale
-	// or missing map — only a missing HEAD commit is a hard failure.
-	mapStatus, err := resolveMapStatus(context.Root, context.Paths)
-	if err != nil {
-		return err
-	}
-	mapRefresh := promptMapRefresh{Triggered: false}
 	head, err := gitExec(context.Root, "rev-parse", "HEAD")
 	if err != nil {
 		return fmt.Errorf("cannot build executor prompt: cannot determine HEAD commit: %w", err)
@@ -147,20 +125,13 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 	if err != nil {
 		return err
 	}
-	manifest := buildPromptManifest(context, hash, mapStatus.RunID, head, now, memory)
-	// Refresh the run's search context from the approved contract: clarification
-	// and revision usually make the work more precise than the initial task
-	// sentence, so re-derive targeted queries from goal/scope/acceptance/validation.
-	searchResults := buildRunSearchResults(context.Paths, mapStatus, "contract", memoryQueryFromContract(context.Contract))
-	if err := activeStore.WriteBytes(context.RunPaths.SearchResults, mustMarshalJSON(searchResults), 0o644); err != nil {
-		return err
-	}
+	manifest := buildPromptManifest(context, hash, head, now, memory)
 	decisions, err := readClarificationDecisions(context.RunPaths.DecisionsJSONL)
 	if err != nil {
 		return err
 	}
 
-	if err := activeStore.WriteBytes(context.RunPaths.ExecutorContext, renderExecutorContext(context.State, mapStatus.RunID, hash, decisions, memory.Selected), 0o644); err != nil {
+	if err := activeStore.WriteBytes(context.RunPaths.ExecutorContext, renderExecutorContext(context.State, hash, decisions, memory.Selected), 0o644); err != nil {
 		return err
 	}
 	if err := activeStore.WriteBytes(context.RunPaths.PromptMD, renderApprovedPromptMD(context.Contract, context.State.RunID, hash, selection), 0o644); err != nil {
@@ -176,7 +147,7 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 		return err
 	}
 
-	response := promptBuildResponse{RunID: runID, RunStatus: context.State.Status, MapRefresh: mapRefresh, Manifest: manifest, Next: nextCommandsForRun(context.Paths, runID)}
+	response := promptBuildResponse{RunID: runID, RunStatus: context.State.Status, Manifest: manifest, Next: nextCommandsForRun(context.Paths, runID)}
 	if jsonOutput {
 		return writeJSONResponse(stdout, response)
 	}
@@ -227,7 +198,7 @@ func (a App) PromptShow(stdout io.Writer, runID string, jsonOutput bool) error {
 	return nil
 }
 
-func buildPromptManifest(context runContext, contractSHA256 string, mapRunID string, headCommit string, builtAt time.Time, memory promptManifestMemory) promptManifest {
+func buildPromptManifest(context runContext, contractSHA256 string, headCommit string, builtAt time.Time, memory promptManifestMemory) promptManifest {
 	approvedBy := ""
 	if context.Approval.ApprovedBy != nil {
 		approvedBy = *context.Approval.ApprovedBy
@@ -246,22 +217,18 @@ func buildPromptManifest(context runContext, contractSHA256 string, mapRunID str
 		ApprovalStatus: "approved",
 		ApprovedBy:     approvedBy,
 		ApprovedAt:     approvedAt,
-		MapRunID:       mapRunID,
 		HeadCommit:     headCommit,
-		MapRefresh:     promptMapRefresh{Triggered: false},
 		Artifacts: promptManifestArtifacts{
 			Prompt:          "contract/prompt.md",
 			ExecutorContext: "context/executor-context.md",
 			Contract:        "contract/contract.json",
 			Approval:        "contract/approval.json",
 			RepoContext:     "context/repo-context.md",
-			SearchResults:   "context/search-results.json",
 		},
 		Memory: &memoryCopy,
 		Checks: promptManifestChecks{
 			ContractApproved:            true,
 			ContractHashMatchesApproval: true,
-			ProjectMapFresh:             true,
 			BlockingClarificationsOpen:  0,
 			MemoryContextReady:          true,
 			MemorySourceCurrent:         true,
@@ -331,14 +298,13 @@ func removePromptReadinessArtifacts(runPaths contractRunPathSet) error {
 	return nil
 }
 
-func renderExecutorContext(state contractRunState, mapRunID string, contractSHA256 string, decisions []clarificationDecisionRecord, memory promptManifestMemorySelected) []byte {
+func renderExecutorContext(state contractRunState, contractSHA256 string, decisions []clarificationDecisionRecord, memory promptManifestMemorySelected) []byte {
 	var buffer bytes.Buffer
 	fmt.Fprintln(&buffer, "# Executor Context")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Run")
 	fmt.Fprintf(&buffer, "- Run id: %s\n", state.RunID)
 	fmt.Fprintf(&buffer, "- Run status: %s\n", state.Status)
-	fmt.Fprintf(&buffer, "- Map run id: %s\n", mapRunID)
 	fmt.Fprintf(&buffer, "- Contract hash: %s\n", contractSHA256)
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Accepted memory")
@@ -368,7 +334,7 @@ func renderApprovedPromptMD(contract draftContract, runID string, contractSHA256
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "This prompt is prepared from an approved Pactum contract.")
 	fmt.Fprintln(&buffer, "This prompt is prepared for the selected built-in agent when `pactum execute run` is used.")
-	fmt.Fprintln(&buffer, "Pactum records execution artifacts and validates contract, map, and memory boundaries before execution.")
+	fmt.Fprintln(&buffer, "Pactum records execution artifacts and validates contract and memory boundaries before execution.")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Contract status")
 	fmt.Fprintf(&buffer, "- Run: %s\n", runID)
@@ -490,15 +456,9 @@ func writePromptBuild(stdout io.Writer, response promptBuildResponse) {
 	fmt.Fprintf(stdout, "  id: %s\n", response.RunID)
 	fmt.Fprintf(stdout, "  status: %s\n", response.RunStatus)
 	fmt.Fprintln(stdout)
-	if response.MapRefresh.Triggered {
-		fmt.Fprintln(stdout, "Project map:")
-		fmt.Fprintf(stdout, "  stale map refreshed: %s\n", response.MapRefresh.RunID)
-		fmt.Fprintln(stdout)
-	}
 	fmt.Fprintln(stdout, "Checks:")
 	fmt.Fprintln(stdout, "  contract approved: yes")
 	fmt.Fprintln(stdout, "  contract hash: ok")
-	fmt.Fprintln(stdout, "  project map: fresh")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Artifacts:")
 	fmt.Fprintf(stdout, "  prompt: %s\n", runArtifactRepoRel(response.RunID, response.Manifest.Artifacts.Prompt))

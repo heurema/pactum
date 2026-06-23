@@ -1,13 +1,13 @@
 ---
 name: pactum
-description: Use Pactum's contract-first workflow for non-trivial repository code changes. Use when a code task needs project-map context, contract approval, a prompt boundary, or a safe plan step. Do not use for quick questions, trivial edits, or when the user asks not to use Pactum.
+description: Use Pactum's contract-first workflow for non-trivial repository code changes. Use when a code task needs contract approval, a prompt boundary, or a safe plan step. Do not use for quick questions, trivial edits, or when the user asks not to use Pactum.
 ---
 
 # Pactum — contract-first agent workflow
 
 Pactum turns a repository code task into an auditable, contract-first run:
-project map → task → clarification → approved contract → prompt boundary →
-execution plan. Drive it entirely with shell commands and `--json` output.
+task → clarification → approved contract → prompt boundary → execution plan.
+Drive it entirely with shell commands and `--json` output.
 
 The reference files in `references/` are optional enrichment; this file is
 self-sufficient for the safe path. Consult them for deeper detail:
@@ -32,8 +32,7 @@ self-sufficient for the safe path. Consult them for deeper detail:
 - **`.heurema/pactum/` run records are durable.** Do not delete or revert them.
   Do not mix `.heurema/pactum` churn into feature commits — report them
   separately unless the user asks for an audit-record commit.
-- Source files are the source of truth. Pactum's map and wiki are navigation
-  context — verify against the actual files before relying on them.
+- Source files are the source of truth — verify against the actual files before relying on any cached context.
 - Never hide a non-zero command exit; report failures with their output.
 
 ## Machine affordances (use `next` and `error.fix` — never memorize stage order)
@@ -46,7 +45,7 @@ Run all Pactum workflow commands with `--json` and read the response:
 - **`error.fix`** — when a command fails, the exact remedial command. Run it.
   If there is no `error.fix`, read `next` for safe inspection alternatives.
 - **`error.code`** — stable machine-readable failure reason
-  (`contract_not_approved`, `prompt_not_built`, `project_map_stale`, …).
+  (`contract_not_approved`, `prompt_not_built`, …).
 
 Decision commands (`clarify answer`, `contract accept`, `contract approve`,
 `review proposal accept`/`reject`, `review approve`, `memory accept`) relay an
@@ -71,35 +70,18 @@ pactum status --json
 pactum init
 ```
 
-**3. Refresh map if stale**
-```sh
-pactum map refresh --json
-```
-Run only if `pactum status` reports the project map stale.
-
-**4. Create the task (sets the current run)**
+**3. Create the task (sets the current run)**
 ```sh
 pactum task new "<task description>" --json
 ```
 Subsequent commands omit the run id — they use the current run.
 
-**5. Search and read (non-optional — this is Pactum's value)**
+**4. Read source files**
 
-Use Pactum's project map for context discovery. Do not substitute raw `rg`/`cat`
-unless Pactum directs you to via `next` or `error.fix`.
+Read the relevant source files to understand the task context. Use `rg`, `cat`,
+or similar tools to locate and read the code you will be changing.
 
-```sh
-# Identifiers and domain terms
-pactum search "<identifier or term>" --json
-# Kind filters
-pactum search "<term>" --kind wiki --json
-pactum search "<term>" --kind file --json
-```
-
-Read the returned file paths. Also read the relevant
-`map/wiki/` pages (overview, structure, areas) and the actual source files.
-
-**6. Clarify ambiguities**
+**5. Clarify ambiguities**
 ```sh
 pactum clarify add "<question>" --blocking --json
 # Type the answer:
@@ -111,7 +93,7 @@ pactum clarify answer --all-recommended --by manual --json
 ```
 Blocking questions must be answered before the prompt can be built.
 
-**7. Write and revise the contract**
+**6. Write and revise the contract**
 ```sh
 # Get current version token
 pactum contract show --json
@@ -131,27 +113,26 @@ pactum contract revise --from - --json <<EOF
 EOF
 ```
 
-**8. Approve the contract**
+**7. Approve the contract**
 ```sh
 pactum contract approve --by manual --json
 ```
 Only after the scope is clear and all blocking clarifications are resolved.
 
-**9. Build the prompt boundary**
+**8. Build the prompt boundary**
 ```sh
 pactum prompt build --json
 pactum prompt show --json
 ```
-A stale map does not block this step — `prompt build` self-heals and reports it.
 
-**10. Execute plan (the safe stop point)**
+**9. Execute plan (the safe stop point)**
 ```sh
 pactum execute plan --agent <agent> --json
 ```
 Replace `<agent>` with the configured executor name (detect whether you are
 Codex or Claude, or ask the user which executor is configured). This validates
-the contract hash, map freshness, and prompt manifest and prints the command
-that *would* run — without running a real agent.
+the contract hash and prompt manifest and prints the command that *would* run —
+without running a real agent.
 
 **STOP HERE.** Do not proceed to `pactum execute run` or implement the plan
 yourself. Report and wait for explicit user approval.
@@ -161,7 +142,7 @@ yourself. Report and wait for explicit user approval.
 After `pactum execute plan`, report exactly:
 
 - **Run:** `<run_id>` and contract status (approved / not approved)
-- **Files likely touched:** the paths identified during search and map reading
+- **Files likely touched:** the paths identified during source-file reading
 - **Contract:** goal, in/out of scope, acceptance criteria, validation commands
 - **Plan command:** the exact command `pactum execute plan` printed
 - **Status:** explicitly state "stopped at execute plan — awaiting your approval

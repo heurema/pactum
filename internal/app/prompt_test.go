@@ -79,39 +79,6 @@ func TestPromptBuildFailsWhenBlockingClarificationOpen(t *testing.T) {
 	}
 }
 
-func readWorkspaceMapRunID(t *testing.T, manifestPath string) string {
-	t.Helper()
-	manifest, err := readWorkspaceManifest(manifestPath)
-	assertNoError(t, err)
-	return manifest.Map.CurrentRunID
-}
-
-func TestPromptBuildSelfHealsStaleProjectMap(t *testing.T) {
-	root := t.TempDir()
-	app, paths, runID := setupApprovedPromptContract(t, root)
-	// Record map run ID before prompt build.
-	mapRunIDBefore := readWorkspaceMapRunID(t, paths.Manifest)
-	// Make the project map stale by adding a new file (working-tree change, no new commit).
-	mustWriteFile(t, filepath.Join(root, "new_feature.go"), "package main\n")
-
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"prompt", "build", runID}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("prompt build should succeed even with stale project map, exited %d, stderr: %s", code, stderr.String())
-	}
-	got := stdout.String()
-	if !strings.Contains(got, "Executor prompt built") {
-		t.Fatalf("prompt build output missing 'Executor prompt built':\n%s", got)
-	}
-	if strings.Contains(got, "stale map refreshed") {
-		t.Fatalf("prompt build must not self-heal the map:\n%s", got)
-	}
-	// Verify RefreshMap was not called — the workspace map run ID must be unchanged.
-	if mapRunIDAfter := readWorkspaceMapRunID(t, paths.Manifest); mapRunIDAfter != mapRunIDBefore {
-		t.Fatalf("prompt build must not change map run ID: was %q, now %q", mapRunIDBefore, mapRunIDAfter)
-	}
-}
-
 func TestPromptBuildFailsWhenRepoHasNoCommits(t *testing.T) {
 	skipIfNoGit(t)
 	root := t.TempDir()
@@ -137,15 +104,8 @@ func TestPromptBuildFailsWhenRepoHasNoCommits(t *testing.T) {
 	)
 	stdout.Reset()
 	stderr.Reset()
-	for _, args := range [][]string{
-		{"map", "refresh"},
-		{"task", "new", "add feature"},
-	} {
-		stdout.Reset()
-		stderr.Reset()
-		if code := app.Run(args, &stdout, &stderr); code != 0 {
-			t.Fatalf("%v exited %d, stderr: %s", args, code, stderr.String())
-		}
+	if code := app.Run([]string{"task", "new", "add feature"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("task new exited %d, stderr: %s", code, stderr.String())
 	}
 	// Approve the contract without ever making a commit — HEAD cannot be resolved.
 	paths := artifacts.New(root)
@@ -183,30 +143,6 @@ func TestPromptBuildFailsWhenRepoHasNoCommits(t *testing.T) {
 	}
 }
 
-func TestPromptBuildJSONReportsMapRefresh(t *testing.T) {
-	root := t.TempDir()
-	app, _, runID := setupApprovedPromptContract(t, root)
-	// Stale working tree does not affect prompt build; map_refresh is always {triggered:false}.
-	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\nchanged\n")
-
-	var stdout, stderr bytes.Buffer
-	code := app.Run([]string{"prompt", "build", runID, "--json"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("prompt build --json exited %d, stderr: %s", code, stderr.String())
-	}
-	var response promptBuildResponse
-	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
-	if response.MapRefresh != (promptMapRefresh{Triggered: false}) {
-		t.Fatalf("map_refresh should always be {triggered:false}: %#v", response.MapRefresh)
-	}
-	if response.Manifest.MapRefresh != (promptMapRefresh{Triggered: false}) {
-		t.Fatalf("manifest map_refresh should always be {triggered:false}: %#v", response.Manifest.MapRefresh)
-	}
-	if response.Manifest.HeadCommit == "" {
-		t.Fatalf("manifest should record head_commit")
-	}
-}
-
 func TestPromptBuildFailsWhenApprovalHashMismatch(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupApprovedPromptContract(t, root)
@@ -240,7 +176,6 @@ func TestPromptBuildSucceedsForApprovedContract(t *testing.T) {
 		"status: contract_approved",
 		"contract approved: yes",
 		"contract hash: ok",
-		"project map: fresh",
 		".heurema/pactum/runs/" + runID + "/contract/prompt.md",
 		".heurema/pactum/runs/" + runID + "/context/executor-context.md",
 		".heurema/pactum/runs/" + runID + "/contract/prompt-manifest.json",
@@ -263,7 +198,7 @@ func TestPromptBuildSucceedsForApprovedContract(t *testing.T) {
 	if approval.ContractSHA256 == nil || manifest.ContractSHA256 != *approval.ContractSHA256 {
 		t.Fatalf("manifest hash = %q, approval = %#v", manifest.ContractSHA256, approval.ContractSHA256)
 	}
-	if !manifest.Checks.ContractApproved || !manifest.Checks.ContractHashMatchesApproval || !manifest.Checks.ProjectMapFresh || manifest.Checks.BlockingClarificationsOpen != 0 {
+	if !manifest.Checks.ContractApproved || !manifest.Checks.ContractHashMatchesApproval || manifest.Checks.BlockingClarificationsOpen != 0 {
 		t.Fatalf("unexpected manifest checks: %#v", manifest.Checks)
 	}
 	if manifest.Artifacts.Prompt != "contract/prompt.md" || manifest.Artifacts.ExecutorContext != "context/executor-context.md" {
@@ -289,7 +224,6 @@ func TestPromptBuildSucceedsForApprovedContract(t *testing.T) {
 	for _, want := range []string{
 		"# Executor Context",
 		"Run id: " + runID,
-		"Map run id: map_20260531_184012",
 		"q_001: Yes. Prompt build must be approved first.",
 	} {
 		if !strings.Contains(executorContext, want) {

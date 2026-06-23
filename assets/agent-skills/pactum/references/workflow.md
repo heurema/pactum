@@ -11,9 +11,9 @@ it for quick questions and trivial edits, or when the user asks you not to.
 
 ## Core principle
 
-Source files are the source of truth. Pactum's map, wiki, and memory are
-navigation and audit context — best-effort and incomplete by design. Always
-confirm against the actual files before relying on them.
+Source files are the source of truth. Pactum's memory is navigation and audit
+context — best-effort and incomplete by design. Always confirm against the
+actual files before relying on them.
 
 ## Step-by-step
 
@@ -21,25 +21,18 @@ confirm against the actual files before relying on them.
    `references/install.md`. Do not continue until it succeeds.
 
 2. **Check workspace state.** Run `pactum status --json`. If the workspace is
-   not initialized, run `pactum init` (it creates `.heurema/pactum/` and builds
-   the map). Do not re-run `init` on an already-initialized workspace.
+   not initialized, run `pactum init` (it creates `.heurema/pactum/`).
+   Do not re-run `init` on an already-initialized workspace.
 
-3. **Refresh the map if stale.** If `pactum status` reports the project map as
-   stale, run `pactum map refresh --json`.
+3. **Create the task.** Run `pactum task new "<task description>" --json`. This
+   creates a run and sets it as the current run. Subsequent commands can omit
+   the run id — they use the current run.
 
-4. **Create the task.** Run `pactum task new "<task description>" --json`. This
-   creates a run, sets it as the current run, and assembles first-pass search
-   context. Subsequent commands can omit the run id — they use the current run.
+4. **Read source files.** Read the relevant source files to understand the task
+   context. Use `rg`, `cat`, or similar tools to locate and read the code you
+   will be changing.
 
-5. **Search and read.** Run targeted searches rather than one long sentence:
-   - identifiers: `pactum search "formatCurrency" --json`
-   - paths: `pactum search "apps/admin/src/lib/format.ts" --json`
-   - domain terms: `pactum search "currency" --json`
-   - filters: `--kind wiki`, `--kind file`
-   Then read `map/wiki/overview.md`, `structure.md`, `entrypoints.md`,
-   `commands.md`, the relevant `areas/<area>.md`, and the actual source files.
-
-6. **Clarify if needed.** For anything ambiguous:
+5. **Clarify if needed.** For anything ambiguous:
    `pactum clarify add "..." --blocking --json`, then record the answer. A
    typed `pactum clarify answer q_001 "..." --by manual` is the explicit human
    answer; when a question carries a stored recommended answer the human agrees
@@ -50,7 +43,7 @@ confirm against the actual files before relying on them.
    (`pactum clarify run` launches a clarifier agent and is not part of the safe
    default flow; `--no-auto --max-rounds 1` is its single manual pass.)
 
-7. **Write the contract.** `pactum contract revise --from - --json` reads a
+6. **Write the contract.** `pactum contract revise --from - --json` reads a
    partial JSON document from stdin (`--from <file>` for a file). Include only
    the fields you want to set — absent fields are left untouched. Wrap the
    fields in `{"base_version": "<version>", "contract": {<fields>}}`. Obtain
@@ -77,23 +70,20 @@ confirm against the actual files before relying on them.
    Contract quality checklist: goal unambiguous, scope bounded, acceptance
    observable, validation runnable.
 
-8. **Approve.** `pactum contract approve --by manual --json` — only once the
+7. **Approve.** `pactum contract approve --by manual --json` — only once the
    scope is clear and clarifications are resolved. Approval pins a contract hash.
 
-9. **Build the prompt boundary.** `pactum prompt build --json`, then
-   `pactum prompt show --json`. `prompt build` re-derives the run's search
-   context from the approved contract, so the executor context reflects the
-   final scope. A stale project map does not block it: the build refreshes the
-   map itself and records the self-heal (`map_refresh` in `--json` output and
-   the prompt manifest).
+8. **Build the prompt boundary.** `pactum prompt build --json`, then
+   `pactum prompt show --json`. `prompt build` assembles the executor context
+   from the approved contract and accepted memory.
 
-10. **Safe plan step.** `pactum execute plan --agent <agent> --json`. This
-    validates the contract hash, map freshness, and prompt manifest, and prints
-    the command that *would* run — without running a real agent. This is the
-    default stop point. Use the configured executor name for `<agent>` (codex,
-    claude, or whatever is registered for this workspace).
+9. **Safe plan step.** `pactum execute plan --agent <agent> --json`. This
+   validates the contract hash and prompt manifest and prints the command that
+   *would* run — without running a real agent. This is the default stop point.
+   Use the configured executor name for `<agent>` (codex, claude, or whatever
+   is registered for this workspace).
 
-11. **Report.** Summarize: current run id, contract status (approved / not
+10. **Report.** Summarize: current run id, contract status (approved / not
     approved), the plan command, files likely touched, and an explicit
     "stopped at execute plan — awaiting your approval to proceed" statement.
 
@@ -173,7 +163,7 @@ state. Treat it as audit data:
 
 Report back with:
 - Run: `<run id>` and contract status (approved / not approved).
-- Files likely touched: the paths you inspected or identified during search.
+- Files likely touched: the paths you inspected or identified during source-file reading.
 - Contract: goal, in/out of scope, acceptance, validation commands.
 - Plan: the exact command `pactum execute plan` printed.
 - Status: "stopped at execute plan — awaiting your approval to proceed."

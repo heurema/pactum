@@ -38,7 +38,6 @@ type DryRunAgent = AgentDescriptor
 type DryRunChecks struct {
 	PromptManifestReady         bool `json:"prompt_manifest_ready"`
 	ContractHashMatchesApproval bool `json:"contract_hash_matches_approval"`
-	ProjectMapFresh             bool `json:"project_map_fresh"`
 }
 
 type DryRunArtifacts struct {

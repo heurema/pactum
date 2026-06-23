@@ -1,41 +1,29 @@
 package app
 
 import (
-	"bufio"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/heurema/pactum/internal/artifacts"
-	"github.com/heurema/pactum/internal/projectmap"
 )
 
 const statusSchema = "pactum.status.v1alpha1"
 
 type statusResponse struct {
-	Schema      string           `json:"schema"`
-	Initialized bool             `json:"initialized"`
-	RepoRoot    string           `json:"repo_root,omitempty"`
-	Workspace   string           `json:"workspace,omitempty"`
-	ProjectMap  projectMapStatus `json:"project_map,omitempty"`
-	Runs        runsStatus       `json:"runs,omitempty"`
-	Memory      memoryStatus     `json:"memory,omitempty"`
-	Usage       usageStatus      `json:"usage,omitempty"`
-	Message     string           `json:"message,omitempty"`
+	Schema      string       `json:"schema"`
+	Initialized bool         `json:"initialized"`
+	RepoRoot    string       `json:"repo_root,omitempty"`
+	Workspace   string       `json:"workspace,omitempty"`
+	Runs        runsStatus   `json:"runs,omitempty"`
+	Memory      memoryStatus `json:"memory,omitempty"`
+	Usage       usageStatus  `json:"usage,omitempty"`
+	Message     string       `json:"message,omitempty"`
 	// Next holds the concrete runnable commands for the current run's stage.
 	// Runs.NextCommand predates it and is kept for compatibility.
 	Next []string `json:"next"`
-}
-
-type projectMapStatus struct {
-	Status       string   `json:"status"`
-	RunID        string   `json:"run_id"`
-	FilesIndexed int      `json:"files_indexed"`
-	SearchIndex  string   `json:"search_index"`
-	StaleReasons []string `json:"stale_reasons"`
 }
 
 type runsStatus struct {
@@ -77,45 +65,8 @@ func writeStatusNotInitialized(stdout io.Writer) error {
 	})
 }
 
-// resolveMapStatus reads the current project map status. Config and manifest
-// failures are returned as errors (they are infrastructure failures, not
-// map-specific). Map inspection or artifact failures return stale status with
-// a nil error so callers (e.g. prompt build) are not blocked by broken map
-// artifacts.
-func resolveMapStatus(root string, paths artifacts.Paths) (projectMapStatus, error) {
-	config, err := readConfig(paths.Config)
-	if err != nil {
-		return projectMapStatus{}, err
-	}
-	manifest, err := readWorkspaceManifest(paths.Manifest)
-	if err != nil {
-		return projectMapStatus{}, err
-	}
-	status, err := inspectProjectMap(root, paths, config, manifest.Map.CurrentRunID)
-	if err != nil {
-		return projectMapStatus{Status: "stale", RunID: manifest.Map.CurrentRunID}, nil
-	}
-	return status, nil
-}
-
 func (a App) workspaceStatus(root string) (statusResponse, error) {
 	paths := artifacts.New(root)
-	config, err := readConfig(paths.Config)
-	if err != nil {
-		return statusResponse{}, err
-	}
-	manifest, err := readWorkspaceManifest(paths.Manifest)
-	if err != nil {
-		return statusResponse{}, err
-	}
-	mapStatus, err := inspectProjectMap(root, paths, config, manifest.Map.CurrentRunID)
-	if err != nil {
-		mapStatus = projectMapStatus{
-			Status:       "stale",
-			RunID:        manifest.Map.CurrentRunID,
-			StaleReasons: []string{"map artifact error: " + err.Error()},
-		}
-	}
 	activeRuns, err := countActiveRuns(paths)
 	if err != nil {
 		return statusResponse{}, err
@@ -144,9 +95,6 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 		if err != nil {
 			return statusResponse{}, err
 		}
-		// The next command must actually be runnable: a bare staged command only
-		// works when an omitted run id resolves to a single run (current, or the
-		// sole active run). Otherwise point the user at selecting a run.
 		switch {
 		case currentValid:
 			runs.NextCommand = nextCommandForStatus(paths, currentID, deriveRunStatus(paths, currentID))
@@ -169,7 +117,6 @@ func (a App) workspaceStatus(root string) (statusResponse, error) {
 		Initialized: true,
 		RepoRoot:    root,
 		Workspace:   paths.Workspace,
-		ProjectMap:  mapStatus,
 		Runs:        runs,
 		Memory:      memoryStatus{Items: memoryItems, Stale: 0},
 		Usage:       usage,
@@ -234,8 +181,6 @@ func countActiveRuns(paths artifacts.Paths) (int, error) {
 			Status string `json:"status"`
 		}
 		if err := json.Unmarshal(data, &state); err != nil {
-			// A run still being created concurrently may have a partially
-			// written run.json; skip it rather than fail the whole status.
 			continue
 		}
 		if !isTerminalRunStatus(state.Status) {
@@ -252,160 +197,6 @@ func isTerminalRunStatus(status string) bool {
 	default:
 		return false
 	}
-}
-
-func inspectProjectMap(root string, paths artifacts.Paths, config configFile, currentRunID string) (projectMapStatus, error) {
-	configHash := mapConfigHash(config.Map)
-	status := projectMapStatus{
-		Status:       "fresh",
-		RunID:        currentRunID,
-		SearchIndex:  "ready",
-		StaleReasons: []string{},
-	}
-
-	for _, artifact := range requiredMapArtifacts(paths) {
-		if filesystemRegularFile(artifact.path) {
-			continue
-		}
-		status.StaleReasons = append(status.StaleReasons, "missing artifact: "+artifact.rel)
-		if artifact.path == paths.SearchSQLite {
-			status.SearchIndex = "missing"
-		}
-	}
-
-	if filesystemRegularFile(paths.MapManifest) {
-		mapManifest, err := readMapManifest(paths.MapManifest)
-		if err != nil {
-			status.StaleReasons = append(status.StaleReasons, "invalid artifact: map/manifest.json")
-		} else {
-			status.RunID = mapManifest.RunID
-			status.FilesIndexed = mapManifest.FilesIndexed
-			if mapManifest.ConfigHashScope != mapConfigHashScope {
-				// Legacy whole-file pin (no scope marker): the hash semantics
-				// changed, so it cannot be compared. Stale once; the next refresh
-				// writes the map-section hash plus the scope marker.
-				status.StaleReasons = append(status.StaleReasons, "map config pin format changed: .heurema/pactum/config.yaml")
-			} else if mapManifest.ConfigHash != "" && mapManifest.ConfigHash != configHash {
-				status.StaleReasons = append(status.StaleReasons, "map config changed: .heurema/pactum/config.yaml")
-			}
-		}
-	}
-
-	if filesystemRegularFile(paths.HashesJSONL) {
-		reasons, err := hashStaleReasons(root, paths.HashesJSONL, config)
-		if err != nil {
-			// Treat a broken hashes.jsonl as stale rather than failing status.
-			status.StaleReasons = append(status.StaleReasons, "invalid artifact: map/hashes.jsonl")
-		} else {
-			status.StaleReasons = append(status.StaleReasons, reasons...)
-		}
-	}
-
-	if len(status.StaleReasons) > 0 {
-		status.Status = "stale"
-	}
-	return status, nil
-}
-
-type mapArtifact struct {
-	rel  string
-	path string
-}
-
-func requiredMapArtifacts(paths artifacts.Paths) []mapArtifact {
-	return []mapArtifact{
-		{rel: "map/manifest.json", path: paths.MapManifest},
-		{rel: "map/files.jsonl", path: paths.FilesJSONL},
-		{rel: "map/hashes.jsonl", path: paths.HashesJSONL},
-		{rel: "map/repo-map.md", path: paths.RepoMap},
-		{rel: "map/llms.txt", path: paths.LLMS},
-		{rel: "map/search.sqlite", path: paths.SearchSQLite},
-	}
-}
-
-func hashStaleReasons(root string, hashesPath string, config configFile) ([]string, error) {
-	oldHashes, err := readHashRecords(hashesPath)
-	if err != nil {
-		return nil, fmt.Errorf("read hashes: %w", err)
-	}
-	scan, err := projectmap.Scan(root, projectmap.ScanOptions{
-		MaxFileBytes: int64(config.Map.MaxFileBytes),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	currentHashes := make(map[string]string, len(scan.Hashes))
-	for _, record := range scan.Hashes {
-		currentHashes[record.Path] = record.SHA256
-	}
-
-	reasons := []string{}
-	oldSeen := make(map[string]struct{}, len(oldHashes))
-	for _, old := range oldHashes {
-		oldSeen[old.Path] = struct{}{}
-		if current, ok := currentHashes[old.Path]; ok {
-			if current != old.SHA256 {
-				reasons = append(reasons, "changed file: "+old.Path)
-			}
-			continue
-		}
-
-		path := filepath.Join(root, filepath.FromSlash(old.Path))
-		info, err := os.Stat(path)
-		if os.IsNotExist(err) {
-			reasons = append(reasons, "missing file: "+old.Path)
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		if !info.Mode().IsRegular() {
-			reasons = append(reasons, "missing file: "+old.Path)
-			continue
-		}
-		hash, err := fileSHA256(path)
-		if err != nil {
-			return nil, err
-		}
-		if hash != old.SHA256 {
-			reasons = append(reasons, "changed file: "+old.Path)
-		}
-	}
-
-	for _, current := range scan.Hashes {
-		if _, ok := oldSeen[current.Path]; !ok {
-			reasons = append(reasons, "new file: "+current.Path)
-		}
-	}
-
-	return reasons, nil
-}
-
-func readHashRecords(path string) ([]projectmap.HashRecord, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	records := []projectmap.HashRecord{}
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var record projectmap.HashRecord
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			return nil, err
-		}
-		records = append(records, record)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	return records, nil
 }
 
 func isRegularFile(path string) bool {

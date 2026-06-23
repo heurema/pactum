@@ -6,31 +6,16 @@ Pactum stores everything for a repository under a single workspace directory:
 .heurema/pactum/
 ```
 
-`pactum init` creates it. The workspace holds the project map, the per-run
-artifacts, the accepted project memory, the event ledger, and scratch space.
+`pactum init` creates it. The workspace holds the per-run artifacts, the
+accepted project memory, the event ledger, and scratch space.
 
 ## Layout
 
 ```
 .heurema/pactum/
-├── manifest.json            # workspace manifest (schema, tool version, map run)
+├── manifest.json            # workspace manifest (schema, tool version)
 ├── config.yaml              # workspace configuration
 ├── .gitignore               # ignores the generated areas below
-├── map/                     # generated, wiki-first project map + search index
-│   ├── wiki/                # deterministic map wiki (read this first)
-│   │   ├── overview.md
-│   │   ├── structure.md
-│   │   ├── commands.md
-│   │   ├── entrypoints.md
-│   │   ├── config.md
-│   │   ├── tests.md
-│   │   └── areas/           # one page per top-level directory
-│   ├── repo-map.md
-│   ├── llms.txt
-│   ├── files.jsonl
-│   ├── hashes.jsonl
-│   ├── search.sqlite
-│   └── manifest.json
 ├── runs/                    # one directory per run
 │   └── <run_id>/
 │       ├── run.json
@@ -66,7 +51,6 @@ the workspace ignores exactly these areas:
 
 ```
 locks/
-map/
 ledger/
 cache/
 tmp/
@@ -75,10 +59,6 @@ runs/*/execute/
 runs/*/review/
 ```
 
-- `map/` — rebuilt at any time with `pactum map refresh` (includes the
-  generated `wiki/` pages and the binary `search.sqlite` index). The map is
-  wiki-first: start at `map/wiki/overview.md`. The wiki is generated from
-  deterministic facts (file inventory and manifests).
 - `ledger/` and `runs/*/ledger/` — append-only event logs.
 - `cache/`, `tmp/`, `locks/` — scratch and coordination state.
 - `runs/*/execute/` — captured agent stdout/stderr and attempt records, which
@@ -113,7 +93,7 @@ artifacts are the task, context, contract, gate, and memory artifacts above.
 
 Do not run `git add .heurema/` from the repository root expecting the whole tree
 to be safe to commit. The workspace deliberately contains generated, binary, and
-scratch content (the SQLite search index, caches, agent logs) that is large,
+scratch content (caches, agent logs) that is large,
 path- or machine-specific, regenerable, and noisy in diffs.
 
 The workspace ships its own `.gitignore` (the list above), but that file only

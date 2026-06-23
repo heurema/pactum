@@ -6,14 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/heurema/pactum/internal/artifacts"
 	"github.com/heurema/pactum/internal/ledger"
-	searchpkg "github.com/heurema/pactum/internal/search"
 )
 
 const (
@@ -30,35 +28,18 @@ type contractRunState struct {
 	UpdatedAt time.Time            `json:"updated_at"`
 	RepoRoot  string               `json:"repo_root"`
 	Workspace string               `json:"workspace"`
-	MapRunID  string               `json:"map_run_id"`
 	Artifacts contractRunArtifacts `json:"artifacts"`
 }
 
 type contractRunArtifacts struct {
 	Task            string `json:"task"`
 	RepoContext     string `json:"repo_context"`
-	SearchResults   string `json:"search_results"`
 	ExecutorContext string `json:"executor_context"`
 	ContractJSON    string `json:"contract_json"`
 	ContractMD      string `json:"contract_md"`
 	Prompt          string `json:"prompt"`
 	PromptManifest  string `json:"prompt_manifest"`
 	Approval        string `json:"approval"`
-}
-
-type runSearchResults struct {
-	Query       string                `json:"query"`
-	Queries     []string              `json:"queries,omitempty"`
-	QuerySource string                `json:"query_source,omitempty"`
-	Results     []runSearchResultItem `json:"results"`
-	Warnings    []string              `json:"warnings,omitempty"`
-}
-
-// runSearchResultItem is a single combined run-context search hit. It embeds the
-// search result and records which targeted query surfaced it.
-type runSearchResultItem struct {
-	searchpkg.Result
-	SourceQuery string `json:"source_query,omitempty"`
 }
 
 type draftContract struct {
@@ -100,10 +81,6 @@ type approvalState struct {
 
 func (a App) createContractOnlyRun(root string, task string) (contractRunState, error) {
 	paths := artifacts.New(root)
-	report, err := a.workspaceStatus(root)
-	if err != nil {
-		return contractRunState{}, err
-	}
 
 	createdAt := a.nowUTC()
 	runID, runDir, err := reserveContractRunDir(createdAt, paths.RunsDir)
@@ -132,11 +109,9 @@ func (a App) createContractOnlyRun(root string, task string) (contractRunState, 
 		UpdatedAt: createdAt,
 		RepoRoot:  ".",
 		Workspace: artifacts.WorkspaceRel,
-		MapRunID:  report.ProjectMap.RunID,
 		Artifacts: contractRunArtifacts{
 			Task:            "task.md",
 			RepoContext:     "context/repo-context.md",
-			SearchResults:   "context/search-results.json",
 			ExecutorContext: "context/executor-context.md",
 			ContractJSON:    "contract/contract.json",
 			ContractMD:      "contract/contract.md",
@@ -146,7 +121,6 @@ func (a App) createContractOnlyRun(root string, task string) (contractRunState, 
 		},
 	}
 
-	searchResults := buildRunSearchResults(paths, report.ProjectMap, "task", task)
 	contract := draftContractFor(runID, task)
 	memorySelection, err := buildAcceptedMemorySelection(paths, runID, task, "task", defaultMemorySelectionLimit, createdAt.Format(time.RFC3339))
 	if err != nil {
@@ -154,17 +128,16 @@ func (a App) createContractOnlyRun(root string, task string) (contractRunState, 
 	}
 	files := map[string][]byte{
 		runPaths.TaskMD:              renderTaskMD(task, createdAt),
-		runPaths.RepoContext:         renderRepoContext(report.ProjectMap.RunID, createdAt),
+		runPaths.RepoContext:         renderRepoContext(createdAt),
 		runPaths.MemoryContextMD:     []byte(renderMemoryContextMD(memorySelection)),
 		runPaths.QuestionsJSONL:      nil,
 		runPaths.AnswersJSONL:        nil,
 		runPaths.DecisionsJSONL:      nil,
 		runPaths.UsageJSONL:          nil,
-		runPaths.ContractMD:          renderContractMDFromDraft(contract, report.ProjectMap.RunID),
+		runPaths.ContractMD:          renderContractMDFromDraft(contract),
 		runPaths.PromptMD:            renderPromptMDFromDraft(contract),
 		runPaths.MemorySelectionJSON: mustMarshalJSON(memorySelection),
 	}
-	files[runPaths.SearchResults] = mustMarshalJSON(searchResults)
 	files[runPaths.ContractJSON] = mustMarshalJSON(contract)
 	files[runPaths.ApprovalJSON] = mustMarshalJSON(pendingApprovalState())
 	files[runPaths.RunJSON] = mustMarshalJSON(state)
@@ -200,7 +173,6 @@ type contractRunPathSet struct {
 	TaskMD  string
 
 	RepoContext         string
-	SearchResults       string
 	MemoryContextMD     string
 	MemorySelectionJSON string
 
@@ -293,7 +265,6 @@ func contractRunPaths(runDir string) contractRunPathSet {
 		RunJSON:                        filepath.Join(runDir, "run.json"),
 		TaskMD:                         filepath.Join(runDir, "task.md"),
 		RepoContext:                    filepath.Join(contextDir, "repo-context.md"),
-		SearchResults:                  filepath.Join(contextDir, "search-results.json"),
 		MemoryContextMD:                filepath.Join(contextDir, "memory-context.md"),
 		MemorySelectionJSON:            filepath.Join(contextDir, "memory-selection.json"),
 		ExecutorContext:                filepath.Join(contextDir, "executor-context.md"),
@@ -387,259 +358,17 @@ func renderTaskMD(task string, generatedAt time.Time) []byte {
 	return buffer.Bytes()
 }
 
-func renderRepoContext(mapRunID string, generatedAt time.Time) []byte {
+func renderRepoContext(generatedAt time.Time) []byte {
 	var buffer bytes.Buffer
 	fmt.Fprintln(&buffer, "# Repository Context")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintf(&buffer, "Generated: %s\n\n", generatedAt.Format(time.RFC3339))
-	fmt.Fprintf(&buffer, "Map run: %s\n", mapRunID)
 	fmt.Fprintln(&buffer, "Accepted memory context: context/memory-context.md")
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "Notes:")
 	fmt.Fprintln(&buffer, "- Pactum has not yet done agentic clarification.")
 	fmt.Fprintln(&buffer, "- This is deterministic context assembled from the run task description.")
 	return buffer.Bytes()
-}
-
-const runContextSearchLimit = 10
-
-// buildRunSearchResults assembles the run's first-pass search context. Instead
-// of running the whole task/contract text as one FTS query — which ANDs every
-// token and matches nothing for a natural-language sentence — it extracts a
-// handful of targeted queries (paths, code identifiers, domain terms) and
-// combines their results. querySource is "task" or "contract".
-func buildRunSearchResults(paths artifacts.Paths, mapStatus projectMapStatus, querySource string, text string) runSearchResults {
-	queries := extractRunContextQueries(text)
-	result := runSearchResults{
-		Query:       text,
-		Queries:     queries,
-		QuerySource: querySource,
-		Results:     []runSearchResultItem{},
-	}
-	if mapStatus.Status == "stale" {
-		result.Warnings = append(result.Warnings, "Search index is stale. Run: pactum map refresh.")
-		return result
-	}
-	if mapStatus.SearchIndex != "ready" {
-		result.Warnings = append(result.Warnings, "Search index is missing. Run: pactum map refresh.")
-		return result
-	}
-	if len(queries) == 0 {
-		return result
-	}
-	combined, err := runContextSearch(paths.SearchSQLite, queries, runContextSearchLimit)
-	if err != nil {
-		if searchpkg.IsMissingIndex(err) {
-			result.Warnings = append(result.Warnings, "Search index is missing. Run: pactum map refresh.")
-			return result
-		}
-		if searchpkg.IsStaleIndex(err) {
-			result.Warnings = append(result.Warnings, "Search index is stale. Run: pactum map refresh.")
-			return result
-		}
-		result.Warnings = append(result.Warnings, "Search failed: "+err.Error())
-		return result
-	}
-	result.Results = combined
-	return result
-}
-
-// runContextSearch runs each targeted query through the local index and merges
-// the hits, deduping by document ID so the same result surfaced by multiple
-// queries collapses to a single entry. Earlier queries are more important:
-// results are kept in query order, then result order within a query, capped at
-// limit. This is deterministic first-pass retrieval, not semantic ranking.
-func runContextSearch(dbPath string, queries []string, limit int) ([]runSearchResultItem, error) {
-	if limit <= 0 {
-		limit = runContextSearchLimit
-	}
-
-	// Run each targeted query and keep its ranked hits.
-	perQuery := make([][]searchpkg.Result, len(queries))
-	longest := 0
-	for i, query := range queries {
-		response, err := searchpkg.Query(dbPath, searchpkg.QueryOptions{
-			Query: query,
-			Limit: limit,
-			Kind:  searchpkg.KindAny,
-		})
-		if err != nil {
-			return nil, err
-		}
-		perQuery[i] = response.Results
-		if len(response.Results) > longest {
-			longest = len(response.Results)
-		}
-	}
-
-	// Round-robin across queries (position-major, query-minor) so every targeted
-	// query gets representation before the cap fills, rather than the most
-	// specific query draining every slot. Dedupe globally.
-	seen := map[string]bool{}
-	ordered := []runSearchResultItem{}
-	for pos := 0; pos < longest; pos++ {
-		for i, results := range perQuery {
-			if pos >= len(results) {
-				continue
-			}
-			hit := results[pos]
-			if seen[hit.ID] {
-				continue
-			}
-			seen[hit.ID] = true
-			ordered = append(ordered, runSearchResultItem{Result: hit, SourceQuery: queries[i]})
-		}
-	}
-
-	combined := ordered
-	if len(combined) > limit {
-		combined = combined[:limit]
-	}
-	for i := range combined {
-		combined[i].Rank = i + 1
-	}
-	return combined, nil
-}
-
-// runContextStopwords are generic task verbs and filler words that should not
-// become standalone search queries. Domain words (format, percent, currency,
-// prompt, manifest, …) are intentionally not listed.
-var runContextStopwords = map[string]bool{
-	"add": true, "update": true, "create": true, "remove": true, "implement": true,
-	"change": true, "fix": true, "helper": true, "function": true, "file": true,
-	"use": true, "using": true, "follow": true, "following": true, "should": true,
-	"would": true, "could": true, "with": true, "from": true, "into": true,
-	"this": true, "that": true, "test": true, "tests": true, "the": true, "and": true,
-	"for": true, "new": true,
-}
-
-var (
-	runContextWordSplitRe = regexp.MustCompile(`[^A-Za-z0-9_./-]+`)
-	runContextCamelRe     = regexp.MustCompile(`[A-Z]+[a-z0-9]*|[a-z0-9]+`)
-)
-
-// extractRunContextQueries derives an ordered, deduped set of targeted search
-// queries from natural-language task/contract text. Order: path-like strings,
-// then code identifiers, then split identifier / domain terms, then remaining
-// plain words. Capped at 8.
-func extractRunContextQueries(text string) []string {
-	const maxQueries = 8
-
-	var paths, idents, parts, words []string
-	pathSeen, identSeen, partSeen, wordSeen := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
-	pathComponents := map[string]bool{}
-
-	for _, token := range strings.Fields(text) {
-		token = strings.Trim(token, ".,;:!?()[]{}\"'`")
-		if token == "" || !looksLikePath(token) {
-			continue
-		}
-		key := strings.ToLower(token)
-		if !pathSeen[key] {
-			pathSeen[key] = true
-			paths = append(paths, token)
-		}
-		for _, component := range regexp.MustCompile(`[/.]`).Split(token, -1) {
-			if component != "" {
-				pathComponents[strings.ToLower(component)] = true
-			}
-		}
-	}
-
-	for _, token := range runContextWordSplitRe.Split(text, -1) {
-		token = strings.Trim(token, "-_./")
-		if token == "" {
-			continue
-		}
-		lower := strings.ToLower(token)
-		switch {
-		case isCodeIdentifier(token):
-			if !identSeen[lower] {
-				identSeen[lower] = true
-				idents = append(idents, token)
-			}
-			for _, part := range splitIdentifier(token) {
-				pl := strings.ToLower(part)
-				if len(pl) >= 3 && !runContextStopwords[pl] && !partSeen[pl] {
-					partSeen[pl] = true
-					parts = append(parts, strings.ToLower(part))
-				}
-			}
-		default:
-			if len(lower) >= 4 && !runContextStopwords[lower] && !pathComponents[lower] && !wordSeen[lower] {
-				wordSeen[lower] = true
-				words = append(words, lower)
-			}
-		}
-	}
-
-	out := []string{}
-	globalSeen := map[string]bool{}
-	for _, group := range [][]string{paths, idents, parts, words} {
-		for _, query := range group {
-			key := strings.ToLower(query)
-			if globalSeen[key] {
-				continue
-			}
-			globalSeen[key] = true
-			out = append(out, query)
-			if len(out) >= maxQueries {
-				return out
-			}
-		}
-	}
-	return out
-}
-
-// looksLikePath reports whether a token looks like a file path or filename: it
-// contains a slash, or ends in a short alphabetic extension (so "format.ts" and
-// "apps/x/format.test.ts" qualify, but "v1.0" and "3.14" do not).
-func looksLikePath(token string) bool {
-	if strings.Contains(token, "/") {
-		return true
-	}
-	dot := strings.LastIndex(token, ".")
-	if dot <= 0 || dot == len(token)-1 {
-		return false
-	}
-	ext := token[dot+1:]
-	if len(ext) < 1 || len(ext) > 5 {
-		return false
-	}
-	for _, r := range ext {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')) {
-			return false
-		}
-	}
-	return true
-}
-
-// isCodeIdentifier reports whether a token looks like a code identifier:
-// camelCase/PascalCase, snake_case, or kebab-case.
-func isCodeIdentifier(token string) bool {
-	if !strings.ContainsAny(token, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") {
-		return false
-	}
-	if strings.ContainsAny(token, "_-") {
-		return true
-	}
-	for i := 1; i < len(token); i++ {
-		if token[i] >= 'A' && token[i] <= 'Z' && token[i-1] >= 'a' && token[i-1] <= 'z' {
-			return true
-		}
-	}
-	return false
-}
-
-// splitIdentifier breaks a code identifier into its word parts across case
-// boundaries and `_`/`-` separators.
-func splitIdentifier(identifier string) []string {
-	normalized := strings.NewReplacer("_", " ", "-", " ").Replace(identifier)
-	var parts []string
-	for _, chunk := range strings.Fields(normalized) {
-		parts = append(parts, runContextCamelRe.FindAllString(chunk, -1)...)
-	}
-	return parts
 }
 
 func draftContractFor(runID string, task string) draftContract {
@@ -667,7 +396,7 @@ func draftContractFor(runID string, task string) draftContract {
 	}
 }
 
-func renderContractMDFromDraft(contract draftContract, mapRunID string) []byte {
+func renderContractMDFromDraft(contract draftContract) []byte {
 	var buffer bytes.Buffer
 	fmt.Fprintln(&buffer, "# Contract Draft")
 	fmt.Fprintln(&buffer)
@@ -677,9 +406,6 @@ func renderContractMDFromDraft(contract draftContract, mapRunID string) []byte {
 	fmt.Fprintln(&buffer, "## Current status")
 	fmt.Fprintf(&buffer, "Contract status: %s\n", contract.Status)
 	fmt.Fprintln(&buffer, "Manual clarification, contract approval, prompt build, and agent execution are available through staged Pactum commands.")
-	fmt.Fprintln(&buffer)
-	fmt.Fprintln(&buffer, "## Relevant repository context")
-	fmt.Fprintf(&buffer, "- Map run: %s\n", mapRunID)
 	fmt.Fprintln(&buffer)
 	fmt.Fprintln(&buffer, "## Clarifications")
 	if len(contract.Clarifications.Questions) == 0 {

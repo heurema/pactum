@@ -172,7 +172,7 @@ func TestPromptMDExecutorWordingIsCurrent(t *testing.T) {
 	}
 	for _, want := range []string{
 		"`pactum execute run`",
-		"validates contract, map, and memory boundaries",
+		"validates contract and memory boundaries",
 		"Pactum gate can run approved validation commands after execution",
 	} {
 		if !strings.Contains(prompt, want) {
