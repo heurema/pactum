@@ -81,18 +81,23 @@ func TestGitGuardPrechecks_DetachedHead(t *testing.T) {
 	hash := mustGitG(t, root, "rev-parse", "HEAD")
 	mustGitG(t, root, "checkout", "--detach", hash)
 
+	// Detached HEAD at execute start is a valid initial condition: the guard
+	// still protects HEAD hash and HEAD reflog without needing a symbolic ref.
 	ok, reason, snap, err := gitGuardPrechecks(root, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ok {
-		t.Fatal("expected ok=false for detached HEAD")
+	if !ok {
+		t.Fatalf("expected ok=true for detached HEAD (valid initial condition), got reason=%q", reason)
 	}
-	if reason != gitGuardReasonInconclusive {
-		t.Errorf("expected %q, got %q", gitGuardReasonInconclusive, reason)
+	if snap == nil {
+		t.Fatal("expected non-nil snapshot for detached HEAD")
 	}
-	if snap != nil {
-		t.Error("expected nil snapshot when ok=false")
+	if snap.HeadSymRef != "" {
+		t.Errorf("expected empty HeadSymRef for detached HEAD, got %q", snap.HeadSymRef)
+	}
+	if snap.HeadHash == "" {
+		t.Error("expected non-empty HeadHash for detached HEAD")
 	}
 }
 
@@ -360,10 +365,10 @@ func TestGitGuardCompareAndRestore_CommitThenResetHard_Inconclusive(t *testing.T
 }
 
 // ---------------------------------------------------------------------------
-// gitGuardCompareAndRestore — stash → inconclusive
+// gitGuardCompareAndRestore — stash: refs/stash not detected, not terminal
 // ---------------------------------------------------------------------------
 
-func TestGitGuardCompareAndRestore_StashCreated_Inconclusive(t *testing.T) {
+func TestGitGuardCompareAndRestore_StashChange_NotDetected(t *testing.T) {
 	skipIfNoGit(t)
 	root := initTestRepo(t)
 
@@ -372,28 +377,28 @@ func TestGitGuardCompareAndRestore_StashCreated_Inconclusive(t *testing.T) {
 		t.Fatalf("snapshot: %v", err)
 	}
 
-	// Simulate agent stashing changes.
+	// refs/stash lives in the shared common store and cannot be exclusively
+	// attributed to this worktree's agent (another worktree could advance it).
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("modified"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mustGitG(t, root, "stash", "push", "-m", "agent stash")
+	mustGitG(t, root, "stash", "push", "-m", "stash")
 
 	outcome := gitGuardCompareAndRestore(root, snap, false, nil)
 
-	if outcome.TerminalReason != gitGuardReasonInconclusive {
-		t.Errorf("expected terminal_reason=%q, got %q", gitGuardReasonInconclusive, outcome.TerminalReason)
+	if outcome.TerminalReason != "" {
+		t.Errorf("stash change must not be terminal, got %q", outcome.TerminalReason)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// gitGuardCompareAndRestore — ref mutation (non-HEAD ref changed)
+// gitGuardCompareAndRestore — non-current-branch ref change: not detected, not restored
 // ---------------------------------------------------------------------------
 
-func TestGitGuardCompareAndRestore_RefMutation_Detected_And_Restored(t *testing.T) {
+func TestGitGuardCompareAndRestore_OtherBranchRef_NotDetected(t *testing.T) {
 	skipIfNoGit(t)
 	root := initTestRepo(t)
 
-	// Create an extra ref pointing to the initial commit.
 	origHash := mustGitG(t, root, "rev-parse", "HEAD")
 	mustGitG(t, root, "update-ref", "refs/heads/extra", origHash)
 
@@ -402,23 +407,23 @@ func TestGitGuardCompareAndRestore_RefMutation_Detected_And_Restored(t *testing.
 		t.Fatalf("snapshot: %v", err)
 	}
 
-	// Create a new commit object WITHOUT touching HEAD (so HEAD reflog does not advance).
-	// git commit-tree creates a commit object directly from the current tree.
+	// Move refs/heads/extra to a new commit without touching HEAD.
 	tree := mustGitG(t, root, "write-tree")
 	newCommit := mustGitG(t, root, "commit-tree", tree, "-p", origHash, "-m", "detached commit object")
-	// Move the extra ref to the new commit.
 	mustGitG(t, root, "update-ref", "refs/heads/extra", newCommit)
 
 	outcome := gitGuardCompareAndRestore(root, snap, false, nil)
 
-	if outcome.TerminalReason != gitGuardReasonRefMutation {
-		t.Errorf("expected terminal_reason=%q, got %q", gitGuardReasonRefMutation, outcome.TerminalReason)
+	// Non-current-branch refs are not attributable to this worktree's agent and
+	// must not be flagged or restored.
+	if outcome.TerminalReason != "" {
+		t.Errorf("non-current-branch ref change must not be terminal, got %q", outcome.TerminalReason)
 	}
 
-	// refs/heads/extra should be restored to origHash.
-	restoredRef := mustGitG(t, root, "rev-parse", "refs/heads/extra")
-	if restoredRef != origHash {
-		t.Errorf("refs/heads/extra not restored: want %s, got %s", origHash, restoredRef)
+	// refs/heads/extra must remain at newCommit — the guard must not restore it.
+	currentRef := mustGitG(t, root, "rev-parse", "refs/heads/extra")
+	if currentRef != newCommit {
+		t.Errorf("guard must not restore refs/heads/extra: want %s, got %s", newCommit, currentRef)
 	}
 }
 
@@ -492,9 +497,6 @@ func TestGitGuardPrechecks_SnapshotPopulatedOnSuccess(t *testing.T) {
 	}
 	if snap.IndexTreeHash == "" {
 		t.Error("snapshot IndexTreeHash is empty")
-	}
-	if snap.Refs == nil {
-		t.Error("snapshot Refs is nil")
 	}
 }
 
@@ -599,47 +601,6 @@ func TestGitGuardReviewFixBaseline(t *testing.T) {
 
 	if outcome.TerminalReason != "" {
 		t.Errorf("pre-existing dirty state should not be flagged as a mutation; got terminal_reason=%q", outcome.TerminalReason)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// gitGuardCompareAndRestore — inconclusive suppresses restoration of restorable mutations
-// ---------------------------------------------------------------------------
-
-func TestGitGuardInconclusiveSuppressesRestore(t *testing.T) {
-	skipIfNoGit(t)
-	root := initTestRepo(t)
-
-	// Create an extra ref that the agent will move (normally a restorable ref mutation).
-	origHash := mustGitG(t, root, "rev-parse", "HEAD")
-	mustGitG(t, root, "update-ref", "refs/heads/extra", origHash)
-
-	snap, err := gitGuardTakeSnapshot(root)
-	if err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
-
-	// Agent: creates a stash (inconclusive trigger) AND moves refs/heads/extra (restorable).
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("modified"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	mustGitG(t, root, "stash", "push", "-m", "agent stash")
-
-	tree := mustGitG(t, root, "write-tree")
-	newCommit := mustGitG(t, root, "commit-tree", tree, "-p", origHash, "-m", "detached commit")
-	mustGitG(t, root, "update-ref", "refs/heads/extra", newCommit)
-
-	outcome := gitGuardCompareAndRestore(root, snap, false, nil)
-
-	// Inconclusive (stash) dominates.
-	if outcome.TerminalReason != gitGuardReasonInconclusive {
-		t.Errorf("expected terminal_reason=%q, got %q", gitGuardReasonInconclusive, outcome.TerminalReason)
-	}
-
-	// refs/heads/extra must NOT be restored — inconclusive suppresses all restoration.
-	currentExtra := mustGitG(t, root, "rev-parse", "refs/heads/extra")
-	if currentExtra != newCommit {
-		t.Errorf("inconclusive should suppress ref restoration: extra should remain at %s, got %s", newCommit, currentExtra)
 	}
 }
 
@@ -797,5 +758,328 @@ func TestGitGuardPrechecks_LooseRefLock_LinkedWorktree(t *testing.T) {
 	}
 	if reason != gitGuardReasonInconclusive {
 		t.Errorf("expected %q, got %q", gitGuardReasonInconclusive, reason)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// gitGuardCompareAndRestore — linked worktree: concurrent other-worktree activity
+// ---------------------------------------------------------------------------
+
+// addLinkedWorktree creates a branch and linked worktree under a temp dir.
+// The caller is responsible for registering cleanup via t.Cleanup.
+func addLinkedWorktree(t *testing.T, primaryRoot string) (wtDir string) {
+	t.Helper()
+	mustGitG(t, primaryRoot, "branch", "wt-branch")
+	wtDir = filepath.Join(t.TempDir(), "wt")
+	mustGitG(t, primaryRoot, "worktree", "add", wtDir, "wt-branch")
+	t.Cleanup(func() {
+		_ = exec.Command("git", "-C", primaryRoot, "worktree", "remove", "--force", wtDir).Run()
+	})
+	return wtDir
+}
+
+func TestGitGuardCompareAndRestore_LinkedWorktree_OtherRefAdd_NotDetected(t *testing.T) {
+	skipIfNoGit(t)
+	primaryRoot := initTestRepo(t)
+	wtDir := addLinkedWorktree(t, primaryRoot)
+
+	snap, err := gitGuardTakeSnapshot(wtDir)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+
+	// Concurrent activity in the other worktree: create a new branch.
+	origHash := mustGitG(t, primaryRoot, "rev-parse", "HEAD")
+	mustGitG(t, primaryRoot, "update-ref", "refs/heads/new-branch", origHash)
+
+	outcome := gitGuardCompareAndRestore(wtDir, snap, false, nil)
+
+	if outcome.TerminalReason != "" {
+		t.Errorf("other-worktree ref add must not be terminal, got %q", outcome.TerminalReason)
+	}
+
+	// Guard must not delete the operator-created branch.
+	if !tryGitG(primaryRoot, "rev-parse", "--verify", "refs/heads/new-branch") {
+		t.Error("guard must not delete operator-created refs/heads/new-branch")
+	}
+}
+
+func TestGitGuardCompareAndRestore_LinkedWorktree_OtherRefDelete_NotDetected(t *testing.T) {
+	skipIfNoGit(t)
+	primaryRoot := initTestRepo(t)
+
+	// Create a branch in the primary before snapshotting in the linked worktree.
+	origHash := mustGitG(t, primaryRoot, "rev-parse", "HEAD")
+	mustGitG(t, primaryRoot, "update-ref", "refs/heads/to-delete", origHash)
+
+	wtDir := addLinkedWorktree(t, primaryRoot)
+
+	snap, err := gitGuardTakeSnapshot(wtDir)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+
+	// Concurrent activity in the other worktree: delete that branch.
+	mustGitG(t, primaryRoot, "update-ref", "-d", "refs/heads/to-delete")
+
+	outcome := gitGuardCompareAndRestore(wtDir, snap, false, nil)
+
+	if outcome.TerminalReason != "" {
+		t.Errorf("other-worktree ref delete must not be terminal, got %q", outcome.TerminalReason)
+	}
+	// Guard must not re-create the branch the operator deleted.
+	if tryGitG(primaryRoot, "rev-parse", "--verify", "refs/heads/to-delete") {
+		t.Error("guard must not restore operator-deleted refs/heads/to-delete")
+	}
+}
+
+func TestGitGuardCompareAndRestore_LinkedWorktree_TagCreated_NotDetected(t *testing.T) {
+	skipIfNoGit(t)
+	primaryRoot := initTestRepo(t)
+	wtDir := addLinkedWorktree(t, primaryRoot)
+
+	snap, err := gitGuardTakeSnapshot(wtDir)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+
+	// Concurrent activity in the other worktree: create a tag.
+	mustGitG(t, primaryRoot, "tag", "v1.0")
+
+	outcome := gitGuardCompareAndRestore(wtDir, snap, false, nil)
+
+	if outcome.TerminalReason != "" {
+		t.Errorf("other-worktree tag creation must not be terminal, got %q", outcome.TerminalReason)
+	}
+
+	// Tag must be untouched.
+	if !tryGitG(primaryRoot, "rev-parse", "--verify", "refs/tags/v1.0") {
+		t.Error("guard must not delete operator-created tag refs/tags/v1.0")
+	}
+}
+
+func TestGitGuardCompareAndRestore_LinkedWorktree_OtherCommit_NotDetected(t *testing.T) {
+	skipIfNoGit(t)
+	primaryRoot := initTestRepo(t)
+	wtDir := addLinkedWorktree(t, primaryRoot)
+
+	snap, err := gitGuardTakeSnapshot(wtDir)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+
+	// Concurrent commit in the primary worktree (advances refs/heads/main in
+	// the shared object store but does not touch wt-branch or HEAD in wtDir).
+	if err := os.WriteFile(filepath.Join(primaryRoot, "primary.txt"), []byte("primary"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitG(t, primaryRoot, "add", "primary.txt")
+	mustGitG(t, primaryRoot, "commit", "-m", "primary commit")
+	primaryHead := mustGitG(t, primaryRoot, "rev-parse", "HEAD")
+
+	outcome := gitGuardCompareAndRestore(wtDir, snap, false, nil)
+
+	if outcome.TerminalReason != "" {
+		t.Errorf("other-worktree commit must not be terminal, got %q", outcome.TerminalReason)
+	}
+	// Guard must not alter the primary worktree's commit.
+	if got := mustGitG(t, primaryRoot, "rev-parse", "HEAD"); got != primaryHead {
+		t.Errorf("guard must not alter primary worktree HEAD: want %s, got %s", primaryHead, got)
+	}
+}
+
+func TestGitGuardCompareAndRestore_LinkedWorktree_OtherStash_NotDetected(t *testing.T) {
+	skipIfNoGit(t)
+	primaryRoot := initTestRepo(t)
+	wtDir := addLinkedWorktree(t, primaryRoot)
+
+	snap, err := gitGuardTakeSnapshot(wtDir)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+
+	// Stash in the primary worktree advances refs/stash in the shared common store.
+	if err := os.WriteFile(filepath.Join(primaryRoot, "a.txt"), []byte("modified"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitG(t, primaryRoot, "stash", "push", "-m", "primary stash")
+	stashHash := mustGitG(t, primaryRoot, "rev-parse", "refs/stash")
+
+	outcome := gitGuardCompareAndRestore(wtDir, snap, false, nil)
+
+	if outcome.TerminalReason != "" {
+		t.Errorf("other-worktree stash must not be terminal, got %q", outcome.TerminalReason)
+	}
+	// refs/stash must remain at the hash created by the other worktree.
+	if got := mustGitG(t, primaryRoot, "rev-parse", "refs/stash"); got != stashHash {
+		t.Errorf("guard must not alter refs/stash: want %s, got %s", stashHash, got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// gitGuardCompareAndRestore — branch-switch and detach after attached start
+// ---------------------------------------------------------------------------
+
+func TestGitGuardCompareAndRestore_BranchSwitch_Inconclusive(t *testing.T) {
+	skipIfNoGit(t)
+	root := initTestRepo(t)
+	mustGitG(t, root, "branch", "other")
+
+	snap, err := gitGuardTakeSnapshot(root)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+
+	mustGitG(t, root, "checkout", "other")
+
+	outcome := gitGuardCompareAndRestore(root, snap, false, nil)
+
+	if outcome.TerminalReason != gitGuardReasonInconclusive {
+		t.Errorf("expected terminal_reason=%q, got %q", gitGuardReasonInconclusive, outcome.TerminalReason)
+	}
+	if outcome.MutationClass != "branch_switched" {
+		t.Errorf("expected mutation_class=%q, got %q", "branch_switched", outcome.MutationClass)
+	}
+}
+
+func TestGitGuardCompareAndRestore_DetachHead_Inconclusive(t *testing.T) {
+	skipIfNoGit(t)
+	root := initTestRepo(t)
+
+	snap, err := gitGuardTakeSnapshot(root)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+
+	// Agent detaches HEAD while execution started on a branch.
+	hash := mustGitG(t, root, "rev-parse", "HEAD")
+	mustGitG(t, root, "checkout", "--detach", hash)
+
+	outcome := gitGuardCompareAndRestore(root, snap, false, nil)
+
+	if outcome.TerminalReason != gitGuardReasonInconclusive {
+		t.Errorf("expected terminal_reason=%q, got %q", gitGuardReasonInconclusive, outcome.TerminalReason)
+	}
+	if outcome.MutationClass != "detached_head" {
+		t.Errorf("expected mutation_class=%q, got %q", "detached_head", outcome.MutationClass)
+	}
+}
+
+func TestGitGuardCompareAndRestore_DetachedStart_AttachBranch_Inconclusive(t *testing.T) {
+	skipIfNoGit(t)
+	root := initTestRepo(t)
+	hash := mustGitG(t, root, "rev-parse", "HEAD")
+	mustGitG(t, root, "checkout", "--detach", hash)
+
+	snap, err := gitGuardTakeSnapshot(root)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snap.HeadSymRef != "" {
+		t.Fatalf("expected empty HeadSymRef, got %q", snap.HeadSymRef)
+	}
+
+	// Agent creates and checks out a new branch, attaching HEAD.
+	mustGitG(t, root, "checkout", "-b", "agent-branch")
+
+	outcome := gitGuardCompareAndRestore(root, snap, false, nil)
+
+	if outcome.TerminalReason != gitGuardReasonInconclusive {
+		t.Errorf("expected terminal_reason=%q, got %q", gitGuardReasonInconclusive, outcome.TerminalReason)
+	}
+	if outcome.MutationClass != "branch_attached" {
+		t.Errorf("expected mutation_class=%q, got %q", "branch_attached", outcome.MutationClass)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// gitGuardCompareAndRestore — detached HEAD at execute start
+// ---------------------------------------------------------------------------
+
+func TestGitGuardCompareAndRestore_DetachedHead_CleanRun(t *testing.T) {
+	skipIfNoGit(t)
+	root := initTestRepo(t)
+	hash := mustGitG(t, root, "rev-parse", "HEAD")
+	mustGitG(t, root, "checkout", "--detach", hash)
+
+	snap, err := gitGuardTakeSnapshot(root)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snap.HeadSymRef != "" {
+		t.Fatalf("expected empty HeadSymRef for detached HEAD, got %q", snap.HeadSymRef)
+	}
+
+	outcome := gitGuardCompareAndRestore(root, snap, false, nil)
+
+	if outcome.TerminalReason != "" {
+		t.Errorf("clean run from detached HEAD must not be terminal, got %q", outcome.TerminalReason)
+	}
+}
+
+func TestGitGuardCompareAndRestore_DetachedHead_AgentCommit_Detected(t *testing.T) {
+	skipIfNoGit(t)
+	root := initTestRepo(t)
+	hash := mustGitG(t, root, "rev-parse", "HEAD")
+	mustGitG(t, root, "checkout", "--detach", hash)
+
+	snap, err := gitGuardTakeSnapshot(root)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+
+	// Agent commits on the detached HEAD.
+	if err := os.WriteFile(filepath.Join(root, "agent.txt"), []byte("agent"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitG(t, root, "add", "agent.txt")
+	mustGitG(t, root, "commit", "-m", "agent commit on detached HEAD")
+
+	outcome := gitGuardCompareAndRestore(root, snap, false, nil)
+
+	if outcome.TerminalReason != gitGuardReasonHistoryMutation {
+		t.Errorf("expected terminal_reason=%q, got %q", gitGuardReasonHistoryMutation, outcome.TerminalReason)
+	}
+
+	// HEAD must be restored to the snapshot hash.
+	currentHead := mustGitG(t, root, "rev-parse", "HEAD")
+	if currentHead != snap.HeadHash {
+		t.Errorf("HEAD not restored: want %s, got %s", snap.HeadHash, currentHead)
+	}
+
+	// Agent's file must be present as an unstaged working-tree modification.
+	statusOut := mustGitG(t, root, "status", "--porcelain=v1")
+	if !strings.Contains(statusOut, "agent.txt") {
+		t.Errorf("expected agent.txt in status after restore, got: %q", statusOut)
+	}
+}
+
+func TestGitGuardCompareAndRestore_DetachedHead_CommitThenReset_Inconclusive(t *testing.T) {
+	skipIfNoGit(t)
+	root := initTestRepo(t)
+	hash := mustGitG(t, root, "rev-parse", "HEAD")
+	mustGitG(t, root, "checkout", "--detach", hash)
+
+	snap, err := gitGuardTakeSnapshot(root)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	origHead := snap.HeadHash
+
+	// Agent commits then resets back to the original detached HEAD commit.
+	if err := os.WriteFile(filepath.Join(root, "secret.txt"), []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitG(t, root, "add", "secret.txt")
+	mustGitG(t, root, "commit", "-m", "agent secret commit on detached HEAD")
+	mustGitG(t, root, "reset", "--hard", origHead)
+
+	outcome := gitGuardCompareAndRestore(root, snap, false, nil)
+
+	if outcome.TerminalReason != gitGuardReasonInconclusive {
+		t.Errorf("expected terminal_reason=%q, got %q", gitGuardReasonInconclusive, outcome.TerminalReason)
+	}
+	if outcome.MutationClass != "head_unchanged_reflog_advanced" {
+		t.Errorf("expected mutation_class=%q, got %q", "head_unchanged_reflog_advanced", outcome.MutationClass)
 	}
 }

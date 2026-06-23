@@ -14,7 +14,6 @@ const (
 	gitGuardReasonInconclusive    = "executor_git_guard_inconclusive"
 	gitGuardReasonRestoreFailed   = "executor_git_restore_failed"
 	gitGuardReasonHistoryMutation = "executor_git_history_mutation"
-	gitGuardReasonRefMutation     = "executor_git_ref_mutation"
 	gitGuardReasonIndexMutation   = "executor_git_index_mutation"
 )
 
@@ -29,13 +28,14 @@ type gitGuardOutcome struct {
 }
 
 // gitGuardSnapshot captures minimal git state for post-transport comparison.
+// Only HEAD, HEAD reflog, and the index are tracked — refs and commit objects
+// that belong to the shared common store are not snapshotted, so concurrent
+// activity in other linked worktrees cannot cause false positives.
 type gitGuardSnapshot struct {
-	HeadSymRef    string            // symbolic ref (e.g. refs/heads/main)
+	HeadSymRef    string            // symbolic ref (e.g. refs/heads/main); empty for detached HEAD
 	HeadHash      string            // HEAD commit hash at snapshot time
-	BranchRef     string            // the current branch ref (same as HeadSymRef)
-	Refs          map[string]string // all refs: refname -> object hash
-	ReflogHints   map[string]string // per-ref reflog tip hash: ref key -> top-entry hash
-	CommitObjects map[string]bool   // SHA set of all commit objects (including dangling)
+	ReflogHints   map[string]string // HEAD reflog: "HEAD" (tip) and "HEAD@{1}" (second entry)
+	HeadReflogLen int               // number of HEAD reflog entries at snapshot time; used for commit-then-reset detection
 	IndexTreeHash string            // tree SHA written from the current index
 }
 
@@ -81,34 +81,17 @@ func gitGuardPrechecks(root string, isReviewFix bool) (bool, string, *gitGuardSn
 		return true, "", nil, nil
 	}
 
-	// HEAD must be a symbolic ref (attached to a branch, not detached).
-	if _, err := gitExec(root, "symbolic-ref", "--quiet", "HEAD"); err != nil {
-		return inconclusive()
-	}
-
 	// Resolve the git directory for state-file checks.
 	gitDir, err := gitExec(root, "rev-parse", "--absolute-git-dir")
 	if err != nil {
 		return inconclusiveErr(fmt.Errorf("git guard: rev-parse --absolute-git-dir: %w", err))
 	}
 
-	// Resolve the git common dir for shared-ref-store state checks. Linked
-	// worktrees are supported — refs are shared across all linked worktrees via
-	// the common dir, so:
-	//   (a) a branch checked out in another worktree cannot be force-moved from
-	//       this one — if the guard must restore such a ref and git refuses, it
-	//       surfaces as executor_git_restore_failed;
-	//   (b) concurrent git activity in another worktree could perturb shared refs
-	//       mid-run — this is an accepted, documented residual and does not block.
-	//
-	// Stale lock path resolution uses the common dir for shared-ref-store locks
-	// (refs.lock, packed-refs.lock, loose-ref locks under refs/). When
-	// --git-common-dir returns a relative path (e.g. ".git" in a primary worktree)
-	// it is resolved via filepath.Join(root, commonDir), where root is the
-	// directory used with "git -C root", because git's relative output is rooted
-	// at root, not the process CWD. index.lock remains resolved against the
-	// per-worktree git dir (always absolute, from --absolute-git-dir) because each
-	// worktree has its own index.
+	// Resolve the git common dir for stale lock-file detection only. Refs and
+	// commit objects in the common store are not snapshotted, so concurrent
+	// activity in other linked worktrees cannot cause false positives. When
+	// --git-common-dir returns a relative path (e.g. ".git" in a primary
+	// worktree) it is resolved via filepath.Join(root, commonDir).
 	commonDir, err := gitExec(root, "rev-parse", "--git-common-dir")
 	if err != nil {
 		return inconclusiveErr(fmt.Errorf("git guard: rev-parse --git-common-dir: %w", err))
@@ -206,17 +189,16 @@ func gitGuardPrechecks(root string, isReviewFix bool) (bool, string, *gitGuardSn
 	return true, "", snap, nil
 }
 
-// gitGuardSnapshot captures the current git state as a mutation-detection baseline.
+// gitGuardTakeSnapshot captures the current git state as a mutation-detection baseline.
+// Only this worktree's HEAD, HEAD reflog, and the index are recorded — shared refs and
+// the commit-object store are intentionally omitted so concurrent activity in other
+// linked worktrees does not cause false positives.
 func gitGuardTakeSnapshot(root string) (*gitGuardSnapshot, error) {
 	snap := &gitGuardSnapshot{}
 
-	// HEAD symbolic ref.
-	symRef, err := gitExec(root, "symbolic-ref", "--quiet", "HEAD")
-	if err != nil {
-		return nil, fmt.Errorf("git guard: symbolic-ref HEAD: %w", err)
-	}
+	// HEAD symbolic ref; empty for detached HEAD, which is a valid initial state.
+	symRef, _ := gitExec(root, "symbolic-ref", "--quiet", "HEAD")
 	snap.HeadSymRef = strings.TrimSpace(symRef)
-	snap.BranchRef = snap.HeadSymRef
 
 	// HEAD commit hash.
 	headHash, err := gitExec(root, "rev-parse", "HEAD")
@@ -225,15 +207,7 @@ func gitGuardTakeSnapshot(root string) (*gitGuardSnapshot, error) {
 	}
 	snap.HeadHash = strings.TrimSpace(headHash)
 
-	// All refs.
-	refsOut, err := gitExec(root, "for-each-ref", "--format=%(refname) %(objectname)")
-	if err != nil {
-		return nil, fmt.Errorf("git guard: for-each-ref: %w", err)
-	}
-	snap.Refs = parseForEachRef(refsOut)
-
-	// Reflog tip hints: HEAD (tip + second entry) for commit-then-reset-hard
-	// detection, and tip-only for every other ref to catch advance-and-retract.
+	// HEAD reflog hints: tip and second entry for commit-then-reset detection.
 	snap.ReflogHints = make(map[string]string)
 	if tip, err := gitExec(root, "reflog", "--format=%H", "-n", "1", "HEAD"); err == nil && strings.TrimSpace(tip) != "" {
 		snap.ReflogHints["HEAD"] = strings.TrimSpace(tip)
@@ -241,23 +215,17 @@ func gitGuardTakeSnapshot(root string) (*gitGuardSnapshot, error) {
 	if second, err := gitExec(root, "rev-parse", "HEAD@{1}"); err == nil && strings.TrimSpace(second) != "" {
 		snap.ReflogHints["HEAD@{1}"] = strings.TrimSpace(second)
 	}
-	// Capture reflog tip for every non-HEAD ref (including stash).
-	for ref := range snap.Refs {
-		if ref == snap.HeadSymRef {
-			continue // HEAD's reflog is already captured above
-		}
-		if tip, err := gitExec(root, "reflog", "--format=%H", "-n", "1", ref); err == nil && strings.TrimSpace(tip) != "" {
-			snap.ReflogHints[ref] = strings.TrimSpace(tip)
+
+	// Count HEAD reflog entries so compare can identify entries added after snapshot.
+	if reflogOut, err := gitExec(root, "reflog", "--format=%H", "HEAD"); err == nil {
+		for _, line := range strings.Split(reflogOut, "\n") {
+			if strings.TrimSpace(line) != "" {
+				snap.HeadReflogLen++
+			}
 		}
 	}
 
-	// Commit object set: all commit objects in the object store, including
-	// dangling ones not reachable from any ref. git commit-tree can create
-	// these without touching HEAD, any ref, or the reflog.
-	snap.CommitObjects = collectCommitObjects(root)
-
-	// Index tree hash. git write-tree creates a tree object from the current
-	// index without creating a commit; the object is loose and harmless.
+	// Index tree hash.
 	indexTree, err := gitExec(root, "write-tree")
 	if err != nil {
 		return nil, fmt.Errorf("git guard: write-tree: %w", err)
@@ -267,42 +235,6 @@ func gitGuardTakeSnapshot(root string) (*gitGuardSnapshot, error) {
 	return snap, nil
 }
 
-// collectCommitObjects returns the SHA set of all commit objects in the object
-// store, including dangling commits not reachable from any ref.
-func collectCommitObjects(root string) map[string]bool {
-	out, err := gitExec(root, "cat-file", "--batch-check=%(objecttype) %(objectname)", "--batch-all-objects")
-	if err != nil {
-		return map[string]bool{}
-	}
-	commits := make(map[string]bool)
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "commit ") {
-			sha := strings.TrimPrefix(line, "commit ")
-			if sha != "" {
-				commits[sha] = true
-			}
-		}
-	}
-	return commits
-}
-
-// parseForEachRef parses "for-each-ref --format=%(refname) %(objectname)" output.
-func parseForEachRef(out string) map[string]string {
-	refs := make(map[string]string)
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, " ", 2)
-		if len(parts) == 2 {
-			refs[parts[0]] = parts[1]
-		}
-	}
-	return refs
-}
-
 // gitGuardCompareAndRestore compares the post-transport git state against the
 // snapshot and restores what it can. It always runs (even when the transport
 // errored) so that agent-caused git mutations are detected and reported.
@@ -310,32 +242,49 @@ func parseForEachRef(out string) map[string]string {
 // transportErr is the error (if any) from the agent transport; it informs
 // detail fields but does not suppress detection or restoration.
 //
-// The restore logic follows the precedence rule (highest first):
+// Only mutations attributable to this worktree's agent are classified:
+// HEAD symbolic-ref change (branch switch), HEAD hash change (commit),
+// HEAD reflog advance while hash is unchanged (commit-then-reset), and
+// index-only staging. Changes to other refs, tags, remote refs, stash, or
+// commit objects in the shared store are not examined — they may originate
+// from concurrent activity in other linked worktrees.
 //
-//	inconclusive > restore_failed > history_mutation > ref_mutation > index_mutation
+// Precedence (highest first):
 //
-// When inconclusive is detected, all restoration is suppressed.
+//	inconclusive > restore_failed > history_mutation > index_mutation
 //
-// Terminality: inconclusive, restore_failed, history_mutation, and ref_mutation
-// all void the attempt (TerminalReason set). An index-only mutation is benign —
-// it is detected, restored, and recorded in MutationClass, but leaves
-// TerminalReason empty so the attempt completes: staging touches only the
-// ephemeral index, not history or refs.
+// An index-only mutation is benign: it is detected and restored, but
+// TerminalReason is left empty so the attempt completes.
 func gitGuardCompareAndRestore(root string, snap *gitGuardSnapshot, isReviewFix bool, transportErr error) gitGuardOutcome {
 	outcome := gitGuardOutcome{}
 	if transportErr != nil {
 		outcome.Detail = "transport error: " + transportErr.Error()
 	}
 
-	// Current HEAD symbolic ref.
-	curSymRef, err := gitExec(root, "symbolic-ref", "--quiet", "HEAD")
-	if err != nil {
-		// Detached HEAD after the agent ran — inconclusive.
-		outcome.TerminalReason = gitGuardReasonInconclusive
-		outcome.MutationClass = "detached_head"
-		return outcome
+	// Branch-switch / HEAD-attachment detection.
+	if snap.HeadSymRef != "" {
+		// Started on a branch: detect detach or switch to another branch.
+		curSymRef, err := gitExec(root, "symbolic-ref", "--quiet", "HEAD")
+		if err != nil {
+			// Agent detached HEAD after starting on a branch — inconclusive.
+			outcome.TerminalReason = gitGuardReasonInconclusive
+			outcome.MutationClass = "detached_head"
+			return outcome
+		}
+		if strings.TrimSpace(curSymRef) != snap.HeadSymRef {
+			outcome.TerminalReason = gitGuardReasonInconclusive
+			outcome.MutationClass = "branch_switched"
+			return outcome
+		}
+	} else {
+		// Started in detached HEAD; if HEAD is now attached the agent checked out
+		// or created a branch — we cannot safely attribute that branch's state.
+		if curSymRef, err := gitExec(root, "symbolic-ref", "--quiet", "HEAD"); err == nil && strings.TrimSpace(curSymRef) != "" {
+			outcome.TerminalReason = gitGuardReasonInconclusive
+			outcome.MutationClass = "branch_attached"
+			return outcome
+		}
 	}
-	curSymRef = strings.TrimSpace(curSymRef)
 
 	// Current HEAD hash.
 	curHeadHash, err := gitExec(root, "rev-parse", "HEAD")
@@ -346,12 +295,6 @@ func gitGuardCompareAndRestore(root string, snap *gitGuardSnapshot, isReviewFix 
 	}
 	curHeadHash = strings.TrimSpace(curHeadHash)
 
-	// Current reflog entries for HEAD (tip and second-most-recent).
-	curReflogTip, _ := gitExec(root, "reflog", "--format=%H", "-n", "1", "HEAD")
-	curReflogTip = strings.TrimSpace(curReflogTip)
-	curReflogSecond, _ := gitExec(root, "rev-parse", "HEAD@{1}")
-	curReflogSecond = strings.TrimSpace(curReflogSecond)
-
 	// Current index tree.
 	curIndexTree, err := gitExec(root, "write-tree")
 	if err != nil {
@@ -361,112 +304,43 @@ func gitGuardCompareAndRestore(root string, snap *gitGuardSnapshot, isReviewFix 
 	}
 	curIndexTree = strings.TrimSpace(curIndexTree)
 
-	// Current refs.
-	refsOut, err := gitExec(root, "for-each-ref", "--format=%(refname) %(objectname)")
-	if err != nil {
-		outcome.TerminalReason = gitGuardReasonInconclusive
-		outcome.MutationClass = "refs_unresolvable"
-		return outcome
-	}
-	curRefs := parseForEachRef(refsOut)
-
-	// ------- Classify mutations -------
-
-	// Stash created or changed → inconclusive.
-	prevStash := snap.Refs["refs/stash"]
-	curStash := curRefs["refs/stash"]
-	if curStash != prevStash && (curStash != "" || prevStash != "") {
-		outcome.TerminalReason = gitGuardReasonInconclusive
-		outcome.MutationClass = "stash_created_or_changed"
-		return outcome
-	}
-
-	// HEAD branch changed (agent switched branches) → inconclusive.
-	if curSymRef != snap.HeadSymRef {
-		outcome.TerminalReason = gitGuardReasonInconclusive
-		outcome.MutationClass = "branch_switched"
-		return outcome
-	}
-
-	// HEAD hash unchanged but reflog advanced → commit-then-reset-hard or similar.
-	// We check both @{0} (tip) and @{1} (second entry): after a commit+reset-hard the
-	// tip hash reverts to the original value but @{1} now holds the agent's commit.
-	snapReflogTip := snap.ReflogHints["HEAD"]
-	snapReflogSecond := snap.ReflogHints["HEAD@{1}"]
 	headHashChanged := curHeadHash != snap.HeadHash
-	reflogAdvanced := (curReflogTip != snapReflogTip || curReflogSecond != snapReflogSecond) && curReflogTip != ""
 
-	if !headHashChanged && reflogAdvanced {
-		// The reflog advanced while HEAD ended at the same hash. This is the
-		// commit-then-reset-hard (or similar) pattern. The agent's committed
-		// work is in dangling commits accessible via the reflog.
-		outcome.TerminalReason = gitGuardReasonInconclusive
-		outcome.MutationClass = "head_unchanged_reflog_advanced"
-		return outcome
-	}
-
-	// Non-HEAD ref reflog check: detect refs that were moved and then restored
-	// (advance-and-retract). A ref whose SHA is back to the snapshot value but
-	// whose reflog tip changed means it was modified mid-run.
-	for ref, snapTip := range snap.ReflogHints {
-		if ref == "HEAD" || ref == "HEAD@{1}" {
-			continue // HEAD reflog is already handled above
-		}
-		// Only check refs whose SHA is still in curRefs and unchanged.
-		snapSHA, hadSHA := snap.Refs[ref]
-		curSHA, stillExists := curRefs[ref]
-		if !hadSHA || !stillExists || curSHA != snapSHA {
-			continue // SHA-level change handled by ref mutation detection below
-		}
-		curTip, _ := gitExec(root, "reflog", "--format=%H", "-n", "1", ref)
-		curTip = strings.TrimSpace(curTip)
-		if curTip != "" && curTip != snapTip {
-			outcome.TerminalReason = gitGuardReasonInconclusive
-			outcome.MutationClass = "ref_reflog_advanced"
-			return outcome
+	// Commit-then-reset detection: HEAD ended at the same hash but the reflog
+	// gained entries since the snapshot. Scan only the new entries (those added
+	// after the snapshot) and flag any entry whose hash differs from snap.HeadHash:
+	// that indicates the agent committed to a new hash and then reset back.
+	// Entries equal to snap.HeadHash (e.g. from `git reset --hard HEAD`) are
+	// harmless and do not trigger this check.
+	if !headHashChanged && snap.HeadReflogLen > 0 {
+		if reflogOut, err := gitExec(root, "reflog", "--format=%H", "HEAD"); err == nil {
+			var curEntries []string
+			for _, line := range strings.Split(reflogOut, "\n") {
+				if h := strings.TrimSpace(line); h != "" {
+					curEntries = append(curEntries, h)
+				}
+			}
+			newCount := len(curEntries) - snap.HeadReflogLen
+			for i := 0; i < newCount && i < len(curEntries); i++ {
+				if curEntries[i] != snap.HeadHash {
+					outcome.TerminalReason = gitGuardReasonInconclusive
+					outcome.MutationClass = "head_unchanged_reflog_advanced"
+					return outcome
+				}
+			}
 		}
 	}
 
-	// Detect changed non-HEAD refs.
-	var changedRefs, addedRefs, deletedRefs []string
-	for ref, sha := range curRefs {
-		if ref == snap.BranchRef {
-			continue // the current branch ref is handled via HEAD hash check
-		}
-		if ref == "refs/stash" {
-			continue // handled above
-		}
-		prevSHA, existed := snap.Refs[ref]
-		if !existed {
-			addedRefs = append(addedRefs, ref)
-		} else if sha != prevSHA {
-			changedRefs = append(changedRefs, ref)
-		}
-	}
-	for ref := range snap.Refs {
-		if ref == snap.BranchRef || ref == "refs/stash" {
-			continue
-		}
-		if _, ok := curRefs[ref]; !ok {
-			deletedRefs = append(deletedRefs, ref)
-		}
-	}
-	hasRefMutation := len(changedRefs)+len(addedRefs)+len(deletedRefs) > 0
-
-	// Collect all detected mutation classes to apply precedence.
+	// Collect detected mutation classes.
 	type mutKind int
 	const (
 		mutHistory mutKind = iota
-		mutRef
 		mutIndex
 	)
 	var detectedMuts []mutKind
 
 	if headHashChanged {
 		detectedMuts = append(detectedMuts, mutHistory)
-	}
-	if hasRefMutation {
-		detectedMuts = append(detectedMuts, mutRef)
 	}
 	if curIndexTree != snap.IndexTreeHash && !headHashChanged {
 		// Only flag index as a separate mutation class when HEAD didn't move;
@@ -475,36 +349,18 @@ func gitGuardCompareAndRestore(root string, snap *gitGuardSnapshot, isReviewFix 
 	}
 
 	if len(detectedMuts) == 0 {
-		// No history, ref, or index mutations detected. Check for new commit
-		// objects created via low-level commands (e.g. git commit-tree) that
-		// bypass refs entirely, leaving dangling commits in the object store.
-		// This check only applies when HEAD didn't move; if HEAD moved the new
-		// commits are already accounted for by the history mutation path above.
-		if !headHashChanged {
-			curCommitObjects := collectCommitObjects(root)
-			for sha := range curCommitObjects {
-				if !snap.CommitObjects[sha] {
-					outcome.TerminalReason = gitGuardReasonInconclusive
-					outcome.MutationClass = "new_commit_objects"
-					return outcome
-				}
-			}
-		}
 		return gitGuardOutcome{}
 	}
 
 	// ------- Restore -------
 
-	// dominantClass returns the highest-precedence class label.
 	dominantClass := func() string {
-		for _, m := range []mutKind{mutHistory, mutRef, mutIndex} {
+		for _, m := range []mutKind{mutHistory, mutIndex} {
 			for _, d := range detectedMuts {
 				if d == m {
 					switch m {
 					case mutHistory:
 						return gitGuardReasonHistoryMutation
-					case mutRef:
-						return gitGuardReasonRefMutation
 					case mutIndex:
 						return gitGuardReasonIndexMutation
 					}
@@ -515,9 +371,9 @@ func gitGuardCompareAndRestore(root string, snap *gitGuardSnapshot, isReviewFix 
 	}
 
 	var restoreErrs []string
-	restored := []string{}
+	var restored []string
 
-	// Restore history mutation: reset the branch to the original commit.
+	// Restore history mutation: reset HEAD to the original commit.
 	if headHashChanged {
 		if err := gitExecNoOut(root, "reset", "--mixed", snap.HeadHash); err != nil {
 			restoreErrs = append(restoreErrs, "reset --mixed: "+err.Error())
@@ -544,45 +400,12 @@ func gitGuardCompareAndRestore(root string, snap *gitGuardSnapshot, isReviewFix 
 		}
 	}
 
-	// Restore changed non-HEAD refs to their snapshot values.
-	for _, ref := range changedRefs {
-		if err := gitExecNoOut(root, "update-ref", ref, snap.Refs[ref]); err != nil {
-			restoreErrs = append(restoreErrs, fmt.Sprintf("update-ref %s: %s", ref, err.Error()))
-		} else {
-			restored = append(restored, "ref "+ref+" restored to "+snap.Refs[ref])
-		}
-	}
-	// Delete refs that the agent added.
-	for _, ref := range addedRefs {
-		if err := gitExecNoOut(root, "update-ref", "-d", ref); err != nil {
-			restoreErrs = append(restoreErrs, fmt.Sprintf("update-ref -d %s: %s", ref, err.Error()))
-		} else {
-			restored = append(restored, "ref "+ref+" deleted")
-		}
-	}
-	// Restore refs that the agent deleted.
-	for _, ref := range deletedRefs {
-		if err := gitExecNoOut(root, "update-ref", ref, snap.Refs[ref]); err != nil {
-			restoreErrs = append(restoreErrs, fmt.Sprintf("update-ref (restore deleted) %s: %s", ref, err.Error()))
-		} else {
-			restored = append(restored, "ref "+ref+" re-created at "+snap.Refs[ref])
-		}
-	}
-
 	outcome.MutationClass = dominantClass()
 	if len(restoreErrs) > 0 {
 		outcome.TerminalReason = gitGuardReasonRestoreFailed
 		outcome.RestoreError = strings.Join(restoreErrs, "; ")
 	} else if outcome.MutationClass == gitGuardReasonIndexMutation {
-		// Index-only staging is benign and does NOT void the attempt. The agent
-		// ran `git add` (or similar), which touches only the ephemeral index;
-		// HEAD and all refs are untouched, the working tree — the real execution
-		// output — is intact, and the guard has already reset the index to the
-		// snapshot tree above. Record the mutation for audit (MutationClass +
-		// RestoredState) but leave TerminalReason empty so the attempt completes:
-		// staging is normal agent behavior, not history/ref tampering. Only
-		// history/ref mutation, a failed restore, or an inconclusive state void
-		// an attempt.
+		// Index-only staging is benign and does NOT void the attempt.
 		outcome.TerminalReason = ""
 	} else {
 		outcome.TerminalReason = dominantClass()
