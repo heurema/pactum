@@ -355,15 +355,23 @@ func validateAgentRegistry(entries []agentRegistryEntry) error {
 	return nil
 }
 
-// defaultIdleTimeout is the built-in idle window for the agent-running
-// commands when --timeout is not given.
+// defaultIdleTimeout is the built-in idle window for the execute command when
+// --timeout is not given. Execute sessions are open-ended; 25 minutes gives
+// a long-running implementation agent ample time between output bursts.
 const defaultIdleTimeout = 25 * time.Minute
+
+// defaultReviewIdleTimeout is the built-in idle window for review-family
+// commands (contract review, code review, review fix) when --timeout is not
+// given. Review-stage agent calls are bounded in scope (~1-3 min normal
+// duration); 10 minutes provides ample margin for a legitimately slow call
+// while catching a genuine stall ~2.5x sooner than the execute default.
+const defaultReviewIdleTimeout = 10 * time.Minute
 
 // defaultWallClockCap is the built-in absolute ceiling on any single agent
 // attempt when wall_clock_cap is absent from config.
 const defaultWallClockCap = 2 * time.Hour
 
-// resolveIdleTimeout resolves the idle window for an agent-running command: an
+// resolveIdleTimeout resolves the idle window for the execute command: an
 // explicit --timeout wins, otherwise the built-in default. Like the loop
 // limits, 0 means the flag was not given; a negative flag value is rejected.
 func resolveIdleTimeout(override time.Duration) (time.Duration, error) {
@@ -374,6 +382,20 @@ func resolveIdleTimeout(override time.Duration) (time.Duration, error) {
 		return override, nil
 	}
 	return defaultIdleTimeout, nil
+}
+
+// resolveReviewIdleTimeout resolves the idle window for a review-family
+// command (contract review, code review, review fix): an explicit --timeout
+// wins, otherwise the shorter review-family default. 0 means the flag was not
+// given; a negative flag value is rejected.
+func resolveReviewIdleTimeout(override time.Duration) (time.Duration, error) {
+	if override < 0 {
+		return 0, errors.New("timeout must be positive")
+	}
+	if override > 0 {
+		return override, nil
+	}
+	return defaultReviewIdleTimeout, nil
 }
 
 // resolveWallClockCap resolves the absolute per-attempt ceiling: a positive

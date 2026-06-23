@@ -92,7 +92,7 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 	if err != nil || !ok {
 		return err
 	}
-	timeout, err = resolveIdleTimeout(timeout)
+	timeout, err = resolveReviewIdleTimeout(timeout)
 	if err != nil {
 		return err
 	}

@@ -345,7 +345,7 @@ func (a App) ContractReview(stdout io.Writer, liveOutput io.Writer, runID string
 		return nil
 	}
 
-	timeout, err = resolveIdleTimeout(timeout)
+	timeout, err = resolveReviewIdleTimeout(timeout)
 	if err != nil {
 		return err
 	}
