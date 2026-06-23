@@ -872,8 +872,11 @@ sandboxing / interactive execute-time approvals; external prompt templating
 
 ### Bugs found during dogfooding (2026-06)
 
-- **Contract-review (and any reviewer/fixer) loop can hang on a stuck agent
-  call** (med). A single hung/very-slow agent call freezes the whole loop: the
+- **RESOLVED (#247) — Contract-review (and any reviewer/fixer) loop can hang on a
+  stuck agent call** (med; mitigated — review-family stages now use a 10-minute
+  idle window vs execute's 25m, so a stalled call is first-detected ~2.5x sooner
+  and the worst-case attempt-level stall drops to ~3x10m; a further review
+  retry-budget bound is a documented follow-up). A single hung/very-slow agent call freezes the whole loop: the
   `contract/reviewer/attempts/` count and the streamed output stop advancing, no
   terminal is reached, and there is no "stalled" signal — the operator only finds
   out by watching the attempt count not move, and the loop will not recover until
@@ -910,8 +913,11 @@ sandboxing / interactive execute-time approvals; external prompt templating
   the gate ignore well-known build outputs / honor `.gitignore` for change
   classification.
 
-- **git-guard false-positives on concurrent operator git activity in other
-  worktrees** (med). The guard snapshots ALL refs at execute start and restores
+- **RESOLVED (#245) — git-guard false-positives on concurrent operator git
+  activity in other worktrees** (med; fixed — the guard now snapshots only this
+  worktree's HEAD, HEAD reflog, and index; shared refs and the commit-object
+  store are no longer tracked, so concurrent activity in other worktrees cannot
+  false-positive). The guard snapshots ALL refs at execute start and restores
   them at end — but refs are shared across every worktree of the same repo. So
   if the operator creates/deletes/pushes a branch in a *parallel* worktree while
   an execute is running, the guard sees those refs as agent ref-mutations, flags
