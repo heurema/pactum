@@ -136,7 +136,7 @@ func (a App) ExecuteRun(stdout io.Writer, liveOutput io.Writer, runID string, ag
 				AttemptID:     context.AttemptID,
 				processResult: processResultFromRunResult(runResult),
 			}
-			if guardOutcome.TerminalReason != "" {
+			if guardOutcome.TerminalReason != "" || guardOutcome.MutationClass != "" || guardOutcome.RestoredState != "" {
 				result.GitGuard = &gitGuardOutcome{
 					TerminalReason: guardOutcome.TerminalReason,
 					MutationClass:  guardOutcome.MutationClass,

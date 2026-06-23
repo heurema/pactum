@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -890,6 +891,110 @@ func setupApprovedAndBuiltPromptWithAgentRegistry(t *testing.T, root string, ent
 	return app, paths, runID
 }
 
+func TestExecuteRunBenignIndexMutationAudit(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupApprovedBuiltPromptWithHelperAgent(t, root, "helper")
+	t.Setenv("PACTUM_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_HELPER_STAGE_FILE", "agent_staged.txt")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute run exited %d: stderr: %s", code, stderr.String())
+	}
+
+	var response executeRunResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v\nraw: %s", err, stdout.String())
+	}
+	if response.ExitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", response.ExitCode)
+	}
+
+	// Benign index mutation must be recorded in the result for audit.
+	g := response.GitGuard
+	if g == nil {
+		t.Fatal("result must include git_guard for a benign index mutation")
+	}
+	if g.MutationClass != gitGuardReasonIndexMutation {
+		t.Errorf("git_guard.mutation_class: want %q, got %q", gitGuardReasonIndexMutation, g.MutationClass)
+	}
+	if g.RestoredState == "" {
+		t.Error("git_guard.restored_state must be non-empty for a benign index mutation")
+	}
+	if g.TerminalReason != "" {
+		t.Errorf("git_guard.terminal_reason must be empty for a benign mutation, got %q", g.TerminalReason)
+	}
+	// A benign mutation must not void the run: the next gate command must be present.
+	if len(response.Next) == 0 {
+		t.Error("benign index mutation must not void the run; Next must be non-empty")
+	}
+
+	// The persisted result.json must also carry the git_guard audit fields.
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	var fileResult executionResultDocument
+	if err := json.Unmarshal([]byte(mustReadFile(t, executionAttemptPaths(runPaths, "attempt_001").ResultJSON)), &fileResult); err != nil {
+		t.Fatalf("unmarshal result.json: %v", err)
+	}
+	if fileResult.GitGuard == nil || fileResult.GitGuard.MutationClass != gitGuardReasonIndexMutation {
+		t.Errorf("persisted result.json must include git_guard with mutation_class=%q", gitGuardReasonIndexMutation)
+	}
+}
+
+func TestReviewFixRunBenignIndexMutationAudit(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	registerTestAgents(t, paths, "helper")
+	app = configureHelperAgent(app, "helper")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "stage file to trigger git-guard")
+	t.Setenv("PACTUM_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_HELPER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_HELPER_STAGE_FILE", "agent_staged.txt")
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "fix", "run", runID, "--agent", "helper", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review fix run exited %d: stderr: %s", code, stderr.String())
+	}
+
+	var response reviewFixRunResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v\nraw: %s", err, stdout.String())
+	}
+	if response.ExitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", response.ExitCode)
+	}
+
+	// Benign index mutation must be recorded in the result for audit.
+	g := response.GitGuard
+	if g == nil {
+		t.Fatal("result must include git_guard for a benign index mutation")
+	}
+	if g.MutationClass != gitGuardReasonIndexMutation {
+		t.Errorf("git_guard.mutation_class: want %q, got %q", gitGuardReasonIndexMutation, g.MutationClass)
+	}
+	if g.RestoredState == "" {
+		t.Error("git_guard.restored_state must be non-empty for a benign index mutation")
+	}
+	if g.TerminalReason != "" {
+		t.Errorf("git_guard.terminal_reason must be empty for a benign mutation, got %q", g.TerminalReason)
+	}
+	// A benign mutation must not void the run: the next affordance must be present.
+	if len(response.Next) == 0 {
+		t.Error("benign index mutation must not void the review fix run; Next must be non-empty")
+	}
+
+	// The persisted result.json must also carry the git_guard audit fields.
+	var fileResult reviewFixResultDocument
+	if err := json.Unmarshal([]byte(mustReadFile(t, reviewFixAttemptPaths(runPaths, "attempt_001").ResultJSON)), &fileResult); err != nil {
+		t.Fatalf("unmarshal result.json: %v", err)
+	}
+	if fileResult.GitGuard == nil || fileResult.GitGuard.MutationClass != gitGuardReasonIndexMutation {
+		t.Errorf("persisted result.json must include git_guard with mutation_class=%q", gitGuardReasonIndexMutation)
+	}
+}
+
 func TestExecutionHelperProcess(t *testing.T) {
 	if os.Getenv("PACTUM_HELPER_PROCESS") != "1" {
 		return
@@ -914,6 +1019,17 @@ func TestExecutionHelperProcess(t *testing.T) {
 	}
 	fmt.Printf("stdin_has_executor_prompt=%t\n", strings.Contains(string(stdin), "# Executor Prompt"))
 	fmt.Fprintln(os.Stderr, "stderr-line")
+	// Stage a file if requested, simulating an agent that runs git add.
+	if fileToStage := os.Getenv("PACTUM_HELPER_STAGE_FILE"); fileToStage != "" {
+		if err := os.WriteFile(fileToStage, []byte("staged by helper"), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "stage write error: %v\n", err)
+			os.Exit(2)
+		}
+		if out, err := exec.Command("git", "add", fileToStage).CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "git add error: %v\n%s", err, out)
+			os.Exit(2)
+		}
+	}
 	if raw := os.Getenv("PACTUM_HELPER_EXIT"); raw != "" {
 		code, err := strconv.Atoi(raw)
 		if err != nil {

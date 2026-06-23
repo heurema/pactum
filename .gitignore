@@ -4,3 +4,10 @@
 
 # Local build output (make build / go build -o bin/pactum).
 /bin/
+
+# Default go build ./cmd/... output binaries at the repo root.
+# Root-anchored so cmd/pactum and cmd/heurema-hygiene source dirs stay tracked.
+/pactum
+/pactum.exe
+/heurema-hygiene
+/heurema-hygiene.exe
