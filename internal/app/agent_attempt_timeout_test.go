@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/heurema/pactum/internal/agents"
 	"github.com/heurema/pactum/internal/artifacts"
@@ -254,6 +255,54 @@ func TestReviewRunWallClockKilledLensIsSkippedNotParseMiss(t *testing.T) {
 	}
 }
 
+// TestReviewRunIdleTimeoutIsSurfacedAsError verifies that a stalled reviewer
+// attempt (no output, idle-timeout fired) surfaces an attributable timeout
+// signal: the run exits non-zero, the timeout message appears in stderr, and
+// the attempt result records TimedOut=true.
+func TestReviewRunIdleTimeoutIsSurfacedAsError(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	app.AgentTransport = &idleKilledAgentTransport{}
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--no-fix"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("review run with all reviewers timing out must fail")
+	}
+	// The timeout message must appear in stderr (liveOutput path).
+	if got := stderr.String(); !strings.Contains(got, "produced no output for") {
+		t.Fatalf("idle timeout must surface a timeout message in stderr:\n%s", got)
+	}
+
+	// At least one reviewer attempt result must record TimedOut=true.
+	entries, err := os.ReadDir(runPaths.ReviewAttemptsDir)
+	if err != nil {
+		t.Fatalf("cannot read reviewer attempts dir: %v", err)
+	}
+	var foundTimedOut bool
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		resultPath := filepath.Join(runPaths.ReviewAttemptsDir, e.Name(), "result.json")
+		data, readErr := os.ReadFile(resultPath)
+		if readErr != nil {
+			continue
+		}
+		var result reviewerResultDocument
+		if err := json.Unmarshal(data, &result); err != nil {
+			continue
+		}
+		if result.TimedOut {
+			foundTimedOut = true
+			break
+		}
+	}
+	if !foundTimedOut {
+		t.Fatal("at least one reviewer attempt result must record TimedOut=true")
+	}
+}
+
 func TestClarifierRoundCompletedDespiteTimeoutRunsAfterSuccess(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID := setupContractRun(t, root)
@@ -282,4 +331,185 @@ func TestClarifierRoundCompletedDespiteTimeoutRunsAfterSuccess(t *testing.T) {
 	if !strings.Contains(out, "Clarify loop finished") || !strings.Contains(out, "questions created 1") {
 		t.Fatalf("AfterSuccess should record the question:\n%s", out)
 	}
+}
+
+// captureTimeoutTransport records the Timeout of the first RunRequest it receives
+// and returns a timed-out result so the lifecycle fails fast. The test cares only
+// about the captured timeout, not the command exit code.
+type captureTimeoutTransport struct {
+	mu      sync.Mutex
+	timeout time.Duration
+	seen    bool
+}
+
+func (tr *captureTimeoutTransport) Run(request agents.RunRequest) (agents.RunResult, error) {
+	tr.mu.Lock()
+	if !tr.seen {
+		tr.timeout = request.Timeout
+		tr.seen = true
+	}
+	tr.mu.Unlock()
+
+	artifactDir := request.ArtifactDir
+	if artifactDir == "" {
+		artifactDir = "execute/attempts"
+	}
+	attemptDir := filepath.Join(request.RepoRoot, artifacts.WorkspaceRel, "runs", request.RunID, filepath.FromSlash(artifactDir), request.AttemptID)
+	if err := os.MkdirAll(attemptDir, 0o755); err != nil {
+		return agents.RunResult{}, err
+	}
+	if err := os.WriteFile(filepath.Join(attemptDir, "stdout.log"), nil, 0o644); err != nil {
+		return agents.RunResult{}, err
+	}
+	if err := os.WriteFile(filepath.Join(attemptDir, "stderr.log"), nil, 0o644); err != nil {
+		return agents.RunResult{}, err
+	}
+	return agents.RunResult{
+		ExitCode:   -1,
+		StartedAt:  "2026-06-10T16:30:51Z",
+		FinishedAt: "2026-06-10T16:30:52Z",
+		TimedOut:   true,
+		StdoutPath: artifactDir + "/" + request.AttemptID + "/stdout.log",
+		StderrPath: artifactDir + "/" + request.AttemptID + "/stderr.log",
+	}, errors.New("agent process killed after idle timeout")
+}
+
+// TestTimeoutWiringExecutePassesDefaultToAgent verifies that execute run passes
+// the 25-minute execute default into agents.RunRequest.Timeout when no --timeout
+// flag is given.
+func TestTimeoutWiringExecutePassesDefaultToAgent(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
+	tr := &captureTimeoutTransport{}
+	app.AgentTransport = tr
+
+	var stdout, stderr bytes.Buffer
+	app.Run([]string{"execute", "run", runID, "--agent", "codex"}, &stdout, &stderr)
+	if !tr.seen {
+		t.Fatal("execute run did not invoke the transport")
+	}
+	if tr.timeout != 25*time.Minute {
+		t.Errorf("execute run: RunRequest.Timeout = %s, want %s", tr.timeout, 25*time.Minute)
+	}
+}
+
+// TestTimeoutWiringReviewRunPassesReviewDefaultToAgent verifies that review run
+// passes the 10-minute review default into agents.RunRequest.Timeout when no
+// --timeout flag is given.
+func TestTimeoutWiringReviewRunPassesReviewDefaultToAgent(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-opus-4-8"})
+	tr := &captureTimeoutTransport{}
+	app.AgentTransport = tr
+
+	var stdout, stderr bytes.Buffer
+	app.Run([]string{"review", "run", runID, "--reviewer", "claude", "--no-fix"}, &stdout, &stderr)
+	if !tr.seen {
+		t.Fatal("review run did not invoke the transport")
+	}
+	if tr.timeout != 10*time.Minute {
+		t.Errorf("review run: RunRequest.Timeout = %s, want %s", tr.timeout, 10*time.Minute)
+	}
+}
+
+// TestTimeoutWiringReviewFixPassesReviewDefaultToAgent verifies that review fix
+// run passes the 10-minute review default into agents.RunRequest.Timeout when no
+// --timeout flag is given.
+func TestTimeoutWiringReviewFixPassesReviewDefaultToAgent(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	// review fix requires at least one finding to proceed to the agent call.
+	runReviewCommand(t, app, "review", "finding", "add", runID, "test finding", "--blocking", "--category", "quality")
+	tr := &captureTimeoutTransport{}
+	app.AgentTransport = tr
+
+	var stdout, stderr bytes.Buffer
+	app.Run([]string{"review", "fix", "run", runID}, &stdout, &stderr)
+	if !tr.seen {
+		t.Fatal("review fix run did not invoke the transport")
+	}
+	if tr.timeout != 10*time.Minute {
+		t.Errorf("review fix run: RunRequest.Timeout = %s, want %s", tr.timeout, 10*time.Minute)
+	}
+}
+
+// TestTimeoutWiringContractReviewPassesReviewDefaultToAgent verifies that
+// contract review run passes the 10-minute review default into
+// agents.RunRequest.Timeout when no --timeout flag is given.
+func TestTimeoutWiringContractReviewPassesReviewDefaultToAgent(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	registerTestAgents(t, paths, "claude")
+	setContractReviewersConfig(t, paths, "claude")
+	tr := &captureTimeoutTransport{}
+	app.AgentTransport = tr
+
+	var stdout, stderr bytes.Buffer
+	app.Run([]string{"contract", "review", "run", runID}, &stdout, &stderr)
+	if !tr.seen {
+		t.Fatal("contract review run did not invoke the transport")
+	}
+	if tr.timeout != 10*time.Minute {
+		t.Errorf("contract review run: RunRequest.Timeout = %s, want %s", tr.timeout, 10*time.Minute)
+	}
+}
+
+// TestTimeoutWiringExplicitFlagOverridesDefault verifies that an explicit
+// --timeout value is passed through unchanged for both execute and review-family
+// commands, taking precedence over their respective built-in defaults.
+func TestTimeoutWiringExplicitFlagOverridesDefault(t *testing.T) {
+	const override = 90 * time.Second
+
+	t.Run("execute", func(t *testing.T) {
+		root := t.TempDir()
+		app, _, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
+		tr := &captureTimeoutTransport{}
+		app.AgentTransport = tr
+		var stdout, stderr bytes.Buffer
+		app.Run([]string{"execute", "run", runID, "--agent", "codex", "--timeout", "90s"}, &stdout, &stderr)
+		if tr.timeout != override {
+			t.Errorf("execute run --timeout 90s: RunRequest.Timeout = %s, want %s", tr.timeout, override)
+		}
+	})
+
+	t.Run("review run", func(t *testing.T) {
+		root := t.TempDir()
+		app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+		setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "claude", Model: "claude-opus-4-8"})
+		tr := &captureTimeoutTransport{}
+		app.AgentTransport = tr
+		var stdout, stderr bytes.Buffer
+		app.Run([]string{"review", "run", runID, "--reviewer", "claude", "--no-fix", "--timeout", "90s"}, &stdout, &stderr)
+		if tr.timeout != override {
+			t.Errorf("review run --timeout 90s: RunRequest.Timeout = %s, want %s", tr.timeout, override)
+		}
+	})
+
+	t.Run("review fix", func(t *testing.T) {
+		root := t.TempDir()
+		app, _, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+		runReviewCommand(t, app, "review", "finding", "add", runID, "test finding", "--blocking", "--category", "quality")
+		tr := &captureTimeoutTransport{}
+		app.AgentTransport = tr
+		var stdout, stderr bytes.Buffer
+		app.Run([]string{"review", "fix", "run", runID, "--timeout", "90s"}, &stdout, &stderr)
+		if tr.timeout != override {
+			t.Errorf("review fix run --timeout 90s: RunRequest.Timeout = %s, want %s", tr.timeout, override)
+		}
+	})
+
+	t.Run("contract review", func(t *testing.T) {
+		root := t.TempDir()
+		app, paths, runID := setupContractRun(t, root)
+		registerTestAgents(t, paths, "claude")
+		setContractReviewersConfig(t, paths, "claude")
+		tr := &captureTimeoutTransport{}
+		app.AgentTransport = tr
+		var stdout, stderr bytes.Buffer
+		app.Run([]string{"contract", "review", "run", runID, "--timeout", "90s"}, &stdout, &stderr)
+		if tr.timeout != override {
+			t.Errorf("contract review run --timeout 90s: RunRequest.Timeout = %s, want %s", tr.timeout, override)
+		}
+	})
 }

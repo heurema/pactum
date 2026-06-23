@@ -325,9 +325,11 @@ There is also **no Docker support yet**.
   container, VM, or filesystem confinement, exactly as described in the execution
   model above. It honors `--timeout` as an idle safety timeout: the process is
   cancelled only after the configured duration passes with no stdout or stderr
-  output. An explicit `--timeout` wins; otherwise the built-in 25 minutes
-  applies — the same resolution applies to every agent-running command that
-  honors `--timeout`. Execution is **unsandboxed** and `execute run` never
+  output. An explicit `--timeout` wins; otherwise the built-in default applies:
+  **25 minutes** for `execute run`, and **10 minutes** for the review-family
+  commands (`contract review run`, `review run`, `review fix run`) — short
+  enough to detect a stalled agent call quickly while still above the normal
+  1–3 minute review-call duration. Execution is **unsandboxed** and `execute run` never
   prompts: the CLI's consumer is an agent relaying decisions already made in
   conversation, so launching the executor is itself the recorded decision.
 

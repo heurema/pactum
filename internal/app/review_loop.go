@@ -175,7 +175,7 @@ func (a App) ReviewRun(stdout io.Writer, liveOutput io.Writer, runID string, opt
 	if _, err := a.ensureReviewRecord(context, "run review"); err != nil {
 		return err
 	}
-	options.Timeout, err = resolveIdleTimeout(options.Timeout)
+	options.Timeout, err = resolveReviewIdleTimeout(options.Timeout)
 	if err != nil {
 		return err
 	}

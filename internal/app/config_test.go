@@ -599,6 +599,59 @@ func TestResolveIdleTimeout(t *testing.T) {
 	}
 }
 
+func TestResolveReviewIdleTimeout(t *testing.T) {
+	cases := []struct {
+		name     string
+		override time.Duration
+		want     time.Duration
+		wantErr  string
+	}{
+		{name: "explicit flag used", override: 90 * time.Second, want: 90 * time.Second},
+		{name: "built-in review default when not given", override: 0, want: 10 * time.Minute},
+		{name: "negative flag is rejected", override: -time.Second, wantErr: "timeout must be positive"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveReviewIdleTimeout(tc.override)
+			if tc.wantErr != "" {
+				if err == nil || err.Error() != tc.wantErr {
+					t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveReviewIdleTimeout: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("resolveReviewIdleTimeout = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReviewDefaultTimeoutShorterThanExecute pins the key invariant: the
+// review-family default idle timeout is materially shorter than execute's so
+// a stalled review-stage call is detected sooner.
+func TestReviewDefaultTimeoutShorterThanExecute(t *testing.T) {
+	executeDefault, err := resolveIdleTimeout(0)
+	if err != nil {
+		t.Fatalf("resolveIdleTimeout: %v", err)
+	}
+	reviewDefault, err := resolveReviewIdleTimeout(0)
+	if err != nil {
+		t.Fatalf("resolveReviewIdleTimeout: %v", err)
+	}
+	if reviewDefault >= executeDefault {
+		t.Fatalf("review default idle timeout (%s) must be shorter than execute default (%s)", reviewDefault, executeDefault)
+	}
+	if reviewDefault != defaultReviewIdleTimeout {
+		t.Fatalf("review default = %s, want %s", reviewDefault, defaultReviewIdleTimeout)
+	}
+	if executeDefault != defaultIdleTimeout {
+		t.Fatalf("execute default = %s, want %s", executeDefault, defaultIdleTimeout)
+	}
+}
+
 func TestResolveWallClockCap(t *testing.T) {
 	cases := []struct {
 		name     string

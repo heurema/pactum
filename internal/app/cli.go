@@ -159,7 +159,7 @@ type contractReviewCmd struct {
 
 type contractReviewRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id whose contract to review."`
-	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without reviewer output. Defaults to 25m when not given."`
+	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without reviewer output. Defaults to 10m when not given."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
@@ -265,14 +265,14 @@ type reviewRunCmd struct {
 	Patience    int           `name:"patience" help:"Consecutive no-change fixer rounds before stopping as stalemate. Defaults to review.patience."`
 	CleanRounds int           `name:"clean-rounds" help:"Consecutive clean review rounds required before convergence. Defaults to review.clean_rounds."`
 	NoFix       bool          `name:"no-fix" help:"Never invoke the fixer; stop after the first round that leaves open blocking findings."`
-	Timeout     time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without reviewer or fixer output. Defaults to 25m when not given."`
+	Timeout     time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without reviewer or fixer output. Defaults to 10m when not given."`
 	JSONOutput  bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
 type reviewFixRunCmd struct {
 	RunID      string        `arg:"" optional:"" name:"run_id" help:"Run id whose review findings should be fixed."`
 	Agent      string        `name:"agent" help:"Registry name (config agents) of the fixer. Defaults to the first registry entry."`
-	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without fixer output. Defaults to 25m when not given."`
+	Timeout    time.Duration `name:"timeout" default:"0" help:"Maximum idle duration without fixer output. Defaults to 10m when not given."`
 	JSONOutput bool          `name:"json" help:"Print machine-readable JSON output."`
 }
 
