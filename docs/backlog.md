@@ -870,6 +870,65 @@ sandboxing / interactive execute-time approvals; external prompt templating
 
 ## Hardening / cleanup
 
+### Bugs found during dogfooding (2026-06)
+
+- **Contract-review (and any reviewer/fixer) loop can hang on a stuck agent
+  call** (med). A single hung/very-slow agent call freezes the whole loop: the
+  `contract/reviewer/attempts/` count and the streamed output stop advancing, no
+  terminal is reached, and there is no "stalled" signal — the operator only finds
+  out by watching the attempt count not move, and the loop will not recover until
+  the 25-min idle timeout fires (one call ≈ a wasted 25 min). Seen live in the
+  map-removal slice 4 (the loop froze at 61 reviewer attempts after the fixer had
+  already folded all findings into the contract). Fix: a per-agent-call watchdog
+  inside the loop that surfaces a `stalled` terminal (or retries/skips the hung
+  call) on a much shorter budget than the global idle timeout, so a single stuck
+  call cannot silently eat a long wait.
+
+- **git-guard benign `index_mutation` outcome is dropped from the execute
+  result** (low). After #238 made index-only staging non-terminal
+  (`TerminalReason == ""`), `execute.go` `BuildResult` only attaches
+  `result.GitGuard` when `TerminalReason != ""`. So when the agent merely stages
+  files (`git add`) and the guard detects + resets the index, the
+  `MutationClass`/`RestoredState` audit fields are computed but never recorded in
+  the execute result document — the audit trail #238 intended for benign
+  mutations is lost. Fix: attach the guard outcome to the result whenever a
+  mutation was detected and restored (`MutationClass != ""`), not only when a
+  terminal reason is set; keep it clearly marked non-voiding.
+
+- **Validation commands that build into the working tree leave stray artifacts**
+  (low, interacts with the git-based gate). A contract `validation` entry like
+  `GOOS=linux GOARCH=amd64 go build ./cmd/pactum` defaults its output to
+  `./pactum` in the repo root (seen in the #240 release slice). Harmless with the
+  old hashes.jsonl gate, but once the gate derives changed/new/missing from
+  `git status` (map-removal slice 4) a stray build artifact shows up as a new
+  untracked file and could read as an out-of-scope change. Mitigations: prefer
+  `-o /dev/null` (or a tempdir) in build-style validation commands, and/or have
+  the gate ignore well-known build outputs / honor `.gitignore` for change
+  classification.
+
+- **git-guard false-positives on concurrent operator git activity in other
+  worktrees** (med). The guard snapshots ALL refs at execute start and restores
+  them at end — but refs are shared across every worktree of the same repo. So
+  if the operator creates/deletes/pushes a branch in a *parallel* worktree while
+  an execute is running, the guard sees those refs as agent ref-mutations, flags
+  `executor_git_ref_mutation`, and "restores" by deleting the operator's refs —
+  tainting the (otherwise-correct) execute attempt and clobbering the operator's
+  local branch. Hit live in map-removal slice 4: creating a backlog branch during
+  an execute deleted it and voided the attempt, forcing a clean ~78-min re-run.
+  Mitigations: scope ref-tracking to refs the agent could plausibly touch (e.g.
+  only HEAD's branch + refs reachable from the worktree), capture the snapshot
+  with the worktree's own ref view, or at minimum document "no concurrent git ops
+  in any worktree during execute". Distinct from the worktree-presence handling
+  in #234.
+
+- **`make check`'s gofmt can miss an unformatted tracked file** (low). In slice 4
+  `internal/app/gate_test.go` was gofmt-unclean, yet the gate's `make check`
+  reported 0 failures; it was only caught by a direct `gofmt -l` before push. The
+  gofmt step in `make check` does not reliably flag every unformatted TRACKED
+  `.go` file (related to the untracked-file gap, but here the file was tracked).
+  Fix: have the gofmt target run `gofmt -l` over the working-tree copies of all
+  tracked `.go` files and fail on non-empty output.
+
 - **Executor resilience: auto-retry on transient failure + resume (not reset)**
   (med). Today a model drop (rate_limit / network / 5xx) or idle-timeout during
   `execute` (or any agent stage) is recorded as a failed attempt and the operator
