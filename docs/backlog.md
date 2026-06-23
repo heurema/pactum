@@ -884,8 +884,10 @@ sandboxing / interactive execute-time approvals; external prompt templating
   call) on a much shorter budget than the global idle timeout, so a single stuck
   call cannot silently eat a long wait.
 
-- **git-guard benign `index_mutation` outcome is dropped from the execute
-  result** (low). After #238 made index-only staging non-terminal
+- **RESOLVED — git-guard benign `index_mutation` outcome is dropped from the
+  execute result** (low; fixed in this change — the execute and review-fix result
+  builders now attach the guard outcome whenever a mutation was detected and
+  restored, even when non-terminal). After #238 made index-only staging non-terminal
   (`TerminalReason == ""`), `execute.go` `BuildResult` only attaches
   `result.GitGuard` when `TerminalReason != ""`. So when the agent merely stages
   files (`git add`) and the guard detects + resets the index, the
@@ -895,8 +897,10 @@ sandboxing / interactive execute-time approvals; external prompt templating
   mutation was detected and restored (`MutationClass != ""`), not only when a
   terminal reason is set; keep it clearly marked non-voiding.
 
-- **Validation commands that build into the working tree leave stray artifacts**
-  (low, interacts with the git-based gate). A contract `validation` entry like
+- **RESOLVED — Validation commands that build into the working tree leave stray
+  artifacts** (low; mitigated in this change — root-anchored `.gitignore` entries
+  for `/pactum`, `/pactum.exe`, `/heurema-hygiene`, `/heurema-hygiene.exe` so the
+  git-status gate no longer reports them). A contract `validation` entry like
   `GOOS=linux GOARCH=amd64 go build ./cmd/pactum` defaults its output to
   `./pactum` in the repo root (seen in the #240 release slice). Harmless with the
   old hashes.jsonl gate, but once the gate derives changed/new/missing from
@@ -920,14 +924,6 @@ sandboxing / interactive execute-time approvals; external prompt templating
   with the worktree's own ref view, or at minimum document "no concurrent git ops
   in any worktree during execute". Distinct from the worktree-presence handling
   in #234.
-
-- **`make check`'s gofmt can miss an unformatted tracked file** (low). In slice 4
-  `internal/app/gate_test.go` was gofmt-unclean, yet the gate's `make check`
-  reported 0 failures; it was only caught by a direct `gofmt -l` before push. The
-  gofmt step in `make check` does not reliably flag every unformatted TRACKED
-  `.go` file (related to the untracked-file gap, but here the file was tracked).
-  Fix: have the gofmt target run `gofmt -l` over the working-tree copies of all
-  tracked `.go` files and fail on non-empty output.
 
 - **Executor resilience: auto-retry on transient failure + resume (not reset)**
   (med). Today a model drop (rate_limit / network / 5xx) or idle-timeout during

@@ -158,7 +158,7 @@ func (a App) ReviewFix(stdout io.Writer, liveOutput io.Writer, runID string, age
 				Fixer:         prep.Fixer.Name,
 				processResult: processResultFromRunResult(runResult),
 			}
-			if guardOutcome.TerminalReason != "" {
+			if guardOutcome.TerminalReason != "" || guardOutcome.MutationClass != "" || guardOutcome.RestoredState != "" {
 				result.GitGuard = &gitGuardOutcome{
 					TerminalReason: guardOutcome.TerminalReason,
 					MutationClass:  guardOutcome.MutationClass,
