@@ -15,6 +15,7 @@ const (
 	gitGuardReasonRestoreFailed   = "executor_git_restore_failed"
 	gitGuardReasonHistoryMutation = "executor_git_history_mutation"
 	gitGuardReasonIndexMutation   = "executor_git_index_mutation"
+	gitGuardReasonUnbornHead      = "executor_git_guard_no_commits"
 )
 
 // gitGuardOutcome records what the guard detected and did.
@@ -98,6 +99,20 @@ func gitGuardPrechecks(root string, isReviewFix bool) (bool, string, *gitGuardSn
 	}
 	if !filepath.IsAbs(commonDir) {
 		commonDir = filepath.Join(root, commonDir)
+	}
+
+	// Detect zero-commit / unborn-HEAD repository: without at least one commit
+	// the guard cannot take a baseline snapshot or detect mutations. Surface
+	// this early with a dedicated reason rather than letting gitGuardTakeSnapshot's
+	// rev-parse HEAD fail with an opaque inconclusive outcome.
+	// Confirm via symbolic-ref that HEAD is genuinely an unborn branch (not a
+	// detached HEAD with a missing object or other corruption) so unrelated git
+	// errors are not hidden behind the initial-commit remedy.
+	if _, err := gitExec(root, "rev-parse", "--verify", "HEAD"); err != nil {
+		if symRef, symErr := gitExec(root, "symbolic-ref", "--quiet", "HEAD"); symErr == nil && strings.TrimSpace(symRef) != "" {
+			return false, gitGuardReasonUnbornHead, nil, nil
+		}
+		return inconclusiveErr(fmt.Errorf("git guard: rev-parse --verify HEAD: %w", err))
 	}
 
 	// No in-progress operations.

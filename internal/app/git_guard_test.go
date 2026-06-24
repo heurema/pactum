@@ -227,6 +227,33 @@ func TestGitGuardPrechecks_Submodule(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// gitGuardPrechecks — zero-commit / unborn-HEAD repository
+// ---------------------------------------------------------------------------
+
+func TestGitGuardPrechecks_UnbornHead(t *testing.T) {
+	skipIfNoGit(t)
+	root := t.TempDir()
+	mustGitG(t, root, "init")
+	mustGitG(t, root, "config", "user.email", "test@test.com")
+	mustGitG(t, root, "config", "user.name", "Test")
+	// No commits — HEAD is unborn.
+
+	ok, reason, snap, err := gitGuardPrechecks(root, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false for zero-commit (unborn HEAD) repository")
+	}
+	if snap != nil {
+		t.Error("expected nil snapshot for unborn HEAD")
+	}
+	if reason != gitGuardReasonUnbornHead {
+		t.Errorf("expected reason=%q, got %q", gitGuardReasonUnbornHead, reason)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // gitGuardCompareAndRestore — no mutation
 // ---------------------------------------------------------------------------
 

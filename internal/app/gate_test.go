@@ -769,6 +769,107 @@ func TestGitGuardLifecycle_ReadOnlyStageSkipsGuard(t *testing.T) {
 	}
 }
 
+// TestExecuteRunUnbornHeadGitGuard verifies that execute run fails clearly when
+// the repository has no commits (unborn HEAD), with the git-guard terminal
+// reason and an actionable remedy in the attempt result and human output.
+func TestExecuteRunUnbornHeadGitGuard(t *testing.T) {
+	skipIfNoGit(t)
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, false)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	// Transition to an orphan branch (unborn HEAD) while keeping working tree
+	// and pactum artifacts intact.
+	mustGitG(t, root, "checkout", "--orphan", "no-commits-branch")
+
+	transport := &recordingAgentTransport{}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("execute run should fail in a zero-commit (unborn HEAD) repository")
+	}
+
+	// Transport must not be called — the git guard blocks execution.
+	if len(transport.requests) != 0 {
+		t.Errorf("transport must not be called for unborn HEAD; got %d calls", len(transport.requests))
+	}
+
+	// Attempt result must carry the unborn-HEAD git-guard terminal reason with a remedy.
+	attemptPaths := executionAttemptPaths(runPaths, "attempt_001")
+	var result executionResultDocument
+	assertNoError(t, readJSON(attemptPaths.ResultJSON, &result))
+	if result.GitGuard == nil {
+		t.Fatal("expected git_guard section in attempt result")
+	}
+	if result.GitGuard.TerminalReason != gitGuardReasonUnbornHead {
+		t.Errorf("git_guard.terminal_reason: want %q, got %q", gitGuardReasonUnbornHead, result.GitGuard.TerminalReason)
+	}
+	if !strings.Contains(result.GitGuard.Detail, "no commits") {
+		t.Errorf("git_guard.detail should mention no commits; got: %q", result.GitGuard.Detail)
+	}
+	if !strings.Contains(result.GitGuard.Detail, "git add") {
+		t.Errorf("git_guard.detail should include a remedy; got: %q", result.GitGuard.Detail)
+	}
+
+	// Human-readable output must include the remedy text directly.
+	if !strings.Contains(stdout.String(), "git add") {
+		t.Errorf("human output should include remedy; got: %s", stdout.String())
+	}
+}
+
+// TestReviewFixRunUnbornHeadGitGuard verifies that review fix run fails clearly
+// when the repository has no commits (unborn HEAD), with the git-guard terminal
+// reason and remedy in the attempt result.
+func TestReviewFixRunUnbornHeadGitGuard(t *testing.T) {
+	skipIfNoGit(t)
+	root := t.TempDir()
+	app, _, runID, runPaths := setupApprovedPreparedReview(t, root, "passed")
+	// At least one finding is required for review fix run to proceed.
+	runReviewCommand(t, app, "review", "finding", "add", runID, "test finding", "--blocking", "--category", "quality")
+
+	// Transition to an orphan branch (unborn HEAD) while keeping working tree
+	// and pactum artifacts intact.
+	mustGitG(t, root, "checkout", "--orphan", "no-commits-branch")
+
+	transport := &recordingAgentTransport{}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "fix", "run", runID}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("review fix run should fail in a zero-commit (unborn HEAD) repository")
+	}
+
+	// Transport must not be called — the git guard blocks execution.
+	if len(transport.requests) != 0 {
+		t.Errorf("transport must not be called for unborn HEAD; got %d calls", len(transport.requests))
+	}
+
+	// Attempt result must carry the unborn-HEAD git-guard terminal reason with a remedy.
+	fixPaths := reviewFixAttemptPaths(runPaths, "attempt_001")
+	var result reviewFixResultDocument
+	assertNoError(t, readJSON(fixPaths.ResultJSON, &result))
+	if result.GitGuard == nil {
+		t.Fatal("expected git_guard section in attempt result")
+	}
+	if result.GitGuard.TerminalReason != gitGuardReasonUnbornHead {
+		t.Errorf("git_guard.terminal_reason: want %q, got %q", gitGuardReasonUnbornHead, result.GitGuard.TerminalReason)
+	}
+	if !strings.Contains(result.GitGuard.Detail, "no commits") {
+		t.Errorf("git_guard.detail should mention no commits; got: %q", result.GitGuard.Detail)
+	}
+	if !strings.Contains(result.GitGuard.Detail, "git add") {
+		t.Errorf("git_guard.detail should include a remedy; got: %q", result.GitGuard.Detail)
+	}
+
+	// Human-readable output must include the remedy text directly.
+	if !strings.Contains(stdout.String(), "git add") {
+		t.Errorf("human output should include remedy; got: %s", stdout.String())
+	}
+}
+
 // TestGateRunPassesCompletedDespiteTimeoutAttempt pins the end-to-end story of
 // completion-aware finalize: an idle-killed attempt whose agent had already
 // completed (exit 0, timed_out true, completed_despite_timeout true) must pass
