@@ -138,8 +138,89 @@ func TestPromptBuildFailsWhenRepoHasNoCommits(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("prompt build should fail when repo has no commits")
 	}
-	if got := stderr.String(); !strings.Contains(got, "cannot build executor prompt") || !strings.Contains(got, "HEAD") {
-		t.Fatalf("no-commits prompt build stderr mismatch:\n%s", got)
+	remedy := `git add -A && git commit -m "initial commit"`
+	if got := stderr.String(); !strings.Contains(got, remedy) {
+		t.Fatalf("no-commits prompt build stderr missing remedy:\n%s", got)
+	}
+	assertNoFile(t, runPaths.PromptManifest)
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"prompt", "build", runID, "--json"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("prompt build --json should fail when repo has no commits")
+	}
+	var envelope affordanceEnvelope
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	if envelope.Error.Code != "repository_has_no_commits" {
+		t.Fatalf("code = %q, want repository_has_no_commits", envelope.Error.Code)
+	}
+	if !strings.Contains(envelope.Error.Message, remedy) {
+		t.Fatalf("json message missing remedy:\n%s", envelope.Error.Message)
+	}
+	if envelope.Error.Fix != nil {
+		t.Fatalf("fix = %q, want absent", *envelope.Error.Fix)
+	}
+}
+
+// TestPromptBuildGitErrorNotMislabeledAsNoCommits confirms the negative path:
+// when rev-parse HEAD fails and symbolic-ref also fails (e.g. the working
+// directory is not a git repository at all), the error must NOT carry the
+// repository_has_no_commits code.
+func TestPromptBuildGitErrorNotMislabeledAsNoCommits(t *testing.T) {
+	// No git init — the workspace is a plain directory with no .git.
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# Example\n")
+	app := testApp(root)
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"init"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, stderr.String())
+	}
+	setAgentRegistryConfig(t, artifacts.New(root),
+		agentRegistryEntry{Name: "codex", Model: "gpt-5"},
+	)
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"task", "new", "add feature"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("task new exited %d, stderr: %s", code, stderr.String())
+	}
+	paths := artifacts.New(root)
+	runID := "run_20260531_184012"
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{
+		"goal": "add feature",
+		"scope": map[string]any{
+			"in":  []string{"internal/app/**"},
+			"out": []string{},
+		},
+		"acceptance_criteria": []string{"Feature works"},
+		"validation":          map[string]any{"commands": []string{}},
+		"assumptions":         []string{},
+	})
+	for _, args := range [][]string{
+		{"contract", "revise", runID, "--from", fromFile},
+		{"contract", "approve", runID},
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		if code := app.Run(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("%v exited %d, stderr: %s", args, code, stderr.String())
+		}
+	}
+
+	// No .git directory: rev-parse HEAD and symbolic-ref --quiet HEAD both fail.
+	// This must surface as an ordinary git error, not repository_has_no_commits.
+	stdout.Reset()
+	stderr.Reset()
+	code := app.Run([]string{"prompt", "build", runID, "--json"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("prompt build should fail without a git repository")
+	}
+	var envelope affordanceEnvelope
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	if envelope.Error.Code == "repository_has_no_commits" {
+		t.Fatalf("non-git-repo HEAD failure must not produce code repository_has_no_commits")
 	}
 }
 

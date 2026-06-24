@@ -113,6 +113,12 @@ func (a App) PromptBuild(stdout io.Writer, runID string, jsonOutput bool) error 
 
 	head, err := gitExec(context.Root, "rev-parse", "HEAD")
 	if err != nil {
+		// Discriminate an unborn branch (no commits yet) from other git failures:
+		// symbolic-ref exits zero with a non-empty ref only when HEAD is a symbolic
+		// ref (i.e. an unborn branch), matching the same check in git_guard.go.
+		if symRef, symErr := gitExec(context.Root, "symbolic-ref", "--quiet", "HEAD"); symErr == nil && strings.TrimSpace(symRef) != "" {
+			return repositoryHasNoCommitsError()
+		}
 		return fmt.Errorf("cannot build executor prompt: cannot determine HEAD commit: %w", err)
 	}
 

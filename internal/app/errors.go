@@ -124,6 +124,18 @@ func clarifyLoopFailedError(runID string, err error) error {
 	}
 }
 
+// repositoryHasNoCommitsError is returned when prompt build cannot resolve HEAD
+// because the repository has no commits (unborn branch). The git remedy is
+// carried in the message rather than fix because a raw git command is not a
+// pactum command and would violate the affordance-grammar invariant asserted by
+// TestEmittedAffordancesUseCurrentGrammar.
+func repositoryHasNoCommitsError() error {
+	return &preconditionError{
+		msg:  `cannot build executor prompt: repository has no commits; run: git add -A && git commit -m "initial commit"`,
+		code: "repository_has_no_commits",
+	}
+}
+
 // errorEnvelope is the machine-readable shape emitted for command errors when
 // the user requested --json output.
 type errorEnvelope struct {
