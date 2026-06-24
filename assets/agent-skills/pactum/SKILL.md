@@ -44,6 +44,10 @@ Run all Pactum workflow commands with `--json` and read the response:
   the user — the next step requires a human decision.
 - **`error.fix`** — when a command fails, the exact remedial command. Run it.
   If there is no `error.fix`, read `next` for safe inspection alternatives.
+  **Exception — write-stage failures (`execute run`, `review fix run`):** these
+  produce a run-result document, not a command error envelope, so `error.fix` is
+  absent. Read `git_guard.detail` in the run-result JSON for the cause and remedy
+  (e.g. a zero-commit repository: `git add -A && git commit -m "initial commit"`).
 - **`error.code`** — stable machine-readable failure reason
   (`contract_not_approved`, `prompt_not_built`, …).
 

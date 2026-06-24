@@ -222,15 +222,17 @@ func (a App) prepareExecution(root string, runID string, agentName string) (exec
 		return executionPreparation{}, fmt.Errorf("cannot prepare execution: approved contract hash does not match current contract")
 	}
 
-	currentHead, err := gitExec(root, "rev-parse", "HEAD")
-	if err != nil {
-		return executionPreparation{}, fmt.Errorf("cannot prepare execution: cannot determine HEAD commit: %w", err)
-	}
-	if manifest.HeadCommit == "" {
-		return executionPreparation{}, fmt.Errorf("cannot prepare execution: executor prompt was built without a HEAD commit anchor")
-	}
-	if manifest.HeadCommit != currentHead {
-		return executionPreparation{}, fmt.Errorf("cannot prepare execution: repository HEAD has changed since executor prompt was built")
+	// Validate the prompt's HEAD-commit anchor only when HEAD currently resolves.
+	// If HEAD does not resolve (e.g. zero-commit / unborn-HEAD repository), skip
+	// this check so the git-guard precheck surfaces a clear actionable message
+	// instead of an opaque "cannot determine HEAD commit" error.
+	if currentHead, err := gitExec(root, "rev-parse", "HEAD"); err == nil {
+		if manifest.HeadCommit == "" {
+			return executionPreparation{}, fmt.Errorf("cannot prepare execution: executor prompt was built without a HEAD commit anchor")
+		}
+		if manifest.HeadCommit != currentHead {
+			return executionPreparation{}, fmt.Errorf("cannot prepare execution: repository HEAD has changed since executor prompt was built")
+		}
 	}
 
 	if _, err := activeStore.ReadBytes(runPaths.PromptMD); err != nil {
@@ -462,6 +464,10 @@ func writeExecuteRun(stdout io.Writer, state contractRunState, request execution
 	fmt.Fprintf(stdout, "  exit code: %d\n", result.ExitCode)
 	fmt.Fprintf(stdout, "  timed out: %t\n", result.TimedOut)
 	writeCompletedDespiteTimeoutWarning(stdout, result.processResult)
+	if result.GitGuard != nil && result.GitGuard.TerminalReason != "" {
+		fmt.Fprintln(stdout)
+		writeGitGuardSection(stdout, result.GitGuard)
+	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Artifacts:")
 	fmt.Fprintf(stdout, "  request: %s\n", runArtifactRepoRel(result.RunID, filepath.ToSlash(filepath.Join("execute", "attempts", result.AttemptID, "request.json"))))
@@ -469,4 +475,12 @@ func writeExecuteRun(stdout io.Writer, state contractRunState, request execution
 	fmt.Fprintf(stdout, "  stdout: %s\n", runArtifactRepoRel(result.RunID, result.Stdout))
 	fmt.Fprintf(stdout, "  stderr: %s\n", runArtifactRepoRel(result.RunID, result.Stderr))
 	fmt.Fprintf(stdout, "  last result: %s\n", runArtifactRepoRel(result.RunID, "execute/last-result.json"))
+}
+
+func writeGitGuardSection(stdout io.Writer, guard *gitGuardOutcome) {
+	fmt.Fprintln(stdout, "Git Guard:")
+	fmt.Fprintf(stdout, "  reason: %s\n", guard.TerminalReason)
+	if guard.Detail != "" {
+		fmt.Fprintf(stdout, "  detail: %s\n", guard.Detail)
+	}
 }

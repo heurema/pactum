@@ -187,9 +187,13 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 			return err
 		}
 		if !ok {
+			detail := "precondition check failed before transport"
+			if reason == gitGuardReasonUnbornHead {
+				detail = `the repository has no commits yet — the git guard requires a baseline commit; run: git add -A && git commit -m "initial commit"`
+			}
 			*cfg.GitGuard.Outcome = gitGuardOutcome{
 				TerminalReason: reason,
-				Detail:         "precondition check failed before transport",
+				Detail:         detail,
 			}
 			guardSkipTransport = true
 			nowNano := a.nowUTC().Format(time.RFC3339Nano)
