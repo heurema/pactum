@@ -204,3 +204,10 @@
 - Files: docs/agent-skill.md, internal/app/affordances_test.go, internal/app/errors.go, internal/app/prompt.go, internal/app/prompt_test.go, internal/app/resolve.go
 - Summary: Reviewed run run_20260620_114301 with gate status needs_review and review status approved. Goal: De-hardcode `--agent codex` from pactum's lifecycle `next` affordances and human "Next:" output so the suggested execute-plan command respec...
 - Candidate: runs/run_20260620_114301/memory/memory-candidate.json
+
+### mem_030 - Harden the contract-review loop (internal/app/contract_review.go) so a contra...
+- Run: run_20260624_143547
+- Freshness: fresh
+- Files: docs/flow.md, internal/app/contract_review.go, internal/app/contract_review_test.go
+- Summary: Reviewed run run_20260624_143547 with gate status needs_review and review status approved. Goal: Harden the contract-review loop (internal/app/contract_review.go) so a contract reviewer/lens whose SUCCESSFUL (exit 0) attempt fails to emi...
+- Candidate: runs/run_20260624_143547/memory/memory-candidate.json

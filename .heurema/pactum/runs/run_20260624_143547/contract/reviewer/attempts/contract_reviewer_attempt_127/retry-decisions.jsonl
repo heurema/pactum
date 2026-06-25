@@ -1,0 +1,3 @@
+{"schema":"pactum.agent_retry_decision.v1alpha1","stage":"contract_review","attempt_id":"contract_reviewer_attempt_127","kind":"rate_limit","reason":"rate limit or overloaded","retryable":true,"read_only":true,"attempt_number":1,"delay_ms":785}
+{"schema":"pactum.agent_retry_decision.v1alpha1","stage":"contract_review","attempt_id":"contract_reviewer_attempt_127","kind":"rate_limit","reason":"rate limit or overloaded","retryable":true,"read_only":true,"attempt_number":2,"delay_ms":1813}
+{"schema":"pactum.agent_retry_decision.v1alpha1","stage":"contract_review","attempt_id":"contract_reviewer_attempt_127","kind":"rate_limit","reason":"rate limit or overloaded","retryable":true,"read_only":true,"attempt_number":3,"delay_ms":0}

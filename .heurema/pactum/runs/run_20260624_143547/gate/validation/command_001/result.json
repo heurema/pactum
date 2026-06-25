@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1alpha1",
+  "id": "command_001",
+  "command": "go test ./internal/app -run TestContractReviewerPromptRequiresMandatoryFindingsBlock -count=1",
+  "started_at": "2026-06-25T10:25:00.337127Z",
+  "finished_at": "2026-06-25T10:25:04.608419Z",
+  "duration_ms": 4271,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "gate/validation/command_001/stdout.log",
+  "stderr": "gate/validation/command_001/stderr.log"
+}
