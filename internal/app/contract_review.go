@@ -168,6 +168,7 @@ type contractReviewRoundResult struct {
 	Findings      []contractReviewFinding
 	SkippedLenses []reviewLoopSkippedLens
 	Warnings      []string
+	ParseMiss     bool
 }
 
 // contractReviewLoopRoundSummary records the outcome of one loop round, including
@@ -176,6 +177,7 @@ type contractReviewLoopRoundSummary struct {
 	Round                  int                     `json:"round"`
 	Findings               []contractReviewFinding `json:"findings"`
 	BlockingFindings       int                     `json:"blocking_findings"`
+	ParseMiss              bool                    `json:"parse_miss,omitempty"`
 	SkippedLenses          []reviewLoopSkippedLens `json:"skipped_lenses"`
 	Warnings               []string                `json:"warnings,omitempty"`
 	FixerAttemptID         string                  `json:"fixer_attempt_id,omitempty"`
@@ -419,8 +421,17 @@ func (a App) runContractReviewLoop(
 			Round:            round,
 			Findings:         roundResult.Findings,
 			BlockingFindings: blockingCount,
+			ParseMiss:        roundResult.ParseMiss,
 			SkippedLenses:    roundResult.SkippedLenses,
 			Warnings:         roundResult.Warnings,
+		}
+
+		if roundResult.ParseMiss {
+			cleanStreak = 0
+			roundSummary.CleanStreak = cleanStreak
+			roundSummary.UnchangedVersionStreak = unchangedVersionStreak
+			rounds = append(rounds, roundSummary)
+			return loop.RoundResult{}, errReviewerUnparsed
 		}
 
 		if blockingCount == 0 {
@@ -500,6 +511,9 @@ func (a App) runContractReviewLoop(
 		loopNoProgressStreak = noProgressStreak
 		loopNoProgressReason = "open blocking finding key set unchanged for 2 consecutive fixer rounds"
 		loopErr = nil
+	case errors.Is(loopErr, errReviewerUnparsed):
+		terminalReason = "reviewer_findings_unparsed"
+		loopErr = nil
 	case loopErr != nil:
 		terminalReason = "error"
 	default:
@@ -537,7 +551,7 @@ func (a App) runContractReviewLoop(
 
 	// For non-approvable terminals, point the operator at inspection rather than approve.
 	nextCmds := nextCommandsForRun(runCtx.Paths, runID)
-	if terminalReason == "blockers_open" || terminalReason == "fixer_no_progress" {
+	if terminalReason == "blockers_open" || terminalReason == "fixer_no_progress" || terminalReason == "reviewer_findings_unparsed" {
 		nextCmds = []string{"pactum contract show " + runID}
 	}
 
@@ -616,6 +630,7 @@ func (a App) runContractReviewRound(
 
 	findings := []contractReviewFinding{}
 	var parseWarnings []string
+	parseMiss := false
 	for reviewerIndex, reviewer := range reviewers {
 		for lensIndex, result := range memberResults[reviewerIndex] {
 			if errs[reviewerIndex][lensIndex] != nil || result.AttemptID == "" {
@@ -624,30 +639,46 @@ func (a App) runContractReviewRound(
 			attemptPaths := agentAttemptPaths(context.RunPaths.ContractReviewAttemptsDir, result.AttemptID)
 			stdoutBytes, readErr := activeStore.ReadBytes(attemptPaths.StdoutLog)
 			if readErr != nil {
-				continue
+				return contractReviewRoundResult{}, readErr
 			}
 			lensKey := contractReviewLenses[lensIndex].Key
-			blocks, blockWarnings := parseContractReviewerFindingBlocks(string(stdoutBytes))
-			for _, w := range blockWarnings {
-				parseWarnings = append(parseWarnings, fmt.Sprintf("%s/%s: %s", reviewer.Name, lensKey, w))
+			if len(stdoutBytes) == 0 {
+				parseMiss = true
+				parseWarnings = append(parseWarnings, fmt.Sprintf("%s/%s: attempt=1: empty stdout — hard failure (parse miss)", reviewer.Name, lensKey))
+				continue
 			}
-			for _, block := range blocks {
-				for _, rawFinding := range *block.Findings {
-					var input contractReviewerFindingInput
-					if err := json.Unmarshal(rawFinding, &input); err != nil {
-						parseWarnings = append(parseWarnings, fmt.Sprintf("%s/%s: finding skipped: invalid JSON", reviewer.Name, lensKey))
-						continue
-					}
-					if strings.TrimSpace(input.Message) == "" {
-						continue
-					}
-					f := contractFindingFromInput(reviewer.Name, lensKey, input)
-					if f.Blocking && f.MaterialImpact == "" {
-						f.Blocking = false
-						parseWarnings = append(parseWarnings, fmt.Sprintf("%s/%s: finding downgraded to advisory: blocking=true requires non-empty material_impact", reviewer.Name, lensKey))
-					}
-					findings = append(findings, f)
+			blocks, blockWarnings := parseContractReviewerFindingBlocks(string(stdoutBytes))
+			if len(blocks) == 0 {
+				parseWarnings = append(parseWarnings, fmt.Sprintf("%s/%s: attempt=1: no valid findings block — corrective retry", reviewer.Name, lensKey))
+				for _, w := range blockWarnings {
+					parseWarnings = append(parseWarnings, fmt.Sprintf("%s/%s: attempt=1: %s", reviewer.Name, lensKey, w))
 				}
+				corrResult, corrOK, corrWarnings := a.runContractReviewerCorrectiveAttempt(liveOutput, runID, context, reviewer, contractReviewLenses[lensIndex], timeout, wallClockCap)
+				for _, w := range corrWarnings {
+					parseWarnings = append(parseWarnings, fmt.Sprintf("%s/%s: attempt=2: %s", reviewer.Name, lensKey, w))
+				}
+				if !corrOK {
+					parseMiss = true
+					continue
+				}
+				attemptPaths = agentAttemptPaths(context.RunPaths.ContractReviewAttemptsDir, corrResult.AttemptID)
+				stdoutBytes, readErr = activeStore.ReadBytes(attemptPaths.StdoutLog)
+				if readErr != nil {
+					return contractReviewRoundResult{}, readErr
+				}
+				blocks, blockWarnings = parseContractReviewerFindingBlocks(string(stdoutBytes))
+				for _, w := range blockWarnings {
+					parseWarnings = append(parseWarnings, fmt.Sprintf("%s/%s: attempt=2: %s", reviewer.Name, lensKey, w))
+				}
+			} else {
+				for _, w := range blockWarnings {
+					parseWarnings = append(parseWarnings, fmt.Sprintf("%s/%s: attempt=1: %s", reviewer.Name, lensKey, w))
+				}
+			}
+			parsedFindings, findingWarnings := contractReviewFindingsFromBlocks(reviewer.Name, lensKey, blocks)
+			findings = append(findings, parsedFindings...)
+			for _, w := range findingWarnings {
+				parseWarnings = append(parseWarnings, fmt.Sprintf("%s/%s: %s", reviewer.Name, lensKey, w))
 			}
 		}
 	}
@@ -656,6 +687,7 @@ func (a App) runContractReviewRound(
 		Findings:      findings,
 		SkippedLenses: skipped,
 		Warnings:      append(skipWarnings, parseWarnings...),
+		ParseMiss:     parseMiss,
 	}, nil
 }
 
@@ -1223,6 +1255,30 @@ func contractFindingFromInput(reviewerName string, lensKey string, input contrac
 	}
 }
 
+func contractReviewFindingsFromBlocks(reviewerName string, lensKey string, blocks []reviewerFindingBlock) ([]contractReviewFinding, []string) {
+	var findings []contractReviewFinding
+	var warnings []string
+	for _, block := range blocks {
+		for _, rawFinding := range *block.Findings {
+			var input contractReviewerFindingInput
+			if err := json.Unmarshal(rawFinding, &input); err != nil {
+				warnings = append(warnings, "finding skipped: invalid JSON")
+				continue
+			}
+			if strings.TrimSpace(input.Message) == "" {
+				continue
+			}
+			f := contractFindingFromInput(reviewerName, lensKey, input)
+			if f.Blocking && f.MaterialImpact == "" {
+				f.Blocking = false
+				warnings = append(warnings, "finding downgraded to advisory: blocking=true requires non-empty material_impact")
+			}
+			findings = append(findings, f)
+		}
+	}
+	return findings, warnings
+}
+
 // parseContractReviewerFindingBlocks extracts structured finding blocks from
 // contract reviewer output. Accepts only blocks whose schema matches
 // contractReviewerResultSchema; mirrors parseReviewerFindingBlocks but is
@@ -1280,8 +1336,16 @@ func contractReviewerLensPromptArtifact(member string, lens contractReviewLens) 
 	return fmt.Sprintf("contract/reviewer/prompt-%s-%s.md", member, lens.Key)
 }
 
+func contractReviewerLensCorrectivePromptArtifact(member string, lens contractReviewLens) string {
+	return fmt.Sprintf("contract/reviewer/prompt-%s-%s-corrective.md", member, lens.Key)
+}
+
 func contractReviewerLensPromptPath(runPaths contractRunPathSet, member string, lens contractReviewLens) string {
 	return filepath.Join(runPaths.ContractReviewDir, fmt.Sprintf("prompt-%s-%s.md", member, lens.Key))
+}
+
+func contractReviewerLensCorrectivePromptPath(runPaths contractRunPathSet, member string, lens contractReviewLens) string {
+	return filepath.Join(runPaths.ContractReviewDir, fmt.Sprintf("prompt-%s-%s-corrective.md", member, lens.Key))
 }
 
 func renderContractReviewerPrompt(contract draftContract, lens contractReviewLens) string {
@@ -1320,7 +1384,8 @@ func writeContractReviewerOutputFormat(b *strings.Builder) {
 	fmt.Fprintln(b, "Report likely-real defects (recall-first), then gate on precision before marking blocking.")
 	fmt.Fprintln(b, "Use state=candidate with explicit uncertainty when you believe a finding is real but have not fully confirmed it.")
 	fmt.Fprintln(b)
-	fmt.Fprintln(b, "State your analysis in prose. If you find issues, also include a structured block:")
+	fmt.Fprintln(b, "State your analysis in prose. You MUST also include exactly one structured findings block:")
+	fmt.Fprintln(b, "The block is mandatory — even when you have no findings, emit `\"findings\": []`.")
 	fmt.Fprintln(b)
 	fmt.Fprintln(b, "```json")
 	fmt.Fprintln(b, "{")
@@ -1351,7 +1416,45 @@ func writeContractReviewerOutputFormat(b *strings.Builder) {
 	fmt.Fprintln(b, "- Every blocking finding MUST include a concrete material_impact explaining the implementation consequence.")
 	fmt.Fprintln(b, "- If you cannot state a concrete material_impact, mark the finding blocking=false (advisory).")
 	fmt.Fprintln(b, "- Set blocking=false for advisory issues.")
-	fmt.Fprintln(b, "- If no issues, say so clearly. Do not include an empty findings block.")
+	fmt.Fprintln(b, "- If no issues, say so clearly and emit the mandatory empty findings block.")
+}
+
+func renderContractReviewerCorrectivePrompt(contract draftContract, lens contractReviewLens) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Corrective Contract Review: %s\n\n", lens.Heading)
+	fmt.Fprintln(&b, "This prompt is prepared for a corrective contract reviewer attempt.")
+	fmt.Fprintf(&b, "Your previous response did not include a valid `%s` JSON block.\n", contractReviewerResultSchema)
+	fmt.Fprintln(&b, "Findings expressed only in prose in the previous attempt are not recoverable; re-review the contract using only your assigned lens checklist.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Contract")
+	fmt.Fprintln(&b)
+	fmt.Fprintf(&b, "**Goal**: %s\n\n", valueOrNone(contract.Goal))
+	writeMarkdownStringList(&b, "**Scope in**:", contract.Scope.In)
+	fmt.Fprintln(&b)
+	writeMarkdownStringList(&b, "**Scope out**:", contract.Scope.Out)
+	fmt.Fprintln(&b)
+	writeMarkdownStringList(&b, "**Acceptance criteria**:", contract.AcceptanceCriteria)
+	fmt.Fprintln(&b)
+	writeMarkdownStringList(&b, "**Validation commands**:", contract.Validation.Commands)
+	fmt.Fprintln(&b)
+	writeMarkdownStringList(&b, "**Assumptions**:", contract.Assumptions)
+	fmt.Fprintln(&b)
+	fmt.Fprintf(&b, "## Lens: %s\n\n", lens.Heading)
+	for _, item := range lens.Checklist {
+		fmt.Fprintf(&b, "- %s\n", item)
+	}
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Required structured output")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "You MUST emit exactly one fenced JSON block. If you have no findings, emit `\"findings\": []`.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "```json")
+	fmt.Fprintln(&b, "{")
+	fmt.Fprintf(&b, "  \"schema\": %q,\n", contractReviewerResultSchema)
+	fmt.Fprintln(&b, `  "findings": []`)
+	fmt.Fprintln(&b, "}")
+	fmt.Fprintln(&b, "```")
+	return b.String()
 }
 
 func renderContractReviewFixerPrompt(contract draftContract, currentVersion string, findings []contractReviewFinding) string {
@@ -1424,7 +1527,7 @@ func buildContractReviewerLensPlan(runID string, member string, lens contractRev
 	}, nil
 }
 
-func (a App) runContractReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID string, context runContext, reviewer reviewLoopReviewer, lens contractReviewLens, timeout time.Duration, wallClockCap time.Duration, onFirstOutput func()) error {
+func (a App) runContractReviewerAttempt(stdout io.Writer, liveOutput io.Writer, runID string, context runContext, reviewer reviewLoopReviewer, lens contractReviewLens, timeout time.Duration, wallClockCap time.Duration, onFirstOutput func(), promptRepoPath string) error {
 	return runAgentAttemptLifecycle(a, agentAttemptLifecycle[contractReviewerAttemptPlan, contractReviewerRequestDocument, contractReviewerResultDocument, struct{}]{
 		Stdout:          stdout,
 		LiveOutput:      liveOutput,
@@ -1440,7 +1543,7 @@ func (a App) runContractReviewerAttempt(stdout io.Writer, liveOutput io.Writer, 
 		AgentName:       reviewer.Name,
 		Agent:           reviewer.Agent,
 		Model:           reviewer.ModelSpec,
-		PromptRepoPath:  runArtifactRepoRel(runID, contractReviewerLensPromptArtifact(reviewer.Name, lens)),
+		PromptRepoPath:  promptRepoPath,
 		ArtifactDir:     contractReviewerAttemptsArtifact,
 		Timeout:         timeout,
 		WallClockCap:    wallClockCap,
@@ -1486,8 +1589,13 @@ func (a App) runContractReviewerAttempt(stdout io.Writer, liveOutput io.Writer, 
 }
 
 func (a App) runContractReviewerWithAgent(liveOutput io.Writer, runID string, context runContext, reviewer reviewLoopReviewer, lens contractReviewLens, timeout time.Duration, wallClockCap time.Duration, onFirstOutput func()) (contractReviewerResultDocument, error) {
+	promptRepoPath := runArtifactRepoRel(runID, contractReviewerLensPromptArtifact(reviewer.Name, lens))
+	return a.runContractReviewerWithPrompt(liveOutput, runID, context, reviewer, lens, timeout, wallClockCap, onFirstOutput, promptRepoPath)
+}
+
+func (a App) runContractReviewerWithPrompt(liveOutput io.Writer, runID string, context runContext, reviewer reviewLoopReviewer, lens contractReviewLens, timeout time.Duration, wallClockCap time.Duration, onFirstOutput func(), promptRepoPath string) (contractReviewerResultDocument, error) {
 	var stdout bytes.Buffer
-	runErr := a.runContractReviewerAttempt(&stdout, liveOutput, runID, context, reviewer, lens, timeout, wallClockCap, onFirstOutput)
+	runErr := a.runContractReviewerAttempt(&stdout, liveOutput, runID, context, reviewer, lens, timeout, wallClockCap, onFirstOutput, promptRepoPath)
 	var result contractReviewerResultDocument
 	if stdout.Len() > 0 {
 		if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
@@ -1498,6 +1606,33 @@ func (a App) runContractReviewerWithAgent(liveOutput io.Writer, runID string, co
 		}
 	}
 	return result, runErr
+}
+
+func (a App) runContractReviewerCorrectiveAttempt(liveOutput io.Writer, runID string, context runContext, reviewer reviewLoopReviewer, lens contractReviewLens, timeout time.Duration, wallClockCap time.Duration) (contractReviewerResultDocument, bool, []string) {
+	corrPath := contractReviewerLensCorrectivePromptPath(context.RunPaths, reviewer.Name, lens)
+	if err := activeStore.WriteBytes(corrPath, []byte(renderContractReviewerCorrectivePrompt(context.Contract, lens)), 0o644); err != nil {
+		return contractReviewerResultDocument{}, false, []string{fmt.Sprintf("corrective prompt write failed: %v", err)}
+	}
+	corrRepoPath := runArtifactRepoRel(runID, contractReviewerLensCorrectivePromptArtifact(reviewer.Name, lens))
+
+	result, err := a.runContractReviewerWithPrompt(liveOutput, runID, context, reviewer, lens, timeout, wallClockCap, nil, corrRepoPath)
+	if err != nil {
+		return contractReviewerResultDocument{}, false, []string{fmt.Sprintf("corrective attempt failed: %v", err)}
+	}
+
+	stdoutBytes, readErr := activeStore.ReadBytes(agentAttemptPaths(context.RunPaths.ContractReviewAttemptsDir, result.AttemptID).StdoutLog)
+	if readErr != nil {
+		return result, false, []string{fmt.Sprintf("corrective attempt stdout unreadable: %v", readErr)}
+	}
+	if len(stdoutBytes) == 0 {
+		return result, false, []string{"corrective attempt produced no output — parse miss"}
+	}
+
+	blocks, warnings := parseContractReviewerFindingBlocks(string(stdoutBytes))
+	if len(blocks) == 0 {
+		return result, false, warnings
+	}
+	return result, true, nil
 }
 
 // groupContractReviewerLensTasks builds the fan-out task list grouped by

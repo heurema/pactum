@@ -20,11 +20,17 @@ import (
 //
 // PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS=1: emit structured findings block.
 // PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING=1: make those findings blocking=true.
-// PACTUM_CONTRACT_REVIEWER_CLEAN_ON_MARKER=1: emit no findings when stdin
+// PACTUM_CONTRACT_REVIEWER_CLEAN_ON_MARKER=1: emit an empty findings block when stdin
 //
 //	contains "FIXED_MARKER", regardless of other emit vars.
 //
 // PACTUM_CONTRACT_REVIEWER_FAIL_LENS=<Heading>: exit 1 for that lens.
+// PACTUM_CONTRACT_REVIEWER_PARSE_MISS_LENS=<Heading>: target parse-miss hooks at one lens.
+// PACTUM_CONTRACT_REVIEWER_SOFT_PARSE_MISS=1: first attempt exits 0 with unparseable stdout.
+// PACTUM_CONTRACT_REVIEWER_EMPTY_STDOUT=1: first attempt exits 0 with empty stdout.
+// PACTUM_CONTRACT_REVIEWER_CORRECTIVE_EMIT_FINDINGS=1: corrective attempt emits one finding.
+// PACTUM_CONTRACT_REVIEWER_CORRECTIVE_EMIT_EMPTY_BLOCK=1: corrective attempt emits findings=[].
+// PACTUM_CONTRACT_REVIEWER_CORRECTIVE_FAIL=1: corrective attempt exits 1.
 func TestContractReviewHelperProcess(t *testing.T) {
 	if os.Getenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS") != "1" {
 		return
@@ -41,32 +47,69 @@ func TestContractReviewHelperProcess(t *testing.T) {
 	if resolved, err := filepath.EvalSymlinks(expectedCWD); err == nil {
 		expectedCWD = resolved
 	}
-	fmt.Printf("cwd_is_repo=%t\n", cwd == expectedCWD)
 	stdin, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "stdin error: %v\n", err)
 		os.Exit(2)
 	}
-	fmt.Printf("stdin_has_contract_review_heading=%t\n", strings.Contains(string(stdin), "# Contract Review:"))
+	prompt := string(stdin)
+	isCorrective := strings.Contains(prompt, "# Corrective Contract Review:")
+	if os.Getenv("PACTUM_CONTRACT_REVIEWER_EMPTY_STDOUT") == "1" && !isCorrective && contractReviewerHookMatchesLens(prompt) {
+		fmt.Fprintln(os.Stderr, "contract-reviewer-empty-stdout-line")
+		os.Exit(0)
+	}
+	fmt.Printf("cwd_is_repo=%t\n", cwd == expectedCWD)
+	fmt.Printf("stdin_has_contract_review_heading=%t\n", strings.Contains(prompt, "# Contract Review:"))
 	if failLens := os.Getenv("PACTUM_CONTRACT_REVIEWER_FAIL_LENS"); failLens != "" {
-		if strings.Contains(string(stdin), "# Contract Review: "+failLens) {
+		if strings.Contains(prompt, "# Contract Review: "+failLens) {
 			fmt.Fprintln(os.Stderr, "contract-reviewer-fail-line")
 			os.Exit(1)
 		}
 	}
+
+	if os.Getenv("PACTUM_CONTRACT_REVIEWER_SOFT_PARSE_MISS") == "1" && contractReviewerHookMatchesLens(prompt) {
+		if isCorrective {
+			if os.Getenv("PACTUM_CONTRACT_REVIEWER_CORRECTIVE_FAIL") == "1" {
+				fmt.Fprintln(os.Stderr, "contract-reviewer-corrective-fail-line")
+				os.Exit(1)
+			}
+			if os.Getenv("PACTUM_CONTRACT_REVIEWER_CORRECTIVE_EMIT_FINDINGS") == "1" {
+				fmt.Print(contractReviewerStructuredFindingOutput(false))
+			} else if os.Getenv("PACTUM_CONTRACT_REVIEWER_CORRECTIVE_EMIT_EMPTY_BLOCK") == "1" {
+				fmt.Print(contractReviewerEmptyFindingsOutput())
+			} else {
+				fmt.Println("corrective analysis without structured findings")
+			}
+		} else {
+			fmt.Println("first attempt analysis without structured findings")
+		}
+		fmt.Fprintln(os.Stderr, "contract-reviewer-stderr-line")
+		os.Exit(0)
+	}
+
 	if os.Getenv("PACTUM_CONTRACT_REVIEWER_EMIT_FINDINGS") == "1" {
 		cleanOnMarker := os.Getenv("PACTUM_CONTRACT_REVIEWER_CLEAN_ON_MARKER") == "1"
-		if cleanOnMarker && strings.Contains(string(stdin), "FIXED_MARKER") {
-			// Contract already fixed; emit no findings this round.
+		if cleanOnMarker && strings.Contains(prompt, "FIXED_MARKER") {
+			fmt.Print(contractReviewerEmptyFindingsOutput())
 		} else if os.Getenv("PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING_NO_IMPACT") == "1" {
 			fmt.Print(contractReviewerBlockingNoImpactOutput())
 		} else {
 			blocking := os.Getenv("PACTUM_CONTRACT_REVIEWER_EMIT_BLOCKING") == "1"
 			fmt.Print(contractReviewerStructuredFindingOutput(blocking))
 		}
+	} else {
+		fmt.Print(contractReviewerEmptyFindingsOutput())
 	}
 	fmt.Fprintln(os.Stderr, "contract-reviewer-stderr-line")
 	os.Exit(0)
+}
+
+func contractReviewerHookMatchesLens(prompt string) bool {
+	lens := os.Getenv("PACTUM_CONTRACT_REVIEWER_PARSE_MISS_LENS")
+	if lens == "" {
+		return true
+	}
+	return strings.Contains(prompt, "# Contract Review: "+lens) || strings.Contains(prompt, "# Corrective Contract Review: "+lens)
 }
 
 // TestContractReviewFixerHelperProcess is the subprocess used by contract fixer
@@ -140,6 +183,18 @@ func contractReviewerStructuredFindingOutput(blocking bool) string {
 	block := map[string]any{
 		"schema":   contractReviewerResultSchema,
 		"findings": []any{finding},
+	}
+	data, err := json.MarshalIndent(block, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	return "reviewer analysis\n```json\n" + string(data) + "\n```\n"
+}
+
+func contractReviewerEmptyFindingsOutput() string {
+	block := map[string]any{
+		"schema":   contractReviewerResultSchema,
+		"findings": []any{},
 	}
 	data, err := json.MarshalIndent(block, "", "  ")
 	if err != nil {
@@ -250,6 +305,33 @@ func setContractReviewMaxRoundsConfig(t *testing.T, paths artifacts.Paths, maxRo
 	assertNoError(t, writeYAML(paths.Config, config))
 }
 
+func runHelperContractReviewJSON(t *testing.T, app App, runID string) (contractReviewLoopResponse, string, string, int) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "review", "run", runID, "--json"}, &stdout, &stderr)
+	var response contractReviewLoopResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	return response, stdout.String(), stderr.String(), code
+}
+
+func countContractReviewerAttemptResults(t *testing.T, runPaths contractRunPathSet) int {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(runPaths.ContractReviewAttemptsDir, "contract_reviewer_attempt_*", "result.json"))
+	if err != nil {
+		t.Fatalf("glob reviewer attempt results: %v", err)
+	}
+	return len(matches)
+}
+
+func warningsContain(warnings []string, needle string) bool {
+	for _, w := range warnings {
+		if strings.Contains(w, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestContractReviewNoReviewersIsNoOp checks that contract review with no
 // contract.reviewers exits 0, prints a no-op message, creates no attempt
 // artifacts, and still emits the loop started/finished ledger events.
@@ -276,6 +358,186 @@ func TestContractReviewNoReviewersIsNoOp(t *testing.T) {
 	}
 	if countEvents(eventTypes, "contract_review_loop_finished") != 1 {
 		t.Fatalf("expected 1 contract_review_loop_finished event, got:\n%v", eventTypes)
+	}
+}
+
+func TestContractReviewSoftParseMissCorrectiveRetryParses(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	app = configureHelperContractReviewers(t, app, paths, "helper")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_SOFT_PARSE_MISS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_PARSE_MISS_LENS", "Completeness")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_CORRECTIVE_EMIT_FINDINGS", "1")
+
+	response, stdout, stderr, code := runHelperContractReviewJSON(t, app, runID)
+	if code != 0 {
+		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if response.TerminalReason != "resolved" {
+		t.Fatalf("expected resolved terminal, got %q\n%s", response.TerminalReason, stdout)
+	}
+	if len(response.Rounds) != 1 {
+		t.Fatalf("expected 1 round, got %d", len(response.Rounds))
+	}
+	round := response.Rounds[0]
+	if round.ParseMiss {
+		t.Fatalf("corrected parse miss must not remain unresolved: %#v", round)
+	}
+	if len(round.Findings) != 1 || round.Findings[0].Lens != "completeness" {
+		t.Fatalf("expected corrective finding for completeness, got: %#v", round.Findings)
+	}
+	if !warningsContain(round.Warnings, "no valid findings block") || !warningsContain(round.Warnings, "corrective retry") {
+		t.Fatalf("expected corrective retry warning, got: %#v", round.Warnings)
+	}
+	if got, want := countContractReviewerAttemptResults(t, runPaths), len(contractReviewLenses)+1; got != want {
+		t.Fatalf("expected %d attempts including one corrective retry, got %d", want, got)
+	}
+}
+
+func TestContractReviewHardParseMissEmptyStdoutNoRetry(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	app = configureHelperContractReviewers(t, app, paths, "helper")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMPTY_STDOUT", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_PARSE_MISS_LENS", "Completeness")
+
+	response, stdout, stderr, code := runHelperContractReviewJSON(t, app, runID)
+	if code != 0 {
+		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if response.TerminalReason != "reviewer_findings_unparsed" {
+		t.Fatalf("expected reviewer_findings_unparsed, got %q\n%s", response.TerminalReason, stdout)
+	}
+	if len(response.Rounds) != 1 || !response.Rounds[0].ParseMiss {
+		t.Fatalf("expected one parse-miss round, got: %#v", response.Rounds)
+	}
+	if !warningsContain(response.Rounds[0].Warnings, "empty stdout") {
+		t.Fatalf("expected empty stdout warning, got: %#v", response.Rounds[0].Warnings)
+	}
+	if got, want := countContractReviewerAttemptResults(t, runPaths), len(contractReviewLenses); got != want {
+		t.Fatalf("expected %d initial attempts and no corrective retry, got %d", want, got)
+	}
+}
+
+func TestContractReviewUnresolvedSoftParseMissFailsLoud(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	app = configureHelperContractReviewers(t, app, paths, "helper")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_SOFT_PARSE_MISS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_PARSE_MISS_LENS", "Completeness")
+
+	response, stdout, stderr, code := runHelperContractReviewJSON(t, app, runID)
+	if code != 0 {
+		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if response.TerminalReason != "reviewer_findings_unparsed" {
+		t.Fatalf("expected reviewer_findings_unparsed, got %q\n%s", response.TerminalReason, stdout)
+	}
+	round := response.Rounds[0]
+	if !round.ParseMiss || round.CleanStreak != 0 {
+		t.Fatalf("unresolved parse miss must be non-clean, got: %#v", round)
+	}
+	if round.BlockingFindings != 0 {
+		t.Fatalf("test should prove blocking_count=0 is insufficient, got %d", round.BlockingFindings)
+	}
+	if !warningsContain(round.Warnings, "attempt=2") || !warningsContain(round.Warnings, "no valid contract reviewer findings block parsed") {
+		t.Fatalf("expected unresolved corrective parse warning, got: %#v", round.Warnings)
+	}
+	if got, want := countContractReviewerAttemptResults(t, runPaths), len(contractReviewLenses)+1; got != want {
+		t.Fatalf("expected %d attempts including corrective retry, got %d", want, got)
+	}
+}
+
+func TestContractReviewCleanEmptyFindingsBlockConverges(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	app = configureHelperContractReviewers(t, app, paths, "helper")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+
+	response, stdout, stderr, code := runHelperContractReviewJSON(t, app, runID)
+	if code != 0 {
+		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if response.TerminalReason != "resolved" {
+		t.Fatalf("expected resolved terminal, got %q\n%s", response.TerminalReason, stdout)
+	}
+	round := response.Rounds[0]
+	if round.ParseMiss || len(round.Findings) != 0 || round.BlockingFindings != 0 {
+		t.Fatalf("empty findings block should parse as clean, got: %#v", round)
+	}
+	if got, want := countContractReviewerAttemptResults(t, runPaths), len(contractReviewLenses); got != want {
+		t.Fatalf("expected %d attempts, got %d", want, got)
+	}
+}
+
+func TestContractReviewCorrectiveRetryFailsToRunFailsLoud(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	app = configureHelperContractReviewers(t, app, paths, "helper")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_SOFT_PARSE_MISS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_PARSE_MISS_LENS", "Completeness")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_CORRECTIVE_FAIL", "1")
+
+	response, stdout, stderr, code := runHelperContractReviewJSON(t, app, runID)
+	if code != 0 {
+		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if response.TerminalReason != "reviewer_findings_unparsed" {
+		t.Fatalf("expected reviewer_findings_unparsed, got %q\n%s", response.TerminalReason, stdout)
+	}
+	round := response.Rounds[0]
+	if !round.ParseMiss {
+		t.Fatalf("corrective failed-to-run must remain a parse miss: %#v", round)
+	}
+	if len(round.SkippedLenses) != 0 {
+		t.Fatalf("corrective failed-to-run must not revert to skipped_lenses: %#v", round.SkippedLenses)
+	}
+	if !warningsContain(round.Warnings, "corrective attempt failed") {
+		t.Fatalf("expected corrective failure warning, got: %#v", round.Warnings)
+	}
+	if got, want := countContractReviewerAttemptResults(t, runPaths), len(contractReviewLenses)+1; got != want {
+		t.Fatalf("expected %d attempts including corrective retry, got %d", want, got)
+	}
+}
+
+func TestContractReviewCorrectiveRetryEmptyBlockConverges(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	app = configureHelperContractReviewers(t, app, paths, "helper")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_HELPER_PROCESS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_SOFT_PARSE_MISS", "1")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_PARSE_MISS_LENS", "Completeness")
+	t.Setenv("PACTUM_CONTRACT_REVIEWER_CORRECTIVE_EMIT_EMPTY_BLOCK", "1")
+
+	response, stdout, stderr, code := runHelperContractReviewJSON(t, app, runID)
+	if code != 0 {
+		t.Fatalf("contract review exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if response.TerminalReason != "resolved" {
+		t.Fatalf("expected resolved terminal, got %q\n%s", response.TerminalReason, stdout)
+	}
+	round := response.Rounds[0]
+	if round.ParseMiss || len(round.Findings) != 0 || round.BlockingFindings != 0 {
+		t.Fatalf("corrective findings=[] should resolve as clean, got: %#v", round)
+	}
+	if got, want := countContractReviewerAttemptResults(t, runPaths), len(contractReviewLenses)+1; got != want {
+		t.Fatalf("expected %d attempts including corrective retry, got %d", want, got)
 	}
 }
 
@@ -1217,6 +1479,25 @@ func TestContractApproveGuardFailClosed(t *testing.T) {
 			t.Fatalf("error message should mention blocking: %s", got)
 		}
 	})
+}
+
+func TestContractReviewerPromptRequiresMandatoryFindingsBlock(t *testing.T) {
+	contract := draftContract{Goal: "test goal"}
+	for _, lens := range contractReviewLenses {
+		prompt := renderContractReviewerPrompt(contract, lens)
+		if !strings.Contains(prompt, "You MUST also include exactly one structured findings block") {
+			t.Errorf("lens %s: prompt does not mandate exactly one structured findings block", lens.Key)
+		}
+		if !strings.Contains(prompt, "The block is mandatory") {
+			t.Errorf("lens %s: prompt does not mark the block mandatory", lens.Key)
+		}
+		if !strings.Contains(prompt, `"findings": []`) {
+			t.Errorf("lens %s: prompt does not require findings=[] for clean reviews", lens.Key)
+		}
+		if strings.Contains(prompt, "Do not include an empty findings block") {
+			t.Errorf("lens %s: prompt still contains old omit-empty-block instruction", lens.Key)
+		}
+	}
 }
 
 // TestContractReviewerPromptContainsContractSchema verifies that the rendered
