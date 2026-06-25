@@ -1,0 +1,123 @@
+{
+  "schema": "pactum.gate_report.v1alpha1",
+  "run_id": "run_20260620_133722",
+  "created_at": "2026-06-20T14:40:46Z",
+  "status": "needs_review",
+  "execution": {
+    "attempt_id": "attempt_001",
+    "exit_code": 0,
+    "timed_out": false,
+    "result": "execute/last-result.json"
+  },
+  "changes": {
+    "status": "changed",
+    "changed_files": [
+      "docs/backlog.md",
+      "docs/install.md",
+      "docs/review-orchestration-patterns.md"
+    ],
+    "new_files": [
+      "docs/install-npm.md",
+      "npm/bin/lib.mjs",
+      "npm/bin/pactum.mjs",
+      "npm/bin/pactum.test.mjs",
+      "npm/checksums.json",
+      "npm/package.json"
+    ],
+    "missing_files": [],
+    "reasons": [
+      "changed file: docs/backlog.md",
+      "changed file: docs/install.md",
+      "changed file: docs/review-orchestration-patterns.md",
+      "new file: docs/install-npm.md",
+      "new file: npm/bin/lib.mjs",
+      "new file: npm/bin/pactum.mjs",
+      "new file: npm/bin/pactum.test.mjs",
+      "new file: npm/checksums.json",
+      "new file: npm/package.json"
+    ]
+  },
+  "validation": {
+    "commands_allowed": true,
+    "commands": [
+      {
+        "id": "command_001",
+        "command": "node --check npm/bin/pactum.mjs",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_001/stdout.log",
+        "stderr": "gate/validation/command_001/stderr.log",
+        "result": "gate/validation/command_001/result.json"
+      },
+      {
+        "id": "command_002",
+        "command": "node --check npm/bin/lib.mjs",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_002/stdout.log",
+        "stderr": "gate/validation/command_002/stderr.log",
+        "result": "gate/validation/command_002/result.json"
+      },
+      {
+        "id": "command_003",
+        "command": "node --test npm/",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_003/stdout.log",
+        "stderr": "gate/validation/command_003/stderr.log",
+        "result": "gate/validation/command_003/result.json"
+      },
+      {
+        "id": "command_004",
+        "command": "node -e \"const p=JSON.parse(require('fs').readFileSync('npm/package.json','utf8')); const a=(c,m)=\u003e{if(!c)throw new Error(m)}; a(p.name==='@heurema/pactum','name must be @heurema/pactum'); a(p.type==='module','type must be module'); a(p.bin\u0026\u0026p.bin.pactum==='bin/pactum.mjs','bin.pactum must be bin/pactum.mjs'); a(p.version==='0.0.0','version must be 0.0.0'); a(Array.isArray(p.files)\u0026\u0026p.files.length===2\u0026\u0026p.files.includes('bin')\u0026\u0026p.files.includes('checksums.json'),'files must be exactly [bin, checksums.json]'); a(p.engines\u0026\u0026p.engines.node\u0026\u0026/^\u003e=18/.test(p.engines.node),'engines.node must be \u003e=18'); a(p.repository\u0026\u0026(typeof p.repository==='string'?p.repository:(p.repository.url||'')).includes('github.com/heurema/pactum'),'repository must point at github.com/heurema/pactum'); a(p.homepage\u0026\u0026p.homepage.includes('github.com/heurema/pactum'),'homepage must point at github.com/heurema/pactum'); a(!p.dependencies||!Object.keys(p.dependencies).length,'must have no runtime dependencies'); a(!p.optionalDependencies||!Object.keys(p.optionalDependencies).length,'must have no optionalDependencies'); a(!p.scripts||(p.scripts.prepare==null\u0026\u0026p.scripts.preinstall==null\u0026\u0026p.scripts.postinstall==null),'must have no prepare/preinstall/postinstall scripts');\"",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_004/stdout.log",
+        "stderr": "gate/validation/command_004/stderr.log",
+        "result": "gate/validation/command_004/result.json"
+      },
+      {
+        "id": "command_005",
+        "command": "node -e \"const c=JSON.parse(require('fs').readFileSync('npm/checksums.json','utf8')); ['pactum-darwin-arm64','pactum-darwin-amd64','pactum-linux-amd64','pactum-linux-arm64'].forEach(k=\u003e{if(!Object.hasOwn(c,k))throw new Error('missing checksums.json key: '+k);});\"",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_005/stdout.log",
+        "stderr": "gate/validation/command_005/stderr.log",
+        "result": "gate/validation/command_005/result.json"
+      },
+      {
+        "id": "command_006",
+        "command": "make check",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_006/stdout.log",
+        "stderr": "gate/validation/command_006/stderr.log",
+        "result": "gate/validation/command_006/result.json"
+      },
+      {
+        "id": "command_007",
+        "command": "node -e \"const fs=require('fs'); const t=fs.readFileSync('docs/install-npm.md','utf8'); const a=(c,m)=\u003e{if(!c)throw new Error(m)}; a(t.includes('npm i -g @heurema/pactum'),'missing: npm i -g @heurema/pactum'); a(t.includes('npx @heurema/pactum'),'missing: npx @heurema/pactum'); a(t.includes('Windows'),'missing: Windows'); a(/Alpine|musl/.test(t),'missing: Alpine or musl'); a(t.includes('PACTUM_NPM_CACHE'),'missing: PACTUM_NPM_CACHE'); a(t.includes('.cache/pactum'),'missing: .cache/pactum'); a(t.includes('github.com/heurema/pactum/releases'),'missing: github.com/heurema/pactum/releases');\"",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_007/stdout.log",
+        "stderr": "gate/validation/command_007/stderr.log",
+        "result": "gate/validation/command_007/result.json"
+      },
+      {
+        "id": "command_008",
+        "command": "node -e \"const fs=require('fs'); const t=fs.readFileSync('docs/install.md','utf8'); if(!t.includes('install-npm'))throw new Error('docs/install.md must link to install-npm.md');\"",
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "gate/validation/command_008/stdout.log",
+        "stderr": "gate/validation/command_008/stderr.log",
+        "result": "gate/validation/command_008/result.json"
+      }
+    ]
+  },
+  "summary": {
+    "execution_passed": true,
+    "validation_passed": true,
+    "changes_need_review": true,
+    "scope_blocked": false
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1alpha1",
+  "id": "command_004",
+  "command": "node -e \"const p=JSON.parse(require('fs').readFileSync('npm/package.json','utf8')); const a=(c,m)=\u003e{if(!c)throw new Error(m)}; a(p.name==='@heurema/pactum','name must be @heurema/pactum'); a(p.type==='module','type must be module'); a(p.bin\u0026\u0026p.bin.pactum==='bin/pactum.mjs','bin.pactum must be bin/pactum.mjs'); a(p.version==='0.0.0','version must be 0.0.0'); a(Array.isArray(p.files)\u0026\u0026p.files.length===2\u0026\u0026p.files.includes('bin')\u0026\u0026p.files.includes('checksums.json'),'files must be exactly [bin, checksums.json]'); a(p.engines\u0026\u0026p.engines.node\u0026\u0026/^\u003e=18/.test(p.engines.node),'engines.node must be \u003e=18'); a(p.repository\u0026\u0026(typeof p.repository==='string'?p.repository:(p.repository.url||'')).includes('github.com/heurema/pactum'),'repository must point at github.com/heurema/pactum'); a(p.homepage\u0026\u0026p.homepage.includes('github.com/heurema/pactum'),'homepage must point at github.com/heurema/pactum'); a(!p.dependencies||!Object.keys(p.dependencies).length,'must have no runtime dependencies'); a(!p.optionalDependencies||!Object.keys(p.optionalDependencies).length,'must have no optionalDependencies'); a(!p.scripts||(p.scripts.prepare==null\u0026\u0026p.scripts.preinstall==null\u0026\u0026p.scripts.postinstall==null),'must have no prepare/preinstall/postinstall scripts');\"",
+  "started_at": "2026-06-20T14:39:53.14897Z",
+  "finished_at": "2026-06-20T14:39:53.178201Z",
+  "duration_ms": 29,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "gate/validation/command_004/stdout.log",
+  "stderr": "gate/validation/command_004/stderr.log"
+}

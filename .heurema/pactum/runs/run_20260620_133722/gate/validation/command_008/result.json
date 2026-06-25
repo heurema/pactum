@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1alpha1",
+  "id": "command_008",
+  "command": "node -e \"const fs=require('fs'); const t=fs.readFileSync('docs/install.md','utf8'); if(!t.includes('install-npm'))throw new Error('docs/install.md must link to install-npm.md');\"",
+  "started_at": "2026-06-20T14:40:45.611894Z",
+  "finished_at": "2026-06-20T14:40:45.640268Z",
+  "duration_ms": 28,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "gate/validation/command_008/stdout.log",
+  "stderr": "gate/validation/command_008/stderr.log"
+}

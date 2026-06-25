@@ -1,0 +1,43 @@
+{
+  "schema": "pactum.contract_draft_proposal.v1alpha1",
+  "run_id": "run_20260620_133722",
+  "status": "accepted",
+  "created_at": "2026-06-20T13:37:29Z",
+  "source": "drafter_attempt",
+  "drafter_attempt_id": "drafter_attempt_001",
+  "drafter": "codex",
+  "in_scope": [
+    "Create a new top-level `npm/` package for `@heurema/pactum` with a dependency-free Node ESM launcher, package metadata, checksum manifest, and hermetic node:test coverage.",
+    "Implement the launcher as a thin `npm/bin/pactum.mjs` entrypoint backed by testable pure helpers, including platform mapping, platform rejection, cache path resolution, checksum lookup, download verification, atomic cache install, and child process execution.",
+    "Add npm install documentation in `docs/install-npm.md` and link to it from the existing install documentation."
+  ],
+  "out_of_scope": [
+    "Do not change `.github/workflows/release.yml` or add npm publishing, checksum generation, or bare-binary upload release automation.",
+    "Do not publish to npm, perform live GitHub Release downloads, or add any validation that depends on a published release asset.",
+    "Do not add optionalDependencies, platform-specific npm packages, postinstall scripts, Homebrew, Docker, Windows support, musl/Alpine support, signed provenance, or Go source changes."
+  ],
+  "acceptance": [
+    "`npm/package.json` declares `@heurema/pactum`, `type: module`, `bin.pactum: bin/pactum.mjs`, placeholder version `0.0.0`, `files` limited to `bin` and `checksums.json`, Node engine `\u003e=18`, repository/homepage metadata for `github.com/heurema/pactum`, and no runtime dependencies or install scripts.",
+    "`npm/checksums.json` is valid JSON and defines checksum entries for `pactum-darwin-arm64`, `pactum-darwin-amd64`, `pactum-linux-amd64`, and `pactum-linux-arm64`; missing or empty checksum values cause a loud nonzero failure rather than skipped verification.",
+    "The launcher maps only darwin/linux arm64/x64 to bare binary asset names using Go arch names, rejects Windows, musl/Alpine Linux, and unsupported platform/arch combinations before any network or cache work, and reports expected failures as single-line stderr messages without stack traces.",
+    "The launcher reads its own package version, caches verified binaries under `PACTUM_NPM_CACHE` or the XDG/home cache fallback at `\u003cbase\u003e/\u003cversion\u003e/\u003cassetName\u003e`, reuses an existing verified cached binary without redownloading, and uses the pinned URL `https://github.com/heurema/pactum/releases/download/v\u003cversion\u003e/\u003cassetName\u003e` on cache miss.",
+    "Download logic follows redirects only to GitHub's release asset CDN host pattern, streams to a temporary file, verifies sha256 against the baked manifest before execution, deletes mismatched temp files, chmods successful binaries executable, and atomically renames into the versioned cache path.",
+    "The launcher execs the cached binary with `spawnSync(binaryPath, process.argv.slice(2), { stdio: 'inherit' })` and exits with the child status, or with a clear nonzero launcher error when spawn fails.",
+    "`npm/bin/pactum.test.mjs` uses `node:test` hermetically with no network or real downloads and covers supported platform mapping, x64-to-amd64 translation, Windows rejection, simulated musl/Alpine rejection, unsupported arch rejection, sha256 success/failure, version-scoped cache paths with `PACTUM_NPM_CACHE`, and missing/empty checksum rejection.",
+    "`docs/install-npm.md` documents global npm install, npx usage, supported OS/arch matrix, unsupported Windows and Alpine/musl behavior, cache location and `PACTUM_NPM_CACHE`, and the GitHub Release tarball as the manual alternative; existing install docs link to this page without claiming release automation is implemented in this slice."
+  ],
+  "validation": [
+    "node --check npm/bin/pactum.mjs",
+    "node --check npm/bin/lib.mjs",
+    "node --test npm/",
+    "node -e \"const fs=require('fs'); JSON.parse(fs.readFileSync('npm/package.json','utf8')); JSON.parse(fs.readFileSync('npm/checksums.json','utf8'));\"",
+    "make check"
+  ],
+  "assumptions": [
+    "Node 18 or newer is available for local validation.",
+    "The follow-up release slice will overwrite the placeholder version and checksum values and publish the bare binary assets expected by this launcher.",
+    "Because JSON does not allow comments, any release-overwrite note for `checksums.json` must remain JSON-valid, for example via documentation or a JSON string field accepted by the implementation."
+  ],
+  "accepted_at": "2026-06-20T13:39:16Z",
+  "accepted_by": "manual"
+}

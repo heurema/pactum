@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1alpha1",
+  "id": "command_003",
+  "command": "node --test npm/",
+  "started_at": "2026-06-20T14:39:53.065767Z",
+  "finished_at": "2026-06-20T14:39:53.148328Z",
+  "duration_ms": 82,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "gate/validation/command_003/stdout.log",
+  "stderr": "gate/validation/command_003/stderr.log"
+}

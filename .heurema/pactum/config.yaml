@@ -8,6 +8,7 @@ agents:
     effort: xhigh
   - name: opus
     model: claude-opus-4-8
+    effort: xhigh
   - name: codex
     model: gpt-5.5
     effort: high
@@ -17,13 +18,12 @@ map:
 out_of_scope: block
 pipeline:
   contract_review:
-    by:
-      - opus
-      - codex-xhigh
+    by: codex
     loop:
       max: 4
       patience: 2
       settle: 1
+  execute:
+    by: codex
   code_review:
-    by:
-      - codex-xhigh
+    by: opus

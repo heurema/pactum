@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1alpha1",
+  "id": "command_005",
+  "command": "node -e \"const c=JSON.parse(require('fs').readFileSync('npm/checksums.json','utf8')); ['pactum-darwin-arm64','pactum-darwin-amd64','pactum-linux-amd64','pactum-linux-arm64'].forEach(k=\u003e{if(!Object.hasOwn(c,k))throw new Error('missing checksums.json key: '+k);});\"",
+  "started_at": "2026-06-20T14:39:53.178488Z",
+  "finished_at": "2026-06-20T14:39:53.204596Z",
+  "duration_ms": 26,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "gate/validation/command_005/stdout.log",
+  "stderr": "gate/validation/command_005/stderr.log"
+}

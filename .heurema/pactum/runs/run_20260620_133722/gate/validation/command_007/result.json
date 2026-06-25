@@ -1,0 +1,12 @@
+{
+  "schema": "pactum.validation_command_result.v1alpha1",
+  "id": "command_007",
+  "command": "node -e \"const fs=require('fs'); const t=fs.readFileSync('docs/install-npm.md','utf8'); const a=(c,m)=\u003e{if(!c)throw new Error(m)}; a(t.includes('npm i -g @heurema/pactum'),'missing: npm i -g @heurema/pactum'); a(t.includes('npx @heurema/pactum'),'missing: npx @heurema/pactum'); a(t.includes('Windows'),'missing: Windows'); a(/Alpine|musl/.test(t),'missing: Alpine or musl'); a(t.includes('PACTUM_NPM_CACHE'),'missing: PACTUM_NPM_CACHE'); a(t.includes('.cache/pactum'),'missing: .cache/pactum'); a(t.includes('github.com/heurema/pactum/releases'),'missing: github.com/heurema/pactum/releases');\"",
+  "started_at": "2026-06-20T14:40:45.576298Z",
+  "finished_at": "2026-06-20T14:40:45.611459Z",
+  "duration_ms": 35,
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "gate/validation/command_007/stdout.log",
+  "stderr": "gate/validation/command_007/stderr.log"
+}
