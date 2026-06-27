@@ -1556,6 +1556,45 @@ func TestContractReviewerPromptContainsContractSchema(t *testing.T) {
 	}
 }
 
+func TestContractReviewFixerPromptUsesNestedScopeSchema(t *testing.T) {
+	contract := draftContract{
+		Goal: "test goal",
+		Scope: draftContractScope{
+			In:  []string{"existing in-scope item"},
+			Out: []string{"existing out-of-scope item"},
+		},
+	}
+	prompt := renderContractReviewFixerPrompt(contract, "version-1", []contractReviewFinding{
+		{
+			Reviewer: "reviewer",
+			Lens:     "scope-boundaries",
+			Severity: "high",
+			Blocking: true,
+			Message:  "Scope needs an explicit in/out update.",
+		},
+	})
+
+	for _, want := range []string{
+		"For scope changes, use contract.scope.in and contract.scope.out as nested arrays.",
+		`"scope": {`,
+		`      "in": ["...updated in-scope item..."],`,
+		`      "out": ["...updated out-of-scope item..."]`,
+		"Do NOT use top-level contract.scope_in or contract.scope_out fields; they are invalid.",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("fixer prompt missing %q:\n%s", want, prompt)
+		}
+	}
+
+	allowedForbiddenFieldWarning := "Do NOT use top-level contract.scope_in or contract.scope_out fields; they are invalid."
+	promptWithoutWarning := strings.Replace(prompt, allowedForbiddenFieldWarning, "", 1)
+	for _, invalidField := range []string{"scope_in", "scope_out"} {
+		if strings.Contains(promptWithoutWarning, invalidField) {
+			t.Fatalf("fixer prompt mentions invalid top-level scope field %q outside the explicit warning:\n%s", invalidField, prompt)
+		}
+	}
+}
+
 // TestContractReviewDowngradesBlockingWithoutMaterialImpact verifies that a
 // finding parsed with blocking=true and empty material_impact is downgraded to
 // advisory (blocking=false), a warning is recorded, no fixer is invoked, and
