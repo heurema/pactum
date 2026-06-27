@@ -508,7 +508,23 @@ func parseContractReviseInput(input []byte) (baseVersion string, update contract
 		return baseVersion, contractPartialUpdate{}, issues
 	}
 
-	knownContract := []string{"goal", "scope", "paths_in_scope", "paths_out_of_scope", "acceptance_criteria", "validation", "assumptions"}
+	showOnlyContractFields := map[string]bool{
+		"schema":         true,
+		"run_id":         true,
+		"status":         true,
+		"open_questions": true,
+		"clarifications": true,
+		"memory_context": true,
+	}
+	knownContract := []string{
+		"goal",
+		"scope",
+		"paths_in_scope",
+		"paths_out_of_scope",
+		"acceptance_criteria",
+		"validation",
+		"assumptions",
+	}
 	for k := range contractFields {
 		known := false
 		for _, kc := range knownContract {
@@ -517,7 +533,7 @@ func parseContractReviseInput(input []byte) (baseVersion string, update contract
 				break
 			}
 		}
-		if !known {
+		if !known && !showOnlyContractFields[k] {
 			msg := fmt.Sprintf("unknown contract field %q", k)
 			if suggestion := didYouMean(k, knownContract); suggestion != "" {
 				msg += fmt.Sprintf("; did you mean %q?", suggestion)

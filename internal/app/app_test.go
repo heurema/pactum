@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1105,6 +1106,76 @@ func TestContractReviseNoOp(t *testing.T) {
 	}
 }
 
+func TestContractReviseFromShowJSONRoundTripNoOp(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(artifacts.New(root).RunsDir, runID))
+	before := readContractDraft(t, runPaths.ContractJSON)
+
+	doc := contractShowJSONDocForTest(t, app, runID)
+	fromFile := writeJSONDocForTest(t, doc)
+	resp := runContractReviseJSONForTest(t, app, runID, fromFile)
+	if resp.Changed {
+		t.Fatalf("show JSON round-trip changed contract: %#v", resp)
+	}
+	if resp.NewVersion != resp.BaseVersion {
+		t.Fatalf("round-trip no-op new_version %q != base_version %q", resp.NewVersion, resp.BaseVersion)
+	}
+	after := readContractDraft(t, runPaths.ContractJSON)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("contract changed after show JSON round-trip:\nbefore=%#v\nafter=%#v", before, after)
+	}
+}
+
+func TestContractReviseFromShowJSONRoundTripEdited(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(artifacts.New(root).RunsDir, runID))
+	before := readContractDraft(t, runPaths.ContractJSON)
+
+	doc := contractShowJSONDocForTest(t, app, runID)
+	contractDoc := contractDocMapForTest(t, doc)
+	contractDoc["goal"] = "add sqlite cache with read-through"
+	mutateShowOnlyContractFieldsForTest(contractDoc)
+	fromFile := writeJSONDocForTest(t, doc)
+	resp := runContractReviseJSONForTest(t, app, runID, fromFile)
+	if !resp.Changed {
+		t.Fatalf("edited show JSON round-trip changed = false")
+	}
+	if resp.Contract.Goal != "add sqlite cache with read-through" {
+		t.Fatalf("response contract goal = %q", resp.Contract.Goal)
+	}
+	contract := readContractDraft(t, runPaths.ContractJSON)
+	if contract.Goal != "add sqlite cache with read-through" {
+		t.Fatalf("stored contract goal = %q", contract.Goal)
+	}
+	expected := before
+	expected.Goal = "add sqlite cache with read-through"
+	if !reflect.DeepEqual(contract, expected) {
+		t.Fatalf("editable field should change while read-only fields stay unchanged:\nwant=%#v\ngot=%#v", expected, contract)
+	}
+}
+
+func TestContractReviseFromShowJSONRoundTripIgnoresChangedReadOnlyFields(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(artifacts.New(root).RunsDir, runID))
+	before := readContractDraft(t, runPaths.ContractJSON)
+
+	doc := contractShowJSONDocForTest(t, app, runID)
+	contractDoc := contractDocMapForTest(t, doc)
+	mutateShowOnlyContractFieldsForTest(contractDoc)
+	fromFile := writeJSONDocForTest(t, doc)
+	resp := runContractReviseJSONForTest(t, app, runID, fromFile)
+	if resp.Changed {
+		t.Fatalf("changing show-only contract fields should be a no-op: %#v", resp)
+	}
+	after := readContractDraft(t, runPaths.ContractJSON)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("read-only contract fields were mutated:\nbefore=%#v\nafter=%#v", before, after)
+	}
+}
+
 func TestContractReviseApprovedNoOp(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID := setupContractRun(t, root)
@@ -1134,6 +1205,34 @@ func TestContractReviseApprovedNoOp(t *testing.T) {
 	after := readApproval(t, runPaths.ApprovalJSON)
 	if after.Status != "approved" || after.ContractSHA256 == nil || *after.ContractSHA256 != *approval.ContractSHA256 {
 		t.Fatalf("approval should remain unchanged after no-op: before=%#v after=%#v", approval, after)
+	}
+}
+
+func TestContractReviseRejectsUnknownFields(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(artifacts.New(root).RunsDir, runID))
+	before := readContractDraft(t, runPaths.ContractJSON)
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{"unrelated_unknown": "x"})
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "revise", runID, "--from", fromFile, "--json"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("contract revise with unknown field should fail")
+	}
+	var failure contractReviseFailure
+	if err := json.Unmarshal(stdout.Bytes(), &failure); err != nil {
+		t.Fatalf("expected structured JSON failure: stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+	if failure.OK || !failure.ContractUnchanged {
+		t.Fatalf("unexpected failure shape: %#v", failure)
+	}
+	if len(failure.Issues) != 1 || failure.Issues[0].Field != "contract.unrelated_unknown" || failure.Issues[0].Code != "UNKNOWN_FIELD" {
+		t.Fatalf("want UNKNOWN_FIELD for contract.unrelated_unknown, got %#v", failure.Issues)
+	}
+	after := readContractDraft(t, runPaths.ContractJSON)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("contract changed after rejected unknown field:\nbefore=%#v\nafter=%#v", before, after)
 	}
 }
 
@@ -2310,6 +2409,74 @@ func writeReviseDocForTest(t *testing.T, runPaths contractRunPathSet, contractUp
 		t.Fatalf("writeReviseDocForTest: write: %v", err)
 	}
 	return path
+}
+
+func contractShowJSONDocForTest(t *testing.T, app App, runID string) map[string]any {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "show", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract show --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		t.Fatalf("contractShowJSONDocForTest: unmarshal: %v\n%s", err, stdout.String())
+	}
+	return doc
+}
+
+func contractDocMapForTest(t *testing.T, doc map[string]any) map[string]any {
+	t.Helper()
+	contractDoc, ok := doc["contract"].(map[string]any)
+	if !ok {
+		t.Fatalf("contract show JSON missing contract object: %#v", doc["contract"])
+	}
+	return contractDoc
+}
+
+func mutateShowOnlyContractFieldsForTest(contractDoc map[string]any) {
+	contractDoc["schema"] = "pactum.contract.changed"
+	contractDoc["run_id"] = "run_changed"
+	contractDoc["status"] = "approved"
+	contractDoc["open_questions"] = []any{"should not be stored"}
+	contractDoc["clarifications"] = map[string]any{
+		"questions": []any{
+			map[string]any{
+				"id":       "q_changed",
+				"question": "Should not be stored?",
+				"blocking": true,
+				"status":   "open",
+			},
+		},
+	}
+	contractDoc["memory_context"] = map[string]any{"used_items": []any{"mem_changed"}}
+}
+
+func writeJSONDocForTest(t *testing.T, doc any) string {
+	t.Helper()
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("writeJSONDocForTest: marshal: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "doc.json")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("writeJSONDocForTest: write: %v", err)
+	}
+	return path
+}
+
+func runContractReviseJSONForTest(t *testing.T, app App, runID string, fromFile string) contractReviseResponse {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"contract", "revise", runID, "--from", fromFile, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract revise exited %d, stderr: %s stdout: %s", code, stderr.String(), stdout.String())
+	}
+	var resp contractReviseResponse
+	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+		t.Fatalf("expected JSON response: %v\n%s", err, stdout.String())
+	}
+	return resp
 }
 
 func mustReadFile(t *testing.T, path string) string {
