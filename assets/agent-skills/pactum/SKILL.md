@@ -39,9 +39,12 @@ self-sufficient for the safe path. Consult them for deeper detail:
 
 Run all Pactum workflow commands with `--json` and read the response:
 
-- **`next` array** — the complete, directly runnable commands legal at this
-  stage. Run ONLY commands from `next`. If `next` is empty, STOP and report to
-  the user — the next step requires a human decision.
+- **`next` array** — the safe, directly runnable commands Pactum advertises
+  for this stage. It is not an exhaustive list of every command that might be
+  legal; for example, review states with missing or unreadable findings, or any
+  open finding, route to `pactum review show <run>` before approval. Run ONLY
+  commands from `next`. If `next` is empty, STOP and report to the user — the
+  next step requires a human decision.
 - **`error.fix`** — when a command fails, the exact remedial command. Run it.
   If there is no `error.fix`, read `next` for safe inspection alternatives.
   **Exception — write-stage failures (`execute run`, `review fix run`):** these

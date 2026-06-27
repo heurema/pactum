@@ -194,6 +194,10 @@ blocks approval until resolved. `pactum review finding resolve <run_id> f_001`
 records a resolution. `pactum review approve <run_id> --by manual` approves the
 review, which requires that the gate did not fail and that no blocking findings
 remain. Adding a finding to an approved review resets the approval.
+The JSON `next` affordance is more conservative than that approval command:
+missing or unreadable findings, pending review proposals, failed gates, or any
+open finding route to `pactum review show <run_id>` before approval is
+advertised.
 
 ### Reviewer rounds
 

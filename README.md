@@ -70,8 +70,8 @@ agent.
 - **A safe stop.** `execute plan` (a dry run) is the default; real execution is a
   separate, explicit step. Pactum drives Claude Code and Codex over the Agent
   Client Protocol and installs as an Agent Skill, so the agent follows the
-  workflow — every `--json` command carries a `next` array of legal moves and an
-  `error.fix` remedy on failure.
+  workflow — every `--json` command carries a `next` array of safe advertised
+  moves and an `error.fix` remedy on failure.
 - **Project memory.** Accepted, deterministic memory from reviewed runs feeds
   future prompts.
 

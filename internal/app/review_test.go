@@ -1704,6 +1704,35 @@ func TestReviewApplyFixOutcomesResolvesFixedAndRebuttedOnly(t *testing.T) {
 	}
 }
 
+func TestReviewApplyFixOutcomesNextShowsReviewWhenFindingsRemainOpen(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	var gateOut, gateErr bytes.Buffer
+	if code := app.Run([]string{"gate", "run", runID}, &gateOut, &gateErr); code != 0 {
+		t.Fatalf("gate run exited %d, stderr: %s", code, gateErr.String())
+	}
+	scaffoldReviewForTest(t, runPaths, runID, "passed")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "fixed blocking finding", "--blocking", "--category", "quality")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "open non-blocking finding", "--category", "quality")
+	writeReviewFixAttemptForTest(t, runPaths, runID, "attempt_001", reviewFixStructuredOutput([]map[string]any{
+		{"finding_id": "f_001", "outcome": "fixed", "note": "changed internal/app/review.go"},
+		{"finding_id": "f_002", "outcome": "blocked", "note": "needs operator disposition"},
+	}), true)
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "fix", "apply", runID, "attempt_001", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review apply-fix-outcomes exited %d, stderr: %s", code, stderr.String())
+	}
+	var response reviewApplyFixOutcomesResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if response.Fixed != 1 || response.Blocked != 1 {
+		t.Fatalf("unexpected apply response: %#v", response)
+	}
+	assertNextCommands(t, response.Next, "pactum review show "+runID)
+}
+
 func TestReviewApplyFixOutcomesMissingOrMalformedBlockWarnsWithoutWriting(t *testing.T) {
 	root := t.TempDir()
 	app, _, runID, runPaths := setupPreparedReview(t, root, "passed")

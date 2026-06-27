@@ -362,13 +362,16 @@ func memoryReproposalLegal(runPaths contractRunPathSet) bool {
 }
 
 // nextReviewCommands picks the review affordance for a gated run: approval is
-// only legal when the gate did not fail, every proposal is decided, and no
-// blocking finding is open, so until then the safe move is inspecting the
-// review.
+// advertised only when the gate did not fail, a completed findings artifact can
+// be read, every proposal is decided, and no finding remains open. Until then
+// the safe move is inspecting the review.
 func nextReviewCommands(runPaths contractRunPathSet, runID string) []string {
 	inspect := []string{"pactum review show " + runID}
 	gateReport, err := readReviewGateReport(runPaths.GateReportJSON)
 	if err != nil || gateReport.Status == "failed" {
+		return inspect
+	}
+	if !isRegularFile(runPaths.ReviewFindingsJSONL) {
 		return inspect
 	}
 	findings, resolutions, err := readReviewRecords(runPaths)
@@ -379,10 +382,37 @@ func nextReviewCommands(runPaths contractRunPathSet, runID string) []string {
 	if err != nil {
 		return inspect
 	}
-	if pending > 0 || summarizeReview(findings, resolutions).BlockingOpen > 0 {
+	summary := summarizeReview(findings, resolutions)
+	if pending > 0 || summary.Open > 0 || !reviewFindingsCompletedForApproval(runPaths, findings) {
 		return inspect
 	}
 	return []string{"pactum review approve " + runID}
+}
+
+func reviewFindingsCompletedForApproval(runPaths contractRunPathSet, findings []reviewFindingRecord) bool {
+	if isRegularFile(runPaths.ReviewLoopSummaryJSON) {
+		var loopSummary reviewLoopSummaryDocument
+		if err := readJSON(runPaths.ReviewLoopSummaryJSON, &loopSummary); err != nil {
+			return false
+		}
+		if loopSummary.OpenBlockingCount > 0 {
+			return false
+		}
+		if len(findings) == 0 {
+			return loopSummary.TerminalReason == "clean_round" || loopSummary.TerminalReason == "resolved"
+		}
+		return true
+	}
+	return len(findings) > 0
+}
+
+// legacyNextCommand keeps next_command's historical bare-command shape while
+// deriving the decision from the guarded JSON `next` selector.
+func legacyNextCommand(commands []string, runID string) string {
+	if len(commands) == 0 {
+		return ""
+	}
+	return strings.TrimSuffix(commands[0], " "+runID)
 }
 
 // nextCommandForStatus maps a derived lifecycle status to the command a user
@@ -397,10 +427,9 @@ func nextCommandForStatus(paths artifacts.Paths, runID string, status string) st
 		return "pactum execute plan"
 	case "executed":
 		return "pactum gate run"
-	case "gated":
-		return "pactum review show"
-	case "review_prepared":
-		return "pactum review approve"
+	case "gated", "review_prepared":
+		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+		return legacyNextCommand(nextReviewCommands(runPaths, runID), runID)
 	case "review_approved":
 		return "pactum memory propose"
 	case "memory_proposed":

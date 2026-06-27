@@ -48,10 +48,10 @@ The flow (full detail in
 
 ## Machine affordances
 
-With `--json`, the CLI announces the legal moves so an agent reads `next` and
-`error.fix` instead of memorizing the pipeline state machine: workflow commands
-(and `pactum status` / `pactum task show`) return a top-level `next` array of
-directly runnable pactum commands for the run's stage, and recognizable
+With `--json`, the CLI announces safe advertised moves so an agent reads `next`
+and `error.fix` instead of memorizing the pipeline state machine: workflow
+commands (and `pactum status` / `pactum task show`) return a top-level `next`
+array of directly runnable pactum commands for the run's stage, and recognizable
 precondition failures return a `pactum.error.v1alpha1` envelope with a stable
 `error.code` and, when a single exact remedial command exists, `error.fix`.
 Read-only not-ready responses (`pactum.not_ready.v1alpha1`) carry the remedial

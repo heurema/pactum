@@ -359,10 +359,10 @@ func TestNextAffordancesAcrossLifecycleStages(t *testing.T) {
 	next = decodeNext(t, app, "execute", "run", runID, "--agent", "helper", "--json")
 	assertNext(t, next, "pactum gate run "+runID)
 
-	// A gated run with nothing open already affords approval: the review
-	// scaffold is implicit, so no preparation step sits in between.
+	// A gated run without review findings routes to inspection; approval is
+	// only advertised after review output exists and is clean.
 	next = decodeNext(t, app, "gate", "run", runID, "--json")
-	assertNext(t, next, "pactum review approve "+runID)
+	assertNext(t, next, "pactum review show "+runID)
 
 	// review run scaffolds the review, runs the panel, and reports the loop
 	// summary; with a clean helper the review stays approvable.
@@ -478,6 +478,100 @@ func TestNextDoesNotAdvertiseApproveForFailedGate(t *testing.T) {
 	}
 	next := decodeNext(t, app, "task", "show", runID, "--json")
 	assertNext(t, next, "pactum review show "+runID)
+}
+
+func TestNextDoesNotAdvertiseReviewApproveWithoutFindings(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRunWithRevision(t, root, map[string]any{"goal": "add deterministic gate", "paths_in_scope": []string{"internal/app/**"}}, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+
+	next := decodeNext(t, app, "gate", "run", runID, "--json")
+	assertNext(t, next, "pactum review show "+runID)
+
+	scaffoldReviewForTest(t, runPaths, runID, "passed")
+	nextCommands := nextReviewCommands(runPaths, runID)
+	assertNextCommands(t, nextCommands, "pactum review show "+runID)
+	if got := taskShowNextCommand(t, app, runID); got != "pactum review show" {
+		t.Fatalf("scaffold-only task show next_command = %q, want pactum review show", got)
+	}
+
+	assertNoError(t, writeJSON(runPaths.ReviewLoopSummaryJSON, reviewLoopSummaryDocument{
+		Schema:         reviewLoopSummarySchema,
+		RunID:          runID,
+		TerminalReason: "error",
+		Rounds:         []reviewLoopRoundSummary{},
+	}))
+	nextCommands = nextReviewCommands(runPaths, runID)
+	assertNextCommands(t, nextCommands, "pactum review show "+runID)
+	next = decodeNext(t, app, "task", "show", runID, "--json")
+	assertNext(t, next, "pactum review show "+runID)
+
+	assertNoError(t, writeJSON(runPaths.ReviewLoopSummaryJSON, reviewLoopSummaryDocument{
+		Schema:         reviewLoopSummarySchema,
+		RunID:          runID,
+		TerminalReason: "clean_round",
+		Rounds:         []reviewLoopRoundSummary{},
+	}))
+	nextCommands = nextReviewCommands(runPaths, runID)
+	assertNextCommands(t, nextCommands, "pactum review approve "+runID)
+	next = decodeNext(t, app, "task", "show", runID, "--json")
+	assertNext(t, next, "pactum review approve "+runID)
+}
+
+func TestNextReviewCommandsShowWhenFindingsUnreadable(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr); code != 0 {
+		t.Fatalf("gate run exited %d, stderr: %s", code, stderr.String())
+	}
+	scaffoldReviewForTest(t, runPaths, runID, "passed")
+	assertNoError(t, activeStore.WriteBytes(runPaths.ReviewFindingsJSONL, []byte("not-json\n"), 0o644))
+
+	nextCommands := nextReviewCommands(runPaths, runID)
+	assertNextCommands(t, nextCommands, "pactum review show "+runID)
+	next := decodeNext(t, app, "task", "show", runID, "--json")
+	assertNext(t, next, "pactum review show "+runID)
+
+	if os.Geteuid() == 0 {
+		t.Log("file permissions are not enforced for root")
+		return
+	}
+	root = t.TempDir()
+	app, paths, runID = setupGatePreparedRun(t, root, nil, true)
+	runPaths = contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr); code != 0 {
+		t.Fatalf("gate run exited %d, stderr: %s", code, stderr.String())
+	}
+	scaffoldReviewForTest(t, runPaths, runID, "passed")
+	assertNoError(t, os.Chmod(runPaths.ReviewFindingsJSONL, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(runPaths.ReviewFindingsJSONL, 0o644) })
+
+	nextCommands = nextReviewCommands(runPaths, runID)
+	assertNextCommands(t, nextCommands, "pactum review show "+runID)
+	next = decodeNext(t, app, "task", "show", runID, "--json")
+	assertNext(t, next, "pactum review show "+runID)
+}
+
+func TestNextReviewCommandsShowWhenFindingsOpen(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr); code != 0 {
+		t.Fatalf("gate run exited %d, stderr: %s", code, stderr.String())
+	}
+	scaffoldReviewForTest(t, runPaths, runID, "passed")
+	runReviewCommand(t, app, "review", "finding", "add", runID, "non-blocking finding", "--category", "quality")
+
+	next := nextReviewCommands(runPaths, runID)
+	assertNextCommands(t, next, "pactum review show "+runID)
+	if got := taskShowNextCommand(t, app, runID); got != "pactum review show" {
+		t.Fatalf("task show next_command = %q, want pactum review show", got)
+	}
 }
 
 // TestNextFallsBackToInspectionOnUnreadableClarifications pins the
@@ -674,8 +768,14 @@ func TestConditionalNextBranches(t *testing.T) {
 	t.Run("review approve gated on pending proposals", func(t *testing.T) {
 		root := t.TempDir()
 		_, _, runID, runPaths := setupPreparedReview(t, root, "needs_review")
+		assertNoError(t, writeJSON(runPaths.ReviewLoopSummaryJSON, reviewLoopSummaryDocument{
+			Schema:         reviewLoopSummarySchema,
+			RunID:          runID,
+			TerminalReason: "clean_round",
+			Rounds:         []reviewLoopRoundSummary{},
+		}))
 
-		// No proposals, no open blocking findings: approval is legal.
+		// No proposals, completed review output, no open findings: approval is legal.
 		next := nextReviewCommands(runPaths, runID)
 		if !slicesContain(next, "pactum review approve "+runID) {
 			t.Fatalf("clean review must offer approve, got %v", next)
@@ -691,6 +791,33 @@ func TestConditionalNextBranches(t *testing.T) {
 			t.Fatalf("inspection affordance missing, got %v", next)
 		}
 	})
+
+	t.Run("review approve mirrors loop summary blocker guard", func(t *testing.T) {
+		root := t.TempDir()
+		app, paths, runID := setupGatePreparedRun(t, root, nil, true)
+		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+		var stdout, stderr bytes.Buffer
+		if code := app.Run([]string{"gate", "run", runID}, &stdout, &stderr); code != 0 {
+			t.Fatalf("gate run exited %d, stderr: %s", code, stderr.String())
+		}
+		scaffoldReviewForTest(t, runPaths, runID, "passed")
+		runReviewCommand(t, app, "review", "finding", "add", runID, "blocking finding", "--blocking", "--category", "quality")
+		runReviewCommand(t, app, "review", "finding", "resolve", runID, "f_001", "--note", "operator fixed it")
+		assertNoError(t, writeJSON(runPaths.ReviewLoopSummaryJSON, reviewLoopSummaryDocument{
+			Schema:            reviewLoopSummarySchema,
+			RunID:             runID,
+			TerminalReason:    "blockers_open",
+			OpenBlockingCount: 1,
+			Rounds:            []reviewLoopRoundSummary{},
+		}))
+
+		next := nextReviewCommands(runPaths, runID)
+		if slicesContain(next, "pactum review approve "+runID) {
+			t.Fatalf("stale loop blocker summary must gate approve, got %v", next)
+		}
+		nextPtr := decodeNext(t, app, "task", "show", runID, "--json")
+		assertNext(t, nextPtr, "pactum review show "+runID)
+	})
 }
 
 func slicesContain(values []string, want string) bool {
@@ -700,4 +827,11 @@ func slicesContain(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func assertNextCommands(t *testing.T, got []string, want ...string) {
+	t.Helper()
+	if !equalStrings(got, want) {
+		t.Fatalf("next = %v, want %v", got, want)
+	}
 }

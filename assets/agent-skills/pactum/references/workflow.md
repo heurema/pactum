@@ -115,11 +115,11 @@ require those records).
 Add `--json` to all workflow commands and read the state machine:
 
 - Workflow commands that advance a run, plus `pactum status` and
-  `pactum task show`, return a top-level `next` array of complete pactum
-  command strings (run id filled in) — the legal next moves. An empty `next`
-  means there is no safe scriptable move: either the next step needs a human
-  decision or the run is at a terminal state; `pactum execute run` is never
-  suggested.
+  `pactum task show`, return a top-level `next` array of safe advertised pactum
+  command strings (run id filled in). `next` is intentionally conservative, not
+  an exhaustive list of every command that might be legal. An empty `next` means
+  there is no safe scriptable move: either the next step needs a human decision
+  or the run is at a terminal state; `pactum execute run` is never suggested.
 - A failed command returns a `pactum.error.v1alpha1` envelope:
   `error.code` is a stable machine-readable reason, `error.message` the human
   text, and `error.fix` (when present) the single exact command that remedies
