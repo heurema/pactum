@@ -406,6 +406,7 @@ func TestContractReviewHardParseMissEmptyStdoutNoRetry(t *testing.T) {
 	t.Setenv("PACTUM_CONTRACT_REVIEWER_EXPECTED_CWD", root)
 	t.Setenv("PACTUM_CONTRACT_REVIEWER_EMPTY_STDOUT", "1")
 	t.Setenv("PACTUM_CONTRACT_REVIEWER_PARSE_MISS_LENS", "Completeness")
+	writeContractReviewResolutionsForNextTest(t, runPaths)
 
 	response, stdout, stderr, code := runHelperContractReviewJSON(t, app, runID)
 	if code != 0 {
@@ -422,6 +423,14 @@ func TestContractReviewHardParseMissEmptyStdoutNoRetry(t *testing.T) {
 	}
 	if got, want := countContractReviewerAttemptResults(t, runPaths), len(contractReviewLenses); got != want {
 		t.Fatalf("expected %d initial attempts and no corrective retry, got %d", want, got)
+	}
+	if isRegularFile(runPaths.ContractReviewResolutionsJSONL) {
+		t.Fatalf("parse miss must not create completed resolutions artifact")
+	}
+	next := nextCommandsForRun(paths, runID)
+	assertNextCommands(t, next, "pactum contract show "+runID)
+	if slicesContain(next, "pactum contract approve "+runID) {
+		t.Fatalf("parse miss must not advertise approve after reload: %v", next)
 	}
 }
 
@@ -478,6 +487,15 @@ func TestContractReviewCleanEmptyFindingsBlockConverges(t *testing.T) {
 	}
 	if got, want := countContractReviewerAttemptResults(t, runPaths), len(contractReviewLenses); got != want {
 		t.Fatalf("expected %d attempts, got %d", want, got)
+	}
+	assertNextCommands(t, response.Next, "pactum contract approve "+runID)
+	assertFile(t, runPaths.ContractReviewResolutionsJSONL)
+	resolutions, err := readJSONLines[contractReviewResolutionRecord](runPaths.ContractReviewResolutionsJSONL)
+	if err != nil {
+		t.Fatalf("cannot read resolutions.jsonl: %v", err)
+	}
+	if len(resolutions) != 0 {
+		t.Fatalf("resolved clean review should write empty resolutions.jsonl, got: %#v", resolutions)
 	}
 }
 
@@ -685,9 +703,14 @@ func TestContractReviewPanelRunsAndEmitsFindings(t *testing.T) {
 		t.Fatalf("expected %d finished events, got:\n%v", len(contractReviewLenses), eventTypes)
 	}
 
-	// Next affordance: still contract_draft (review does not change run status).
-	if response.Next == nil {
-		t.Fatalf("response missing next affordance")
+	assertNextCommands(t, response.Next, "pactum contract approve "+runID)
+	assertFile(t, runPaths.ContractReviewResolutionsJSONL)
+	resolutions, err := readJSONLines[contractReviewResolutionRecord](runPaths.ContractReviewResolutionsJSONL)
+	if err != nil {
+		t.Fatalf("cannot read resolutions.jsonl: %v", err)
+	}
+	if len(resolutions) != 0 {
+		t.Fatalf("resolved advisory review should write empty resolutions.jsonl, got: %#v", resolutions)
 	}
 }
 

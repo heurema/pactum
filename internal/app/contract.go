@@ -248,6 +248,9 @@ func (a App) contractReviseWithUpdate(context runContext, update contractPartial
 	state.Status = status.RunStatus
 	state.UpdatedAt = now
 
+	if err := removeContractReviewAggregateArtifacts(context.RunPaths); err != nil {
+		return contractReviseResponse{}, err
+	}
 	if err := writeContractArtifacts(context.RunPaths, contract); err != nil {
 		return contractReviseResponse{}, err
 	}

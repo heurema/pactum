@@ -264,16 +264,12 @@ func nextCommandsForRun(paths artifacts.Paths, runID string) []string {
 		// point at contract review so the error surfaces there rather than
 		// silently advertising approve.
 		configured, err := contractReviewersConfigured(paths.Config)
-		if err != nil || configured {
+		if err != nil {
 			return []string{"pactum contract review run " + runID}
 		}
-		// Even without configured reviewers, a prior contract-review run may have
-		// left persisted blocking findings — approve would refuse them too. Route to
-		// inspection so the guard error surfaces there rather than here.
-		if isRegularFile(runPaths.ContractReviewFindingsJSONL) {
-			if _, err := checkContractReviewFindingsApprovalGuard(runPaths); err != nil {
-				return []string{"pactum contract show " + runID}
-			}
+		contractReviewNext := nextContractReviewDraftCommands(runPaths, runID, configured)
+		if len(contractReviewNext) > 0 {
+			return contractReviewNext
 		}
 		return []string{"pactum contract approve " + runID}
 	case "contract_approved":
@@ -306,6 +302,24 @@ func nextCommandsForRun(paths artifacts.Paths, runID string) []string {
 	default:
 		return []string{}
 	}
+}
+
+func nextContractReviewDraftCommands(runPaths contractRunPathSet, runID string, reviewersConfigured bool) []string {
+	findingsExist := isRegularFile(runPaths.ContractReviewFindingsJSONL)
+	resolutionsExist := isRegularFile(runPaths.ContractReviewResolutionsJSONL)
+	switch {
+	case !findingsExist && !resolutionsExist:
+		if reviewersConfigured {
+			return []string{"pactum contract review run " + runID}
+		}
+		return nil
+	case !findingsExist || !resolutionsExist:
+		return []string{"pactum contract show " + runID}
+	}
+	if _, err := checkContractReviewFindingsApprovalGuard(runPaths); err != nil {
+		return []string{"pactum contract show " + runID}
+	}
+	return []string{"pactum contract approve " + runID}
 }
 
 // contractReviewersConfigured reports whether the workspace config has at least
@@ -420,6 +434,10 @@ func legacyNextCommand(commands []string, runID string) string {
 func nextCommandForStatus(paths artifacts.Paths, runID string, status string) string {
 	switch status {
 	case "contract_draft":
+		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+		if isRegularFile(runPaths.ContractReviewFindingsJSONL) || isRegularFile(runPaths.ContractReviewResolutionsJSONL) {
+			return legacyNextCommand(nextCommandsForRun(paths, runID), runID)
+		}
 		return "pactum contract revise"
 	case "contract_approved":
 		return "pactum prompt build"

@@ -590,6 +590,295 @@ func TestNextFallsBackToInspectionOnUnreadableClarifications(t *testing.T) {
 	assertNext(t, next, "pactum clarify show "+runID)
 }
 
+func TestNextContractReviewResolvedAdvertisesApprove(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	setContractReviewersConfig(t, paths, "helper")
+	registerTestAgents(t, paths, "helper")
+	writeContractReviewFindingsForNextTest(t, runPaths)
+	writeContractReviewResolutionsForNextTest(t, runPaths)
+
+	next := nextCommandsForRun(paths, runID)
+	assertNextCommands(t, next, "pactum contract approve "+runID)
+	if slicesContain(next, "pactum contract review run "+runID) {
+		t.Fatalf("resolved contract review must not advertise review run: %v", next)
+	}
+	nextPtr := decodeNext(t, app, "task", "show", runID, "--json")
+	assertNext(t, nextPtr, "pactum contract approve "+runID)
+}
+
+func TestNextContractReviewPartialOutputFallsBack(t *testing.T) {
+	t.Run("no aggregate output advertises review run", func(t *testing.T) {
+		root := t.TempDir()
+		app, paths, runID := setupContractRun(t, root)
+		setContractReviewersConfig(t, paths, "helper")
+		registerTestAgents(t, paths, "helper")
+
+		next := decodeNext(t, app, "task", "show", runID, "--json")
+		assertNext(t, next, "pactum contract review run "+runID)
+	})
+
+	t.Run("findings only falls back", func(t *testing.T) {
+		root := t.TempDir()
+		app, paths, runID := setupContractRun(t, root)
+		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+		setContractReviewersConfig(t, paths, "helper")
+		registerTestAgents(t, paths, "helper")
+		writeContractReviewFindingsForNextTest(t, runPaths)
+
+		next := decodeNext(t, app, "task", "show", runID, "--json")
+		assertNext(t, next, "pactum contract show "+runID)
+	})
+
+	t.Run("resolutions only falls back", func(t *testing.T) {
+		root := t.TempDir()
+		app, paths, runID := setupContractRun(t, root)
+		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+		setContractReviewersConfig(t, paths, "helper")
+		registerTestAgents(t, paths, "helper")
+		writeContractReviewResolutionsForNextTest(t, runPaths)
+
+		next := decodeNext(t, app, "task", "show", runID, "--json")
+		assertNext(t, next, "pactum contract show "+runID)
+	})
+}
+
+func TestNextContractReviewMalformedFindingsFallsBack(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	setContractReviewersConfig(t, paths, "helper")
+	registerTestAgents(t, paths, "helper")
+	assertNoError(t, activeStore.WriteBytes(runPaths.ContractReviewFindingsJSONL, []byte("not-json\n"), 0o644))
+	writeContractReviewResolutionsForNextTest(t, runPaths)
+
+	next := decodeNext(t, app, "task", "show", runID, "--json")
+	assertNext(t, next, "pactum contract show "+runID)
+}
+
+func TestNextContractReviewUnreadableFindingsFallsBack(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("file permissions are not enforced for root")
+	}
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	setContractReviewersConfig(t, paths, "helper")
+	registerTestAgents(t, paths, "helper")
+	writeContractReviewFindingsForNextTest(t, runPaths)
+	writeContractReviewResolutionsForNextTest(t, runPaths)
+	assertNoError(t, os.Chmod(runPaths.ContractReviewFindingsJSONL, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(runPaths.ContractReviewFindingsJSONL, 0o644) })
+
+	next := decodeNext(t, app, "task", "show", runID, "--json")
+	assertNext(t, next, "pactum contract show "+runID)
+}
+
+func TestNextContractReviewMalformedResolutionsFallsBack(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	setContractReviewersConfig(t, paths, "helper")
+	registerTestAgents(t, paths, "helper")
+	writeContractReviewFindingsForNextTest(t, runPaths)
+	assertNoError(t, activeStore.WriteBytes(runPaths.ContractReviewResolutionsJSONL, []byte("not-json\n"), 0o644))
+
+	next := decodeNext(t, app, "task", "show", runID, "--json")
+	assertNext(t, next, "pactum contract show "+runID)
+}
+
+func TestNextContractReviewUnreadableResolutionsFallsBack(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("file permissions are not enforced for root")
+	}
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	setContractReviewersConfig(t, paths, "helper")
+	registerTestAgents(t, paths, "helper")
+	writeContractReviewFindingsForNextTest(t, runPaths)
+	writeContractReviewResolutionsForNextTest(t, runPaths)
+	assertNoError(t, os.Chmod(runPaths.ContractReviewResolutionsJSONL, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(runPaths.ContractReviewResolutionsJSONL, 0o644) })
+
+	next := decodeNext(t, app, "task", "show", runID, "--json")
+	assertNext(t, next, "pactum contract show "+runID)
+}
+
+func TestNextContractReviewUnresolvedBlockerFallsBack(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	setContractReviewersConfig(t, paths, "helper")
+	registerTestAgents(t, paths, "helper")
+	writeBlockingFindingLine(t, runPaths, "correctness", "missing validation")
+	writeContractReviewResolutionsForNextTest(t, runPaths)
+
+	next := decodeNext(t, app, "task", "show", runID, "--json")
+	assertNext(t, next, "pactum contract show "+runID)
+}
+
+func TestNextCommandContractReviewResolvedUsesGuardedSelector(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	setContractReviewersConfig(t, paths, "helper")
+	registerTestAgents(t, paths, "helper")
+	writeContractReviewFindingsForNextTest(t, runPaths)
+	writeContractReviewResolutionsForNextTest(t, runPaths)
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"status", "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("status exited %d, stderr: %s", code, stderr.String())
+	}
+	var status statusResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &status))
+	if status.Runs.NextCommand != "pactum contract approve" {
+		t.Fatalf("status next_command = %q, want pactum contract approve", status.Runs.NextCommand)
+	}
+	assertNextCommands(t, status.Next, "pactum contract approve "+runID)
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"task", "show", runID, "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("task show exited %d, stderr: %s", code, stderr.String())
+	}
+	var show taskShowResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &show))
+	if show.NextCommand != "pactum contract approve" {
+		t.Fatalf("task show next_command = %q, want pactum contract approve", show.NextCommand)
+	}
+	assertNextCommands(t, show.Next, "pactum contract approve "+runID)
+}
+
+func TestNextCommandContractReviewFallbackUsesGuardedSelector(t *testing.T) {
+	t.Run("partial output", func(t *testing.T) {
+		root := t.TempDir()
+		app, paths, runID := setupContractRun(t, root)
+		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+		setContractReviewersConfig(t, paths, "helper")
+		registerTestAgents(t, paths, "helper")
+		writeContractReviewFindingsForNextTest(t, runPaths)
+
+		assertLegacyNextCommandForRun(t, app, runID, "pactum contract show")
+	})
+
+	t.Run("unresolved blocker", func(t *testing.T) {
+		root := t.TempDir()
+		app, paths, runID := setupContractRun(t, root)
+		runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+		setContractReviewersConfig(t, paths, "helper")
+		registerTestAgents(t, paths, "helper")
+		writeBlockingFindingLine(t, runPaths, "correctness", "missing validation")
+		writeContractReviewResolutionsForNextTest(t, runPaths)
+
+		assertLegacyNextCommandForRun(t, app, runID, "pactum contract show")
+	})
+}
+
+func TestContractReviseInvalidatesContractReviewArtifacts(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	setContractReviewersConfig(t, paths, "helper")
+	registerTestAgents(t, paths, "helper")
+	writeContractReviewFindingsForNextTest(t, runPaths)
+	writeContractReviewResolutionsForNextTest(t, runPaths)
+	assertNextCommands(t, nextCommandsForRun(paths, runID), "pactum contract approve "+runID)
+
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{"goal": "review the revised contract draft"})
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"contract", "revise", runID, "--from", fromFile, "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("contract revise exited %d, stderr: %s stdout: %s", code, stderr.String(), stdout.String())
+	}
+	var response contractReviseResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	if !response.Changed {
+		t.Fatalf("contract revise should change the draft")
+	}
+	if isRegularFile(runPaths.ContractReviewFindingsJSONL) || isRegularFile(runPaths.ContractReviewResolutionsJSONL) {
+		t.Fatalf("contract revise must remove stale contract-review aggregate artifacts")
+	}
+	assertNextCommands(t, response.Next, "pactum contract review run "+runID)
+	next := decodeNext(t, app, "task", "show", runID, "--json")
+	assertNext(t, next, "pactum contract review run "+runID)
+}
+
+func TestContractReviseInvalidationFailureLeavesContractUnchanged(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("directory permissions are not enforced for root")
+	}
+	root := t.TempDir()
+	app, paths, runID := setupContractRun(t, root)
+	runPaths := contractRunPaths(filepath.Join(paths.RunsDir, runID))
+	writeContractReviewFindingsForNextTest(t, runPaths)
+	writeContractReviewResolutionsForNextTest(t, runPaths)
+	originalVersion, err := storeFileSHA256(runPaths.ContractJSON)
+	assertNoError(t, err)
+	fromFile := writeReviseDocForTest(t, runPaths, map[string]any{"goal": "do not persist if invalidation fails"})
+
+	reviewerDir := filepath.Dir(runPaths.ContractReviewFindingsJSONL)
+	assertNoError(t, os.Chmod(reviewerDir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(reviewerDir, 0o755) })
+
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"contract", "revise", runID, "--from", fromFile, "--json"}, &stdout, &stderr); code == 0 {
+		t.Fatalf("contract revise should fail when contract-review artifact invalidation fails\nstdout: %s", stdout.String())
+	}
+	currentVersion, err := storeFileSHA256(runPaths.ContractJSON)
+	assertNoError(t, err)
+	if currentVersion != originalVersion {
+		t.Fatalf("contract changed despite failed review artifact invalidation: got %s want %s\nstderr: %s", currentVersion, originalVersion, stderr.String())
+	}
+}
+
+func assertLegacyNextCommandForRun(t *testing.T, app App, runID string, want string) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	if code := app.Run([]string{"status", "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("status exited %d, stderr: %s", code, stderr.String())
+	}
+	var status statusResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &status))
+	if status.Runs.NextCommand != want {
+		t.Fatalf("status next_command = %q, want %q", status.Runs.NextCommand, want)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"task", "show", runID, "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("task show exited %d, stderr: %s", code, stderr.String())
+	}
+	var show taskShowResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &show))
+	if show.NextCommand != want {
+		t.Fatalf("task show next_command = %q, want %q", show.NextCommand, want)
+	}
+}
+
+func writeContractReviewFindingsForNextTest(t *testing.T, runPaths contractRunPathSet, findings ...contractReviewFindingLine) {
+	t.Helper()
+	writeContractReviewJSONLLinesForNextTest(t, runPaths.ContractReviewFindingsJSONL, findings)
+}
+
+func writeContractReviewResolutionsForNextTest(t *testing.T, runPaths contractRunPathSet, resolutions ...contractReviewResolutionRecord) {
+	t.Helper()
+	writeContractReviewJSONLLinesForNextTest(t, runPaths.ContractReviewResolutionsJSONL, resolutions)
+}
+
+func writeContractReviewJSONLLinesForNextTest[T any](t *testing.T, path string, records []T) {
+	t.Helper()
+	var data []byte
+	for _, record := range records {
+		line, err := json.Marshal(record)
+		assertNoError(t, err)
+		data = append(data, line...)
+		data = append(data, '\n')
+	}
+	assertNoError(t, activeStore.WriteBytes(path, data, 0o644))
+}
+
 // TestEmittedAffordancesUseCurrentGrammar walks command strings the CLI emits
 // through fix and next affordances and parses each one against the current
 // command grammar, so a renamed or removed verb (clarify status, execute

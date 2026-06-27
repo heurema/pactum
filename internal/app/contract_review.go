@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -538,8 +539,18 @@ func (a App) runContractReviewLoop(
 
 	// Write the durable findings artifact so contract approve can enforce the guard.
 	if loopErr == nil && terminalReason != "error" {
-		if writeErr := writeContractReviewFindingsJSONL(runCtx.RunPaths, rounds); writeErr != nil && loopErr == nil {
+		if writeErr := removeContractReviewResolutionsArtifact(runCtx.RunPaths); writeErr != nil {
 			loopErr = writeErr
+		}
+		if loopErr == nil {
+			if writeErr := writeContractReviewFindingsJSONL(runCtx.RunPaths, rounds); writeErr != nil {
+				loopErr = writeErr
+			}
+		}
+		if loopErr == nil && terminalReason == "resolved" {
+			if writeErr := ensureContractReviewResolutionsJSONL(runCtx.RunPaths); writeErr != nil && loopErr == nil {
+				loopErr = writeErr
+			}
 		}
 	}
 
@@ -1035,6 +1046,27 @@ func writeContractReviewFindingsJSONL(runPaths contractRunPathSet, rounds []cont
 		buf = []byte{}
 	}
 	return activeStore.WriteBytes(runPaths.ContractReviewFindingsJSONL, buf, 0o644)
+}
+
+func ensureContractReviewResolutionsJSONL(runPaths contractRunPathSet) error {
+	if isRegularFile(runPaths.ContractReviewResolutionsJSONL) {
+		return nil
+	}
+	return activeStore.WriteBytes(runPaths.ContractReviewResolutionsJSONL, []byte{}, 0o644)
+}
+
+func removeContractReviewResolutionsArtifact(runPaths contractRunPathSet) error {
+	if err := activeStore.Remove(runPaths.ContractReviewResolutionsJSONL); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func removeContractReviewAggregateArtifacts(runPaths contractRunPathSet) error {
+	if err := activeStore.Remove(runPaths.ContractReviewFindingsJSONL); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return removeContractReviewResolutionsArtifact(runPaths)
 }
 
 func nextContractReviewFindingID(index int) string {

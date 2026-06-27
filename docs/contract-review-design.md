@@ -93,11 +93,12 @@ reason instead of re-running the reviewer:
 pactum contract review finding resolve <run> <id> --reason "..." --by <who>
 ```
 
-`--reason` and `--by` are required. The resolution is appended to
-`contract/reviewer/resolutions.jsonl` (append-only, never rewritten) and a ledger
+`--reason` and `--by` are required. The resolution is appended to the current
+contract-review aggregate at `contract/reviewer/resolutions.jsonl`, and a ledger
 event is written. A resolution is **active only while the contract hash is
-unchanged** — editing the contract via `contract revise` invalidates prior
-resolutions and requires re-resolving before `contract approve` will pass.
+unchanged** — editing the contract via `contract revise` discards the aggregate
+contract-review findings/resolutions artifacts and requires a fresh review or
+fresh resolutions before `contract approve` will pass.
 
 `contract approve` accepts the resolved findings and prints a loud waiver summary
 listing each waived finding id, reason, and by. Unresolved blocking findings still
