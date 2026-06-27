@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"time"
@@ -54,6 +55,9 @@ type DryRunCommand struct {
 }
 
 type RunRequest struct {
+	// Context cancels the in-flight transport from the caller side, for example
+	// when the CLI receives an interrupt. Nil means context.Background().
+	Context        context.Context
 	RepoRoot       string
 	RunID          string
 	AttemptID      string

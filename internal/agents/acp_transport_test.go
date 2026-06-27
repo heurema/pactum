@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	acp "github.com/coder/acp-go-sdk"
 )
@@ -461,6 +463,54 @@ func TestACPTransportWritesNoUsageWarning(t *testing.T) {
 	}
 	if !strings.Contains(string(stderr), "usage capture warning: acp prompt returned no usage") {
 		t.Fatalf("stderr missing usage warning:\n%s", stderr)
+	}
+}
+
+func TestACPTransportTeeAdapterStderrToLiveOutput(t *testing.T) {
+	t.Setenv("PACTUM_CLAUDE_ACP_COMMAND", os.Args[0])
+	t.Setenv("PACTUM_ACP_WALLCLOCK_HELPER", "stderr_hang")
+
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, "prompt.md"), []byte("prompt"), 0o644); err != nil {
+		t.Fatalf("write prompt: %v", err)
+	}
+
+	var live bytes.Buffer
+	result, err := (ACPTransport{}).Run(RunRequest{
+		RepoRoot:       repoRoot,
+		RunID:          "run_stderr_tee",
+		AttemptID:      "attempt_001",
+		Agent:          AgentDescriptor{Name: BuiltinClaude},
+		PromptRepoPath: "prompt.md",
+		ArtifactDir:    "test/attempts",
+		Timeout:        100 * time.Millisecond,
+		LiveOutput:     &live,
+	})
+	if err == nil {
+		t.Fatal("stderr-hanging adapter should fail on idle timeout")
+	}
+	if !result.TimedOut {
+		t.Fatalf("result should record idle timeout, got: %+v", result)
+	}
+
+	stderrPath := filepath.Join(repoRoot, ".heurema", "pactum", "runs", "run_stderr_tee", filepath.FromSlash(result.StderrPath))
+	stderrLog, readErr := os.ReadFile(stderrPath)
+	if readErr != nil {
+		t.Fatalf("read stderr.log: %v", readErr)
+	}
+	if !strings.Contains(string(stderrLog), "mcp auth failed for Linear") {
+		t.Fatalf("stderr.log missing adapter diagnostic:\n%s", stderrLog)
+	}
+	if !strings.Contains(live.String(), "mcp auth failed for Linear") {
+		t.Fatalf("live output missing adapter diagnostic:\n%s", live.String())
+	}
+	stdoutPath := filepath.Join(repoRoot, ".heurema", "pactum", "runs", "run_stderr_tee", filepath.FromSlash(result.StdoutPath))
+	stdoutLog, readErr := os.ReadFile(stdoutPath)
+	if readErr != nil {
+		t.Fatalf("read stdout.log: %v", readErr)
+	}
+	if strings.Contains(string(stdoutLog), "mcp auth failed for Linear") {
+		t.Fatalf("adapter stderr leaked into stdout.log:\n%s", stdoutLog)
 	}
 }
 

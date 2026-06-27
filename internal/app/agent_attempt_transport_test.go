@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,6 +116,27 @@ func TestExecuteRunPassesModelSpecAndStaysWriteStage(t *testing.T) {
 	}
 }
 
+func TestExecuteRunPropagatesInterruptContextToAgentRunRequest(t *testing.T) {
+	root := t.TempDir()
+	app, _, runID := setupApprovedAndBuiltPromptWithAgentRegistry(t, root, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app.Context = ctx
+	transport := &recordingAgentTransport{}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "run", runID, "--agent", "codex"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute run exited %d, stderr: %s", code, stderr.String())
+	}
+
+	request := singleTransportRequest(t, transport)
+	if request.Context != ctx {
+		t.Fatal("execute RunRequest should carry the app interrupt context")
+	}
+}
+
 func TestReviewFixPassesModelSpecAndStaysWriteStage(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
@@ -171,7 +193,7 @@ func TestReviewFixClaudeACPPathIsWriteStageWithModelSpec(t *testing.T) {
 	}
 }
 
-func TestReviewRunMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
+func TestReviewRunCodexACPPathIsReadOnlyWithModelSpec(t *testing.T) {
 	root := t.TempDir()
 	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
 	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "codex", Model: "gpt-5", Effort: "high"})
@@ -194,6 +216,32 @@ func TestReviewRunMarksAttemptReadOnlyAndPassesModelSpec(t *testing.T) {
 		}
 		if want := (agents.ModelSpec{Model: "gpt-5", Effort: "high"}); request.Model != want {
 			t.Fatalf("review run model spec = %+v, want %+v", request.Model, want)
+		}
+	}
+}
+
+func TestReviewRunPropagatesInterruptContextToAgentRunRequest(t *testing.T) {
+	root := t.TempDir()
+	app, paths, runID, _ := setupApprovedPreparedReview(t, root, "passed")
+	setAgentRegistryConfig(t, paths, agentRegistryEntry{Name: "codex", Model: "gpt-5"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app.Context = ctx
+	transport := &recordingAgentTransport{}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"review", "run", runID, "--reviewer", "codex"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("review run exited %d, stderr: %s", code, stderr.String())
+	}
+
+	if len(transport.requests) == 0 {
+		t.Fatal("review run should make at least one transport request")
+	}
+	for _, request := range transport.requests {
+		if request.Context != ctx {
+			t.Fatal("review RunRequest should carry the app interrupt context")
 		}
 	}
 }

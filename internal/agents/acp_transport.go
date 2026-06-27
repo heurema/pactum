@@ -48,14 +48,21 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 	defer stdoutFile.Close()
 	defer stderrFile.Close()
 
-	// The agent's streamed text goes to the attempt stdout.log, teed to the live
-	// writer (operator stderr) and wrapped in an activity writer so the idle
-	// watchdog sees the streaming progress the protocol gives us.
+	// The agent's streamed text goes to the attempt stdout.log. Adapter stderr
+	// diagnostics stay in stderr.log. Both streams are teed to the live writer
+	// (operator stderr) when requested, and both tick the idle watchdog.
 	var stdoutWriter io.Writer = stdoutFile
+	var stderrWriter io.Writer = stderrFile
 	if request.LiveOutput != nil {
-		stdoutWriter = io.MultiWriter(stdoutFile, &lockedWriter{w: request.LiveOutput})
+		live := &lockedWriter{w: request.LiveOutput}
+		stdoutWriter = io.MultiWriter(stdoutFile, live)
+		stderrWriter = io.MultiWriter(stderrFile, live)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	parentContext := request.Context
+	if parentContext == nil {
+		parentContext = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parentContext)
 	var idleTimedOut atomic.Bool
 	stopIdle := func() {}
 	// Over ACP, streamed text is only one liveness signal: an agent can work
@@ -66,6 +73,7 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 	if request.Timeout > 0 {
 		activity := make(chan struct{}, 1)
 		stdoutWriter = activityWriter{w: stdoutWriter, activity: activity}
+		stderrWriter = activityWriter{w: stderrWriter, activity: activity}
 		clientActivity = func() {
 			select {
 			case activity <- struct{}{}:
@@ -83,7 +91,7 @@ func (ACPTransport) Run(request RunRequest) (RunResult, error) {
 	cmd := exec.CommandContext(ctx, adapterCmd, adapterArgs...)
 	cmd.Dir = request.RepoRoot
 	cmd.Env = append(os.Environ(), adapterEnv...)
-	cmd.Stderr = stderrFile
+	cmd.Stderr = stderrWriter
 	// Run the adapter in its own process group so the whole tree (the npx wrapper,
 	// the adapter, and the agent child it launches) can be reaped together. On
 	// non-Unix platforms this is a no-op (see acp_transport_other.go).

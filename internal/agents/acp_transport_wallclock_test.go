@@ -17,6 +17,7 @@ import (
 //
 //   - "1":          hang forever (non-responsive ACP adapter)
 //   - "exit_fast":  exit immediately without speaking ACP
+//   - "stderr_hang": write a diagnostic to stderr, then hang
 //   - "spawn_child": spawn a sleeping grandchild, write its PID to
 //     PACTUM_CHILD_PID_FILE, then hang — lets the reap test verify that
 //     killProcessGroup kills the whole process group
@@ -31,6 +32,10 @@ func TestMain(m *testing.M) {
 	case "exit_fast":
 		// Exit immediately without speaking ACP — simulates an adapter that
 		// exits cleanly well before the wall-clock cap fires.
+		return
+	case "stderr_hang":
+		fmt.Fprintln(os.Stderr, "mcp auth failed for Linear")
+		time.Sleep(time.Hour)
 		return
 	case "spawn_child":
 		// Launch a grandchild process that also sleeps forever. Write its PID

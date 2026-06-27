@@ -1,11 +1,13 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"math/rand"
 	"os"
+	"os/signal"
 	"time"
 
 	"github.com/alecthomas/kong"
@@ -21,6 +23,7 @@ const (
 
 type App struct {
 	WorkingDir     string
+	Context        context.Context
 	Now            func() time.Time
 	AgentRegistry  agents.Registry
 	AgentTransport agents.Transport
@@ -53,7 +56,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "pactum: %v\n", err)
 		return 1
 	}
-	return App{WorkingDir: wd, Now: time.Now}.Run(args, stdout, stderr)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	return App{WorkingDir: wd, Context: ctx, Now: time.Now}.Run(args, stdout, stderr)
 }
 
 // kongExit carries the exit code kong requests (for example from --help) out
@@ -65,6 +70,9 @@ type kongExit struct{ code int }
 func (a App) Run(args []string, stdout, stderr io.Writer) (code int) {
 	if a.Now == nil {
 		a.Now = time.Now
+	}
+	if a.Context == nil {
+		a.Context = context.Background()
 	}
 	if a.WorkingDir == "" {
 		wd, err := os.Getwd()

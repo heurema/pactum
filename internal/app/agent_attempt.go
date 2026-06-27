@@ -156,6 +156,7 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 	}
 
 	runReq := agents.RunRequest{
+		Context:          a.Context,
 		RepoRoot:         cfg.Root,
 		RunID:            cfg.RunID,
 		AttemptID:        attemptID,
