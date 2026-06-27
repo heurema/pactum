@@ -710,6 +710,95 @@ func TestGitGuardLifecycle_PreconditionBlocksTransport(t *testing.T) {
 	if result.GitGuard == nil || result.GitGuard.TerminalReason != gitGuardReasonInconclusive {
 		t.Errorf("expected git_guard.terminal_reason=%q in result; got %#v", gitGuardReasonInconclusive, result.GitGuard)
 	}
+	if result.GitGuard == nil || !strings.Contains(result.GitGuard.Detail, "dirty worktree") || !strings.Contains(result.GitGuard.Detail, "checkpoint") {
+		t.Errorf("git_guard.detail should name dirty/checkpoint remedy; got: %#v", result.GitGuard)
+	}
+	if got := stdout.String(); !strings.Contains(got, "dirty worktree") || !strings.Contains(got, "checkpoint") {
+		t.Errorf("human output should include dirty/checkpoint remedy; got: %s", got)
+	}
+}
+
+func TestGitGuardLifecycle_PreconditionFailureDoesNotAdvertiseGateNext(t *testing.T) {
+	skipIfNoGit(t)
+
+	root := t.TempDir()
+	app, paths, runID := setupGatePreparedRun(t, root, nil, false)
+
+	mustWriteFile(t, filepath.Join(root, "untracked.go"), "package main\n")
+
+	transport := &recordingAgentTransport{}
+	app.AgentTransport = transport
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"execute", "run", runID, "--agent", "helper", "--json"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("execute run should fail when git guard precondition fails")
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("execute run --json should keep stderr empty, got: %s", stderr.String())
+	}
+	var execResp executeRunResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &execResp))
+	if execResp.GitGuard == nil || execResp.GitGuard.TerminalReason != gitGuardReasonInconclusive {
+		t.Fatalf("expected inconclusive git_guard result, got %#v", execResp.GitGuard)
+	}
+	if !strings.Contains(execResp.GitGuard.Detail, "dirty worktree") || !strings.Contains(execResp.GitGuard.Detail, "checkpoint") {
+		t.Fatalf("git_guard.detail should name dirty/checkpoint remedy; got: %q", execResp.GitGuard.Detail)
+	}
+	assertNextCommands(t, execResp.Next)
+
+	if len(transport.requests) != 0 {
+		t.Fatalf("transport should not be called when precondition fails; got %d calls", len(transport.requests))
+	}
+	if got := deriveRunStatus(paths, runID); got != "prompt_built" {
+		t.Fatalf("derived status after git-guard precondition failure = %q, want prompt_built", got)
+	}
+	assertNextCommands(t, nextCommandsForRun(paths, runID), "pactum execute plan "+runID)
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"status", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("status --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var status statusResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &status))
+	if status.Runs.NextCommand != "pactum execute plan" {
+		t.Fatalf("status next_command = %q, want pactum execute plan", status.Runs.NextCommand)
+	}
+	assertNextCommands(t, status.Next, "pactum execute plan "+runID)
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"task", "show", runID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("task show --json exited %d, stderr: %s", code, stderr.String())
+	}
+	var show taskShowResponse
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &show))
+	if show.NextCommand != "pactum execute plan" {
+		t.Fatalf("task show next_command = %q, want pactum execute plan", show.NextCommand)
+	}
+	assertNextCommands(t, show.Next, "pactum execute plan "+runID)
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.Run([]string{"gate", "run", runID, "--json"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("gate run should fail when no completed execution attempt exists")
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("gate run --json should keep stderr empty, got: %s", stderr.String())
+	}
+	var envelope affordanceEnvelope
+	assertNoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	if envelope.Error.Code != "no_execution_attempt" {
+		t.Fatalf("gate error code = %q, want no_execution_attempt", envelope.Error.Code)
+	}
+	if envelope.Next == nil {
+		t.Fatal("gate error should include next affordance")
+	}
+	assertNextCommands(t, *envelope.Next, "pactum execute plan "+runID)
 }
 
 // TestGitGuardLifecycle_GateBlockedByGuardedAttempt verifies that the gate

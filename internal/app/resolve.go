@@ -208,6 +208,9 @@ func deriveRunStatus(paths artifacts.Paths, runID string) string {
 	if !isRegularFile(runPaths.LastResultJSON) {
 		return "prompt_built"
 	}
+	if executionResultBlockedByGitGuard(runPaths.LastResultJSON) {
+		return "prompt_built"
+	}
 	if !isRegularFile(runPaths.GateReportJSON) {
 		return "executed"
 	}
@@ -224,6 +227,14 @@ func deriveRunStatus(paths artifacts.Paths, runID string) string {
 		return "memory_accepted"
 	}
 	return "memory_proposed"
+}
+
+func executionResultBlockedByGitGuard(path string) bool {
+	var result executionResultDocument
+	if err := readJSON(path, &result); err != nil {
+		return false
+	}
+	return result.GitGuard != nil && result.GitGuard.TerminalReason != ""
 }
 
 func approvalApproved(path string) bool {

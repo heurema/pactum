@@ -311,9 +311,14 @@ func hasCompletedGateExecutionAttempt(runPaths contractRunPathSet) (bool, error)
 		return false, err
 	}
 	for _, attemptID := range attemptIDs {
-		if isRegularFile(executionAttemptPaths(runPaths, attemptID).ResultJSON) {
-			return true, nil
+		resultPath := executionAttemptPaths(runPaths, attemptID).ResultJSON
+		if !isRegularFile(resultPath) {
+			continue
 		}
+		if executionResultBlockedByGitGuard(resultPath) {
+			continue
+		}
+		return true, nil
 	}
 	return false, nil
 }

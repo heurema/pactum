@@ -187,13 +187,9 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 			return err
 		}
 		if !ok {
-			detail := "precondition check failed before transport"
-			if reason == gitGuardReasonUnbornHead {
-				detail = `the repository has no commits yet — the git guard requires a baseline commit; run: git add -A && git commit -m "initial commit"`
-			}
 			*cfg.GitGuard.Outcome = gitGuardOutcome{
 				TerminalReason: reason,
-				Detail:         detail,
+				Detail:         gitGuardPrecheckDetail(reason),
 			}
 			guardSkipTransport = true
 			nowNano := a.nowUTC().Format(time.RFC3339Nano)
@@ -350,6 +346,17 @@ func runAgentAttemptLifecycle[Prepared any, Request any, Result any, Response an
 	}
 	cfg.RenderSuccess(cfg.Stdout, response, request)
 	return nil
+}
+
+func gitGuardPrecheckDetail(reason string) string {
+	switch reason {
+	case gitGuardReasonUnbornHead:
+		return `the repository has no commits yet — the git guard requires a baseline commit; run: git add -A && git commit -m "initial commit"`
+	case gitGuardReasonInconclusive:
+		return "the git guard could not establish a safe clean baseline before transport; if the intended baseline has dirty worktree or index changes, checkpoint them with a commit/stash or clean them up, resolve in-progress git operations or stale lock files if present, rebuild the prompt if HEAD changes, then rerun execute"
+	default:
+		return "git guard precondition failed before transport; establish a clean baseline, checkpoint or clean up intended worktree/index changes, then rerun execute"
+	}
 }
 
 // isTransportOutputEmpty reports whether the transport's stdout artifact is
