@@ -1577,8 +1577,8 @@ func TestContractReviewFixerPromptUsesNestedScopeSchema(t *testing.T) {
 	for _, want := range []string{
 		"For scope changes, use contract.scope.in and contract.scope.out as nested arrays.",
 		`"scope": {`,
-		`      "in": ["...updated in-scope item..."],`,
-		`      "out": ["...updated out-of-scope item..."]`,
+		`      "in": ["...all in-scope items to keep, including unchanged and updated entries..."],`,
+		`      "out": ["...all out-of-scope items to keep, including unchanged and updated entries..."]`,
 		"Do NOT use top-level contract.scope_in or contract.scope_out fields; they are invalid.",
 	} {
 		if !strings.Contains(prompt, want) {
@@ -1591,6 +1591,52 @@ func TestContractReviewFixerPromptUsesNestedScopeSchema(t *testing.T) {
 	for _, invalidField := range []string{"scope_in", "scope_out"} {
 		if strings.Contains(promptWithoutWarning, invalidField) {
 			t.Fatalf("fixer prompt mentions invalid top-level scope field %q outside the explicit warning:\n%s", invalidField, prompt)
+		}
+	}
+}
+
+func TestContractReviewFixerPromptWarnsListFieldsAreWholeReplacements(t *testing.T) {
+	contract := draftContract{
+		Goal: "test goal",
+		Scope: draftContractScope{
+			In:  []string{"existing in-scope item"},
+			Out: []string{"existing out-of-scope item"},
+		},
+		AcceptanceCriteria: []string{"stdout stays clean", "docs updated", "make check passes"},
+		Validation: draftValidation{
+			Commands: []string{"go test ./internal/app", "make check"},
+		},
+		Assumptions: []string{"contract revise keeps partial-replace semantics"},
+	}
+	prompt := renderContractReviewFixerPrompt(contract, "version-1", []contractReviewFinding{
+		{
+			Reviewer: "reviewer",
+			Lens:     "testability",
+			Severity: "high",
+			Blocking: true,
+			Message:  "Acceptance criteria need a focused update.",
+		},
+	})
+
+	for _, want := range []string{
+		"List fields are whole-list replacements in contract revise",
+		"include every item that should remain, including unchanged items",
+		"For acceptance_criteria, validation.commands, assumptions, scope.in, and scope.out, do NOT output only the changed or newly added entries.",
+		`"acceptance_criteria": ["...all criteria to keep, including unchanged and updated entries..."]`,
+		`"validation": {"commands": ["...all validation commands to keep, including unchanged and updated entries..."]}`,
+		`"assumptions": ["...all assumptions to keep, including unchanged and updated entries..."]`,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("fixer prompt missing whole-list guidance %q:\n%s", want, prompt)
+		}
+	}
+
+	for _, staleExample := range []string{
+		`"acceptance_criteria": ["...updated criteria..."]`,
+		`"validation": {"commands": ["...updated commands..."]}`,
+	} {
+		if strings.Contains(prompt, staleExample) {
+			t.Fatalf("fixer prompt still suggests partial array replacement %q:\n%s", staleExample, prompt)
 		}
 	}
 }
